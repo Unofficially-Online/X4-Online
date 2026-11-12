@@ -73,6 +73,8 @@ static struct {
     uint64_t ring[64];unsigned ring_n;
 } fs={.pipe_fd=-1};
 static fs_lock fs_locks[FS_LOCKS];
+/* The diagnostic is armed by the same UI worker that can arm a save. */
+static _Atomic unsigned presentation_fork_reservation;
 /* Tests replace the engine calls and the task folder; production resolves them on the image. */
 static fs_possible_fn fs_possible_hook;
 static fs_save_fn fs_save_hook;
@@ -411,7 +413,9 @@ static int fs_folder_ok(const char *folder) {
 /* Arm (UI thread = MoveWorker, admitted session): records this thread's kernel TID and thread block. A
  * finished request may be followed by another one for a later tick. */
 static int fork_save_arm(uint64_t tick,const char *name,const char *folder,unsigned budget_ms,unsigned watchdog_s) {
-    if(!stats.active || (boot_mode && boot_phase!=3) || GetCurrentThreadId()!=ui_thread || fs.state==FS_ARMED || fs.state==FS_RUNNING) return 0;
+    if(!stats.active || (boot_mode && boot_phase!=3) || GetCurrentThreadId()!=ui_thread ||
+       atomic_load_explicit(&presentation_fork_reservation,memory_order_acquire) ||
+       fs.state==FS_ARMED || fs.state==FS_RUNNING) return 0;
     unsigned char *tls=gate_tls_self();
     if(!gate_tls_worker(tls) || tick<=stats.issued || !fs_name_ok(name) || !fs_folder_ok(folder) ||
        budget_ms<1 || budget_ms>2000 || watchdog_s<2 || watchdog_s>3600) return 0;

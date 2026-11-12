@@ -1,0 +1,147 @@
+Linux / Windows simulation comparison after the upstream update
+2026-11-10
+
+Result
+------
+The upstream update plus two opt-in Windows mass corrections agree for the
+complete captured ship states over 180 ticks. A longer 1,800-tick comparison
+still diverges. This is development evidence, not a playable-client release or
+acceptance of native Linux player controls.
+
+Source and environment
+----------------------
+Upstream base: 158b9ca4a56b7838686d0797644cae3671863f29.
+Baseline comparison source: 6d6b2d2003e5e20b015b7d4202497563a3b72a6b.
+Mass-corrected probe / Windows build source:
+df258e7ae20106a9a1dfdfc33032390c0939377a.
+
+The native Linux gate and portable-math preload were retained byte-for-byte
+from the baseline build. The two changed Linux/shared native dependencies only
+changed comments; the new probe and defaults were staged on both peers.
+Subsequent registry and diagnostic-loader fixes do not change these binaries.
+
+Both games ran on one Linux PC: native Linux X4 and Windows X4 under Proton.
+Both used X4 9.00 (611726), the same isolated snapshot, seed 2222222, twelve
+fixture ships, a common relay and 30 simulation ticks per second. Runs used
+private profiles and read-only game-data mounts. They did not use normal saves
+or profiles. The runners recorded clean owned-process cleanup and unchanged
+Steam process identity. No public package was built.
+
+Observed comparisons
+--------------------
+Baseline, 180 ticks:
+- First strict relay mismatch at tick 2.
+- Every fixture ship differed in body1 mass properties. Windows had retained
+  the native compound properties while Linux used the requested fallback.
+- Ships 7 through 12 additionally differed by one ULP in a body0 inertia
+  rotation component.
+- Diagnostic classification found no other STATE differences over this short
+  interval. Those fields were never masked out of the actual acceptance check.
+
+Mass corrections, 180 ticks:
+- Strict captured agreement passed for all ticks 0 through 180.
+- All 2,148 STATE rows per peer were equal without masking any fields.
+- All 362 report digests were independently reconstructed from their inputs.
+- All 15,036 captured IK rows agreed.
+- Complete canonical world captures at ticks 1, 60, 120 and 180 agreed.
+- Both peers stopped at 180 ticks, reason 1, restored=1. The new Windows
+  patches also reported no outstanding byte, protection, cache or thread
+  cleanup obligations.
+
+Mass corrections, 1,800 ticks:
+- Strict agreement failed. Relay mismatches occurred at ticks 260-261 and
+  900-1800; completing the run is not a passing synchronization result.
+- At tick 260, ship 10 first differed in angular velocity Y:
+  Linux 0x36074f56, Windows 0x36074f55. The recorded FLIGHT input state,
+  input parameters and limits matched; the recorded output differed in this
+  component. These entry snapshots precede behavior dispatch; they do not
+  establish equal commands after dispatch or equal intermediate operands.
+  At tick 261 the output converged again. No arithmetic cause is established.
+- Across the longer run, 50 actor/tick STATE rows differed. Later physical
+  differences start at tick 1777. No captured body inverse-mass, inverse-inertia
+  or inertia-rotation differences remain.
+- Canonical world objects agreed at ticks 1, 300 and 600. One object differed
+  at each of ticks 900, 1200 and 1500; five differed at tick 1800. The first
+  differing object is non-fixture ShipSmall 0000000000075280: motion differs,
+  while its timing preimage agrees. No causal connection to the transient
+  fixture difference is established. Sparse world captures do not identify
+  its exact onset tick.
+- The held world component differs at ticks 900-1800. Its union with fixture
+  mismatch ticks 260-261 and 1777-1800 explains all 903 relay mismatch ticks.
+  At tick 1800 the five differing world entries comprise the same non-fixture
+  ship, fixture ships 3 and 9, and two different created Zone identities (one
+  present on each peer). The zones have equal captured payloads but different
+  keys; their membership difference also changes the canonical digests.
+- IK first differed at tick 1781. Twenty-five rows differed among 141,876
+  matched keys.
+- Both peers completed 1,800 ticks and their owned processes were cleaned up.
+
+Implementation
+--------------
+The Windows gate now implements the existing opt-in body1 fallback request.
+It applies the same fallback properties as the Linux path at body creation.
+This is an explicit experiment; using the approximation is not a claim that
+the native compound inertia calculation is already portable.
+
+A separate opt-in mass Jacobi patch makes the Windows scalar expression use
+the Linux operation order. It verifies the pinned function and patch bytes,
+preserves the calling convention, and tracks partial writes and restoration.
+Both options remain disabled in general defaults. The mixed comparison preset
+already requested the body1 fallback; Jacobi was explicitly enabled only in
+the Windows comparison configuration.
+
+Shared Windows thread-freeze cleanup now retains unsuccessful resume and
+handle-close obligations. STOP includes this shared state even if installation
+failed before a module published its installed flag. Fault tests exercise
+partial installation, rollback, foreign bytes and pending cleanup.
+
+The Linux parity hooks for steering roll, avoidance angle and pursuit speed
+also retain cleanup obligations if closing a writable code page fails after
+the patch was written. Previously that path could omit restoration.
+
+Harness corrections include boolean literals in the shared mixed-platform
+preset, a Windows read-fault test using an owned inaccessible page, explicit
+cross-platform stop-code aliases, and isolation of the get-up diagnostic's
+source-only import policy from ordinary test discovery.
+
+Validation limits
+-----------------
+The passing interval is six seconds of gated simulation; the longer failing
+interval is sixty seconds. Neither establishes a long-running session, a
+second physical Windows PC, human player input, hot join or full native Linux
+player support. The Windows configuration uses the declared ship viewpoint
+observer; mining and the full player/people stack were not enabled.
+
+World comparison covers WORLD_IMPORTED_2's declared canonical fields and timing
+preimages. Raw navigation fields can differ while mapping to equal canonical
+timing values. Unknown motion fields, unavailable probes and degraded capture
+notices remain recorded. Canonical agreement is not equality of every hidden
+engine field.
+
+The full offline suite initially ran 2,107 tests and failed with three registry
+failures, two import-order errors and 56 skipped checks. The registry and
+import-isolation failures have focused regressions and fixes. Twenty-four of
+the original skipped checks subsequently passed with the available executables,
+compiler and crypto library. Thirty-two original skips remain unvalidated,
+including Windows-only tests and unavailable external reference data. There
+is no claim of an all-green full suite.
+
+Windows aggregate and focused mass/failure tests ran under isolated Proton.
+They do not replace execution on Windows hardware. The Linux build, synthetic
+hook tests, copied-image checks and Lua API checks are distinct from the real
+game comparisons above.
+
+Private evidence
+----------------
+The working copy retains raw logs, binary/source inventories, launch receipts,
+cleanup receipts and independent audits under .local/resume-20261110/:
+  mixed-current-180/
+  mixed-mass-current-180/
+  mixed-mass-current-1800/
+  current-comparison-180-final/
+  mass-comparison-180/
+  mass-comparison-1800/
+  windows-mass-build/
+  current-full-check.log
+  current-full-check-results.json
+These private artifacts are not included in the source repository.

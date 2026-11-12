@@ -17,6 +17,58 @@ import linux_gate_live as live
 
 @unittest.skipUnless(sys.platform == "linux", "Linux desktop isolation is Linux-only")
 class DesktopSetup(unittest.TestCase):
+    def test_remote_options_parse_for_run(self):
+        with mock.patch.object(live, 'run') as run:
+            live.main(['run', '--root', '/unused', '--relay-port', '45000', '--relay-token', 'a' * 32,
+                       '--local-slots', '2', '--relay-host', '192.0.2.7', '--arm-at', '2000000000'])
+        options = run.call_args.args[0]
+        self.assertEqual((options.relay_host, options.arm_at, options.local_slots), ('192.0.2.7', 2000000000, '2'))
+
+    def test_remote_session_validation_and_private_config(self):
+        self.assertEqual(live.remote_session_options('192.0.2.7', 2000, True, now=1000),
+                         ('192.0.2.7', 2000))
+        for host, arm, external in [('192.0.2.7', None, False), (None, 2000, False),
+                                    ("1.2.3.4'; os.execute('bad') --", None, True),
+                                    ('256.2.3.4', None, True), (123, None, True),
+                                    (None, 1000, True), (None, True, True), (None, 2000.0, True),
+                                    (None, float('nan'), True), (None, float('inf'), True), (None, '2000', True)]:
+            with self.subTest(host=host, arm=arm, external=external), self.assertRaises(ValueError):
+                live.remote_session_options(host, arm, external, now=1000)
+        with mock.patch.object(live.time, 'time', return_value=1000):
+            config = live.case_config('slot=@X4LANE_SLOT@', 45000, 'a' * 32, 2, 2,
+                                      relay_host='192.0.2.7', arm_at=2000)
+        self.assertEqual(config, "slot=p2\nX4LAN_CONFIG.native_gate_relay_host = '192.0.2.7'\n"
+                                 'X4LAN_CONFIG.native_gate_arm_at = 2000\n')
+        self.assertEqual(live.case_config('slot=@X4LANE_SLOT@', 45000, 'a' * 32, 2, 2), 'slot=p2')
+        with mock.patch.object(live.time, 'time', return_value=1000):
+            overridden = live.case_config('X4LAN_CONFIG.native_gate_arm_at = 1100\n', 45000, 'a' * 32, 2, 2,
+                                          relay_host='192.0.2.7', arm_at=2000)
+        self.assertTrue(overridden.rstrip().endswith('X4LAN_CONFIG.native_gate_arm_at = 2000'))
+        with self.assertRaises(ValueError):
+            live.case_config('', 45000, 'a' * 32, 2, 2, relay_host=123)
+        with self.assertRaises(ValueError):
+            live.case_config('', 45000, 'a' * 32, 2, 2, arm_at=True)
+
+    def test_remote_options_are_written_only_to_private_case(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            bundle, game, home = root / 'bundle', root / 'game', root / 'home'
+            (bundle / 'snapshot').mkdir(parents=True)
+            (bundle / 'snapshot' / live.SLOT_SAVE).write_bytes(b'snapshot')
+            template = bundle / 'extension/x4_lan_lab/ui/config.lua'
+            template.parent.mkdir(parents=True)
+            template.write_text('slot=@X4LANE_SLOT@\n')
+            (game / 'extensions').mkdir(parents=True)
+            home.mkdir()
+            with mock.patch.object(live.time, 'time', return_value=1000):
+                case, profile, *_ = live.stage_case(bundle, root / 'run', 2, game, home, 45000,
+                                                    'a' * 32, 2, relay_host='192.0.2.7', arm_at=2000)
+            config = (case / 'extensions/x4_lan_lab/ui/config.lua').read_text()
+            self.assertIn("native_gate_relay_host = '192.0.2.7'", config)
+            self.assertIn('native_gate_arm_at = 2000', config)
+            self.assertEqual(template.read_text(), 'slot=@X4LANE_SLOT@\n')
+            self.assertEqual((profile / 'save' / live.SLOT_SAVE).read_bytes(), b'snapshot')
+
     def test_status_stride_bundle_argument_and_manifest(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -151,8 +203,12 @@ class DesktopSetup(unittest.TestCase):
             output = Path(directory) / 'bundle'
             for ticks, stride, rows, identities in ((0, 60, False, False), (600, 0, False, False),
                                                    (600, 60, True, False)):
-                args = mock.Mock(out=output, ticks=ticks, stride=stride,
-                                 created_rows=rows, created_identities=identities, status_stride=None)
+                # Use the real parser defaults so new opt-in fields stay disabled.
+                flags = (['--created-rows'] if rows else []) + (['--created-identities'] if identities else [])
+                with mock.patch.object(live, 'bundle') as capture:
+                    live.main(['bundle', '--zig', '/unused', '--snapshot', '/unused',
+                               '--out', str(output), '--ticks', str(ticks), '--stride', str(stride), *flags])
+                args = capture.call_args.args[0]
                 with self.assertRaises(SystemExit):
                     live.bundle(args)
                 self.assertFalse(output.exists())

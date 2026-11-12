@@ -1,0 +1,7 @@
+# Linux pilot slot preflight
+
+This helper checks a coherent read-only snapshot of the canonical Linux Player and two externally resolved fixture identities. It performs no native invocation or engine write. Success means only that the requested memory reads and the caller's resolver produced two matching observations with the expected Player vtable, class 0x4c, a positive observed reference count, and distinct nonzero saved/runtime IDs and object pointers whose object+8 IDs match. Output is unchanged on any failure.
+
+Before calling, the owner must verify the exact ELF image and expected runtime vtable, provide a fault-aware reader and a read-only resolver backed by a sealed identity map, and prove an appropriate serialized boundary. Returned addresses are borrowed observations: the helper does not acquire references or keep objects alive. It does not prove ship class, ship-controller association, ownership, seat readiness, absence of intervening ABA changes, or pointer validity after return. It does not validate control banks, suppression shares, native input state, safe Player construction, singleton swaps or stockplay. No code should mutate the engine or enter a player scope based only on this result.
+
+The two collections catch ordinary changes in Universe singleton, Player vtable/macro/refcount and fixture resolution but are not atomic. The caller remains responsible for lifetime, serialization, pin checks and any follow-up validation. No game hook, Lua API or native adapter is included.

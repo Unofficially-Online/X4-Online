@@ -1,0 +1,69 @@
+Native Linux controls: ownership and scheduling diagnostics
+=========================================================
+
+Status: internal development. Independent native Linux player control is not
+complete. These changes do not constitute a playable cross-platform client.
+
+The retained-player seat inspection now recognizes the pinned Cockpit and
+terminal NavigationController. A separate unused helper can retain the target
+ShipSmall and its Cockpit with individually recorded reference obligations.
+Synthetic tests cover partial acquisition, uncertain native-call results,
+identity changes and cleanup. Native target/room acquisition has not been run.
+
+The control-bank roundtrip helper has an engine-free test adapter and explicit
+restoration checks. Its native Lua request currently ALWAYS REFUSES. The path
+join alone does not establish exclusion of the main SDL loop or all context
+tree writers. Copying and restoring bytes is not a substitute for that proof.
+Do not enable native bank exchange merely because the barrier test below passes.
+
+The separate --player-control-boundary-probe is a one-shot readiness experiment:
+
+  1. Request at gate tick 2, then arm on main before FrameTick at gate tick 5.
+  2. Main parks after that original FrameTick returns. The existing path-join
+     hook lets the worker enter only after the registered main thread is parked.
+  3. The worker immediately releases main. The protected body is deliberately
+     empty: no player bank, context-tree or component-reference operation.
+  4. Each wait is bounded by five seconds. A failed rendezvous writes a raw
+     stderr ERROR record and terminates this disposable test process (exit 222).
+     It never returns from a failed rendezvous to the engine.
+
+Only a successful main acknowledgment completes the receipt. Tick-five status
+may still report incomplete while main has not yet consumed the worker release;
+later status and STOP must report completion. Ordinary STOP is insufficient
+proof that the experiment executed. Raw stderr is retained separately and its
+fatal records are included in the final evidence check.
+
+The normal native semaphore path orders the previous worker's completion before
+the next FrameTick. Exceptional engine paths can bypass that wait or signal the
+same semaphore. This diagnostic labels its generation using the gate's tick;
+it does not prove all exceptional native generations are excluded. It also does
+not suspend or establish exclusion of other renderer/background threads.
+
+Keep the experiment in disposable profiles, windowed and local. It excludes
+factory, seat, bank mutation, reference and keyboard replay experiments. An
+optional read-only bank census runs outside the rendezvous, never in its body.
+No ordinary settings, saves or Workshop state are required or modified.
+
+Native verification on 10 November 2026 used source 6553277 and the immutable
+control-boundary-readiness bundle. Both disposable Linux instances reached the
+empty rendezvous at tick 5 and completed 180 ticks with STOP reason 1 and restored
+hooks. Their 180 rolling world-hash rows matched (one 120-slice cycle plus a
+partial cycle). All 179 status rows per instance and the final STOP identified
+the same single rendezvous; repeated status rows are not repeated executions.
+No player bank, context-tree or reference operation ran in that scope.
+
+An independent audit verified all 35 bundle file hashes and exact extraction of
+28,255 engine log rows per instance. Both process-output captures end with a
+partial line, so full stdout/stderr tail closure is not claimed. No fatal record
+was found in the retained bytes. Existing degraded identity and rendering
+diagnostics remain in the originals. The runner recorded no owned processes
+left and an unchanged Steam process. This is a local scheduling result, not
+proof of full thread exclusion, independent player controls or cross-platform
+gameplay.
+
+Focused C/pthread, Lua/overlay and evidence checks passed. The Linux gate build
+and 29 synthetic network scenarios passed. The full repository suite at 3b982cb
+ran 2,273 tests with one missing stop-reason-label failure and 34 unavailable
+checks. The labels were corrected in 6553277 and all 31 focused defaults tests
+passed. Full repository validation remains incomplete because the unavailable
+Windows/environment checks have not run.

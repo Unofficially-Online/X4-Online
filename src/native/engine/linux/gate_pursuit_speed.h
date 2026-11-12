@@ -21,7 +21,21 @@
 #define LXPS_CODE 0x14u
 static const unsigned char lxps_original[16]={0xf3,0x0f,0x59,0x1d,0x10,0x44,0x98,0x01,0xf3,0x0f,0x5e,0x1d,0x7c,0x44,0x98,0x01};
 static unsigned char *lxps_page;
+/* installed also means cleanup is owed after an unsuccessful arm. A successful CAS
+ * and closing the code page are separate obligations; neither is hidden by the other. */
 static int lxps_installed,lxps_restored;
+static unsigned lxps_rx_pending;
+#ifdef GATE_TLS_TEST
+static int (*lxps_test_protect)(void *,int);
+#endif
+static int lxps_protect(void *address, int writable) {
+#ifdef GATE_TLS_TEST
+    if (lxps_test_protect) {
+        return lxps_test_protect(address, writable);
+    }
+#endif
+    return writable ? gate_code_open(address, 16) : gate_code_close(address);
+}
 static const char *lxps_stage="idle";
 static int lxps_rel(unsigned char *out,const unsigned char *page,unsigned char *at,const void *target) {
     const intptr_t d=(intptr_t)target-(intptr_t)(page+(at-out)+4);
@@ -55,44 +69,132 @@ static int lxps_pins(void) {
     memcpy(copy+(LXPS_VA-s->va),lxps_original,5);
     return hash_ok(copy,s->length,s->sha256);
 }
-static int lxps_swap(const unsigned char from[5],const unsigned char to[5]) {
-    unsigned char *line=(unsigned char*)((uintptr_t)LX(LXPS_VA)&~(uintptr_t)15);const unsigned at=(unsigned)(LX(LXPS_VA)-line);
-    unsigned __int128 current,desired;
-    if(at+5>16) return 0;
-    memcpy(&current,line,16);
-    if(memcmp((unsigned char*)&current+at,from,5)) return 0;
-    desired=current;memcpy((unsigned char*)&desired+at,to,5);
-    return gate_code_swap128(line,current,desired);
+static int lxps_swap(const unsigned char expected_bytes[5], const unsigned char replacement_bytes[5]) {
+    unsigned char *code_line = (unsigned char*)((uintptr_t)LX(LXPS_VA)&~(uintptr_t)15);
+    const unsigned patch_offset = (unsigned)(LX(LXPS_VA)-code_line);
+    const unsigned protection_bit = 1u;
+    unsigned __int128 current_line, desired_line;
+    if (patch_offset + 5 > 16) {
+        return 0;
+    }
+    pthread_mutex_lock(&gate_code_lock);
+    memcpy(&current_line, code_line, 16);
+    if (memcmp((unsigned char*)&current_line + patch_offset, expected_bytes, 5)
+        || !lxps_protect(code_line, 1)) {
+        pthread_mutex_unlock(&gate_code_lock);
+        return 0;
+    }
+    lxps_rx_pending |= protection_bit;
+    desired_line = current_line;
+    memcpy((unsigned char*)&desired_line + patch_offset, replacement_bytes, 5);
+    const int patch_written = __sync_val_compare_and_swap((unsigned __int128*)code_line,
+        current_line, desired_line) == current_line;
+    if (patch_written) {
+        lxps_installed = 1;
+        lxps_restored = 0;
+    }
+    if (lxps_protect(code_line, 0)) {
+        lxps_rx_pending &= ~protection_bit;
+    }
+    else {
+        lxps_installed = 1;
+        lxps_restored = 0;
+    }
+    pthread_mutex_unlock(&gate_code_lock);
+    return patch_written && !(lxps_rx_pending & protection_bit);
 }
 /* Before the first admitted frame, on the MoveWorker. */
 static int lxps_arm(void) {
-    if(lxps_installed) return stats.active;
-    if(!stats.active || (boot_mode && boot_phase) || stats.issued || GetCurrentThreadId()!=ui_thread) {lxps_stage="guard";return 0;}
-    if(lxps_state()!=0) {lxps_stage="entry";return 0;}
-    if(!lxps_pins()) {lxps_stage="pins";return 0;}
-    if(!lxps_page) lxps_page=gate_near_page(LX(LXPS_VA));
-    if(!lxps_page || mprotect(lxps_page,GATE_PAGE,PROT_READ|PROT_WRITE)) {lxps_stage="page";return 0;}
-    memset(lxps_page,0xcc,GATE_PAGE);
-    unsigned char to[5];
-    if(!lxps_code(lxps_page,lxps_page) || mprotect(lxps_page,GATE_PAGE,PROT_READ|PROT_EXEC) || !lxps_patch(to) ||
-       !lxps_swap(lxps_original,to)) {lxps_stage="install";return 0;}
-    lxps_installed=1;lxps_restored=0;lxps_stage="armed";return 1;
+    if (lxps_installed) {
+        return stats.active
+            && !lxps_rx_pending
+            && !strcmp(lxps_stage, "armed")
+            && lxps_state() == 1
+            && lxps_page_ok()
+            && lxps_pins();
+    }
+    if (!stats.active || (boot_mode && boot_phase) || stats.issued || GetCurrentThreadId() != ui_thread) {
+        lxps_stage = "guard";
+        return 0;
+    }
+    if (lxps_state() != 0) {
+        lxps_stage = "entry";
+        return 0;
+    }
+    if (!lxps_pins()) {
+        lxps_stage = "pins";
+        return 0;
+    }
+    if (!lxps_page) {
+        lxps_page = gate_near_page(LX(LXPS_VA));
+    }
+    if (!lxps_page || mprotect(lxps_page, GATE_PAGE, PROT_READ|PROT_WRITE)) {
+        lxps_stage = "page";
+        return 0;
+    }
+    memset(lxps_page, 0xcc, GATE_PAGE);
+    unsigned char entry_patch[5];
+    if (!lxps_code(lxps_page, lxps_page)
+        || mprotect(lxps_page, GATE_PAGE, PROT_READ|PROT_EXEC)
+        || !lxps_patch(entry_patch)
+        || !lxps_swap(lxps_original, entry_patch)) {
+        lxps_stage = "install";
+        return 0;
+    }
+    lxps_installed = 1;
+    lxps_restored = 0;
+    lxps_stage = "armed";
+    return 1;
 }
 static int lxps_check(void) {
-    const char *why=lxps_state()!=1?"entry_changed":!lxps_page_ok()?"page_changed":!lxps_pins()?"block_changed":NULL;
-    if(why) {lxps_stage=why;return 0;}
+    const char *failure_stage = lxps_rx_pending ? "protection_pending" :
+        lxps_state() != 1 ? "entry_changed" :
+        !lxps_page_ok() ? "page_changed" :
+        !lxps_pins() ? "block_changed" :
+        NULL;
+    if (failure_stage) {
+        lxps_stage = failure_stage;
+        return 0;
+    }
     return 1;
 }
 static void lxps_restore(void) {
-    if(!lxps_installed) return;
-    unsigned char from[5];
-    if(lxps_state()!=1 || !lxps_patch(from)) {lxps_stage="restore_foreign";return;}
-    if(lxps_swap(from,lxps_original)) {lxps_installed=0;lxps_restored=1;lxps_stage="restored";} /* the page stays */
+    if (!lxps_installed) {
+        return;
+    }
+    unsigned char owned_patch[5], current_bytes[sizeof(lxps_original)];
+    const int entry_state = lxps_state();
+    if (entry_state == 1 && lxps_patch(owned_patch)) {
+        lxps_swap(owned_patch, lxps_original);
+    }
+    else if (entry_state == 0 || lxps_rx_pending) {
+        pthread_mutex_lock(&gate_code_lock);
+        if (lxps_protect(LX(LXPS_VA), 0)) {
+            lxps_rx_pending = 0;
+        }
+        else {
+            lxps_rx_pending = 1;
+        }
+        pthread_mutex_unlock(&gate_code_lock);
+    }
+    const int original_bytes_restored = gate_read_local(LX(LXPS_VA), current_bytes, sizeof(current_bytes))
+        && !memcmp(current_bytes, lxps_original, sizeof(current_bytes));
+    if (original_bytes_restored && !lxps_rx_pending) {
+        lxps_installed = 0;
+        lxps_restored = 1;
+        lxps_stage = "restored";
+    }
+    else {
+        lxps_stage = original_bytes_restored ? "restore_protection" : "restore_pending";
+    }
+    /* The page stays; foreign entry bytes are never replaced. */
 }
-static int lxps_status(char *out,size_t size) {
-    const int n=snprintf(out,size,"tick=%llu installed=%d restored=%d state=%d pin=%d page=%d stage=%s",(unsigned long long)stats.issued,
-        lxps_installed,lxps_restored,lxps_state(),lxps_pins(),lxps_page_ok(),lxps_stage);
-    return n>0 && (size_t)n<size?n:0;
+static int lxps_status(char *out, size_t size) {
+    const int written = snprintf(
+        out, size, "tick=%llu installed=%d restored=%d state=%d pin=%d page=%d stage=%s rx_pending=%u",
+        (unsigned long long)stats.issued, lxps_installed, lxps_restored,
+        lxps_state(), lxps_pins(), lxps_page_ok(), lxps_stage, lxps_rx_pending);
+    return written > 0 && (size_t)written < size ? written : 0;
 }
 static int lua_pursuit_speed(lua_State *L) {p_lua_pushnumber(L,lxps_arm());return 1;}
 static int lua_pursuit_speed_status(lua_State *L) {

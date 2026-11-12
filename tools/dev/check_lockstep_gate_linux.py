@@ -88,8 +88,13 @@ def module_checks(so):
         raise AssertionError(f'unexpected exports: {sorted(exported ^ EXPORTS)}')
     dynamic = subprocess.check_output(['readelf', '-dW', str(so)], text=True)
     needed = set(re.findall(r'\(NEEDED\).*\[(.+)\]', dynamic))
-    if not needed <= {'libc.so.6', 'libdl.so.2', 'libpthread.so.0', 'libm.so.6'}:
+    allowed = {'libc.so.6', 'libdl.so.2', 'libpthread.so.0', 'libm.so.6', 'ld-linux-x86-64.so.2'}
+    if not needed <= allowed:
         raise AssertionError(f'unexpected dependencies {needed}')
+    if 'ld-linux-x86-64.so.2' in needed:
+        imports = subprocess.check_output(['readelf', '--dyn-syms', '--wide', str(so)], text=True)
+        if not re.search(r'\bUND\s+__tls_get_addr@GLIBC_2\.3(?:\s|$)', imports):
+            raise AssertionError('loader dependency requires __tls_get_addr@GLIBC_2.3')
     if 'TEXTREL' in dynamic:
         raise AssertionError('text relocations')
     versions = subprocess.check_output(['readelf', '-VW', str(so)], text=True)
@@ -680,6 +685,21 @@ def main():
                          env=env).stdout
     print(out, end='')
     report['unit'] = 'pass' + (' with executable image' if args.x4 else ' (synthetic image only)')
+    stock_record = build / 'test_lockstep_stock_record'
+    run(cc + FLAGS + ['-O2', '-DNDEBUG', ENGINE / 'test_lockstep_stock_record.c', '-lm', '-o', stock_record])
+    out = subprocess.run([str(stock_record)], check=True, capture_output=True, text=True, timeout=30).stdout
+    print(out, end='')
+    report['stock_record'] = 'pass (portable v3 wire codec; no engine replay)'
+    stock_queue = build / 'test_gate_stock_queue'
+    run(cc + FLAGS + ['-O2', '-DNDEBUG', LINUX / 'test_gate_stock_queue.c', '-pthread', '-lm', '-o', stock_queue])
+    out = subprocess.run([str(stock_queue)], check=True, capture_output=True, text=True, timeout=30).stdout
+    print(out, end='')
+    report['stock_queue'] = 'pass (ordered stock-v3 capture and delayed frames; no engine replay)'
+    pilot_receiver = build / 'test_gate_pilot_receiver'
+    run(cc + FLAGS + ['-O2', LINUX / 'test_gate_pilot_receiver.c', '-pthread', '-lm', '-o', pilot_receiver])
+    out = subprocess.run([str(pilot_receiver)], check=True, capture_output=True, text=True, timeout=30).stdout
+    print(out, end='')
+    report['pilot_receiver'] = 'pass (record staging and immutable snapshots; steering inactive)'
     if args.x4:
         # The preload patches a copied ELF mapped at its expected addresses;
         # this test never starts the game or executes any X4 instructions.

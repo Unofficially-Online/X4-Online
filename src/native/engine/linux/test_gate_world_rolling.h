@@ -71,6 +71,73 @@ static void test_world_rolling(void) {
     assert(world_hash_capture_rolling(1, 1));
     assert(!strcmp(full_roots, world_hash_state + strlen(world_hash_state) - 259));
     assert(!world_hash_capture(2, 2)); /* mode mixing in the other direction */
+    /* Diagnostic copies existing leaves and never changes aggregate roots. */
+    rolling_reset_counts();
+    assert(!world_rolling_leaf_config(0, 2) && !world_rolling_leaf_config(2, 2) &&
+           !world_rolling_leaf_config(1, 18001));
+    assert(!world_rolling_raw_add("0000000000000001", 16));
+    assert(world_rolling_leaf_config(1, 2) && !world_rolling_leaf_config(1, 3));
+    char selected[17]; snprintf(selected, sizeof selected, "%016llx", (unsigned long long)world_hash_items[0].saved);
+    assert(!world_rolling_raw_add("0000000000000000", 16));
+    assert(!world_rolling_raw_add("8000000000000000", 16));
+    assert(!world_rolling_raw_add("000000000000000G", 16));
+    assert(!world_rolling_raw_add(selected, 15));
+    assert(world_rolling_raw_add(selected, 16) && !world_rolling_raw_add(selected, 16));
+    for(unsigned i = 1; i < WORLD_ROLLING_RAW_MAX; ++i) {
+        char missing[17]; snprintf(missing, sizeof missing, "%016llx", (unsigned long long)(0x7ffffffffffffff0ull + i));
+        assert(world_rolling_raw_add(missing, 16));
+    }
+    assert(!world_rolling_raw_add("7fffffffffffffff", 16));
+    assert(!world_rolling_leaf_prepare(1, 0, WORLD_ROLLING_LEAF_MAX + 1));
+    assert(!world_rolling_leaf_capture && !world_rolling_leaf_tick);
+    rolling_flip_runtime = wscen_saved_runtime[0];
+    assert(!world_hash_capture_rolling(1, 1) && !world_rolling_leaf_tick && !world_rolling_leaf_capture);
+    char raw_line[2400];
+    assert(!world_rolling_raw_row(1, raw_line, sizeof raw_line)); /* failed bank publishes nothing */
+    rolling_flip_runtime = 0;
+    *wscen_l->bank_read = 0; *wscen_l->bank_write = 1;
+    assert(world_hash_capture_rolling(1, 1));
+    assert(!strcmp(full_roots, world_hash_state + strlen(world_hash_state) - 259));
+    assert(world_rolling_leaf_tick == 1 && world_rolling_leaf_count == WSCEN_IDENTITIES);
+    for (unsigned index = 0; index < WSCEN_IDENTITIES; ++index) {
+        assert(world_rolling_leaves[index].index == index);
+        assert(world_rolling_leaves[index].saved == world_hash_items[index].saved);
+        assert(!memcmp(world_rolling_leaves[index].hashes, world_hash_items[index].hash,
+                       sizeof world_rolling_leaves[index].hashes));
+    }
+    assert(world_rolling_raw_count == 1); /* seven missing IDs are allowed */
+    const world_rolling_raw *raw = &world_rolling_raw_rows[0];
+    assert(raw->saved == world_hash_items[0].saved && raw->type == world_hash_items[0].type &&
+           raw->flags == world_hash_items[0].flags && raw->parent == world_hash_items[0].parent);
+    for(unsigned domain = 0; domain < WORLD_HASH_DOMAINS; ++domain) {
+        unsigned char digest[32];
+        lockstep_sha256(raw->data[domain].data, raw->data[domain].length, digest);
+        assert(!memcmp(digest, world_rolling_leaves[0].hashes[domain], 32));
+        int length = world_rolling_raw_row(domain + 1, raw_line, sizeof raw_line);
+        assert(length > 0);
+        const char *hex = strstr(raw_line, " bytes="); assert(hex);
+        assert((size_t)(length - (hex + 7 - raw_line)) == raw->data[domain].length * 2);
+        for(unsigned i = 0; i < raw->data[domain].length; ++i) {
+            char byte[3]; snprintf(byte, sizeof byte, "%02x", raw->data[domain].data[i]);
+            assert(!memcmp(hex + 7 + i * 2, byte, 2));
+        }
+    }
+    assert(!world_rolling_raw_row(0, raw_line, sizeof raw_line));
+    assert(!world_rolling_raw_row(5, raw_line, sizeof raw_line));
+    assert(!world_rolling_raw_row(1, raw_line, 8));
+    ++world_hash_tick; assert(!world_rolling_raw_row(1, raw_line, sizeof raw_line)); --world_hash_tick;
+    assert(!world_rolling_raw_add("0000000000000002", 16)); /* no late reconfiguration */
+    assert(!world_hash_capture_rolling(2, 2)); /* rejected sequence invalidates raw receipt */
+    assert(!world_rolling_raw_row(1, raw_line, sizeof raw_line));
+    *wscen_l->bank_write = *wscen_l->bank_read;
+    assert(!world_hash_capture_rolling(2, 1));
+    assert(!world_rolling_raw_row(1, raw_line, sizeof raw_line));
+    *wscen_l->bank_write = 1 - *wscen_l->bank_read;
+    assert(world_hash_capture_rolling(2, 1) && world_rolling_leaf_tick == 2);
+    assert(!strcmp(full_roots, world_hash_state + strlen(world_hash_state) - 259));
+    world_rolling_leaf_first = world_rolling_leaf_second = world_rolling_leaf_tick = 0;
+    world_rolling_leaf_count = world_rolling_leaf_capture = 0;
+    world_rolling_raw_id_count = world_rolling_raw_count = 0;
     /* More slices than IDs: every range is disjoint, empty roots are SHA-256
      * of empty input, and the ordered concatenated slice leaves match full. */
     rolling_reset_counts();
@@ -118,6 +185,7 @@ static void test_world_rolling(void) {
     rolling_flip_runtime = 102; /* last ID, after all live objects were read */
     assert(!world_hash_capture_rolling(1, 1) && !strcmp(world_hash_stage, "bank_phase_after"));
     assert(world_hash_tick == 0 && world_hash_scans == 0);
+    assert(!world_rolling_raw_row(1, raw_line, sizeof raw_line)); /* failed bank publishes nothing */
     rolling_flip_runtime = 0;
     *wscen_l->bank_read = 0;
     *wscen_l->bank_write = 1;

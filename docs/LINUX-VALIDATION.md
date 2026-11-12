@@ -392,3 +392,502 @@ in a private copy before checking the original full worker hash. A mixed or
 unknown patch is refused. The copied-ELF compatibility test in
 `check_lockstep_gate_linux.py --x4 ...` invokes the real preload installer but
 does not execute X4 code; it is not gameplay evidence.
+
+## Independent Linux ship-control diagnostics
+
+The optional `--independent-keyboard-frames N` bundle mode exercises two
+independent input streams against retained native controllers. It accepts
+2 through 600 frames; the scripted controller mode remains limited to 180.
+The matching run uses `--controller-physics-discard` and
+`--controller-physics-frames N`. This is a disposable experiment, not a
+player-client launcher: both processes deliberately exit with code 223,
+without restoring or resuming the retained controller state. Exit code 223
+alone never indicates success. The runner checks the complete receipts and
+stops the other owned process promptly when a finished peer reports failure.
+
+The independent stream supports native states 2 through 9 (rotation and
+strafe), 13 (increase throttle), and 14 (decrease throttle). Scripted throttle
+and network throttle cannot be combined. Key release clears the held key;
+it does not reset the native throttle command. On a German X11 layout,
+synthetic input must distinguish the Z keysym from the physical SDL Z key.
+Verify the captured native state rather than relying on the injector's exit
+code. These tests do not validate physical keyboard or mouse input.
+
+On source `7af0fa7`, a two-process, 180-frame Linux test transmitted state 13
+and produced matching ship motion and 184 matching rolling world samples.
+Source `04cf0a9` extended the comparison to 600 frames and included external
+camera presentation, throttle, rotation and strafe. Both peers applied the
+same ten input transitions, including state 14, and all 1,650 shared P2 body
+observations agreed. The extended run nevertheless **failed at tick 417**:
+the camera input-context anchor changed, followed by an upkeep call outside
+the admitted recurring scope. Only 411 of 417 rolling world samples matched;
+the later differences were not attributed by that run's retained leaf data.
+
+A diagnostic repeat on `b68cb92` identified the camera-context change as one
+new UI help-text registration (context 59, requester 8); all 15 prior payloads
+were unchanged. The other peer's first failed upkeep predicate was
+`entered=0`. These observations do not yet identify the runtime writer or
+establish that either transition is safe to admit. The checks remain strict.
+Normal UI changes, pause behavior, complete cockpit/HUD presentation, sector
+transitions and safe controller teardown still require work. No cross-PC or
+Windows/Linux player-session acceptance is claimed by these diagnostics.
+
+A control run on `59741b4`, with the same inputs and without the external
+camera, completed all 600 native frames on both peers. All 604 rolling world
+samples, 2,400 recorded P2 body observations and 604 P1 poses matched. Its
+strict evidence check still failed: both context counts changed from 13 to 14
+at tick 417. That capture retained only the three selected payloads, so it
+cannot independently identify the added entry. The result distinguishes a
+completed native run from a passing validation and does not establish the
+cause of the other peer's refusal in the camera experiment.
+
+The diagnostic on `a6716a4` introduces a context policy with complete payload
+receipts. It keeps the original context set immutable and permits only the
+observed help-text entry to appear or disappear outside scoped P2 operations.
+Each Update, upkeep and motion observation must leave the full context set
+unchanged. The camera's separately validated 13-to-15 transition establishes
+a new immutable baseline. The policy does not establish exclusion of other
+engine readers or make controller exchange safe for a persistent session.
+
+That combined camera/input run passed the bounded controller validator on both
+peers for all 600 frames (ticks 5 through 604). Both admitted exactly the known
+help-text payload at tick 417, outside protected operations, retaining every
+prior context byte. All 600 applied records per slot, 2,400 P2 body observations
+and 604 P1 exported poses agreed. The source inventory contained 97 files;
+independent checks also matched all 53 retained source files to the commit.
+
+The rolling WORLD comparison still matched only 594 of 604 samples. Five
+samples differed in all recorded domains and five in timing alone. At tick 603,
+the retained leaf data identifies only the UI helper `11f87` timing difference;
+the other 8,688 selected leaf rows match. The final all-domain difference moved
+to tick 597, while the chosen detailed capture was tick 598, so that run cannot
+attribute the tick-597 discrepancy to a specific object. No mismatches are
+filtered out. The runner's top-level `pass=false` is also deliberate for every
+discard experiment; the bounded physics result and WORLD comparison must be
+read separately. Both owned processes stopped, Steam state matched, and the
+memory scope recorded a 9.57 GiB peak with no swap or memory-limit events.
+
+### Player identity used by the view
+
+The optional `--player-presentation-probe` checks the live and published cockpit
+references once at tick 7. It requires the independent controller experiment
+and at least four frames. The diagnostic does not change the local player,
+switch cameras or install a presentation overlay. It calls a cached native
+lookup only when that player's published parent already names the retained
+cockpit; the acquired reference must be released and its count restored.
+
+On source `6c0f8ef`, both clients completed 180 controller frames. P1's live and
+cached lookups agreed, and the cached reference count changed from 10 to 11
+and back to 10. P2's live lookup found its retained cockpit, but its parent in
+the selected published bank was null. The cached P2 lookup was therefore
+explicitly omitted. This identifies a missing presentation prerequisite;
+it does not demonstrate a working P2 cockpit or HUD.
+
+This neutral run used no external camera switch or input injection. All 184
+rolling WORLD samples, 8,657 selected leaf rows, 720 P2 body observations and
+184 exported P1 poses agreed between peers. Independent checks matched the
+99-file inventory and all 54 source receipts to the named commit. Both owned
+processes stopped, Steam state was unchanged, and peak memory was 9.43 GiB
+with no swap or memory-limit events. These are bounded diagnostic results,
+not acceptance of a persistent player session or cross-platform gameplay.
+
+The separate `--player-view-query-observer` experiment counts calls to the
+stock occupied-ship getter without changing its result. It requires the
+independent controller experiment, the lifetime preload and at least four
+frames. The exact pinned executable is instrumented before its main thread
+starts. The observer remains resident until the disposable process exits;
+it is never installed or removed in a running game.
+
+At tick 7 the gate authenticates the frozen observer library and assigns the
+observation thread. Calls made inside the probe's marked frame are counted
+separately. Other calls on that thread retain their caller, returned identity,
+first and last tick, and count, up to 64 distinct rows. The final receipt
+reports overflow explicitly. Calls outside the marked frame can include
+unmarked menu or notice work; they do not establish stock-UI-only provenance.
+Unknown callers remain unknown. Neither these observations nor matching
+world hashes establish a working guest cockpit, HUD or persistent session.
+
+The first native observer attempt on `2f9e87e` activated both preloads but
+refused to arm the gate observer at tick 7. Neither client produced an armed
+or final query receipt, and the requested 180-frame comparison was not
+completed. This is a failed diagnostic attempt, not evidence about HUD
+callers or world equality. That run did not identify the failing predicate.
+Both owned processes exited, Steam state matched and
+the memory scope recorded a 9.68 GiB peak without swap or memory-limit events.
+
+The subsequent interface check found that the gate's pthread-derived thread
+token was passed to a preload API that requires the Linux kernel thread ID.
+The retained preload rejected that token and accepted `SYS_gettid` in a
+synthetic process. The adapter now obtains and validates the kernel ID only
+after its existing gate-thread admission and provider checks. Refusal stages
+remain sticky and are recorded without relaxing those checks.
+
+With this correction, the bounded native run on `47f78e0` armed both observers
+at tick 7 and finished at tick 184. Each client recorded 709 calls: 178 inside
+the marked probe and 531 outside it, with no overflow or foreign-thread calls.
+Each outside-frame aggregate has one caller outside the engine image; its
+origin remains unclassified. These counts do not establish stock-UI-only
+provenance or absence of other engine readers.
+
+Both clients completed 180 independent-controller frames. All 184 WORLD rows,
+8,657 selected rolling leaves and 720 normalized P2 body rows matched. This
+was a neutral-input, disposable experiment ending with exit 223: it did not
+restore or resume a persistent session. The P2 cached presentation lookup
+remains explicitly omitted. All 105 inventory hashes and 59 source receipts
+matched; owned processes stopped, Steam state matched, and peak memory was
+9.334 GiB with no swap or memory-limit events. Guest cockpit/HUD acceptance
+is still outstanding.
+
+The next read-only probe on `8d87596` also validated the Linux UI-plan object
+chain at tick 7. Both processes had the pinned presenter and controller
+vtables, the expected cockpit/first-person/plan-change function pointers,
+and a first-person flag of zero. The object identities and flag were unchanged
+across the occupied-ship lookup. No UI-plan handler was called and no player
+presentation fields were written by this probe.
+
+Both disposable processes completed their 180 controller frames. The P2
+published parent remained null, so its cached lookup was still omitted. The
+run's bounded physics check passed; its top-level persistent-session result
+remains false because this experiment intentionally exits without restoring
+or resuming the game. All owned processes stopped, Steam state matched, and
+peak memory was 9.350 GiB without swap or memory-limit events. These results
+confirm the mapped UI objects in this scenario, not a working guest cockpit.
+
+An independent audit matched all 105 inventory hashes and 59 source receipts
+to `8d87596`, as well as all 184 WORLD rows, 8,657 selected rolling leaves and
+720 normalized P2 body observations between peers. Inputs were neutral.
+
+Static inspection identified the UI Move callback reached through the
+secondary-interface thunk at `0xa77e90`. Its recursive UI mutex is also used by
+the UI render handler at `0xa604e0`, so it excludes that particular handler.
+It does not establish a common exclusion rule for all player-identity readers,
+queued render work or object destruction.
+The current worker rendezvous likewise does not establish renderer exclusion.
+A temporary canonical-player presentation overlay therefore remains disabled
+pending an appropriate execution and lifetime boundary.
+
+The opt-in UI callback observer on `c690e16` now measures complete calls to
+the pinned Move and render handlers. It installs the two vtable wrappers
+before engine startup, authenticates their live slots at admission and closure,
+and lets already admitted calls return before freezing the final counters.
+Calls starting after closure still run the original handler, without counting.
+
+In the bounded 180-frame run, each client recorded 176 entered and 176 returned
+calls for each handler. Neither reported a foreign thread, changed object,
+nested callback or unfinished call. The Move scope contained 704 occupied-ship
+queries, including probe work; the render scope contained none. The callback
+object matched the independently observed presenter plus its secondary-interface
+offset. Both deferred native receipts exactly matched the tick-184 Lua records.
+This establishes the observed callback boundary, not exclusion of all other
+readers or readiness of the guest's cockpit.
+
+All 184 WORLD rows, 8,657 selected leaf rows and 720 normalized P2 body rows
+matched between these neutral-input Linux processes. The independent audit also
+matched 105 bundle files and 59 source receipts. Both processes ended with the
+intentional diagnostic exit, with no restoration or resume. Cleanup left no
+owned processes; Steam state matched. Peak scope memory was 9.373 GiB, with
+no swap or memory-limit events.
+
+The comprehensive Linux gate check initially stopped because its Lua method
+registry test did not include the two added methods. `f7ca118` corrects that
+test and verifies refusal outside an admitted worker. The corrected bridge
+passed with 250 methods; the remaining 29 synthetic scenarios met their
+expectations in a separate continuation. Earlier compiled and copied-image
+checks passed. Windows TLS compilation was unavailable because MinGW was
+absent. This is not a claim that the complete repository suite passed.
+
+The default-off presentation fork probe now checks the native occupied-ship
+and room getters in an isolated child. On `6754177`, both Linux processes
+reported the sequence P1 ship 442686, P2 ship 442530, then P1 ship 442686.
+The live and cached room getters agreed on the retained P2 room; its reference
+count changed from 8 to 9 and back to 8. Each child exited and was reaped, and
+the parent player bytes were unchanged before the simulation continued.
+
+Both processes then completed 180 controller frames with the bounded physics
+check passing. This proves a child-only getter roundtrip, not a rendered guest
+cockpit, persistent-session restoration or cross-platform gameplay. The overall
+persistent-session result remains false because the harness intentionally exits.
+
+Earlier attempts remain recorded as failures. Native diagnostics identified an
+EINVAL at the memory-read syscall; explicitly passing full-width variadic
+arguments removed that failure. The next attempt stopped while reading the
+memory map. The successful run captured 262,189 and 262,532 bytes, each above
+the original 256 KiB limit. The capture now uses a bounded 2 MiB workspace
+allocated before the quiet section and rejects overflow or incomplete input.
+Focused syscall, map-boundary and malformed-evidence tests passed.
+
+The next diagnostic temporarily selects P2 for one guest UI Move callback,
+restoring P1 around each Lua `onUpdate` and before returning to the worker.
+The first native attempt (`0bd9485`) stopped at the return check. A diagnostic
+repeat (`9a15325`) recorded three applications and two restorations: X4 had
+executed two complete pause/resume pairs within that callback, while the first
+implementation required exactly one. Both failed runs remain retained. They
+do not establish completion of the requested 180 controller frames.
+
+The revised diagnostic accepts one to eight complete update pairs within that
+single callback. Every pause checks restored P1 fields and occupied-ship identity;
+every resume checks the canonical fields and retained P2 data before applying
+the temporary view. A ninth update, unbalanced transition or failed restoration
+terminates the disposable process. Version 2 evidence records the update count
+and requires exactly one more application and restoration than update pairs.
+The guarded callback also terminates on the tested C++ exception and dynamically
+bound `_longjmp` paths. This does not establish coverage of all possible escape
+mechanisms or exclusion of unrelated threads reading the temporary fields.
+
+On `8b086f1`, the first revised attempt stopped before the UI experiment because
+the host's child-fork prerequisite observed another running thread. The unchanged
+bundle's separate repeat completed the guest callback: two update pairs, three
+applications and three restorations, with native and Lua receipts agreeing.
+Both processes then completed 180 controller frames. All 184 WORLD rows,
+8,657 selected leaf rows, eight raw domains and 720 normalized body rows matched.
+The callback observer closed with balanced entries/exits and no counted anomalies.
+
+The independent audit matched all 113 bundle hashes and 67 source receipts.
+Six guest getter calls outside the marked probe returned P2 during tick 9;
+their caller was outside the pinned executable, so these calls are not attributed
+to a particular stock HUD component. Cleanup left no test processes and Steam
+state was unchanged. Peak scope memory was 9.440 GiB, with no swap or memory
+events. The earlier prerequisite failure remains preserved separately.
+
+This is native acceptance of one disposable callback, with subsequent bounded
+simulation comparison. The source remains default off. Persistent guest cockpit
+presentation, general reader exclusion, normal session resume and cross-platform
+gameplay remain unproven.
+
+The follow-up on `b3ec884` completed eight consecutive guarded callbacks at
+ticks 9–16 and returned its summary at tick 17. The first callback executed two
+update pairs; the other seven executed one each. Every pause and final return
+observed P1, and every overlay and resume observed P2. Both clients completed
+180 physics frames, with the same 184 WORLD rows, 8,657 selected leaves, eight
+raw domains and 720 body rows. All 113 inventory hashes and 67 source receipts
+matched in the independent audit. Peak memory was 9.410 GiB, with no memory
+events or swap; cleanup left no test processes and Steam was unchanged.
+
+The 27 non-probe P2 getter results in this window still have an unclassified
+caller outside the pinned executable. They do not prove that the cockpit or
+HUD displayed the guest correctly. The next default-off diagnostic extends the
+same guarded lease to 160 callbacks (ticks 9–168, summary 169) and captures the
+disposable guest window. The runner requires at least 165 independent physics
+frames. Its retained references remain owned by the disposable physics path;
+this is not an in-process teardown or normal-session resume claim.
+
+
+The 160-callback run at `1d3223f` subsequently passed independent checks. Both
+clients completed 180 physics frames; all 184 WORLD rows, 8,657 selected leaves,
+eight raw domains and 720 normalized body rows matched. The guest emitted
+exactly 160 ordered callback receipts for ticks 9–168 and its summary at 169.
+Peak memory was 9.364 GiB, with no memory events or swap. An earlier attempt
+never reached the gate because both X11 windows remained unmapped. The passing
+repeat required an explicitly recorded window-manager bypass for the two
+owned disposable windows. This is a test-environment qualification, not a
+normal Linux launcher acceptance. Both runs cleaned up their owned processes;
+the failed startup and its errors remain retained.
+
+A read-only follow-up at `e4e9865` sampled the UI state before, during and after
+the first overlay. All three observations reported selector 1, first-person
+flag 0 and current plan `cockpit`. The candidate camera, mode 0 and external
+target ID 442691 were unchanged. The target pointer matches the canonical P1
+actor in the retained presentation receipt, rather than an occupied ship. A
+different ID from P2's ship therefore does not by itself identify a camera
+error. These fields do not establish which camera produced the rendered view. That
+run independently passed the same bounded simulation and callback comparisons, with all 114 inventory hashes and 68 source
+receipts matching. It peaked at 9.671 GiB without memory events or swap, and
+cleanup left Steam unchanged and no test processes. Both attempted window
+captures failed in the separate capture helper; there is no visual acceptance.
+
+The explicit plan-re-emission diagnostic at `6651ef3` subsequently passed its
+bounded native comparison. It called the stock first-person handler and then
+the cockpit handler once inside the first guest overlay. The observed plan
+changed as requested; the sampled RNG word, context census and candidate camera
+fields were unchanged. The strict collector checks full native receipt syntax,
+presentation identities, input-file hashes and the order between the surrounding
+VIEWSTATE observations and first overlay frame. The host did not perform a kick.
+
+An independent audit verified 118 bundle hashes and 71 source receipts, all
+160 overlays, 180 physics frames and the same world/body comparisons. Peak scope
+memory was 9.373 GiB, with no swap or memory events. Owned-process cleanup was
+complete and Steam state was unchanged. The recorded owned-window startup
+workaround was still required.
+
+The capture helper retained 49 images of the authenticated guest window only.
+The last image contains a faint cockpit and HUD, with maximum RGB values of 14.
+The DirectColor visual was not colour-calibrated, and these asynchronous captures
+do not establish a correct P2 camera or an image drawn inside a particular
+identity scope. This result supports the bounded handler sequence, not a playable
+persistent guest. The next investigation reads controller and candidate local-pose
+identities before attempting a Linux seat-eye correction. Normal session resume
+and camera/render scope remain unproven.
+
+
+The read-only seat-pose census at `4eeeb002` then collected all six requested
+observations. P1 had the secondary FirstPersonController vtable `0x3b5edf8`
+and a finite, rigid published local transform with translation
+`(0, -0.038251698, -0.14931345)`. This pose stayed unchanged while the overlay
+changed P1's parent to the guest room. P2 had no movement controller or published
+local transform in any sample. Worker view 1 and selected bank 1 were stable.
+The collector therefore reports complete observations but incomplete pose
+coverage; it does not invent an identity transform for a null pointer.
+
+The pinned isolated snapshot identifies P1 as an Argon scout and the retained
+P2 target as an Argon fighter. P1's existing seat does not establish the correct
+seat for the other model. Static Linux analysis corroborates the published
+transform field, and distinguishes the primary FPC vtable from its secondary
+interface; copying Windows vtable slot numbers would use the wrong ABI.
+
+The independent audit verified 121 bundle hashes and 73 source receipts,
+all prior bounded simulation comparisons, and 47 owned-window image hashes.
+The sampled DirectColor lookup table was exactly linear; the sample was not
+atomic with image capture and is not a calibration claim. Peak scope memory was
+9.426 GiB without swap or memory events. Cleanup left no test processes and
+Steam state was unchanged. No live seat-query call or pose correction was
+included in this run.
+
+The explicit parent-worker seat query at `ffa3281d` completed both stock
+calls before the first guest overlay. Separate temporary references protected
+P1's ship and room, and were released in reverse order. Both calls returned a
+finite rigid transform. The scout seat was `(0, -0.038251698, -0.14931345)`;
+the fighter seat was `(0.005983999, -0.070649743, 0.238356113)`, with identity
+bases in both. Their origins differ by approximately 0.389067 metres.
+
+An independent audit verified all 125 bundle hashes and 76 source receipts,
+160 UI callbacks, 180 physics frames, 184 matching world rows, 8657 matching
+leaves, eight raw domains and 720 body rows. The sampled RNG and 13-node input
+context census were unchanged. All 52 owned-window capture hashes matched.
+Peak scope memory was 9.363 GiB, without scope swap or memory events. Cleanup
+left no X4 processes and Steam was unchanged. The startup helper observed both
+test windows already viewable in this run.
+
+These returned transforms remained scratch data: P2 still had no movement
+controller or published local pose. The stock helper may populate internal
+caches; this comparison does not prove that it is read-only. It also does not
+establish a corrected camera, a persistent guest or safe session resumption.
+The top-level run result remains false because this diagnostic deliberately
+discards its processes; the bounded physics comparison is recorded separately.
+
+The engine-free helper at `88f60a2` computes the relative seat transform and
+preserves each canonical pose's four metadata words. Its synthetic tests cover
+distinct rotated seats, a displaced pose, matching seats, signed-zero metadata
+and invalid or overflowing input. It is not activated in the native gate.
+
+### Passive live-pose observation (12 November, `62b847da`)
+
+The disposable `ui-live-pose-180` run records genuine owner-worker calls through
+the pinned FPC entry. The resident entry hook forwards each call once without
+changing its arguments or output. It records only a pointer-filtered observation;
+it does not retain the FPC object or exclude pointer reuse and other readers.
+
+The independent audit verified 131 bundle hashes and 81 source receipts. Both
+peers completed 180 physics frames, and the guest completed 160 UI callbacks.
+All 184 world rows, 8,657 selected leaves, eight raw domains and 720 body rows
+matched. The hook observed 43,264 completed calls: 2,030 during UI Move, none
+during the observed UI Render callback, and 41,234 outside those TLS brackets.
+Every call used mode 1. The first 32 samples returned the queried P1 seat pose;
+43,232 later calls were counted but their output was not retained.
+
+The sampled return addresses `0x1314317` and `0x1314407` belong to two branches
+of the same Player transform function. They do not identify the higher caller
+or establish active-camera use. UI Move also includes canonical Lua pauses,
+so this result does not yet identify calls made while the P2 overlay is open.
+
+Cleanup left no owned processes or X4 instance, and the recorded Steam state
+was unchanged. The run retained 51 guest-window images and peaked at 9.356 GiB,
+with no scope swap or memory-limit events. Exit 223 and the overall false
+session result remain intentional: this is not persistent-session acceptance.
+The next observation distinguishes open overlay, paused and outside calls
+before applying any coupled live/published seat-pose correction.
+
+The follow-up `ui-pose-scope-180` run at `fc5d0236` distinguishes completed open,
+paused and outside states from the interval while fields are changing. Its
+independent audit verified 133 bundle hashes and 82 source receipts. All 2,030
+Move calls occurred in the open overlay; 41,234 calls occurred outside it,
+and no calls were observed while paused or changing. There were 321 successful
+opens, 161 pauses and 160 final closes. Four representative rows cover three
+previously retained calls and one additional call; they are not four extra
+invocations or complete per-call data.
+
+The same 180-frame physics and world/body comparisons passed. Cleanup was
+clear, Steam state was unchanged, 51 images were retained, and peak memory was
+9.366 GiB with no scope swap or memory-limit events. This establishes a bounded
+owner-thread interval for the next correction experiment, not active-camera
+selection or exclusion of other readers. The engine-free published-pose lease
+at `c9af1f7` has focused synthetic coverage but remains unused by these runs.
+
+### Coupled seat correction: first native failure (12 November, `fdff09e`)
+
+The default-off `--player-ui-seat-correction` experiment applies the queried
+seat difference to both live FPC output and the published local pose during
+the guest's UI Move interval. It restores the published pointer before the
+identity overlay. Each publication uses a distinct resident scratch block;
+the original pose bytes remain untouched. The live path accepts only the
+observed mode-1 call from `0x1314317` into the authenticated worker stack.
+Passive receipts continue to contain raw stock output; separate receipts
+describe corrected output. This is a disposable experiment, not a session
+default or a claim of object lifetime and reader exclusion.
+
+Root validation passed three focused native test wrappers, thirteen collector
+tests and the Linux gate checker. The first collector invocation used module
+imports that could not resolve a sibling fixture; standard unittest discovery
+passed. The original import failure remains in the private evidence.
+
+The first native run, `ui-seat-correction-180`, **failed**. Tick 9 completed
+three apply/restore pairs. Independent raw analysis verifies that the first
+published P1 pose became the queried P2 seat pose, with metadata preserved,
+and that the published pointer was restored exactly. At tick 10, after physics
+upkeep, the next overlay apply refused and terminated the guest. No completed
+160-callback interval, correction aggregate or terminal physics receipt exists.
+The generic apply failure does not identify which admission predicate failed.
+
+The independent audit verified all 139 inventory hashes and 87 source receipts.
+The nine common world rows and 22 common body rows match; the unequal partial
+row counts are retained, not treated as a completed comparison. Cleanup left
+no owned processes or X4 instance, with Steam state unchanged. Memory peaked
+at 9.250 GiB without scope swap or memory-limit events. The next step is a
+failure-specific diagnostic; the admission checks remain enforced.
+
+The follow-up diagnostic at `7e25551` identified the refusal: at tick 10 the
+worker, entered phase, object ownership and view were valid, but X4 selected
+bank 0 while the correction still expected the initially captured bank 1.
+The current identity transaction had touched no fields; the preceding
+published lease was closed after three apply/restore pairs. The independent
+audit verified all 139 inventory hashes and 87 source receipts and clear
+cleanup. This is evidence for binding the selected bank per Move; the failed
+run remains a failure and does not establish a working bank-switch correction.
+
+### Seat correction across presentation banks (12 November, `55ac5bd9`)
+
+The follow-up captures the active presentation bank at each admitted UI Move.
+Both the identity overlay and the published pose use that captured bank until
+restoration completes. The original fork request remains unchanged. The first
+Move must still match the initial seat query; a bank change during a lease or
+an unexpected change to the original pose causes a refusal. Synthetic tests
+cover alternating banks, an initial mismatch and a change during a lease.
+Three focused test wrappers and the Linux gate checker passed.
+
+The disposable native run `ui-seat-bank-180` completed 180 physics frames on
+each peer and all 160 guest UI callbacks. The unchanged strict collectors
+accepted the overlay, seat queries, live-pose observations, pose scopes and
+coupled correction. The correction closed with 321 applies and 321 restores,
+2,030 live calls and two retained output samples. Its terminal state was
+outside the overlay, with the published pointer restored.
+
+Supplemental `SEAT_BANK` receipts record the first closed Move in each bank
+and totals of 80 Moves per bank. These receipts are separate from the strict
+collector. Independent analysis verified each recorded slot against the P1
+actor and selected bank, the restored pointer, and ordering before the matching
+frame. This does not provide a continuous per-frame bank trace. The original
+failed runs remain unchanged.
+
+The independent audit verified all 139 inventory hashes and 87 source receipts
+and reproduced the strict collector results. All 184 world rows, 8,657 selected
+leaf rows, eight raw domains and 720 body rows matched between peers. The first
+published pose and two retained live outputs matched the queried P2 seat, with
+metadata preserved. The audit retained hashes for 61 captured images.
+
+Both peers deliberately exited with code 223 at the diagnostic boundary;
+the overall session result remains false because this does not prove a safe
+return to ordinary gameplay. Cleanup reports no remaining owned process or
+X4 instance and unchanged Steam state. The recorded memory peak was 9.323 GiB,
+without scope swap or memory-limit events. A captured final image contains a
+dark cockpit and HUD; this alone does not establish correct guest rendering.
+Persistent guest control, object lifetime and exclusion of other readers
+remain unproven.

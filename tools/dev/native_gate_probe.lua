@@ -116,6 +116,10 @@ end
 assert(cfg.native_gate_wire_crypto==nil or (type(cfg.native_gate_wire_crypto)=='string' and wire3),
  'native_gate_wire_crypto needs the protocol 3 input wire (native_gate_clients) and a credential string')
 assert(cfg.native_gate_hash=='clock' or cfg.native_gate_hash=='battle','invalid gate hash scope')
+assert(cfg.native_gate_mass_jacobi_order==nil or type(cfg.native_gate_mass_jacobi_order)=='boolean',
+ 'native_gate_mass_jacobi_order must be a boolean')
+assert(not cfg.native_gate_mass_jacobi_order or cfg.native_gate_snapshot_sha,
+ 'mass Jacobi order requires the snapshot boot')
 assert(cfg.native_gate_battle_engage==nil or cfg.native_gate_battle_engage==false,'native_gate_battle_engage accepts only false')
 -- Opt-in census scenario fixtures (docs/LOCKSTEP-SCENARIOS.txt): MD events at fixed gated
 -- ticks, identical on every client. native_gate_missions.xml / native_gate_highway.xml.
@@ -821,6 +825,21 @@ do
  local stride=cfg.native_gate_runtime_ids_caller_stride
  assert(stride==nil or (type(stride)=='number' and stride%1==0 and stride>=1 and stride<=3600 and cfg.native_gate_runtime_ids~=nil),
   'native_gate_runtime_ids_caller_stride must be a tick count 1..3600, with native_gate_runtime_ids')
+end
+
+do
+ local leaves=cfg.native_gate_world_rolling_leaf_ticks
+ assert(leaves==nil or (cfg.native_gate_world_rolling_slices and type(leaves)=='table' and #leaves==2 and
+  type(leaves[1])=='number' and type(leaves[2])=='number' and leaves[1]%1==0 and leaves[2]%1==0 and
+  leaves[1]>=1 and leaves[1]<leaves[2] and leaves[2]<=18000),
+  'world rolling leaf ticks require two ordered bounded ticks and rolling census')
+ local ids=cfg.native_gate_world_rolling_raw_ids
+ assert(ids==nil or (leaves and type(ids)=='table' and #ids>=1 and #ids<=8),'raw IDs require leaf ticks and 1..8 saved IDs')
+ local seen={}
+ for _,id in ipairs(ids or {}) do
+  assert(type(id)=='string' and #id==16 and id:match('^[0-7][0-9a-f]+$') and id~='0000000000000000' and not seen[id],'invalid raw saved ID')
+  seen[id]=true
+ end
 end
 function ticklog.write(text)
  DebugError('[X4LAN] NATIVE_GATE '..text)
@@ -2267,6 +2286,78 @@ local pilot_camera_follow,pilot_camera_stage=false,nil -- this client follows it
 -- pilot firing mode; stock: 'capture' | 'replay' (stock piloting), the stock slots (set), its
 -- pending proposal and scripted events. One table keeps the probe's arming function below LuaJIT's upvalue limit.
 local pilot_view={predict=nil,raw=false,hits=nil,fire=nil,stock=nil,stock_slots=nil,stock_proposal=nil,stock_script=nil}
+-- A read-only census of native control storage, not a player-control adapter.
+if cfg.native_gate_player_control_bank_census then
+    assert(cfg.native_gate_player_control_bank_census == true and
+        cfg.native_gate_stock_keyboard_observer == true and cfg.native_gate_serial_pathing and
+        cfg.native_gate_snapshot_sha and gate.platform and gate.platform() == 'linux' and
+        type(gate.player_control_bank_census_request) == 'function' and
+        type(gate.player_control_bank_census) == 'function' and
+        not cfg.native_gate_stock_keyboard_replay_probe,
+        'player control-bank census needs the Linux observer, serial pathing and snapshot')
+end
+-- This diagnostic restores the canonical player's bank before simulation resumes.
+-- It does not seat another player or invoke a native controller update.
+if cfg.native_gate_player_control_bank_probe then
+    assert(cfg.native_gate_player_control_bank_probe == true and
+        cfg.native_gate_stock_keyboard_observer == true and cfg.native_gate_serial_pathing and
+        cfg.native_gate_snapshot_sha and gate.platform and gate.platform() == 'linux' and
+        type(gate.player_control_bank_probe_request) == 'function' and
+        type(gate.player_control_bank_probe_status) == 'function' and
+        not cfg.native_gate_stock_keyboard_replay_probe and not cfg.native_gate_player_reference_probe,
+        'player control-bank probe needs an isolated Linux snapshot, observer and serial pathing')
+end
+if cfg.native_gate_player_control_boundary_probe then
+    assert(cfg.native_gate_player_control_boundary_probe == true and
+        cfg.native_gate_stock_keyboard_observer == true and cfg.native_gate_serial_pathing and
+        cfg.native_gate_snapshot_sha and gate.platform and gate.platform() == 'linux' and
+        type(gate.player_control_boundary_request) == 'function' and
+        type(gate.player_control_boundary_status) == 'function' and
+        not cfg.native_gate_player_control_bank_probe and not cfg.native_gate_player_factory_probe and
+        not cfg.native_gate_player_reference_probe and not cfg.native_gate_stock_keyboard_replay_probe and
+        not cfg.native_gate_player_seat_preflight,
+        'control-boundary readiness needs the isolated Linux observer and serial pathing')
+end
+if cfg.native_gate_player_factory_retain_until ~= nil then
+    local retain_until = cfg.native_gate_player_factory_retain_until
+    assert(cfg.native_gate_player_factory_probe == true and type(retain_until) == 'number' and
+        retain_until % 1 == 0 and retain_until >= 4 and retain_until <= 36000,
+        'player factory retention requires the factory probe and a release tick in 4..36000')
+end
+if cfg.native_gate_player_seat_preflight then
+    assert(cfg.native_gate_player_seat_preflight == true and
+        cfg.native_gate_player_factory_probe == true and
+        type(cfg.native_gate_player_factory_retain_until) == 'number' and
+        cfg.native_gate_player_factory_retain_until >= 5 and
+        type(gate.player_seat_preflight_request) == 'function' and
+        type(gate.player_seat_preflight) == 'function',
+        'player seat preflight needs a retained diagnostic player through tick four')
+end
+if cfg.native_gate_player_factory_probe then
+    local keyboard = cfg.native_gate_stock_keyboard_replay_probe
+    local independent_keyboard = type(keyboard) == 'table' and
+        keyboard.independent_players == true and keyboard.delay == 2 and
+        keyboard.lookahead == 0 and cfg.native_gate_lookahead == 0 and
+        cfg.native_gate_clients == 2
+    assert(cfg.native_gate_player_factory_probe == true and
+        cfg.native_gate_stock_keyboard_observer == true and cfg.native_gate_serial_pathing and
+        cfg.native_gate_snapshot_sha and gate.platform and gate.platform() == 'linux' and
+        gate.factory_probe_request and gate.factory_probe_status and
+        not cfg.native_gate_player_reference_probe and (not keyboard or independent_keyboard),
+        'player factory diagnostic needs the Linux observer, serial pathing and an isolated snapshot')
+end
+if cfg.native_gate_player_reference_probe then
+    assert(cfg.native_gate_player_reference_probe == true and
+        cfg.native_gate_stock_keyboard_observer == true and cfg.native_gate_serial_pathing and
+        cfg.native_gate_snapshot_sha and gate.platform and gate.platform() == 'linux' and
+        gate.player_reference_request and gate.player_reference_status and
+        not cfg.native_gate_stock_keyboard_replay_probe,
+        'player reference inspection needs the Linux observer, serial pathing and an isolated snapshot')
+end
+if cfg.native_gate_stock_keyboard_replay_probe then
+    pilot_view.linux_keyboard = assert(X4LAN_LINUX_KEYBOARD, 'Linux keyboard module missing').create(
+        gate, cfg, input_section, ffi, log)
+end
 -- Per-tick state of every slot ship (position in sector, hull, shield): the
 -- ships the humans fly enter the declared state every tick, so a desync of a
 -- driven ship (the occupied player ship is not a fixture) reaches the relay at once.
@@ -3542,6 +3633,18 @@ local function frame()
     'fp env refused '..tostring(gate.fp_env_status and gate.fp_env_status()))
    log('FP_ENV_ARMED '..tostring(gate.fp_env_status()))
   end
+  -- Windows Jacobi theta uses Linux's multiply-then-divide order. Default off;
+  -- install before LoadGame, including loading-UI reloads. Linux already has it.
+  if cfg.native_gate_mass_jacobi_order then
+   assert(snapshot,'mass Jacobi order requires the snapshot boot')
+   if gate.platform and gate.platform()=='linux' then
+    log('MASS_JACOBI_ORDER_NOOP linux: native theta order is (0.5*h)/a')
+   else
+    assert(gate.mass_jacobi_order and gate.mass_jacobi_order_status and gate.mass_jacobi_order()==1,
+     'mass Jacobi order refused '..tostring(gate.mass_jacobi_order_status and gate.mass_jacobi_order_status()))
+    log('MASS_JACOBI_ORDER_ARMED '..tostring(gate.mass_jacobi_order_status()))
+   end
+  end
   -- The saved-value readers (0x14c3090/0x14c2bd0) to the portable decimal reader:
   -- same syntax, correctly rounded, the bits the Linux preload gives. Before the load.
   if cfg.native_gate_decimal then
@@ -3833,10 +3936,9 @@ local function frame()
    assert(cfg.native_gate_flight_limits==true and snapshot and gate.flight_limits and gate.flight_limits_status and gate.flight_limits()==1,'flight limits refused')
    log('FLIGHT_LIMITS_ARMED')
   end
-  -- A ship's second body (linux/gate_body_mass.h): its mass properties come from the parts its compound holds when the
-  -- body is created; Windows creates it before they arrive (the empty compound's sphere fallback), Linux often after.
-  -- 'fallback' gives every such body Windows' value at creation, before the snapshot load. Linux only; default off.
-  if cfg.native_gate_body1_mass and gate.platform and gate.platform()=='linux' then
+  -- Creation-time compound contents vary on both platforms. The opt-in fallback normalizes the second body's
+  -- inertia before the snapshot load while retaining all body fields in the digest. Default off.
+  if cfg.native_gate_body1_mass then
    assert(cfg.native_gate_body1_mass=='fallback' and snapshot and gate.body1_mass and gate.body1_mass_status and gate.body1_mass('fallback')==1,
     'body1 mass refused '..tostring(gate.body1_mass_status and gate.body1_mass_status()))
    log('BODY1_MASS_ARMED mode=fallback')
@@ -3877,7 +3979,6 @@ local function frame()
    if cfg.native_gate_avoid_angle then log('AVOID_ANGLE_NOOP windows: the avoidance angles multiply by 1/pi and 2/pi already') end
    if cfg.native_gate_pursuit_speed then log('PURSUIT_SPEED_NOOP windows: the speed factor multiplies by the folded 0.8/1.5 already') end
    if cfg.native_gate_ik_wrap then log('IK_WRAP_NOOP windows: the joint wrap is (t2 + value) - pi already') end
-   if cfg.native_gate_body1_mass then log('BODY1_MASS_NOOP windows: second bodies are created with an empty compound already') end
   end
   -- The fixture bodies just before and after Jolt's step (linux/gate_body_step.h): BODY_STEP rows. Linux only, diagnostic.
   if cfg.native_gate_body_step_diag and gate.platform and gate.platform()=='linux' then
@@ -5426,6 +5527,30 @@ local function frame()
    cfg.slot,tonumber(s.completed),s.reason,s.restored,s.wait_game_delta,s.max_dt_error))
   -- Every piloting module's why at once, before any other stop row can fail (w1foot: stop 185 without its why).
   if gate.pilot_why then pcall(function() local why=gate.pilot_why();if why then log('PILOT_STOP_WHY '..why) end end) end
+  if cfg.native_gate_stock_keyboard_observer then
+   log('STOCK_KEYBOARD_STOP '..assert(gate.stock_keyboard_observer_status()))
+  end
+  if pilot_view.linux_keyboard then
+   pilot_view.linux_keyboard.stop()
+  end
+  if cfg.native_gate_player_control_bank_census then
+   log('PLAYER_CONTROL_BANK_CENSUS_STOP '..assert(gate.player_control_bank_census()))
+  end
+  if cfg.native_gate_player_seat_preflight then
+   log('PLAYER_SEAT_PREFLIGHT_STOP '..assert(gate.player_seat_preflight()))
+  end
+  if cfg.native_gate_player_control_bank_probe then
+   log('PLAYER_CONTROL_BANK_PROBE_STOP '..assert(gate.player_control_bank_probe_status()))
+  end
+  if cfg.native_gate_player_control_boundary_probe then
+   log('PLAYER_CONTROL_BOUNDARY_STOP '..assert(gate.player_control_boundary_status()))
+  end
+  if cfg.native_gate_player_factory_probe then
+   log('PLAYER_FACTORY_STOP '..assert(gate.factory_probe_status()))
+  end
+  if cfg.native_gate_player_reference_probe then
+   log('PLAYER_REFERENCE_STOP '..assert(gate.player_reference_status()))
+  end
   ticklog.stopped(s.reason)
   if cfg.native_gate_navmesh_post_observe then
     row_cursors.stop_navmesh_post(s.boot_phase >= 3, false)
@@ -5577,6 +5702,9 @@ local function frame()
    for i=0,255 do local row=gate.sample_profile_row(i);if not row then break end;log('SAMPLE_PROFILE_ROW '..row) end
   end
   if cfg.native_gate_exact_reciprocal then log('EXACT_RECIPROCAL_STOP '..tostring(gate.exact_reciprocal_status())) end
+  if cfg.native_gate_mass_jacobi_order and not (gate.platform and gate.platform()=='linux') and gate.mass_jacobi_order_status then
+   log('MASS_JACOBI_ORDER_STOP '..tostring(gate.mass_jacobi_order_status()))
+  end
   if cfg.native_gate_fp_env then log('FP_ENV_STOP '..tostring(gate.fp_env_status())) end
   if cfg.native_gate_decimal then log('DECIMAL_STOP '..tostring(gate.decimal_status())) end
   if cfg.native_gate_motion_watch then log('MOTION_WATCH_STOP '..tostring(gate.motion_watch_status())) end
@@ -5778,6 +5906,62 @@ local function frame()
  end
  if snapshot and (s.boot_phase<3 or s.issued==s.report_tick) then return end
  local tick=tonumber(s.issued)
+ -- Linux keyboard diagnostics. The default observer forwards selected input;
+ -- the separate replay mode reports capture_suppressed and its own coverage.
+ if cfg.native_gate_stock_keyboard_observer then
+  assert(cfg.native_gate_stock_keyboard_observer==true and gate.platform and gate.platform()=='linux' and
+   gate.stock_keyboard_observer_request and gate.stock_keyboard_observer_status and gate.stock_keyboard_observer_drain,
+   'stock keyboard observer requires its Linux diagnostic adapter')
+  if tick==1 then
+   assert(gate.stock_keyboard_observer_request()==1,'stock keyboard observer request refused')
+   if cfg.native_gate_player_factory_probe then
+    assert(gate.factory_probe_request(cfg.native_gate_player_factory_retain_until or 0) == 1, 'player factory diagnostic request refused')
+   end
+   if cfg.native_gate_player_reference_probe then
+    assert(cfg.native_gate_player_reference_probe == true and gate.player_reference_request() == 1,
+        'player reference diagnostic request refused')
+   end
+  end
+  if cfg.native_gate_player_control_bank_census and tick >= 2 then
+   if tick == 2 then
+    assert(gate.player_control_bank_census_request()==1, 'player control-bank census request refused')
+   end
+   log('PLAYER_CONTROL_BANK_CENSUS tick='..tick..' '..assert(gate.player_control_bank_census()))
+  end
+  if cfg.native_gate_player_seat_preflight and tick >= 2 then
+   if tick == 2 then
+    assert(gate.player_seat_preflight_request() == 1, 'player seat preflight request refused')
+   end
+   log('PLAYER_SEAT_PREFLIGHT tick='..tick..' '..assert(gate.player_seat_preflight()))
+  end
+  if cfg.native_gate_player_control_bank_probe and tick >= 2 then
+   if tick == 2 then
+    assert(gate.player_control_bank_probe_request() == 1, 'player control-bank probe request refused')
+   end
+   log('PLAYER_CONTROL_BANK_PROBE tick='..tick..' '..assert(gate.player_control_bank_probe_status()))
+  end
+  if cfg.native_gate_player_control_boundary_probe and tick >= 2 then
+   if tick == 2 then
+    assert(gate.player_control_boundary_request() == 1, 'control-boundary request refused')
+   end
+   log('PLAYER_CONTROL_BOUNDARY tick='..tick..' '..assert(gate.player_control_boundary_status()))
+  end
+  for index=1,1024 do
+   local event=gate.stock_keyboard_observer_drain()
+   if not event then break end
+   log('STOCK_KEYBOARD_EVENT tick='..tick..' '..event)
+  end
+  log('STOCK_KEYBOARD_OBSERVER tick='..tick..' '..assert(gate.stock_keyboard_observer_status()))
+  if cfg.native_gate_player_factory_probe then
+   log('PLAYER_FACTORY tick='..tick..' '..assert(gate.factory_probe_status()))
+  end
+  if tick>=2 and gate.stock_keyboard_identity then
+   log('STOCK_KEYBOARD_IDENTITY tick='..tick..' '..assert(gate.stock_keyboard_identity(), 'keyboard identity boundary unavailable'))
+  end
+  if cfg.native_gate_player_reference_probe then
+   log('PLAYER_REFERENCE tick='..tick..' '..assert(gate.player_reference_status()))
+  end
+ end
  -- A joiner's first tick follows its tick base T: the probe's own session state comes back from the package first.
  if join_joiner and not join_restored then
   local base=gate.join_base()
@@ -5810,6 +5994,9 @@ local function frame()
  trace_gravidar(tick,s.registry_manifest)
  if profile then profile.mark('drains') end
  local input_state
+ if pilot_view.linux_keyboard then
+  pilot_view.linux_keyboard_pose = pilot_view.linux_keyboard.frame(tick)
+ end
  if cfg.native_gate_command_test then
   assert(s.wire_version==2,'native command wire version mismatch')
   input_state=assert(X4LAN_NATIVE_COMMANDS,'native command adapter missing').apply(tick,s.input1,s.input2)
@@ -5820,6 +6007,9 @@ local function frame()
   assert((not s.input1 or s.input1=='00000000') and (not s.input2 or s.input2=='00000000'),'unexpected native commands')
  end
  if wire3 then input_state=apply_inputs(tick,s) end
+ if pilot_view.linux_keyboard_pose then
+  input_state = (input_state or '')..'|'..pilot_view.linux_keyboard_pose
+ end
  if profile then profile.mark('inputs') end
  -- native_gate_rng_rows=true (diagnostic): the MoveWorker word after the frame's draws on every tick, written at
  -- once (the status stride keeps only every Nth): the first tick whose natural draws differ between clients.
@@ -6248,6 +6438,18 @@ local function frame()
  end
  local rolling_slices=cfg.native_gate_world_rolling_slices -- a local, not an upvalue (frame()'s limit of 60)
  if rolling_slices then
+  do
+   local leaves=cfg.native_gate_world_rolling_leaf_ticks
+   if leaves and tick==1 then
+    assert(type(leaves)=='table' and #leaves==2 and type(leaves[1])=='number' and type(leaves[2])=='number' and
+     leaves[1]%1==0 and leaves[2]%1==0 and leaves[1]>=1 and leaves[1]<leaves[2] and leaves[2]<=18000 and
+     gate.world_rolling_leaves_config and gate.world_rolling_leaves_row and
+     gate.world_rolling_leaves_config(leaves[1],leaves[2])==1,'rolling leaves configuration refused')
+    for _,id in ipairs(cfg.native_gate_world_rolling_raw_ids or {}) do
+     assert(gate.world_rolling_raw_add and gate.world_rolling_raw_add(id)==1,'rolling raw configuration refused')
+    end
+   end
+  end
   local capture_started = profile and gate.qpc_us()
   local summary,why = gate.world_capture_rolling(tick,rolling_slices)
   if profile then profile.part('world_scan',capture_started) end
@@ -6257,6 +6459,22 @@ local function frame()
   -- Each sample is evidence even when ordinary status rows are held or dropped.
   ticklog.write('WORLD_BANKS '..assert(gate.world_banks(),'rolling census bank phase unavailable'))
   ticklog.write('WORLD_ROLLING '..summary)
+  do
+   local leaves=cfg.native_gate_world_rolling_leaf_ticks
+   if leaves and (tick==leaves[1] or tick==leaves[2]) then
+    local count=assert(gate.world_rolling_leaves_row(0),'rolling leaf count unavailable')
+    ticklog.write('WORLD_ROLLING_LEAVES tick='..tick..' count='..count)
+    for index=1,count do ticklog.write('WORLD_ROLLING_LEAF '..assert(gate.world_rolling_leaves_row(index),'rolling leaf unavailable')) end
+    if cfg.native_gate_world_rolling_raw_ids then
+     local raw_count=assert(gate.world_rolling_raw_row(0),'rolling raw count unavailable')
+     assert(raw_count>=0 and raw_count<=32 and raw_count%4==0,'rolling raw count invalid')
+     ticklog.write('WORLD_ROLLING_RAW_BEGIN tick='..tick..' count='..raw_count)
+     for index=1,raw_count do ticklog.write('WORLD_ROLLING_RAW '..assert(gate.world_rolling_raw_row(index),'rolling raw unavailable')) end
+     assert(gate.world_rolling_raw_row(0)==raw_count,'rolling raw count changed')
+     ticklog.write('WORLD_ROLLING_RAW_END tick='..tick..' count='..raw_count..' complete=1')
+    end
+   end
+  end
   if cfg.native_gate_world_hash_shields and (tick==1 or tick%rolling_slices==0) then
    ticklog.write('WORLD_SHIELDS_ROLLING tick='..tick..' '..gate.world_hash_shields_status())
   end
@@ -6439,6 +6657,7 @@ local function mp_menu_test_step()
  end
 end
 SetScript('onUpdate',function()
+ local early_overlay_pause=cfg.native_gate_linux_ui_overlay_probe and gate and gate.pilot_present_pause and gate.pilot_present_pause()
  -- the menu block's local; absent where the handler runs on its own (tests lift it out with stubs)
  if not mp_menu then elseif not mp_menu.installed then pcall(mp_menu_install)
  elseif cfg.native_gate_mp_menu_test then pcall(mp_menu_test_step) end
@@ -6447,12 +6666,14 @@ SetScript('onUpdate',function()
  if defaults and #defaults.pending>0 then defaults.flush_notices(not ffi.C.IsStartmenu()) end
  if done and diagnostic and native_owned then
   pcall(function() assert(X4LAN_NATIVE_DIAGNOSTIC,'diagnostic adapter missing').drain(gate,true) end)
+  if early_overlay_pause==1 then gate.pilot_present_resume() end
   return
  end
  local probe_started=cfg.native_gate_frame_timing and gate and gate.qpc_us and gate.qpc_us()
  -- A presenting client's UI slot runs as its slot's player; the probe reads and reports as the canonical one.
  if cfg.native_gate_draw_watch_frame and gate and gate.draw_watch_frame_end then gate.draw_watch_frame_end() end
- local paused=gate and gate.pilot_present_pause and gate.pilot_present_pause()
+ local paused=early_overlay_pause
+ if not cfg.native_gate_linux_ui_overlay_probe then paused=gate and gate.pilot_present_pause and gate.pilot_present_pause() end
  -- The HUD's display scope (lockstep_own_predict_hud.h) closes for the probe's frame like the presentation's: the gate's
  -- modules read the simulated poses. It opens again below with this tick's own display pose.
  local hud_scope=pilot_view and pilot_view.own_predict_hud and gate and gate.own_predict_hud
@@ -6461,12 +6682,26 @@ SetScript('onUpdate',function()
  -- The UI replay and guard tell the probe's own calls of stock entries from a person's by this mark too.
  if not probe_mark and cfg.native_gate_ui_replay~=nil and cfg.native_gate_ui_replay~=false and gate then probe_mark=gate.runtime_ids_probe end
  if probe_mark then probe_mark(1) end
- local ok,error=pcall(frame)
+ local view_queries=cfg.native_gate_linux_view_query_observer and gate and gate.player_view_query_phase
+ local ok,error
+ if view_queries then
+  ok,error=pcall(function()
+   assert(view_queries(1)==1,'view query probe entry refused')
+   frame()
+  end)
+  local closed,close_error=pcall(function()
+   assert(view_queries(0)==1,'view query probe exit refused')
+  end)
+  if not closed and ok then ok,error=false,close_error end
+ else
+  ok,error=pcall(frame)
+ end
  if probe_mark then probe_mark(0) end
  if hud_scope then hud_scope(1) end
- if paused==1 then gate.pilot_present_resume() end
+ if paused==1 and not cfg.native_gate_linux_ui_overlay_probe then gate.pilot_present_resume() end
  if probe_started then probe_last_us=gate.qpc_us()-probe_started end
  if not ok then
+  if paused==1 and cfg.native_gate_linux_ui_overlay_probe then gate.player_ui_overlay_abort() end
   ticklog.flush() -- held ticks, the failing one up to the error, precede the ERROR line
   log('ERROR '..tostring(error))
   ticklog.notice('the session stopped - '..tostring(error):gsub('^[^:]*:%d+: ',''):sub(1,200)..' (see the log)')
@@ -6545,6 +6780,9 @@ SetScript('onUpdate',function()
     for i=0,255 do local row=gate.sample_profile_row(i);if not row then break end;log('SAMPLE_PROFILE_ROW '..row) end
    end) end
    if cfg.native_gate_exact_reciprocal then ticklog.try(function() log('EXACT_RECIPROCAL_STOP '..tostring(gate.exact_reciprocal_status())) end) end
+   if cfg.native_gate_mass_jacobi_order and not (gate.platform and gate.platform()=='linux') and gate.mass_jacobi_order_status then
+    ticklog.try(function() log('MASS_JACOBI_ORDER_STOP '..tostring(gate.mass_jacobi_order_status())) end)
+   end
    if cfg.native_gate_fp_env then ticklog.try(function() log('FP_ENV_STOP '..tostring(gate.fp_env_status())) end) end
    if cfg.native_gate_decimal then ticklog.try(function() log('DECIMAL_STOP '..tostring(gate.decimal_status())) end) end
    if cfg.native_gate_event_rng then ticklog.try(function() log('EVENT_RNG_STOP '..tostring(gate.event_rng_status())) end) end
@@ -6610,6 +6848,7 @@ SetScript('onUpdate',function()
   end
   done=true
  end
+ if paused==1 and cfg.native_gate_linux_ui_overlay_probe then gate.pilot_present_resume() end
 end)
 end)
 if not x4lan_probe_loaded then

@@ -132,6 +132,9 @@ static void lxp_path_release(void *semaphore,unsigned count) {
     if(prior) {finish(24);return;}
     release(done,1);
     ++path_joins;InterlockedExchange(&path_pass_open,0);
+    /* This scope ends before the next native input/controller pass. Cleanup
+     * still verifies worker TLS and that no input callback is active. */
+    stock_observer_post_join_boundary = 1;
     /* Before anything flushes events: wait for late batch command-list splices. */
     if(InterlockedCompareExchange(&tsnap_active,0,0) && stats.active && !tsnap_after_join(manager)) {
         InterlockedIncrement64(&tsnap_failures);finish(89);
@@ -141,6 +144,47 @@ static void lxp_path_release(void *semaphore,unsigned count) {
     if((path_det_mask&PATH_DET_REFRESH_BIT) && stats.active && !path_det_frame(manager)) {
         InterlockedIncrement64(&path_det_failures);finish(79);
     }
+    if(stats.active) {
+        player_control_boundary_after_join();
+        if (atomic_load_explicit(&player_physics_ready, memory_order_acquire)) {
+            /* This disposable probe intentionally retains P2 in its cockpit.
+             * The later factory checks require the pre-take parent to be null.
+             * Only the authenticated owner may enter this one movement pass. */
+            if (!player_recurring_physics || !player_physics_identity())
+                player_recurring_fatal("physics_path_identity");
+            stock_observer_post_join_boundary = 0;
+            return;
+        }
+        if(!player_control_bank_census_after_join()) {
+            finish(PLAYER_CONTROL_BANK_CENSUS_STOP_REASON);
+        }
+    }
+    if(stats.active) {
+        if(!factory_probe_after_join()) {
+            finish(PLAYER_FACTORY_PROBE_STOP_REASON);
+        }
+    }
+    if(stats.active) {
+        if(!player_seat_preflight_after_join()) {
+            finish(PLAYER_SEAT_PREFLIGHT_STOP_REASON);
+        }
+    }
+    if(stats.active) {
+        if(!player_reference_after_join()) {
+            finish(PLAYER_REFERENCE_PROBE_STOP_REASON);
+        }
+    }
+    if(stats.active) {
+        if(!player_control_bank_probe_after_join()) {
+            finish(PLAYER_CONTROL_BANK_PROBE_STOP_REASON);
+        }
+    }
+    if(stats.active) {
+        if(!keyboard_probe_after_path_join()) {
+            finish(KEYBOARD_REPLAY_PROBE_STOP_REASON);
+        }
+    }
+    stock_observer_post_join_boundary = 0;
 }
 /* The word holding the call: one aligned compare-exchange, the first 3 bytes kept. */
 static uint64_t lxp_patched_word(void) {

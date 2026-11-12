@@ -4,13 +4,19 @@ This is never a fallback from paired testing and cannot produce session_pass.
 """
 import argparse,json,secrets,socket,subprocess,sys,threading,time
 from pathlib import Path
-# Load the policy itself from source, before any local dependency import.
-import importlib.util
-_policy_path=Path(__file__).with_name('native_getup_source_only.py')
-_policy_spec=importlib.util.spec_from_file_location('x4lan_getup_source_only',_policy_path)
-_policy=importlib.util.module_from_spec(_policy_spec)
-_policy_bytes=_policy_path.read_bytes();exec(compile(_policy_bytes,str(_policy_path),'exec'),_policy.__dict__)
-sys.modules['x4lan_getup_source_only']=_policy;_policy.remember(_policy_path,_policy_bytes);_policy.install();_policy.record_script(__file__)
+# Install the strict source loader before local imports only for the executable
+# diagnostic. Importing this module for tests must not change the host process.
+if __name__ == '__main__':
+    import importlib.util
+    policy_path = Path(__file__).with_name('native_getup_source_only.py')
+    policy_spec = importlib.util.spec_from_file_location('x4lan_getup_source_only', policy_path)
+    policy = importlib.util.module_from_spec(policy_spec)
+    policy_source = policy_path.read_bytes()
+    exec(compile(policy_source, str(policy_path), 'exec'), policy.__dict__)
+    sys.modules['x4lan_getup_source_only'] = policy
+    policy.remember(policy_path, policy_source)
+    policy.install()
+    policy.record_script(__file__)
 from native_getup_diagnostic import Diagnostic,serve,FALSE_CLAIMS
 from native_getup_diagnostic_contract import manifest,check,configured_text,file_record
 

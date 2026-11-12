@@ -391,6 +391,7 @@ static void test_frame_gate_failures(void) {
 #include "test_gate_steer_roll.h"
 #include "test_gate_avoid_angle.h"
 #include "test_gate_pursuit_speed.h"
+#include "test_gate_player_factory_probe.h"
 /* The real entry bytes: the hook patch and its exact restoration, without running them. */
 static void test_world_install_elf(void) {
     reset_session();wt_reset_identities();
@@ -409,6 +410,7 @@ int main(int argc,char **argv) {
     test_fetch();test_fetch_region_cost();
     test_sha256();test_relay_host();test_compat();test_code_swap();test_near_page();
     synth_image();test_verify_stages();test_dt();test_frame_gate();test_frame_gate_failures();
+    test_player_factory_patch();
     test_world_golden(getenv("GATE_WORLD_GOLDEN"));
     test_world_rolling();
     test_world_motion_watch();

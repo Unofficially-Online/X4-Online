@@ -7,8 +7,23 @@ local open=assert(package.loadlib(path,'luaopen_x4lan_gate'))
 local gate=assert(open(),'module did not resolve the Lua ABI')
 local core={'sha256','start','boot','load_requested','report','poll','stop','frame_timing','qpc_us','tick_rate','wire','propose',
  'world_motion_config','world_motion_capture','world_motion_row','world_motion_status',
+ 'world_rolling_leaves_config','world_rolling_leaves_row','world_rolling_raw_add','world_rolling_raw_row',
  'economy_watch_config','economy_watch_capture','economy_watch_status',
  'economy_load_rng','economy_load_rng_status','economy_load_rng_row',
+ 'stock_keyboard_observer_request','stock_keyboard_observer_status','stock_keyboard_observer_drain',
+ 'stock_keyboard_identity','stock_keyboard_replay_request','stock_keyboard_replay_capture',
+ 'player_reference_request','player_reference_status','factory_probe_request','factory_probe_status',
+ 'player_external_camera_probe','player_presentation_probe',
+ 'player_view_query_observe','player_view_query_phase','player_view_query_finish',
+ 'player_ui_callback_close','player_ui_callback_result',
+ 'player_presentation_fork_arm','player_presentation_fork_result',
+ 'player_ui_overlay_arm','player_ui_overlay_result','player_ui_overlay_abort',
+ 'pilot_present_pause','pilot_present_resume',
+ 'player_seat_preflight_request','player_seat_preflight',
+ 'player_control_bank_census_request','player_control_bank_census',
+ 'player_control_bank_probe_request','player_control_bank_probe_status',
+ 'player_control_boundary_request','player_control_boundary_status',
+ 'stock_keyboard_replay_stage','stock_keyboard_replay_status',
  'navmesh_post_observe','navmesh_post_observe_status','navmesh_post_observe_row',
  'relay_host','lookahead','lookahead_status','peer_links','peer_status','wire_crypto','wire_crypto_status','platform','verify_stage',
  'world_watch','world_capture','world_capture_nav_v2','world_capture_rolling','world_page','world_detail','world_banks','saved_identity','world_health','world_hash_shields','world_hash_shields_status','flight_faults','flight','avoidance','agent','ship','spline','body','actor','params','snapshot_fixture','snapshot_actor','snapshot_enroll','snapshot_status',
@@ -34,8 +49,36 @@ for _,name in ipairs({'world_trace','thread_rng','boot_rng_anchor','pilot_inputs
  assert(gate[name]==nil,'unported method present: '..name)
 end
 assert(gate.platform()=='linux')
+assert(gate.player_presentation_probe()==0,'presentation must refuse without an admitted experiment')
+assert(gate.world_rolling_leaves_config(1,2)==0 and gate.world_rolling_leaves_row(0)==nil and
+ gate.world_rolling_raw_add('0000000000000001')==0 and gate.world_rolling_raw_row(0)==nil,
+ 'rolling world diagnostics must refuse outside a verified session')
+assert(gate.player_view_query_phase(0)==1, 'unarmed view-query phase must be a no-op')
+assert(gate.player_view_query_observe()==0 and gate.player_view_query_finish()==nil,
+ 'view query must refuse outside an admitted worker')
+assert(gate.player_ui_callback_close()==0 and gate.player_ui_callback_result()==nil,
+ 'UI callback observer must refuse outside an admitted worker')
+assert(gate.player_presentation_fork_arm()==0 and gate.player_presentation_fork_result()==nil,
+ 'presentation fork must refuse outside an admitted worker')
+assert(gate.player_ui_overlay_arm()==0 and gate.player_ui_overlay_result()==nil and
+ gate.pilot_present_pause()==0 and gate.pilot_present_resume()==0,
+ 'UI overlay must refuse outside an admitted worker')
+assert(gate.player_external_camera_probe()==0,
+ 'camera diagnostic must refuse outside an admitted worker')
 assert(gate.travel_determinism()==0,'ordered jobs must refuse outside a verified session')
 assert(gate.build_rng()==0,'build RNG must refuse outside a verified session')
+assert(gate.stock_keyboard_observer_request()==0,'keyboard observer must refuse outside an admitted worker')
+assert(gate.stock_keyboard_observer_status()==nil and gate.stock_keyboard_observer_drain()==nil,
+ 'keyboard observer reads must refuse outside an admitted worker')
+assert(gate.stock_keyboard_identity()==nil and gate.stock_keyboard_replay_request()==0 and
+ gate.stock_keyboard_replay_capture()==nil and gate.stock_keyboard_replay_stage()==0 and
+ gate.stock_keyboard_replay_status()==nil,'keyboard replay methods must refuse outside a verified session')
+assert(gate.player_reference_request()==0 and gate.player_reference_status()==nil,
+ 'player reference probe must refuse outside a verified session')
+assert(gate.player_control_bank_probe_request()==0 and gate.player_control_bank_probe_status()==nil,
+ 'control bank roundtrip must refuse outside a verified worker boundary')
+assert(gate.player_control_boundary_request()==0 and gate.player_control_boundary_status()==nil,
+ 'control boundary diagnostic must refuse outside a verified worker boundary')
 assert(gate.event_rng('key')==0 and gate.event_rng('observe', 1, 2)==0 and gate.event_rng('invalid')==0,
  'event RNG must refuse outside a verified session')
 assert(gate.world_motion_config('000000000006ec76',1,2)==0,'motion observer must refuse outside a verified live session')
@@ -88,3 +131,8 @@ assert(gate.wire(3,2)==1 and gate.boot(1,47000,token,5000,digest,0)==11,'armed w
 local again=assert(package.loadlib(path,'luaopen_x4lan_gate'))()
 assert(again.wire(2,2)==1 and again.poll()==nil)
 print('LUA BRIDGE PASS methods='..count)
+
+assert(gate.factory_probe_request()==0 and gate.factory_probe_status()==nil,
+ 'player factory probe must refuse outside a verified session')
+assert(gate.player_seat_preflight_request()==0 and gate.player_seat_preflight()==nil,
+ 'seat preflight must refuse outside a verified session')

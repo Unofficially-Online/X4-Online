@@ -478,7 +478,7 @@ class LoudTests(unittest.TestCase):
 
     def test_the_stop_reasons_are_the_registrys(self):
         registry = (ROOT/'docs/LOCKSTEP-REGISTRY.txt').read_text(encoding='utf-8')
-        codes = {int(c) for c in re.findall(r'^  (1\d\d) [A-Z_]+', registry, re.M)}
+        codes = {int(c) for c in re.findall(r'^  (\d{3}) [A-Z_]+', registry, re.M)}
         lua = lua_runtime('nil')
         named = {int(k) for k in lua.globals().X4LAN_NATIVE_GATE_DEFAULTS.STOP_REASONS.keys()}
         self.assertEqual(sorted(codes - named), [])
@@ -691,6 +691,32 @@ X4LAN_CONFIG.native_gate_clients = @X4LANE_CLIENTS@
             self.assertIn('DEFAULTS_OFF', printed.getvalue())
             self.assertEqual((out/'ui.xml.files').read_text().split()[0], 'ui/native_gate_defaults.lua')
             self.assertTrue((out/'ui/config.lua.append').read_text().startswith('X4LAN_CONFIG.native_gate_defaults = false  -- a fixed-tick boot'))
+
+    def test_windows_body1_fallback_requires_snapshot_and_is_emitted_only_when_requested(self):
+        builder = load('build_native_gate_overlay_body_mass', 'tools/dev/build_native_gate_overlay.py')
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            dll = root / 'gate.dll'
+            dll.write_bytes(b'dll')
+            snapshot = root / 'save.xml.gz'
+            snapshot.write_bytes(b'owned snapshot')
+            for enabled in (False, True):
+                out = root / ('enabled' if enabled else 'default')
+                argv = ['build', '--gate-dll', str(dll), '--snapshot', str(snapshot),
+                        '--mode', 'clock', '--out', str(out)]
+                if enabled:
+                    argv += ['--body1-mass', 'fallback']
+                with mock.patch('sys.argv', argv), contextlib.redirect_stdout(io.StringIO()):
+                    builder.main()
+                config = (out / 'ui/config.lua.append').read_text()
+                self.assertEqual("X4LAN_CONFIG.native_gate_body1_mass = 'fallback'" in config, enabled)
+            fixed = root / 'fixed.dll'
+            fixed.write_bytes(b'dll')
+            argv = ['build', '--gate-dll', str(dll), '--fixedtick-dll', str(fixed),
+                    '--mode', 'clock', '--out', str(root / 'missing-snapshot'), '--body1-mass', 'fallback']
+            with mock.patch('sys.argv', argv), contextlib.redirect_stderr(io.StringIO()):
+                with self.assertRaises(SystemExit):
+                    builder.main()
 
 
 if __name__ == '__main__':

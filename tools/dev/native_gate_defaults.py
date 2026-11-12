@@ -64,6 +64,8 @@ MD_FILES = ('md/native_gate_battle.xml', 'md/native_gate_player_identity.xml', '
 TABLE = load()
 ON_KEYS = [e[0] for e in TABLE['on']]
 DIAGNOSTIC_KEYS = [k for k, _ in TABLE['diagnostic']]
+# Explicit experiments (including Linux stock keyboard replay) stay excluded;
+# importing this mirror must never turn them into session defaults.
 EXCLUDED_KEYS = [k for k, _ in TABLE['excluded']]
 TUNING_KEYS = [k for k, _ in TABLE['tuning']]
 

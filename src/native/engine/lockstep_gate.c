@@ -224,6 +224,7 @@ static int join_unsealed_ok(uint64_t source);
 static void snapshot_nav_observe(unsigned,const void *);
 static int read_local(const void *,void *,size_t);
 static int sample_read(const void *,void *,size_t);
+static void (*volatile sample_copy_fn)(void *,const void *,size_t);
 static int read_local_fast;
 /* native_gate_play_mode, default off: no observer sample tables at all (lockstep_interrupt_faults.h).
  * The keys, the digests and the world captures are untouched; only rows nobody plays with go. */
@@ -522,18 +523,22 @@ static int cov_load(void) {
 #include "lockstep_safe_pos_order.h"
 #include "lockstep_nav_refresh_watch.h"
 #include "lockstep_impulse.h"
+#include "lockstep_body_mass_win.h"
 #include "lockstep_spline_calc_watch.h"
 #include "lockstep_exact_reciprocal.h"
+#include "lockstep_mass_jacobi_order.h"
 #include "lockstep_fp_env.h"
 #include "lockstep_decimal.h"
 #include "lockstep_path_budget.h"
 #include "lockstep_path_transforms.h"
 #include "lockstep_body_pose.h"
 static int fp_patch_overlaps(const void *source,size_t bytes) {
+    if(mass_jacobi_overlaps(source,bytes)) return 1;
     return xrcp_overlaps(source,bytes) || pmath_overlaps(source,bytes) || spo_overlaps(source,bytes) || nrw_overlaps(source,bytes) || wai_overlaps(source,bytes) || scw_overlaps(source,bytes) || pdec_overlaps(source,bytes) || pbud_overlaps(source,bytes) || ptf_overlaps(source,bytes) || bpose_overlaps(source,bytes) ||
         stc_overlaps(source,bytes) || fr_len_overlaps(source,bytes) || cov_overlaps(source,bytes);
 }
 static void fp_patch_view(const void *source,void *copy,size_t bytes) {
+    mass_jacobi_unpatch_copy(source,copy,bytes);
     xrcp_unpatch_copy(source,copy,bytes);pmath_unpatch_copy(source,copy,bytes);spo_unpatch_copy(source,copy,bytes);nrw_unpatch_copy(source,copy,bytes);wai_unpatch_copy(source,copy,bytes);scw_unpatch_copy(source,copy,bytes);pdec_unpatch_copy(source,copy,bytes);pbud_unpatch_copy(source,copy,bytes);ptf_unpatch_copy(source,copy,bytes);bpose_unpatch_copy(source,copy,bytes);
     stc_unpatch_copy(source,copy,bytes);fr_len_unpatch_copy(source,copy,bytes);cov_unpatch_copy(source,copy,bytes);
 }
@@ -543,9 +548,10 @@ static void close_connection(void) {
     if(owned!=INVALID_SOCKET) {closesocket(owned);WSACleanup();}
 }
 static int gate_sites_owned(void) {
-    return !(*(uint64_t*)(image+WORD_RVA)!=patched_word || (path_installed && *(unsigned __int128*)(image+0xef4610)!=path_patched) || !travel_owned() || !tsnap_owned() || !pilot_owned() ||
+    if(!mass_jacobi_owned()) return 0;
+    return !( !pmath_cleanup_clear() || *(uint64_t*)(image+WORD_RVA)!=patched_word || (path_installed && *(unsigned __int128*)(image+0xef4610)!=path_patched) || !travel_owned() || !tsnap_owned() || !pilot_owned() ||
        (ship_installed && *(void**)(image+SHIP_ENTRY)!=(void*)ship_move) ||
-       !weapon_owned() || !bullet_owned() || !bullet_cadence_owned() || !speak_timer_owned() || !cr_owned() || !nav_cadence_owned() || !nav_player_owned() || !ss_owned() || !pt_owned() || !wr_owned() || !trr_owned() || !tz_owned() || !gwide_owned() || !view_owned() || !mt_owned() || !rc_owned() || !wfire_owned() || !motion_order_owned() || !wreck_owned() || !ptrace_owned() || !border_owned() || !sorder_owned() || !cplay_owned() || !erng_owned() || !brng_owned() || !uic_owned() || !spr_owned() || !ul_owned() || !noct_owned() || !nmesh_owned() || !pmath_owned() || !spo_owned() || !nrw_owned() || !wai_owned() || !scw_owned() || !xrcp_owned() || !fpenv_owned() || !pdec_owned() || !pbud_owned() || !ptf_owned() || !bpose_owned() || !sw_owned() || !ll_owned() || !oc_owned() || !po_owned() || !ma_owned() || !br_owned() || !eco_owned() ||
+       !weapon_owned() || !bullet_owned() || !bullet_cadence_owned() || !speak_timer_owned() || !cr_owned() || !nav_cadence_owned() || !nav_player_owned() || !ss_owned() || !pt_owned() || !wr_owned() || !trr_owned() || !tz_owned() || !gwide_owned() || !view_owned() || !mt_owned() || !rc_owned() || !wfire_owned() || !motion_order_owned() || !wreck_owned() || !ptrace_owned() || !border_owned() || !sorder_owned() || !cplay_owned() || !erng_owned() || !brng_owned() || !uic_owned() || !spr_owned() || !ul_owned() || !noct_owned() || !nmesh_owned() || !pmath_owned() || !spo_owned() || !nrw_owned() || !wai_owned() || !wbm_owned() || !scw_owned() || !xrcp_owned() || !fpenv_owned() || !pdec_owned() || !pbud_owned() || !ptf_owned() || !bpose_owned() || !sw_owned() || !ll_owned() || !oc_owned() || !po_owned() || !ma_owned() || !br_owned() || !eco_owned() ||
        (attention_installed && *(uint64_t*)(image+ATTENTION_ENTRY)!=attention_patched_word) ||
        (mass_installed && *(uint64_t*)(image+MASS_ENTRY)!=mass_patched_word) ||
        (death_installed && *(void**)(image+DEATH_ENTRY)!=(void*)death_listener) ||
@@ -618,12 +624,15 @@ static const char *gate_sites_unowned(void) {
     if(!spr_owned()) return "!spr_owned()";
     if(!ul_owned()) return "!ul_owned()";
     if(!noct_owned()) return "!noct_owned()";
+    if(!pmath_cleanup_clear()) return "pmath_release_uncertain";
     if(!pmath_owned()) return "!pmath_owned()";
     if(!spo_owned()) return "!spo_owned()";
     if(!nrw_owned()) return "!nrw_owned()";
     if(!wai_owned()) return "!wai_owned()";
+    if(!wbm_owned()) return "!wbm_owned()";
     if(!scw_owned()) return "!scw_owned()";
     if(!xrcp_owned()) return "!xrcp_owned()";
+    if(!mass_jacobi_owned()) return "!mass_jacobi_owned()";
     if(!fpenv_owned()) return "!fpenv_owned()";
     if(!pdec_owned()) return "!pdec_owned()";
     if(!pbud_owned()) return "!pbud_owned()";
@@ -692,7 +701,13 @@ static void join_rule_restore(void);static void join_pcf_restore(void);static vo
 static void join_fmt_restore(void);       /* lockstep_join_precise.h: the full-precision join save */
 static void join_parse_restore(void);
 static void join_ids_restore(void);        /* lockstep_join_ids.h */
+static int gate_freeze_hooks_restored(void) {
+    return pmath_cleanup_clear() && !spo_installed && !nrw_installed && !wai_installed && !scw_installed &&
+        !scw_xform_on && !pbud_installed && !fpenv_thread_restore_uncertain;
+}
 static void finish(unsigned reason) {
+    wbm_stop_begin();
+    mass_jacobi_request_stop();
     cov_unmark(); /* first: every coverage mark and page back before any other restore changes a page */
     timer_resolution_restore();
     sprof_restore(); /* reads only: the sampler ends before anything is restored under it */
@@ -733,9 +748,11 @@ static void finish(unsigned reason) {
     spo_restore();
     nrw_restore();
     wai_restore();
+    wbm_restore();
     scw_restore();
     pmath_restore();
     xrcp_restore();
+    mass_jacobi_restore();
     fpenv_restore();
     pdec_restore();
     pbud_restore();
@@ -859,8 +876,11 @@ static void finish(unsigned reason) {
     if(uic_installed) stats.restored=0;
     if(spr_installed) stats.restored=0;
     if(ul_installed) stats.restored=0;
+    if(!gate_freeze_hooks_restored()) stats.restored=0;
     if(pmath_installed) stats.restored=0;
+    if(!wbm_clean()) stats.restored=0;
     if(xrcp_installed) stats.restored=0;
+    if(!mass_jacobi_clean()) stats.restored=0;
     if(fpenv_installed) stats.restored=0;
     if(pdec_installed) stats.restored=0;
     if(sw_installed) stats.restored=0;
@@ -1147,9 +1167,15 @@ static void gate_tick(void *frame,unsigned char loading) {
     if(pmath_installed && !pmath_check()) {finish(PMATH_STOP_REASON);gate_original_once(original,frame,loading);return;}
     if(spo_installed && !spo_check()) {finish(SPO_STOP_REASON);gate_original_once(original,frame,loading);return;}
     if(nrw_installed && !nrw_check()) {finish(NRW_STOP_REASON);gate_original_once(original,frame,loading);return;}
+    if(wbm_installed && !wbm_check()) {finish(WBM_STOP_REASON);gate_original_once(original,frame,loading);return;}
     if(wai_installed && !wai_check()) {finish(WAI_STOP_REASON);gate_original_once(original,frame,loading);return;}
     if(scw_installed && !scw_check()) {finish(SCW_STOP_REASON);gate_original_once(original,frame,loading);return;}
     if(xrcp_installed && !xrcp_check()) {finish(XRCP_STOP_REASON);gate_original_once(original,frame,loading);return;}
+    /* Do not gate this reader on publication flags outside its lifecycle lock:
+     * an arm can be in flight during a boot frame even while they are all zero. */
+    if(!mass_jacobi_check()) {
+        finish(MASS_JACOBI_ORDER_STOP_REASON);gate_original_once(original,frame,loading);return;
+    }
     if(fpenv_installed && !fpenv_tick(stats.issued)) {finish(FPENV_STOP_REASON);gate_original_once(original,frame,loading);return;}
     if(pdec_installed && !pdec_check()) {finish(PDEC_STOP_REASON);gate_original_once(original,frame,loading);return;}
     if(pbud_installed && !pbud_check()) {finish(PBUD_STOP_REASON);gate_original_once(original,frame,loading);return;}
@@ -2095,7 +2121,7 @@ static int lua_engine_refresh_rng(lua_State *L) {p_lua_pushnumber(L,erng_arm());
 /* portable_math(): the CRT math entries and sin/cos helpers to src/native/portable_math (lockstep_portable_math.h). */
 static int lua_portable_math(lua_State *L) {p_lua_pushnumber(L,pmath_arm());return 1;}
 static int lua_portable_math_status(lua_State *L) {
-    char out[320];int n=accept_ui()?pmath_status(out,sizeof(out)):0;
+    char out[768];int n=accept_ui()?pmath_status(out,sizeof(out)):0;
     if(n) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);return 1;
 }
 /* safe_pos_order(): the GetSafePos solver's boxes sorted at its entry (lockstep_safe_pos_order.h). */
@@ -2164,6 +2190,12 @@ static int lua_safe_pos_order_status(lua_State *L) {
 static int lua_exact_reciprocal(lua_State *L) {p_lua_pushnumber(L,xrcp_arm());return 1;}
 static int lua_exact_reciprocal_status(lua_State *L) {
     char out[320];int n=accept_ui()?xrcp_status(out,sizeof(out)):0;
+    if(n) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);return 1;
+}
+/* mass_jacobi_order(): Windows theta arithmetic order, before snapshot load. */
+static int lua_mass_jacobi_order(lua_State *L) {p_lua_pushnumber(L,mass_jacobi_arm());return 1;}
+static int lua_mass_jacobi_order_status(lua_State *L) {
+    char out[320];int n=accept_ui()?mass_jacobi_status(out,sizeof(out)):0;
     if(n) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);return 1;
 }
 /* fp_env(mode): 'default' (MXCSR 0x1f80 on every X4 thread) or 'observe' (lockstep_fp_env.h). */
@@ -3662,6 +3694,22 @@ static int lua_body(lua_State *L) {
     if(!object || !read_local(object+8,&id,8) || id!=actor_ids[i] || !body_state(object,(unsigned)which,out)) {p_lua_pushnil(L);return 1;}
     p_lua_pushlstring(L,out,strlen(out));return 1;
 }
+static int lua_body1_mass(lua_State *L) {
+    size_t length = 0;
+    const char *mode = p_lua_tolstring(L, 1, &length);
+    int ok = mode && length == 8 && !memcmp(mode, "fallback", 8) && wbm_arm();
+    p_lua_pushnumber(L, ok);
+    return 1;
+}
+
+static int lua_body1_mass_status(lua_State *L) {
+    char out[300];
+    int n = accept_ui() ? wbm_status(out, sizeof(out)) : 0;
+    if (n) p_lua_pushlstring(L, out, (size_t)n);
+    else p_lua_pushnil(L);
+    return 1;
+}
+
 /* gate.body1_mass_census(): lockstep_body_mass.h over the BodyManager behind the first bound ship's first record (all
  * bodies, not only the fixture's); read only, a verify for the Linux gate's native_gate_body1_mass. */
 static int lua_body1_mass_census(lua_State *L) {
@@ -4607,7 +4655,8 @@ __declspec(dllexport) int luaopen_x4lan_gate(lua_State *L) {
     METHOD(creation_rng_config);METHOD(creation_rng_status);METHOD(creation_rng_row);METHOD(creation_rng_ack_status);
     METHOD(registry_creation_config);METHOD(registry_creation_status);METHOD(registry_creation_identity);METHOD(registry_creation_operation);
     METHOD(velocity);
-    METHOD(body);METHOD(body1_mass_census);
+    METHOD(body);METHOD(body1_mass);METHOD(body1_mass_status);METHOD(body1_mass_census);
+    METHOD(mass_jacobi_order);METHOD(mass_jacobi_order_status);
     METHOD(shape);METHOD(bullet);METHOD(bullet_clear);METHOD(death);METHOD(death_clear);METHOD(mass);METHOD(mass_clear);METHOD(attention);
     METHOD(shape_lifetime);METHOD(shape_lifetime_clear);
     METHOD(join_t1_row);METHOD(join_arm);METHOD(join_result);METHOD(join_load);METHOD(join_handover);METHOD(join_base);METHOD(join_lua);METHOD(join_lua_state);METHOD(join_status);METHOD(join_evq_dump);METHOD(join_watch);METHOD(join_watch_span);METHOD(join_refwatch);METHOD(join_refwatch_from);METHOD(join_refwatch_peek);METHOD(join_refwatch_at);METHOD(join_shape_at);METHOD(join_hold_boot_events);METHOD(join_precise);METHOD(join_ids);METHOD(join_buildp);METHOD(join_view_skip);METHOD(join_viewf_write);METHOD(join_viewf_bits);METHOD(join_pend);METHOD(join_viewl);METHOD(join_rcnt);METHOD(join_ecos);METHOD(join_shpw);METHOD(join_shpw_words);METHOD(join_trdn);METHOD(join_npca);METHOD(join_jobg);METHOD(join_jobw);METHOD(join_code);METHOD(join_engr);METHOD(join_shgr);METHOD(join_resv);METHOD(join_pcsv);METHOD(join_conn);METHOD(join_warp);METHOD(join_gravn_extra);METHOD(join_attn_set);METHOD(join_attn_states);METHOD(join_shoot_far);METHOD(join_bootev_session);METHOD(join_mute_load_npcs);METHOD(join_hold_fire);METHOD(join_grav_dead);METHOD(join_body_make);METHOD(join_cue_ids);METHOD(join_ares);METHOD(join_undk);METHOD(join_bp);METHOD(join_porders);METHOD(join_gravp_settled);METHOD(join_lstn);METHOD(join_fobj);METHOD(join_srcs);METHOD(join_agcb_nav);METHOD(join_rprt);METHOD(join_bnds);METHOD(join_omgs);METHOD(join_jobdump);METHOD(join_jobcnt_at);METHOD(join_unpaired);

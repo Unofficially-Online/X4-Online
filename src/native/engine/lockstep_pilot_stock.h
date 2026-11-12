@@ -62,6 +62,8 @@
  * slot's record per slot, pstk_frame keeps slot k's record of the tick and the
  * slot scope replays it (pstk_slot_replay) with slot k's player as the singleton
  * and slot k's bank; d88a10's outputs and the view answer per scope. */
+#include "lockstep_stock_record.h"
+
 #define PSTK_STOP_REASON 155u
 #define PSTK_VERSION 3u
 #define PSTK_HEAD 43u
@@ -84,9 +86,8 @@
 #define PSTK_DOMAIN 0x5053544f434b3156ULL /* "PSTOCK1V" */
 enum {PSTK_ACTION=0,PSTK_STATE=1,PSTK_RANGE=2,PSTK_SPACE=3,PSTK_KINDS=4};
 enum {PSTK_LOCAL=0,PSTK_REPLAY=1,PSTK_REFUSE=2};
-typedef struct {unsigned char kind;uint16_t id;uint32_t value;} pstk_event; /* state/space 0|1, range float bits, action 0 */
-typedef struct {unsigned char flags;uint16_t capture16;float cursor[3];float aim[3];unsigned char steer,view;float fov;uint64_t target;
-    unsigned count;pstk_event events[PSTK_EVENTS_MAX];} pstk_record;
+typedef stock_input_event pstk_event;
+typedef stock_input_record pstk_record;
 typedef struct {uint64_t tick;unsigned length,present;unsigned char bytes[PSTK_BYTES_MAX];} pstk_staged;
 typedef struct {uint64_t capture,apply;unsigned length,used;unsigned char bytes[PSTK_BYTES_MAX];} pstk_local;
 typedef void (*pstk_handoff_fn)(void *,char);   /* d9c590(controller, authority) */
@@ -255,7 +256,7 @@ static int pstk_handler_ok(const void *handler) {
     return 0;
 }
 
-/* Record v2, little endian: 0 version | 1 flags | 2..3 low 16 bits of the capture
+/* Record v3, little endian: 0 version | 1 flags | 2..3 low 16 bits of the capture
  * tick | 4..15 cursor outputs, three float32 (zero bits without the cursor flag) |
  * 16..27 aim point in the ship's frame, three float32, and 28 the mouse steering
  * flag 0|1 (zero without the aim flag) | 29 view bits (1 cockpit, 2 floating),
@@ -263,48 +264,24 @@ static int pstk_handler_ok(const void *handler) {
  * 0 = none; all zero without the view flag) | 42 event count n (0..31) | then n
  * events of 6 bytes: u16 kind<<14|id (id < 512), u32 value (action 0, state and
  * SPACE 0|1, range float32 bits, finite). */
-static unsigned pstk_encode(const pstk_record *r,unsigned char *out) {
-    out[0]=PSTK_VERSION;out[1]=r->flags;out[2]=(unsigned char)r->capture16;out[3]=(unsigned char)(r->capture16>>8);
-    for(unsigned i=0;i<3;i++) {uint32_t v;memcpy(&v,&r->cursor[i],4);for(unsigned b=0;b<4;b++) out[4+4*i+b]=(unsigned char)(v>>(8*b));}
-    for(unsigned i=0;i<3;i++) {uint32_t v;memcpy(&v,&r->aim[i],4);for(unsigned b=0;b<4;b++) out[16+4*i+b]=(unsigned char)(v>>(8*b));}
-    out[28]=r->steer;out[29]=r->view;
-    {uint32_t v;memcpy(&v,&r->fov,4);for(unsigned b=0;b<4;b++) out[30+b]=(unsigned char)(v>>(8*b));}
-    for(unsigned b=0;b<8;b++) out[34+b]=(unsigned char)(r->target>>(8*b));
-    out[42]=(unsigned char)r->count;
-    for(unsigned i=0;i<r->count;i++) {
-        unsigned char *e=out+PSTK_HEAD+PSTK_EVENT*i;uint16_t head=(uint16_t)(r->events[i].kind<<14|r->events[i].id);
-        e[0]=(unsigned char)head;e[1]=(unsigned char)(head>>8);
-        for(unsigned b=0;b<4;b++) e[2+b]=(unsigned char)(r->events[i].value>>(8*b));
-    }
-    return PSTK_HEAD+PSTK_EVENT*r->count;
+static unsigned pstk_encode(const pstk_record *record, unsigned char *output) {
+    return stock_input_encode(record, output, PSTK_BYTES_MAX);
 }
-static int pstk_decode(const unsigned char *in,unsigned length,pstk_record *r) {
-    if(length<PSTK_HEAD || in[0]!=PSTK_VERSION || (in[1]&~PSTK_FLAGS_KNOWN) || in[42]>PSTK_EVENTS_MAX || length!=PSTK_HEAD+PSTK_EVENT*in[42]) return 0;
-    memset(r,0,sizeof(*r));r->flags=in[1];r->capture16=(uint16_t)(in[2]|in[3]<<8);r->count=in[42];r->steer=in[28];r->view=in[29];
-    {uint32_t v=0;for(unsigned b=0;b<4;b++) v|=(uint32_t)in[30+b]<<(8*b);memcpy(&r->fov,&v,4);}
-    for(unsigned b=0;b<8;b++) r->target|=(uint64_t)in[34+b]<<(8*b);
-    if(r->flags&PSTK_FLAG_VIEW) {if(r->view>3 || !isfinite(r->fov)) return 0;}
-    else if(r->view || r->target) return 0;
-    else {uint32_t v;memcpy(&v,&r->fov,4);if(v) return 0;}
-    for(unsigned i=0;i<3;i++) {
-        uint32_t v=0;for(unsigned b=0;b<4;b++) v|=(uint32_t)in[4+4*i+b]<<(8*b);
-        memcpy(&r->cursor[i],&v,4);
-        if(!isfinite(r->cursor[i]) || (!(r->flags&PSTK_FLAG_CURSOR) && v)) return 0;
-        v=0;for(unsigned b=0;b<4;b++) v|=(uint32_t)in[16+4*i+b]<<(8*b);
-        memcpy(&r->aim[i],&v,4);
-        if(!isfinite(r->aim[i]) || (!(r->flags&PSTK_FLAG_AIM) && v)) return 0;
+static int pstk_decode(const unsigned char *bytes, unsigned length, pstk_record *record) {
+    if (!stock_input_decode(bytes, length, record)) {
+        return 0;
     }
-    if(r->steer>(1u|PAIM_STEER_MANUAL|PAIM_STEER_ASSIST) || (!(r->flags&PSTK_FLAG_AIM) && r->steer)) return 0;
-    for(unsigned i=0;i<r->count;i++) {
-        const unsigned char *e=in+PSTK_HEAD+PSTK_EVENT*i;uint16_t head=(uint16_t)(e[0]|e[1]<<8);uint32_t v=0;
-        for(unsigned b=0;b<4;b++) v|=(uint32_t)e[2+b]<<(8*b);
-        pstk_event *x=&r->events[i];x->kind=(unsigned char)(head>>14);x->id=(uint16_t)(head&0x3fff);x->value=v;
-        if(x->id>=512) return 0;
-        if(x->kind==PSTK_ACTION && v) return 0;
-        if((x->kind==PSTK_STATE || x->kind==PSTK_SPACE) && v>1) return 0;
-        if(x->kind==PSTK_SPACE && x->id!=8 && !(pfoot_armed && x->id==PFOOT_CONTEXT)) return 0;
-        if(x->kind==PSTK_RANGE) {float f;memcpy(&f,&v,4);if(!isfinite(f)) return 0;}
-        if(x->kind!=PSTK_SPACE && pstk_verdict(x->kind,x->id)!=PSTK_REPLAY) return 0;
+    /* Structural validity is not permission to replay an input. Keep the
+     * existing session-specific context and feature policy on this adapter. */
+    for (unsigned index = 0; index < record->count; ++index) {
+        const pstk_event *event = &record->events[index];
+        if (event->kind == PSTK_SPACE) {
+            if (event->id != 8 && !(pfoot_armed && event->id == PFOOT_CONTEXT)) {
+                return 0;
+            }
+        } else if (pstk_verdict(event->kind, event->id) != PSTK_REPLAY) {
+            return 0;
+        }
     }
     return 1;
 }

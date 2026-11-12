@@ -134,7 +134,7 @@ static int lmt_pins(void) {
             if(c<s->va || c+5>s->va+s->length || lmt_site_state(i)<0) return 0;
             int32_t d=(int32_t)((intptr_t)LX(lmt_sites[i].target_va)-(intptr_t)(LX(c)+5));memcpy(copy+(c-s->va)+1,&d,4);
         }
-        if(!hash_ok(copy,s->length,s->sha256)) return 0;
+        if(!player_tail_original_view(s->va,copy,s->length,player_recurring_tail_callback) || !hash_ok(copy,s->length,s->sha256)) return 0;
     }
     return 1;
 }

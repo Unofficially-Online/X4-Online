@@ -62,6 +62,38 @@ static int blob_staged_set;
 static DWORD ui_thread, main_thread;
 static unsigned timeout_ms;
 static int installed, used;
+/* Only true inside the main thread's joined pre-FrameTick interval. */
+static int stock_observer_main_boundary;
+static int stock_observer_post_join_boundary;
+#define STOCK_OBSERVER_STOP_REASON 215u
+static int stock_observer_admit(void);
+static void stock_observer_restore(void);
+static int stock_observer_has_cleanup(void);
+static int stock_observer_wanted(void);
+#define KEYBOARD_REPLAY_PROBE_STOP_REASON 216u
+static int keyboard_probe_admit(void);
+static int keyboard_probe_after_path_join(void);
+static int keyboard_probe_stop(void);
+#define PLAYER_REFERENCE_PROBE_STOP_REASON 217u
+static int player_reference_after_join(void);
+static int player_reference_clean(void);
+#define PLAYER_FACTORY_PROBE_STOP_REASON 218u
+static int factory_probe_admit(void);
+static int factory_probe_after_join(void);
+static int factory_probe_restore(void);
+static int factory_probe_clean(void);
+#define PLAYER_CONTROL_BANK_CENSUS_STOP_REASON 219u
+static int player_control_bank_census_after_join(void);
+#define PLAYER_SEAT_PREFLIGHT_STOP_REASON 220u
+static int player_seat_preflight_after_join(void);
+#define PLAYER_CONTROL_BANK_PROBE_STOP_REASON 221u
+static int player_control_bank_probe_after_join(void);
+static int player_control_bank_probe_restore(void);
+static int player_control_bank_probe_clean(void);
+static _Noreturn void player_control_bank_probe_fatal(void);
+static int player_control_boundary_before_frame(void);
+static void player_control_boundary_after_frame(int armed_by_this_call);
+static void player_control_boundary_after_join(void);
 static double previous_game;
 static uint64_t rng_seeds,seed_skips;
 static int boot_mode, boot_phase, boot_adopted, dt_installed, dt_restored;
@@ -340,6 +372,8 @@ static unsigned path_det_mask;
 static volatile LONG64 path_det_failures;
 /* Non-blocking save by fork (gate_fork_save.h, included below). */
 static void fork_save_frame(uint64_t completed);
+static void player_presentation_fork_frame(uint64_t completed);
+static void player_ui_overlay_main_interlock(void);
 static void fork_save_stop(void);
 
 /* Production defaults. Only linux/test_gate_linux.c changes them, to run the same
@@ -409,9 +443,12 @@ static int dt_state(void) {
 }
 /* A site's bytes against its pin; the dt site is compared in its original form
  * when the fixed60 patch (ours or another owner's) is present. */
+#include "player_lifetime_preload_pin.h"
 static int site_ok(const lx_site *s) {
     unsigned char copy[0x200];
     if(!s) return 0;
+    if(s->va == PLP_REPLACE || s->va == PLP_DESTRUCT)
+        return player_lifetime_original_pin(s->va, s->length, s->sha256);
     if(strcmp(s->name,LX_SITE_DT)) return hash_ok(LX(s->va),s->length,s->sha256);
     if(s->length>sizeof(copy)) return 0;
     memcpy(copy,LX(s->va),s->length);
@@ -535,6 +572,13 @@ static int gate_sites_owned(void) {
            world_identity_owned() && path_owned() && pbud_owned() && region_rng_owned() && ai_wait_owned() && md_resume_owned() && boot_hold_owned() && event_order_owned() && gravidar_owned() && gdl_owned() && tsnap_owned() && lxt_inline_owned() && path_transform_observer_owned() && rid_owned() && md_timed_owned() && lxs_owned() && find_order_owned() && ll_owned() && attention_owned() && spawn_rng_owned() && nav_cadence_owned() && lxn_owned();
 }
 static void finish(unsigned reason) {
+    int keyboard_neutral = keyboard_probe_stop();
+    int control_bank_restored = player_control_bank_probe_restore();
+    if (!control_bank_restored || !player_control_bank_probe_clean()) {
+        player_control_bank_probe_fatal();
+    }
+    factory_probe_restore();
+    stock_observer_restore();
     cov_unmark(); /* first: every coverage mark and page back before any other restore changes a page */
     stats.reason=reason;
     created_stop(); /* No created identity is recorded once STOP has begun. */
@@ -545,6 +589,10 @@ static void finish(unsigned reason) {
     if(dt_installed && main_thread && GetCurrentThreadId()!=main_thread) wait_parked(500);
     restore_dt();
     if(dt_installed) stats.restored=0;
+    if(stock_observer_has_cleanup()) stats.restored=0;
+    if(!keyboard_neutral) stats.restored=0;
+    if(!player_reference_clean()) stats.restored=0;
+    if(!factory_probe_clean()) stats.restored=0;
     navmesh_post_restore();
     if(navmesh_post_installed || navmesh_post_cleanup_uncertain) stats.restored=0;
     economy_rng_restore(); /* Must not outlive its identity hooks. */
@@ -656,7 +704,12 @@ static void finish(unsigned reason) {
     gate_fetch_remove();
     close_connection();
 }
-static void gate_original_once(void *frame,unsigned char loading) {gate_frame_tick(frame,loading);}
+static void gate_original_once(void *frame,unsigned char loading) {
+    stock_observer_main_boundary=0;
+    int boundary_armed = player_control_boundary_before_frame();
+    gate_frame_tick(frame,loading);
+    player_control_boundary_after_frame(boundary_armed);
+}
 static int closed_window(void) {return 0;} /* no cheap SDL quit check from this thread yet; the timeout bounds the wait */
 /* The per-frame reads of the timing rows: every guarded read, also those not through read_local. */
 #define read_local_calls gate_read_count
@@ -706,9 +759,18 @@ static void seed_frame(void) {
     *gate_tls_rng(base)=lockstep_seed(LX_SEED_DOMAIN,stats.issued,0,0,0,0);++rng_seeds;
 }
 static void gate_tick(void *frame,unsigned char loading) {
+    player_ui_overlay_main_interlock();
     if(!stats.active) {gate_original_once(frame,loading);return;}
     LARGE_INTEGER ft_entry;QueryPerformanceCounter(&ft_entry);
     DWORD thread=GetCurrentThreadId();if(!main_thread) main_thread=thread;
+    /* The native loop can bypass semSimDone while flag bit 2 is set. Such an
+     * entry is never a safe place to manage the input observer's pointers. */
+    unsigned observer_native_flags=0;
+    unsigned char observer_in_flight=1,observer_loading=1;
+    stock_observer_main_boundary=stock_observer_wanted() && thread==main_thread && boot_phase==3 && !loading &&
+        read_local(LX(0x3daab04u),&observer_native_flags,4) && !(observer_native_flags&2) &&
+        read_local(LX(LX_IN_FLIGHT_VA),&observer_in_flight,1) && !observer_in_flight &&
+        read_local(LX(0x3daab00u),&observer_loading,1) && !observer_loading;
     gate_fetch_check();
     void *table;memcpy(&table,LX(LX_VBI_TABLE_VA),8);
     if(world_identity_installed && world_identity_failures) {finish(72);gate_original_once(frame,loading);return;}
@@ -798,6 +860,7 @@ static void gate_tick(void *frame,unsigned char loading) {
     if(!rid_frame(stats.completed)) {finish(130);gate_original_once(frame,loading);return;}
     if(lmt_installed && !lmt_join(stats.completed)) {finish(100);gate_original_once(frame,loading);return;} /* the passes kicked at its end */
     actor_all_frame(stats.completed); /* fold the frame's all-ship actor RNG tallies (default off) */
+    player_presentation_fork_frame(stats.completed);
     fork_save_frame(stats.completed); /* default off; never stops the session */
     static char packet[GATE_STATE_MAX],reply[GATE_PERMIT_MAX];uint64_t gamebits,realbits;
     memcpy(&gamebits,&stats.game,8);memcpy(&realbits,&stats.real,8);
@@ -825,6 +888,9 @@ static void gate_tick(void *frame,unsigned char loading) {
     if(reason) finish(reason);
     else {
         previous_game=stats.game;++stats.issued;
+        if(!stock_observer_admit()) {finish(STOCK_OBSERVER_STOP_REASON);gate_original_once(frame,loading);return;}
+        if(!factory_probe_admit()) {finish(PLAYER_FACTORY_PROBE_STOP_REASON);gate_original_once(frame,loading);return;}
+        if(!keyboard_probe_admit()) {finish(KEYBOARD_REPLAY_PROBE_STOP_REASON);gate_original_once(frame,loading);return;}
         navmesh_post_publish((unsigned)boot_phase,stats.issued);
         if(seed_frames && !path_installed) seed_frame(); /* else after the release, as on Windows (gate_path.h) */
     }
@@ -931,6 +997,26 @@ static int lua_start(lua_State *L) {
 }
 #include "lockstep_gate_lua_wire.h"
 #include "gate_world.h"
+#include "gate_stock_keyboard_observer.h"
+#include "gate_stock_keyboard_identity.h"
+#include "gate_player_control_bank_census.h"
+#include "gate_player_reference_probe.h"
+#include "gate_player_factory_probe.h"
+#include "gate_player_seat_preflight.h"
+#include "gate_player_target_hold.h"
+#include "gate_player_zone_scope.h"
+#include "gate_player_control_bank_scope.h"
+#include "gate_player_bank_roundtrip.h"
+#include "gate_context_refresh_edges.h"
+#include "gate_player_lifecycle_discard.h"
+#include "gate_player_physics_discard.h"
+#include "gate_player_control_boundary.h"
+#include "gate_player_physics_replay.h"
+#include "gate_player_physics_network.h"
+#include "gate_stock_keyboard_replay.h"
+#include "gate_player_camera_probe.h"
+#include "gate_player_view_query.h"
+#include "gate_player_presentation_probe.h"
 #include "gate_world_created.h"
 #include "gate_world_motion_watch.h"
 #include "gate_navmesh_post_observe.h"
@@ -959,6 +1045,8 @@ static int lua_start(lua_State *L) {
 #include "gate_path_transform_observe.h"
 #include "gate_runtime_ids.h"
 #include "gate_fork_save.h"
+#include "gate_player_presentation_fork.h"
+#include "gate_player_ui_overlay_probe.h"
 #include "gate_weapon_fire.h"
 #include "gate_engine_rng.h"
 #include "gate_build_rng.h"
@@ -1217,13 +1305,30 @@ GATE_EXPORT int luaopen_x4lan_gate(lua_State *L) {
     p_lua_createtable(L,0,16);
 #define METHOD(name) p_lua_pushcclosure(L,lua_##name,0);p_lua_setfield(L,-2,#name)
     METHOD(sha256);METHOD(start);METHOD(boot);METHOD(load_requested);METHOD(report);METHOD(poll);METHOD(stop);
+    METHOD(stock_keyboard_observer_request);METHOD(stock_keyboard_observer_status);METHOD(stock_keyboard_observer_drain);
+    METHOD(stock_keyboard_identity);
+    METHOD(player_reference_request);METHOD(player_reference_status);
+    METHOD(factory_probe_request);METHOD(factory_probe_status);
+    METHOD(player_control_bank_census_request);METHOD(player_control_bank_census);
+    METHOD(player_seat_preflight_request);METHOD(player_seat_preflight);
+    METHOD(player_control_bank_probe_request);METHOD(player_control_bank_probe_status);
+    METHOD(player_control_boundary_request);METHOD(player_control_boundary_status);
+    METHOD(stock_keyboard_replay_request);METHOD(stock_keyboard_replay_capture);
+    METHOD(stock_keyboard_replay_stage);METHOD(stock_keyboard_replay_status);
+    METHOD(player_external_camera_probe);
+    METHOD(player_presentation_probe);
+    METHOD(player_view_query_observe);METHOD(player_view_query_phase);METHOD(player_view_query_finish);
+    METHOD(player_ui_callback_close);METHOD(player_ui_callback_result);
+    METHOD(player_presentation_fork_arm);METHOD(player_presentation_fork_result);
+    METHOD(player_ui_overlay_arm);METHOD(player_ui_overlay_result);METHOD(player_ui_overlay_abort);
+    METHOD(pilot_present_pause);METHOD(pilot_present_resume);
     METHOD(frame_timing);METHOD(qpc_us);METHOD(tick_rate);METHOD(wire);METHOD(propose);METHOD(relay_host);METHOD(lookahead);METHOD(lookahead_status);METHOD(peer_links);METHOD(peer_status);METHOD(wire_crypto);METHOD(wire_crypto_status);
     METHOD(platform);METHOD(verify_stage);
     METHOD(world_motion_config);METHOD(world_motion_capture);METHOD(world_motion_row);METHOD(world_motion_status);
     METHOD(economy_load_rng);METHOD(economy_load_rng_status);METHOD(economy_load_rng_row);
     METHOD(navmesh_post_observe);METHOD(navmesh_post_observe_status);METHOD(navmesh_post_observe_row);
     METHOD(economy_watch_config);METHOD(economy_watch_capture);METHOD(economy_watch_status);
-    METHOD(world_watch);METHOD(world_capture);METHOD(world_capture_nav_v2);METHOD(world_capture_rolling);METHOD(world_page);METHOD(world_detail);METHOD(world_health);METHOD(world_hash_shields);METHOD(world_hash_shields_status);METHOD(flight_faults);METHOD(flight);METHOD(avoidance);METHOD(agent);METHOD(ship);METHOD(spline);METHOD(body);
+    METHOD(world_watch);METHOD(world_capture);METHOD(world_capture_nav_v2);METHOD(world_capture_rolling);METHOD(world_rolling_leaves_config);METHOD(world_rolling_leaves_row);METHOD(world_rolling_raw_add);METHOD(world_rolling_raw_row);METHOD(world_page);METHOD(world_detail);METHOD(world_health);METHOD(world_hash_shields);METHOD(world_hash_shields_status);METHOD(flight_faults);METHOD(flight);METHOD(avoidance);METHOD(agent);METHOD(ship);METHOD(spline);METHOD(body);
     METHOD(actor);METHOD(params);METHOD(snapshot_fixture);METHOD(snapshot_actor);METHOD(snapshot_enroll);METHOD(snapshot_status);
     METHOD(world_banks);METHOD(saved_identity);
     METHOD(path_determinism);METHOD(path_determinism_status);METHOD(path_budget);METHOD(path_budget_status);

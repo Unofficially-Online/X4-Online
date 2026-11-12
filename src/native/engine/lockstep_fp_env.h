@@ -38,6 +38,7 @@ enum {FPENV_OFF,FPENV_DEFAULT,FPENV_OBSERVE};
 typedef void (*fpenv_hook_fn)(void);
 typedef struct {DWORD id;unsigned before;} fpenv_record;
 static int fpenv_mode,fpenv_installed,fpenv_restored;
+static int fpenv_hook_restored,fpenv_thread_restore_uncertain;
 static unsigned fpenv_ui_before,fpenv_threads,fpenv_set_at_arm,fpenv_mismatch_at_arm,fpenv_record_count;
 static fpenv_record fpenv_records[FPENV_MAX_RECORDS];
 static uint64_t fpenv_last_sample;
@@ -105,11 +106,12 @@ static int fpenv_arm(int mode) {
     fpenv_set_at_arm=fpenv_visit(mode==FPENV_DEFAULT,1);
     int hooked=mode!=FPENV_DEFAULT ||
         InterlockedCompareExchangePointer((void *volatile*)(image+FPENV_HOOK_PTR),(void*)fpenv_thread_start,(void*)(image+FPENV_HOOK_FN))==(void*)(image+FPENV_HOOK_FN);
-    pmath_thaw();
+    int thawed=pmath_thaw();
     if(!hooked) {fpenv_stage="hook";return 0;}
     fpenv_mismatch_at_arm=0;for(unsigned i=0;i<fpenv_value_kinds;i++) if(fpenv_values[i]!=FPENV_TARGET) fpenv_mismatch_at_arm+=fpenv_counts[i];
     if(mode==FPENV_DEFAULT) fpenv_setcsr(fpenv_fixed(fpenv_ui_before));
-    fpenv_mode=mode;fpenv_installed=1;fpenv_last_sample=0;fpenv_stage="armed";return 1;
+    fpenv_mode=mode;fpenv_installed=1;fpenv_hook_restored=0;fpenv_thread_restore_uncertain=0;
+    fpenv_last_sample=0;fpenv_stage=thawed?"armed":"thaw";return thawed;
 }
 /* Gate frame, on the hook's thread (main thread; the MoveWorker has joined), before the
  * frame: this thread's value, and every 600 ticks the other X4 threads. 0 stops the gate
@@ -125,10 +127,13 @@ static int fpenv_tick(uint64_t tick) {
      * asset loader race is timing sensitive (lockstep_shape_order.h). */
     if(tick && (!InterlockedCompareExchange64(&fpenv_samples,0,0) || tick>=fpenv_last_sample+FPENV_SAMPLE_TICKS)) {
         fpenv_last_sample=tick;
-        if(pmath_freeze()) {
-            unsigned changed=fpenv_visit(fpenv_mode==FPENV_DEFAULT,0);pmath_thaw();
-            InterlockedAdd64(&fpenv_repairs_worker,changed);InterlockedIncrement64(&fpenv_samples);
+        if(!pmath_freeze()) {
+            fpenv_stage="freeze";InterlockedIncrement64(&fpenv_failures);return 0;
         }
+        unsigned changed=fpenv_visit(fpenv_mode==FPENV_DEFAULT,0);
+        int thawed=pmath_thaw();
+        InterlockedAdd64(&fpenv_repairs_worker,changed);InterlockedIncrement64(&fpenv_samples);
+        if(!thawed) {fpenv_stage="thaw";InterlockedIncrement64(&fpenv_failures);return 0;}
     }
     return 1;
 }
@@ -140,25 +145,32 @@ static unsigned fpenv_restore_threads(void) {
     for(unsigned r=0;r<fpenv_record_count;r++) if(fpenv_records[r].id==GetCurrentThreadId() && (fpenv_records[r].before&FPENV_CONTROL)!=FPENV_TARGET) {
         fpenv_setcsr((fpenv_getcsr()&0x3fu)|(fpenv_records[r].before&FPENV_CONTROL));++restored;
     }
-    if(!pmath_freeze()) return restored;
+    if(!pmath_freeze()) {fpenv_thread_restore_uncertain=1;return restored;}
     for(unsigned t=0;t<pmath_frozen_count;t++) for(unsigned r=0;r<fpenv_record_count;r++) {
         if(fpenv_records[r].id!=pmath_frozen_ids[t] || (fpenv_records[r].before&FPENV_CONTROL)==FPENV_TARGET) continue;
         CONTEXT c;memset(&c,0,sizeof(c));c.ContextFlags=CONTEXT_FLOATING_POINT;
         if(GetThreadContext(pmath_frozen[t],&c)) {
             c.MxCsr=(c.MxCsr&0x3fu)|(fpenv_records[r].before&FPENV_CONTROL);c.FltSave.MxCsr=c.MxCsr;
             if(SetThreadContext(pmath_frozen[t],&c)) ++restored;
-        }
+            else fpenv_thread_restore_uncertain=1;
+        } else fpenv_thread_restore_uncertain=1;
     }
-    pmath_thaw();return restored;
+    if(!pmath_thaw()) fpenv_thread_restore_uncertain=1;
+    return restored;
 }
 static void fpenv_restore(void) {
     if(!fpenv_installed) return;
     if(fpenv_mode==FPENV_DEFAULT) {
-        if(InterlockedCompareExchangePointer((void *volatile*)(image+FPENV_HOOK_PTR),(void*)(image+FPENV_HOOK_FN),(void*)fpenv_thread_start)!=(void*)fpenv_thread_start) {
-            fpenv_stage="restore_foreign";return;
-        }
+        if(!fpenv_hook_restored) {
+            if(InterlockedCompareExchangePointer((void *volatile*)(image+FPENV_HOOK_PTR),(void*)(image+FPENV_HOOK_FN),(void*)fpenv_thread_start)!=(void*)fpenv_thread_start) {
+                fpenv_stage="restore_foreign";return;
+            }
+            fpenv_hook_restored=1;
+        } else if(fpenv_hook_state()!=0) {fpenv_stage="restore_foreign";return;}
         if(GetCurrentThreadId()==ui_thread) fpenv_setcsr((fpenv_getcsr()&0x3fu)|(fpenv_ui_before&FPENV_CONTROL));
+        fpenv_thread_restore_uncertain=0;
         fpenv_restore_threads();
+        if(fpenv_thread_restore_uncertain) {fpenv_stage="restore_threads";return;}
     }
     fpenv_installed=0;fpenv_restored=1;fpenv_stage="restored";
 }
@@ -167,9 +179,9 @@ static int fpenv_status(char *out,size_t capacity) {
     for(unsigned i=0;i<fpenv_value_kinds && k<(int)sizeof(values)-16;i++)
         k+=snprintf(values+k,sizeof(values)-(size_t)k,"%s%04x:%u",i?",":"",fpenv_values[i],fpenv_counts[i]);
     int n=snprintf(out,capacity,"installed=%d mode=%s ui_before=%04x threads=%u values=%s set_at_arm=%u mismatch_at_arm=%u "
-        "started=%lld repairs_ui=%lld repairs_worker=%lld samples=%lld restored=%d stage=%s failures=%lld",
+        "started=%lld repairs_ui=%lld repairs_worker=%lld samples=%lld restored=%d restore_uncertain=%d stage=%s failures=%lld",
         fpenv_installed,fpenv_mode==FPENV_DEFAULT?"default":fpenv_mode==FPENV_OBSERVE?"observe":"off",fpenv_ui_before,fpenv_threads,
         fpenv_value_kinds?values:"-",fpenv_set_at_arm,fpenv_mismatch_at_arm,(long long)fpenv_started,(long long)fpenv_repairs_ui,
-        (long long)fpenv_repairs_worker,(long long)fpenv_samples,fpenv_restored,fpenv_stage,(long long)fpenv_failures);
+        (long long)fpenv_repairs_worker,(long long)fpenv_samples,fpenv_restored,fpenv_thread_restore_uncertain,fpenv_stage,(long long)fpenv_failures);
     return n>0 && (size_t)n<capacity?n:0;
 }

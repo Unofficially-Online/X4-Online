@@ -25,7 +25,21 @@
 static const unsigned char lxav_original[25]={0xf3,0x0f,0x5f,0xe2,0xf3,0x0f,0x5f,0xe8,0xf3,0x0f,0x5e,0xe7,0x0f,0x28,0xfd,0xf3,0x41,0x0f,0x5e,0xf8,
                                               0xe9,0x34,0xfe,0xff,0xff};
 static unsigned char *lxav_page;
+/* installed also means cleanup is owed after an unsuccessful arm. A successful CAS
+ * and closing the code page are separate obligations; neither is hidden by the other. */
 static int lxav_installed,lxav_restored;
+static unsigned lxav_rx_pending;
+#ifdef GATE_TLS_TEST
+static int (*lxav_test_protect)(void *,int);
+#endif
+static int lxav_protect(void *address, int writable) {
+#ifdef GATE_TLS_TEST
+    if (lxav_test_protect) {
+        return lxav_test_protect(address, writable);
+    }
+#endif
+    return writable ? gate_code_open(address, 16) : gate_code_close(address);
+}
 static const char *lxav_stage="idle";
 static int lxav_rel(unsigned char *out,const unsigned char *page,unsigned char *at,const void *target) {
     const intptr_t d=(intptr_t)target-(intptr_t)(page+(at-out)+4);
@@ -62,44 +76,132 @@ static int lxav_pins(void) {
     memcpy(copy+(LXAV_VA-s->va),lxav_original,5);
     return hash_ok(copy,s->length,s->sha256);
 }
-static int lxav_swap(const unsigned char from[5],const unsigned char to[5]) {
-    unsigned char *line=(unsigned char*)((uintptr_t)LX(LXAV_VA)&~(uintptr_t)15);const unsigned at=(unsigned)(LX(LXAV_VA)-line);
-    unsigned __int128 current,desired;
-    if(at+5>16) return 0;
-    memcpy(&current,line,16);
-    if(memcmp((unsigned char*)&current+at,from,5)) return 0;
-    desired=current;memcpy((unsigned char*)&desired+at,to,5);
-    return gate_code_swap128(line,current,desired);
+static int lxav_swap(const unsigned char expected_bytes[5], const unsigned char replacement_bytes[5]) {
+    unsigned char *code_line = (unsigned char*)((uintptr_t)LX(LXAV_VA)&~(uintptr_t)15);
+    const unsigned patch_offset = (unsigned)(LX(LXAV_VA)-code_line);
+    const unsigned protection_bit = 1u;
+    unsigned __int128 current_line, desired_line;
+    if (patch_offset + 5 > 16) {
+        return 0;
+    }
+    pthread_mutex_lock(&gate_code_lock);
+    memcpy(&current_line, code_line, 16);
+    if (memcmp((unsigned char*)&current_line + patch_offset, expected_bytes, 5)
+        || !lxav_protect(code_line, 1)) {
+        pthread_mutex_unlock(&gate_code_lock);
+        return 0;
+    }
+    lxav_rx_pending |= protection_bit;
+    desired_line = current_line;
+    memcpy((unsigned char*)&desired_line + patch_offset, replacement_bytes, 5);
+    const int patch_written = __sync_val_compare_and_swap((unsigned __int128*)code_line,
+        current_line, desired_line) == current_line;
+    if (patch_written) {
+        lxav_installed = 1;
+        lxav_restored = 0;
+    }
+    if (lxav_protect(code_line, 0)) {
+        lxav_rx_pending &= ~protection_bit;
+    }
+    else {
+        lxav_installed = 1;
+        lxav_restored = 0;
+    }
+    pthread_mutex_unlock(&gate_code_lock);
+    return patch_written && !(lxav_rx_pending & protection_bit);
 }
 /* Before the first admitted frame, on the MoveWorker. */
 static int lxav_arm(void) {
-    if(lxav_installed) return stats.active;
-    if(!stats.active || (boot_mode && boot_phase) || stats.issued || GetCurrentThreadId()!=ui_thread) {lxav_stage="guard";return 0;}
-    if(lxav_state()!=0) {lxav_stage="entry";return 0;}
-    if(!lxav_pins()) {lxav_stage="pins";return 0;}
-    if(!lxav_page) lxav_page=gate_near_page(LX(LXAV_VA));
-    if(!lxav_page || mprotect(lxav_page,GATE_PAGE,PROT_READ|PROT_WRITE)) {lxav_stage="page";return 0;}
-    memset(lxav_page,0xcc,GATE_PAGE);
-    unsigned char to[5];
-    if(!lxav_code(lxav_page,lxav_page) || mprotect(lxav_page,GATE_PAGE,PROT_READ|PROT_EXEC) || !lxav_patch(to) ||
-       !lxav_swap(lxav_original,to)) {lxav_stage="install";return 0;}
-    lxav_installed=1;lxav_restored=0;lxav_stage="armed";return 1;
+    if (lxav_installed) {
+        return stats.active
+            && !lxav_rx_pending
+            && !strcmp(lxav_stage, "armed")
+            && lxav_state() == 1
+            && lxav_page_ok()
+            && lxav_pins();
+    }
+    if (!stats.active || (boot_mode && boot_phase) || stats.issued || GetCurrentThreadId() != ui_thread) {
+        lxav_stage = "guard";
+        return 0;
+    }
+    if (lxav_state() != 0) {
+        lxav_stage = "entry";
+        return 0;
+    }
+    if (!lxav_pins()) {
+        lxav_stage = "pins";
+        return 0;
+    }
+    if (!lxav_page) {
+        lxav_page = gate_near_page(LX(LXAV_VA));
+    }
+    if (!lxav_page || mprotect(lxav_page, GATE_PAGE, PROT_READ|PROT_WRITE)) {
+        lxav_stage = "page";
+        return 0;
+    }
+    memset(lxav_page, 0xcc, GATE_PAGE);
+    unsigned char entry_patch[5];
+    if (!lxav_code(lxav_page, lxav_page)
+        || mprotect(lxav_page, GATE_PAGE, PROT_READ|PROT_EXEC)
+        || !lxav_patch(entry_patch)
+        || !lxav_swap(lxav_original, entry_patch)) {
+        lxav_stage = "install";
+        return 0;
+    }
+    lxav_installed = 1;
+    lxav_restored = 0;
+    lxav_stage = "armed";
+    return 1;
 }
 static int lxav_check(void) {
-    const char *why=lxav_state()!=1?"entry_changed":!lxav_page_ok()?"page_changed":!lxav_pins()?"block_changed":NULL;
-    if(why) {lxav_stage=why;return 0;}
+    const char *failure_stage = lxav_rx_pending ? "protection_pending" :
+        lxav_state() != 1 ? "entry_changed" :
+        !lxav_page_ok() ? "page_changed" :
+        !lxav_pins() ? "block_changed" :
+        NULL;
+    if (failure_stage) {
+        lxav_stage = failure_stage;
+        return 0;
+    }
     return 1;
 }
 static void lxav_restore(void) {
-    if(!lxav_installed) return;
-    unsigned char from[5];
-    if(lxav_state()!=1 || !lxav_patch(from)) {lxav_stage="restore_foreign";return;}
-    if(lxav_swap(from,lxav_original)) {lxav_installed=0;lxav_restored=1;lxav_stage="restored";} /* the page stays */
+    if (!lxav_installed) {
+        return;
+    }
+    unsigned char owned_patch[5], current_bytes[sizeof(lxav_original)];
+    const int entry_state = lxav_state();
+    if (entry_state == 1 && lxav_patch(owned_patch)) {
+        lxav_swap(owned_patch, lxav_original);
+    }
+    else if (entry_state == 0 || lxav_rx_pending) {
+        pthread_mutex_lock(&gate_code_lock);
+        if (lxav_protect(LX(LXAV_VA), 0)) {
+            lxav_rx_pending = 0;
+        }
+        else {
+            lxav_rx_pending = 1;
+        }
+        pthread_mutex_unlock(&gate_code_lock);
+    }
+    const int original_bytes_restored = gate_read_local(LX(LXAV_VA), current_bytes, sizeof(current_bytes))
+        && !memcmp(current_bytes, lxav_original, sizeof(current_bytes));
+    if (original_bytes_restored && !lxav_rx_pending) {
+        lxav_installed = 0;
+        lxav_restored = 1;
+        lxav_stage = "restored";
+    }
+    else {
+        lxav_stage = original_bytes_restored ? "restore_protection" : "restore_pending";
+    }
+    /* The page stays; foreign entry bytes are never replaced. */
 }
-static int lxav_status(char *out,size_t size) {
-    const int n=snprintf(out,size,"tick=%llu installed=%d restored=%d state=%d pin=%d page=%d stage=%s",(unsigned long long)stats.issued,
-        lxav_installed,lxav_restored,lxav_state(),lxav_pins(),lxav_page_ok(),lxav_stage);
-    return n>0 && (size_t)n<size?n:0;
+static int lxav_status(char *out, size_t size) {
+    const int written = snprintf(
+        out, size, "tick=%llu installed=%d restored=%d state=%d pin=%d page=%d stage=%s rx_pending=%u",
+        (unsigned long long)stats.issued, lxav_installed, lxav_restored,
+        lxav_state(), lxav_pins(), lxav_page_ok(), lxav_stage, lxav_rx_pending);
+    return written > 0 && (size_t)written < size ? written : 0;
 }
 static int lua_avoid_angle(lua_State *L) {p_lua_pushnumber(L,lxav_arm());return 1;}
 static int lua_avoid_angle_status(lua_State *L) {

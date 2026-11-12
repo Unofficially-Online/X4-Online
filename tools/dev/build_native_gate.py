@@ -50,6 +50,10 @@ def main():
                               '-o', str(out/'test_gate.exe')], check=True)
         gate_env=dict(os.environ,X4LAN_XRCP_EXPORT=str(out/'xrcp-export.bin')) if args.native_image else None
         subprocess.run([str(out/'test_gate.exe')]+([str(args.native_image.resolve())] if args.native_image else []), check=True,env=gate_env)
+        # The creation-time body mass hook has its own focused lifecycle, fault and unwind tests.
+        subprocess.run(common+[str(source/'test_lockstep_body_mass_win.c'), '-lbcrypt', '-lws2_32',
+                              '-o', str(out/'test_body_mass_win.exe')], check=True)
+        subprocess.run([str(out/'test_body_mass_win.exe')], check=True)
         if args.native_image:
             try:
                 import capstone  # noqa: F401  (the trampoline proof decodes with capstone)

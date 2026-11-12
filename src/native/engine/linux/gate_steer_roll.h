@@ -35,7 +35,21 @@ static const unsigned char lxsr_b_original[8]={0xf3,0x0f,0x58,0xff,0xf3,0x0f,0x5
 static const struct {uint32_t va,stub;const unsigned char *original;const char *pin;} lxsr_sites[2]={
     {LXSR_A_VA,LXSR_STUB_A,lxsr_a_original,"steer_roll_a"},{LXSR_B_VA,LXSR_STUB_B,lxsr_b_original,"steer_roll_b"}};
 static unsigned char *lxsr_page;
+/* installed also means cleanup is owed after an unsuccessful arm. A successful CAS
+ * and closing the code page are separate obligations; neither is hidden by the other. */
 static int lxsr_installed,lxsr_restored;
+static unsigned lxsr_rx_pending;
+#ifdef GATE_TLS_TEST
+static int (*lxsr_test_protect)(void *,int);
+#endif
+static int lxsr_protect(void *address, int writable) {
+#ifdef GATE_TLS_TEST
+    if (lxsr_test_protect) {
+        return lxsr_test_protect(address, writable);
+    }
+#endif
+    return writable ? gate_code_open(address, 16) : gate_code_close(address);
+}
 static const char *lxsr_stage="idle";
 static int lxsr_rel(unsigned char *out,const unsigned char *page,unsigned char *at,const void *target) {
     const intptr_t d=(intptr_t)target-(intptr_t)(page+(at-out)+4);
@@ -84,14 +98,39 @@ static int lxsr_pins(void) {
     }
     return 1;
 }
-static int lxsr_swap(unsigned va,const unsigned char from[5],const unsigned char to[5]) {
-    unsigned char *line=(unsigned char*)((uintptr_t)LX(va)&~(uintptr_t)15);const unsigned at=(unsigned)(LX(va)-line);
-    unsigned __int128 current,desired;
-    if(at+5>16) return 0;
-    memcpy(&current,line,16);
-    if(memcmp((unsigned char*)&current+at,from,5)) return 0;
-    desired=current;memcpy((unsigned char*)&desired+at,to,5);
-    return gate_code_swap128(line,current,desired);
+static int lxsr_swap(unsigned virtual_address, const unsigned char expected_bytes[5], const unsigned char replacement_bytes[5]) {
+    unsigned char *code_line = (unsigned char*)((uintptr_t)LX(virtual_address)&~(uintptr_t)15);
+    const unsigned patch_offset = (unsigned)(LX(virtual_address)-code_line);
+    const unsigned protection_bit = (virtual_address == LXSR_A_VA?1u:2u);
+    unsigned __int128 current_line, desired_line;
+    if (patch_offset + 5 > 16) {
+        return 0;
+    }
+    pthread_mutex_lock(&gate_code_lock);
+    memcpy(&current_line, code_line, 16);
+    if (memcmp((unsigned char*)&current_line + patch_offset, expected_bytes, 5)
+        || !lxsr_protect(code_line, 1)) {
+        pthread_mutex_unlock(&gate_code_lock);
+        return 0;
+    }
+    lxsr_rx_pending |= protection_bit;
+    desired_line = current_line;
+    memcpy((unsigned char*)&desired_line + patch_offset, replacement_bytes, 5);
+    const int patch_written = __sync_val_compare_and_swap((unsigned __int128*)code_line,
+        current_line, desired_line) == current_line;
+    if (patch_written) {
+        lxsr_installed = 1;
+        lxsr_restored = 0;
+    }
+    if (lxsr_protect(code_line, 0)) {
+        lxsr_rx_pending &= ~protection_bit;
+    }
+    else {
+        lxsr_installed = 1;
+        lxsr_restored = 0;
+    }
+    pthread_mutex_unlock(&gate_code_lock);
+    return patch_written && !(lxsr_rx_pending & protection_bit);
 }
 static int lxsr_install(void) {
     if(!lxsr_page) lxsr_page=gate_near_page(LX(LXSR_A_VA));
@@ -106,29 +145,91 @@ static int lxsr_install(void) {
 }
 /* Before the first admitted frame, on the MoveWorker. */
 static int lxsr_arm(void) {
-    if(lxsr_installed) return stats.active;
-    if(!stats.active || (boot_mode && boot_phase) || stats.issued || GetCurrentThreadId()!=ui_thread) {lxsr_stage="guard";return 0;}
-    if(lxsr_state()!=0) {lxsr_stage="entry";return 0;}
-    if(!lxsr_pins()) {lxsr_stage="pins";return 0;}
-    if(!lxsr_install()) {lxsr_stage="install";return 0;}
-    lxsr_installed=1;lxsr_restored=0;lxsr_stage="armed";return 1;
+    if (lxsr_installed) {
+        return stats.active
+            && !lxsr_rx_pending
+            && !strcmp(lxsr_stage, "armed")
+            && lxsr_state() == 1
+            && lxsr_page_ok()
+            && lxsr_pins();
+    }
+    if (!stats.active || (boot_mode && boot_phase) || stats.issued || GetCurrentThreadId() != ui_thread) {
+        lxsr_stage = "guard";
+        return 0;
+    }
+    if (lxsr_state() != 0) {
+        lxsr_stage = "entry";
+        return 0;
+    }
+    if (!lxsr_pins()) {
+        lxsr_stage = "pins";
+        return 0;
+    }
+    if (!lxsr_install()) {
+        lxsr_stage = "install";
+        return 0;
+    }
+    lxsr_installed = 1;
+    lxsr_restored = 0;
+    lxsr_stage = "armed";
+    return 1;
 }
 static int lxsr_check(void) {
-    const char *why=lxsr_state()!=1?"entry_changed":!lxsr_page_ok()?"page_changed":!lxsr_pins()?"block_changed":NULL;
-    if(why) {lxsr_stage=why;return 0;}
+    const char *failure_stage = lxsr_rx_pending ? "protection_pending" :
+        lxsr_state() != 1 ? "entry_changed" :
+        !lxsr_page_ok() ? "page_changed" :
+        !lxsr_pins() ? "block_changed" :
+        NULL;
+    if (failure_stage) {
+        lxsr_stage = failure_stage;
+        return 0;
+    }
     return 1;
 }
 static void lxsr_restore(void) {
-    if(!lxsr_installed) return;
-    unsigned char a[5],b[5];
-    if(lxsr_state()!=1 || !lxsr_patch(a,0) || !lxsr_patch(b,1)) {lxsr_stage="restore_foreign";return;}
-    const int ra=lxsr_swap(LXSR_A_VA,a,lxsr_a_original),rb=lxsr_swap(LXSR_B_VA,b,lxsr_b_original);
-    if(ra && rb) {lxsr_installed=0;lxsr_restored=1;lxsr_stage="restored";} /* the page stays: a thread may still be inside a stub */
+    if (!lxsr_installed) {
+        return;
+    }
+    int original_bytes_restored = 1;
+    for (unsigned site_index = 0; site_index < 2; site_index++) {
+        unsigned char owned_patch[5], current_bytes[8];
+        const unsigned protection_bit = 1u << site_index;
+        const unsigned instruction_size = site_index ? sizeof(lxsr_b_original) : sizeof(lxsr_a_original);
+        const int entry_state = lxsr_site_state(site_index);
+        if (entry_state == 1 && lxsr_patch(owned_patch, site_index)) {
+            lxsr_swap(lxsr_sites[site_index].va, owned_patch, lxsr_sites[site_index].original);
+        }
+        else if (entry_state == 0 || (lxsr_rx_pending & protection_bit)) {
+            pthread_mutex_lock(&gate_code_lock);
+            if (lxsr_protect(LX(lxsr_sites[site_index].va), 0)) {
+                lxsr_rx_pending &= ~protection_bit;
+            }
+            else {
+                lxsr_rx_pending |= protection_bit;
+            }
+            pthread_mutex_unlock(&gate_code_lock);
+        }
+        if (!gate_read_local(LX(lxsr_sites[site_index].va), current_bytes, instruction_size)
+            || memcmp(current_bytes, lxsr_sites[site_index].original, instruction_size)) {
+            original_bytes_restored = 0;
+        }
+    }
+    if (original_bytes_restored && !lxsr_rx_pending) {
+        lxsr_installed = 0;
+        lxsr_restored = 1;
+        lxsr_stage = "restored";
+    }
+    else {
+        lxsr_stage = original_bytes_restored ? "restore_protection" : "restore_pending";
+    }
+    /* The page stays: a thread may still be inside either stub. */
 }
-static int lxsr_status(char *out,size_t size) {
-    const int n=snprintf(out,size,"tick=%llu installed=%d restored=%d state=%d pin=%d page=%d stage=%s",(unsigned long long)stats.issued,
-        lxsr_installed,lxsr_restored,lxsr_state(),lxsr_pins(),lxsr_page_ok(),lxsr_stage);
-    return n>0 && (size_t)n<size?n:0;
+static int lxsr_status(char *out, size_t size) {
+    const int written = snprintf(
+        out, size, "tick=%llu installed=%d restored=%d state=%d pin=%d page=%d stage=%s rx_pending=%u",
+        (unsigned long long)stats.issued, lxsr_installed, lxsr_restored,
+        lxsr_state(), lxsr_pins(), lxsr_page_ok(), lxsr_stage, lxsr_rx_pending);
+    return written > 0 && (size_t)written < size ? written : 0;
 }
 static int lua_steer_roll(lua_State *L) {p_lua_pushnumber(L,lxsr_arm());return 1;}
 static int lua_steer_roll_status(lua_State *L) {

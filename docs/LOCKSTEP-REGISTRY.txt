@@ -132,8 +132,12 @@ Core (lockstep_gate.c; the Linux gate uses the same numbers where ported):
   30/31 AI RNG            32/33 agent RNG
   34/35 ship RNG / ship pin              36 parameter initialization
   37/38 weapon RNG        39/40 parameter trace
-  41/42 nav               43/44 velocity
-  45/46 shape             47/48 bullet
+  41 LXN_INSTALL_STOP     nav install (Linux port of Windows core 41)
+  42 LXN_STOP_REASON      nav failure (Linux port of Windows core 42)
+  43/44 velocity
+  45 LXSH_STOP_INSTALL    shape install (Linux port of Windows core 45)
+  46 LXSH_STOP_FAILURE    shape failure (Linux port of Windows core 46)
+  47/48 bullet
   49/50 death             51/52 mass
   53/54 attention         55 flight
   56 local proposal differs / packet too long / nonzero permit
@@ -207,7 +211,7 @@ Modules (define, owner):
                                 build, assets, missions, conversation, faction; the why names the module);
                                 lockstep_player_settings.h (whys player_settings_install, _hook_lost,
                                 _restore, _scope, _scope_open, _present)
-  165 RC_STOP_REASON            lockstep_region_camera.h (was 130)
+  165 RC_STOP_REASON LXSH_STOP_KEYS  region camera; Linux shape-refresh failures share this owner (was 130)
   166 RC_MINING_STOP            lockstep_region_camera.h (group mining); on the Linux gate LXMC_STOP_REASON,
                                 linux/gate_mining_camera.h (whys entry_changed, block_changed)
   167 RC_XS_STOP                lockstep_region_camera.h (group xs)
@@ -273,8 +277,8 @@ Modules (define, owner):
   201 ECONOMY_RNG_STOP_REASON   Linux economy load RNG detour
   202 PATH_TRANSFORM_OBSERVER_STOP_REASON Linux path-transform observer
   203 NAVMESH_POST_STOP_REASON Linux NavMesh producer-post observer (ownership/pin failure)
-  204 LXBM_STOP_REASON          linux/gate_body_mass.h (native_gate_body1_mass, Linux gate only: AllocateBody's entry, its
-                                pins, or a body's motion properties unreadable; whys entry_changed, block_changed, motion)
+  204 LXBM_STOP_REASON WBM_STOP_REASON  linux/gate_body_mass.h (native_gate_body1_mass, both platforms: allocation entry/pins,
+                                or a body's motion properties unreadable; Windows fallback shares this reason)
   205 LXBS_STOP_REASON          linux/gate_body_step.h (native_gate_body_step_diag, Linux gate only, diagnostic:
                                 PhysicsSystem::Update's entry or its pins; whys entry_changed, block_changed)
   206 LXAI_STOP_REASON          linux/gate_impulse.h (native_gate_impulse_diag, Linux gate only, diagnostic:
@@ -293,7 +297,16 @@ Modules (define, owner):
                                 entry, the stub page or the pin; whys entry_changed, page_changed, block_changed)
   213 LXPS_STOP_REASON          linux/gate_pursuit_speed.h (native_gate_pursuit_speed, Linux gate only: the speed factor
                                 run's entry, the stub page or the pin; whys entry_changed, page_changed, block_changed)
-  free: 109, 114-119, 122-129, 147-149, 214-255.
+  214 MASS_JACOBI_ORDER_STOP_REASON lockstep_mass_jacobi_order.h (Windows only: instruction ownership, partial write, or protection recovery)
+  215 STOCK_OBSERVER_STOP_REASON Linux stock keyboard observer (diagnostic; gate_stock_keyboard_observer.h)
+  216 KEYBOARD_REPLAY_PROBE_STOP_REASON linux/gate_stock_keyboard_replay.h (single-canonical-ship diagnostic only)
+  217 PLAYER_REFERENCE_PROBE_STOP_REASON linux/gate_player_reference_probe.h (P1 reference diagnostic only)
+  218 PLAYER_FACTORY_PROBE_STOP_REASON linux/gate_player_factory_probe.h (isolated constructor diagnostic)
+  219 PLAYER_CONTROL_BANK_CENSUS_STOP_REASON linux/gate_player_control_bank_census.h (read-only bank diagnostic)
+  220 PLAYER_SEAT_PREFLIGHT_STOP_REASON linux/gate_player_seat_preflight.h (read-only seat diagnostic)
+  221 PLAYER_CONTROL_BANK_PROBE_STOP_REASON linux/gate_player_bank_roundtrip.h (canonical bank roundtrip diagnostic)
+  222 PLAYER_CONTROL_BOUNDARY_FATAL linux/gate_player_control_boundary.h (readiness-only main/worker rendezvous; immediate process exit)
+  free: 109, 114-119, 122-129, 147-149, 223-255.
 Not stop reasons although named *_STOP*: PSLOT_STOP_WAIT (a wait count),
 PFIRE_STOP, PNAT_STOP_IN_MENU, PNAT_FULL_STOP (flags, 0).
 Renumbered on 1 November 2026 (integration): region camera 130 -> 165, speak

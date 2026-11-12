@@ -44,7 +44,9 @@ import argparse
 import ctypes
 import gzip
 import hashlib
+import ipaddress
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -52,16 +54,56 @@ import secrets
 import shutil
 import signal
 import socket
+import stat
 import subprocess
 import sys
 import time
 
 from linux_gate_evidence import is_fatal_gate_message, validate_evidence
+from linux_player_physics_evidence import collect_physics_evidence
+try:
+    from linux_player_frames_evidence import collect_recurring_physics_evidence
+except ModuleNotFoundError as error:
+    if error.name != 'linux_player_frames_evidence':
+        raise
+    collect_recurring_physics_evidence = None
+
+try:
+    from linux_player_network_evidence import collect_network_physics_evidence, compare_throttle_peers
+except ModuleNotFoundError as error:
+    if error.name != 'linux_player_network_evidence':
+        raise
+    collect_network_physics_evidence = None
+    compare_throttle_peers = None
+
+try:
+    from linux_player_camera_evidence import collect_camera_evidence
+except ModuleNotFoundError as error:
+    if error.name != 'linux_player_camera_evidence':
+        raise
+    collect_camera_evidence = None
 
 EXE_SHA = '113f73d74570084f6ce18a659b365009eccf579fb66dbabb5dad2b1718045f20'
 MARKER = '.x4mp-linux-gate-live'
 SLOT_SAVE = 'save_009.xml.gz'
 PORTABLE_MATH = 'libx4mp_portable_math.so'
+PLAYER_LIFETIME = 'libx4mp_player_lifetime.so'
+PLAYER_VIEW_QUERY = 'libx4mp_player_view_query.so'
+VIEW_QUERY_SOURCES = (
+    'src/native/engine/linux/player_view_query_preload.c',
+    'src/native/engine/linux/player_view_query_preload.h',
+    'src/native/engine/linux/player_live_pose_preload.h',
+    'src/native/engine/linux/player_live_pose_preload_impl.h',
+    'src/native/engine/linux/player_live_pose_preload_pin.h',
+    'src/native/engine/linux/player_ui_live_correction.h',
+    'src/native/engine/linux/player_ui_seat_transform.h',
+    'src/native/engine/linux/player_ui_escape_guard.cpp',
+    'src/native/engine/linux/player_ui_escape_guard.h',
+    'src/native/engine/linux/player_view_query_preload_pin.h',
+    'src/native/engine/linux/gate_player_view_query.h',
+    'src/native/engine/lockstep_sha256.h',
+    'tools/dev/build_player_view_query_preload.py',
+)
 PORTABLE_MATH_ACTIVE = re.compile(r'X4MP_PORTABLE_MATH ACTIVE version=1 kat=([0-9a-f]{16}) symbols=28 decimal=1 exact_reciprocal=1185/1185 ')
 # A client past its STOP line runs free, so nothing waits long after one (seconds).
 FAILED_STOP_SETTLE = 5   # after the last STOP, for its trailing lines (WORLD_IDENTITY_STOP, ...)
@@ -135,6 +177,18 @@ def apply_bundle_preset(args):
         apply_mixed_platform(args)
 
 
+def mixed_platform_literal(text):
+    """Decode the shared preset's limited Lua literals; never evaluate code."""
+    value = text.strip()
+    if value in ('true', 'false'):
+        return value == 'true'
+    if re.fullmatch(r'-?(?:0|[1-9][0-9]*)', value):
+        return int(value)
+    if re.fullmatch(r"'[^'\\\x00-\x1f\x7f]*'", value):
+        return value[1:-1]
+    raise SystemExit(f'--mixed-platform: unsupported preset literal {text!r}')
+
+
 def mixed_platform_options():
     """tools/build_play_overlay.py's MIXED_PLATFORM_SETS (the Windows host's --mixed-platform) as bundle options:
     imported, not copied, so a Windows host overlay and a Linux bundle carry the same keys and values."""
@@ -148,8 +202,7 @@ def mixed_platform_options():
         key, value = text.split('=', 1)
         if not key.startswith('native_gate_'):
             raise SystemExit(f'--mixed-platform: unexpected key {key}')
-        value = value.strip()
-        options[key[len('native_gate_'):]] = value.strip("'") if value.startswith("'") else int(value)
+        options[key[len('native_gate_'):]] = mixed_platform_literal(value)
     return options
 
 
@@ -246,8 +299,1537 @@ def compose_extension_template(overlay, target, extension_base=None):
         (target / 'ui.xml').write_text(extension.ui_xml([*extension.BASE_UI, *overlay_files]), encoding='utf-8')
 
 
+def validate_factory_retention(retain_until, factory_probe, ticks):
+    """Require the owned P2 reference to be released before session STOP."""
+    if retain_until is None:
+        return
+    if not factory_probe:
+        raise SystemExit('--player-factory-retain-until requires --player-factory-probe')
+    if type(retain_until) is not int or not 4 <= retain_until <= 36000 or retain_until >= ticks:
+        raise SystemExit('--player-factory-retain-until must be 4..36000 and less than --ticks')
+
+
+def validate_seat_preflight(factory_probe, retain_until, observer, serial_pathing, ticks):
+    """Keep the diagnostic player owned through the tick-four inspection."""
+    if not (factory_probe and observer and serial_pathing):
+        raise SystemExit('--player-seat-preflight requires the factory probe, observer and serial pathing')
+    if type(retain_until) is not int or not 5 <= retain_until <= 36000 or retain_until >= ticks:
+        raise SystemExit('--player-seat-preflight requires a factory release tick in 5..36000 before STOP')
+
+
+def validate_control_bank_probe(observer, serial_pathing, ticks, replay=False, reference_probe=False):
+    """Keep the tick-five canonical bank roundtrip inside its isolated session."""
+    if not observer or not serial_pathing or type(ticks) is not int or ticks < 6:
+        raise SystemExit('--player-control-bank-probe requires observer, serial pathing and at least six ticks')
+    if replay or reference_probe:
+        raise SystemExit('run the control-bank probe separately from keyboard replay and reference probes')
+
+
+def validate_control_boundary_probe(observer, serial_pathing, ticks, conflicts):
+    """Measure one main/worker rendezvous without exchanging player state."""
+    if not observer or not serial_pathing or type(ticks) is not int or ticks < 6:
+        raise SystemExit('--player-control-boundary-probe requires observer, serial pathing and at least six ticks')
+    if any(conflicts):
+        raise SystemExit('run the control-boundary probe separately from player mutation experiments')
+
+
+def validate_independent_keyboard(options, ticks):
+    frames = options.get('independent_keyboard_frames', 0)
+    if type(frames) is not int or (frames != 0 and not 2 <= frames <= 600):
+        raise SystemExit('--independent-keyboard-frames must be 0 or 2..600')
+    if not frames:
+        return 0
+    required = ('stock_keyboard_replay_probe', 'player_factory_probe',
+                'stock_keyboard_observer', 'serial_pathing')
+    if (not all(options.get(key) for key in required) or
+            not (options.get('player_lifetime_preload') or options.get('player_lifetime_sha256')) or
+            options.get('clients', 2) != 2 or ticks <= 4 + frames):
+        raise SystemExit('independent keyboard frames require replay, factory, observer, serial pathing, lifetime preload, two clients and ticks > 4+frames')
+    if any(options.get(key) for key in ('player_control_boundary_probe', 'player_control_bank_probe',
+                                      'player_control_bank_census', 'player_reference_probe', 'player_seat_preflight')):
+        raise SystemExit('independent keyboard frames conflict with other player experiments')
+    return frames
+
+
+def validate_lifetime_receipts(receipts):
+    return receipts == ['X4 PLAYER LIFETIME PRELOAD ACTIVE version=5']
+
+
+def lifetime_preload_sources(repo):
+    """Sources required to reproduce and inspect the frozen lifetime preload."""
+    engine = repo / 'src/native/engine/linux'
+    sources = [engine / name for name in (
+        'player_lifetime_preload.c', 'player_lifetime_preload_emit.h',
+        'player_lifetime_preload_pin.h', 'player_lifetime_preload_wrappers.h',
+    )]
+    sources += [repo / 'src/native/engine/lockstep_sha256.h',
+                repo / 'tools/dev/build_player_lifetime_preload.py']
+    if not all(source.is_file() for source in sources):
+        raise SystemExit('lifetime preload requires all frozen source files')
+    return sources
+
+
+def validate_view_query_observer(options, frames):
+    enabled = options.get('player_view_query_observer', False)
+    if type(enabled) is not bool:
+        raise SystemExit('player_view_query_observer must be a boolean')
+    if enabled and (frames < 4 or not (options.get('player_lifetime_preload') or
+                                      options.get('player_lifetime_sha256'))):
+        raise SystemExit('view query observer requires at least 4 independent frames and lifetime preload')
+    return enabled
+
+
+UI_OVERLAY_SOURCES = (
+    'src/native/engine/linux/gate_player_ui_overlay_probe.h',
+    'src/native/engine/linux/player_ui_published_pose.h',
+    'src/native/engine/linux/player_ui_seat_transform.h',
+    'src/native/engine/linux/player_ui_overlay_lifecycle.h',
+    'src/native/engine/linux/player_ui_viewstate.h',
+    'src/native/engine/linux/player_ui_seat_pose.h',
+    'tools/dev/linux_ui_seat_pose_evidence.py',
+    'src/native/engine/linux/player_ui_escape_guard.cpp',
+    'src/native/engine/linux/player_ui_escape_guard.h',
+    'tools/dev/build_player_view_query_preload.py',
+    'src/native/engine/linux/player_presentation_overlay.h',
+    'src/native/engine/linux/player_view_query_preload.c',
+    'src/native/engine/linux/player_view_query_preload.h',
+    'src/native/engine/linux/player_view_query_preload_pin.h',
+    'src/native/engine/linux/gate_linux.c', 'tools/dev/native_gate_probe.lua',
+)
+
+
+PLAN_KICK_SOURCES = (
+    'src/native/engine/linux/gate_player_ui_plan_kick.h',
+    'src/native/engine/linux/player_ui_plan_kick.h',
+    'tools/dev/linux_ui_plan_kick_evidence.py',
+)
+
+
+def validate_plan_kick(options):
+    enabled = options.get('player_ui_plan_kick_probe', False)
+    if type(enabled) is not bool:
+        raise SystemExit('player_ui_plan_kick_probe must be a boolean')
+    if enabled and (options.get('player_ui_overlay_probe') is not True or
+                    type(options.get('player_ui_overlay_callbacks')) is not int or
+                    options['player_ui_overlay_callbacks'] != 160):
+        raise SystemExit('plan-kick requires explicit UI overlay160')
+    return enabled
+
+
+def plan_kick_sources(repo):
+    sources = [repo / name for name in PLAN_KICK_SOURCES]
+    if not all(path.is_file() for path in sources):
+        raise SystemExit('plan-kick requires all frozen source files')
+    return sources
+
+
+def validate_plan_kick_config(config, enabled):
+    values = re.findall(r'(?m)^\s*X4LAN_CONFIG\.native_gate_linux_ui_plan_kick_probe\s*=\s*(.*?)\s*$', config)
+    if values != (['true'] if enabled else []):
+        raise SystemExit('plan-kick config does not match frozen option')
+
+
+def plan_kick_environment(enabled, slot):
+    return {'X4_DEV_UI_PLAN_KICK': '1'} if enabled and slot == 2 else {}
+
+
+SEAT_QUERY_SOURCES = (
+    'src/native/engine/linux/gate_player_ui_seat_query.h',
+    'src/native/engine/linux/player_ui_seat_query.h',
+    'tools/dev/linux_ui_seat_query_evidence.py',
+)
+
+
+def validate_seat_query(options):
+    enabled = options.get('player_ui_seat_query_probe', False)
+    if type(enabled) is not bool:
+        raise SystemExit('player_ui_seat_query_probe must be a boolean')
+    if enabled and (options.get('player_ui_overlay_probe') is not True or
+                    type(options.get('player_ui_overlay_callbacks')) is not int or
+                    options['player_ui_overlay_callbacks'] != 160):
+        raise SystemExit('seat-query requires explicit UI overlay160')
+    return enabled
+
+
+def seat_query_sources(repo):
+    sources = [repo / name for name in SEAT_QUERY_SOURCES]
+    if not all(path.is_file() for path in sources):
+        raise SystemExit('seat-query requires all frozen source files')
+    return sources
+
+
+def validate_seat_query_config(config, enabled):
+    values = re.findall(r'(?m)^\s*X4LAN_CONFIG\.native_gate_linux_ui_seat_query_probe\s*=\s*(.*?)\s*$', config)
+    if values != (['true'] if enabled else []):
+        raise SystemExit('seat-query config does not match frozen option')
+
+
+def seat_query_environment(enabled, slot):
+    return {'X4_DEV_UI_SEAT_QUERY': '1'} if enabled and slot == 2 else {}
+
+
+LIVE_POSE_SOURCES = (
+    'src/native/engine/linux/gate_player_live_pose_observer.h',
+    'src/native/engine/linux/player_live_pose_preload.h',
+    'src/native/engine/linux/player_live_pose_preload_impl.h',
+    'src/native/engine/linux/player_live_pose_preload_pin.h',
+    'tools/dev/linux_ui_live_pose_observer_evidence.py',
+    'tools/dev/linux_ui_pose_scope_evidence.py',
+)
+
+
+def validate_live_pose_observer(options):
+    enabled = options.get('player_ui_live_pose_observer', False)
+    if type(enabled) is not bool:
+        raise SystemExit('player_ui_live_pose_observer must be a boolean')
+    if enabled and (options.get('player_ui_seat_query_probe') is not True or
+                    options.get('player_ui_overlay_probe') is not True or
+                    type(options.get('player_ui_overlay_callbacks')) is not int or
+                    options['player_ui_overlay_callbacks'] != 160):
+        raise SystemExit('live-pose observer requires explicit seat query and UI overlay160')
+    return enabled
+
+
+def validate_live_pose_evidence_contract(options):
+    enabled = validate_live_pose_observer(options)
+    version = options.get('player_ui_live_pose_observer_evidence_version')
+    if (enabled and (type(version) is not int or version != 2)) or (not enabled and version is not None):
+        raise SystemExit('live-pose evidence contract must be frozen as version 2 when enabled')
+    return version
+
+
+SEAT_CORRECTION_SOURCES = (
+    'src/native/engine/linux/gate_player_ui_seat_correction.h',
+    'src/native/engine/linux/gate_player_ui_overlay_probe.h',
+    'src/native/engine/linux/gate_player_ui_seat_query.h',
+    'src/native/engine/linux/player_ui_live_correction.h',
+    'src/native/engine/linux/gate_player_live_pose_observer.h',
+    'src/native/engine/linux/player_live_pose_preload.h',
+    'src/native/engine/linux/player_live_pose_preload_impl.h',
+    'src/native/engine/linux/player_live_pose_preload_pin.h',
+    'src/native/engine/linux/player_ui_published_pose.h',
+    'src/native/engine/linux/player_ui_seat_transform.h',
+    'tools/dev/linux_ui_seat_correction_evidence.py',
+)
+
+
+def validate_seat_correction(options, *, frozen=False):
+    enabled = options.get('player_ui_seat_correction', False)
+    if type(enabled) is not bool:
+        raise SystemExit('player_ui_seat_correction must be a boolean')
+    if enabled and not validate_live_pose_observer(options):
+        raise SystemExit('seat correction requires explicit live observer, seat query and UI overlay160')
+    if frozen:
+        version = options.get('player_ui_seat_correction_evidence_version')
+        if (enabled and (type(version) is not int or version != 1)) or (not enabled and version is not None):
+            raise SystemExit('seat correction requires frozen evidence version 1 when enabled')
+    return enabled
+
+
+def seat_correction_sources(repo):
+    sources = [repo / name for name in SEAT_CORRECTION_SOURCES]
+    if not all(path.is_file() for path in sources):
+        raise SystemExit('seat correction requires all frozen source files')
+    return sources
+
+
+def validate_seat_correction_config(config, enabled):
+    values = re.findall(r'(?m)^\s*X4LAN_CONFIG\.native_gate_linux_ui_seat_correction\s*=\s*(.*?)\s*$', config)
+    if values != (['true'] if enabled else []):
+        raise SystemExit('seat correction config does not match frozen option')
+
+
+def seat_correction_environment(enabled, slot):
+    return {'X4_DEV_UI_SEAT_CORRECTION': '1'} if enabled and slot == 2 else {}
+
+
+def live_pose_observer_sources(repo):
+    sources = [repo / name for name in LIVE_POSE_SOURCES]
+    if not all(path.is_file() for path in sources):
+        raise SystemExit('live-pose observer requires all frozen source files')
+    return sources
+
+
+def validate_live_pose_observer_config(config, enabled):
+    values = re.findall(r'(?m)^\s*X4LAN_CONFIG\.native_gate_linux_ui_live_pose_observer\s*=\s*(.*?)\s*$', config)
+    if values != (['true'] if enabled else []):
+        raise SystemExit('live-pose observer config does not match frozen option')
+
+
+def live_pose_observer_environment(enabled, slot):
+    return {'X4_DEV_UI_LIVE_POSE_OBSERVER': '1'} if enabled and slot == 2 else {}
+
+
+def validate_ui_overlay(options, frames):
+    validate_seat_correction(options)
+    validate_plan_kick(options)
+    validate_seat_query(options)
+    validate_live_pose_observer(options)
+    enabled = options.get('player_ui_overlay_probe', False)
+    if type(enabled) is not bool:
+        raise SystemExit('player_ui_overlay_probe must be a boolean')
+    callbacks = options.get('player_ui_overlay_callbacks', 1)
+    if type(callbacks) is not int or callbacks not in (1, 8, 160) or (callbacks != 1 and not enabled):
+        raise SystemExit('UI overlay callbacks must be 1, 8 or 160; multiple callbacks require the explicit probe')
+    if callbacks != 1 and frames < callbacks + 5:
+        raise SystemExit('UI overlay callback count requires independent frames >= count+5')
+    required = ('player_presentation_fork_probe', 'player_presentation_probe',
+                'player_view_query_observer', 'ui_callback_observer')
+    if enabled and (frames < 6 or not all(options.get(key) is True for key in required) or
+                    not (options.get('player_lifetime_preload') or options.get('player_lifetime_sha256'))):
+        raise SystemExit('UI overlay requires independent >=6 frames, fork, presentation, view-query, callbacks and lifetime')
+    return enabled
+
+
+def ui_overlay_sources(repo):
+    sources = [repo / name for name in UI_OVERLAY_SOURCES]
+    if not all(source.is_file() for source in sources):
+        raise SystemExit('UI overlay requires all frozen source files')
+    return sources
+
+
+def validate_ui_overlay_config(config, enabled, callbacks=1):
+    values = re.findall(r'(?m)^\s*X4LAN_CONFIG\.native_gate_linux_ui_overlay_probe\s*=\s*(.*?)\s*$', config)
+    if values != (['true'] if enabled else []):
+        raise SystemExit('UI overlay config does not match frozen option')
+    counts = re.findall(r'(?m)^\s*X4LAN_CONFIG\.native_gate_linux_ui_overlay_callbacks\s*=\s*(.*?)\s*$', config)
+    if counts != ([str(callbacks)] if enabled and callbacks != 1 else []):
+        raise SystemExit('UI overlay callback config does not match frozen option')
+
+
+def ui_overlay_environment(enabled, slot, callbacks=1):
+    key = {1: 'X4_DEV_UI_OVERLAY', 8: 'X4_DEV_UI_OVERLAY_EIGHT', 160: 'X4_DEV_UI_OVERLAY_160'}[callbacks]
+    return {key: '1'} if enabled and slot == 2 else {}
+
+
+def parse_ui_overlay_evidence(engine_lines, stderr_lines, trace_lines, slot, enabled, fork, callbacks=1):
+    result = {'pass': False, 'errors': [], 'enabled': enabled and slot == 2,
+              'readiness_proven': False, 'exclusion_proven': False, 'safe_resume_proven': False}
+    errors = result['errors']
+    if (type(slot) is not int or slot not in (1, 2) or type(enabled) is not bool or
+            type(callbacks) is not int or callbacks not in (1, 8, 160) or (callbacks != 1 and not enabled)):
+        errors.append('invalid UI overlay slot or activation boolean')
+        return result
+    markers = [(i, line) for i, line in enumerate(engine_lines) if 'UI_OVERLAY' in line]
+    native = [line for line in stderr_lines if 'X4 UI OVERLAY' in line]
+    result.update(raw_engine_receipts=[line for _, line in markers], raw_native_receipts=native)
+    if not enabled or slot == 1:
+        if markers or native:
+            errors.append('unexpected disabled or client1 UI overlay evidence')
+        result['pass'] = not errors
+        return result
+    if (slot != 2 or len(markers) != 2 or len(native) != (callbacks + 1 if callbacks != 1 else 1) or
+            any(line.count('UI_OVERLAY') != 1 for _, line in markers) or
+            any(len(line) > 2048 or not line.endswith('\n') for line in [*result['raw_engine_receipts'], *native])):
+        errors.append('missing, duplicate, truncated or oversized UI overlay receipts')
+        return result
+    prefix = r'.*?\[X4LAN\] NATIVE_GATE '
+    if not re.fullmatch(prefix + r'LINUX_UI_OVERLAY_ARMED tick=8 slot=2\n', markers[0][1]):
+        errors.append('invalid UI overlay arm')
+    number, pointer = r'(0|[1-9][0-9]{0,19})', r'([1-9a-f][0-9a-f]{0,15})'
+    measurements = ('updates', 'applies', 'restores', 'before', 'overlay', 'paused', 'resumed', 'restored')
+    names = (*measurements, 'p1', 'p2', 'room', 'object')
+    body = (' '.join(key+'='+number for key in measurements) + ' ' +
+            ' '.join(key+'='+pointer for key in ('p1', 'p2', 'room', 'object')) + r' canonical_restored=1')
+    if callbacks == 1:
+        payload = r'v=2 status=pass tick=9 ' + body
+        match = re.fullmatch(prefix + r'LINUX_UI_OVERLAY_RESULT tick=10 slot=2 ('+payload+r')\n', markers[1][1])
+        if not match:
+            errors.append('invalid UI overlay result grammar or restoration state')
+            return result
+        if native != ['X4 UI OVERLAY RESULT '+match[1]+'\n']:
+            errors.append('native and engine UI overlay receipts differ')
+        observations = [match.groups()[1:]]
+    else:
+        summary = f'v=3 status=pass first=9 last={8+callbacks} count={callbacks}'
+        if (not re.fullmatch(prefix + f'LINUX_UI_OVERLAY_RESULT tick={9+callbacks} slot=2 '+summary+r'\n', markers[1][1]) or
+                native[-1] != 'X4 UI OVERLAY RESULT '+summary+'\n'):
+            errors.append('invalid bounded UI overlay summary')
+        observations = []
+        for ordinal, line in enumerate(native[:-1], 1):
+            frame = (f'X4 UI OVERLAY FRAME v=3 tick={8+ordinal} ordinal={ordinal} count={callbacks} ' + body + r'\n')
+            match = re.fullmatch(frame, line)
+            if not match:
+                errors.append('missing, reordered or malformed UI overlay frame')
+            else:
+                observations.append(match.groups())
+    from linux_player_presentation_evidence import validate_presentation_rows
+    presentation = validate_presentation_rows(trace_lines, slot)
+    proof = fork.get('measurements', {})
+    proof_valid = (fork.get('pass') is True and
+                   all(key in proof for key in ('p1_ship', 'p2_ship', 'p1', 'p2', 'room')))
+    if not proof_valid:
+        errors.append('UI overlay lacks an accepted child presentation fork proof')
+    measured_frames = []
+    for values in observations:
+        measured = {key: int(value, 16 if index >= 8 else 10)
+                    for index, (key, value) in enumerate(zip(names, values))}
+        measured_frames.append(measured)
+        if any(value > 0xffffffffffffffff for value in measured.values()):
+            errors.append('UI overlay field outside native uint64 range')
+        if not (1 <= measured['updates'] <= 8 and
+                measured['applies'] == measured['restores'] == measured['updates'] + 1):
+            errors.append('UI overlay updates or apply/restore counters invalid')
+        if proof_valid and (any(measured[key] != proof['p1_ship'] for key in ('before', 'paused', 'restored')) or
+                any(measured[key] != proof['p2_ship'] for key in ('overlay', 'resumed')) or
+                any(measured[key] != proof[key] for key in ('p1', 'p2', 'room'))):
+            errors.append('UI overlay P1/P2 pause/resume/restore or player identity mismatch')
+        if not presentation['pass'] or measured['object'] != presentation.get('ui_plan', {}).get('presenter', -9) + 8:
+            errors.append('UI overlay object differs from authenticated presenter+8')
+    if callbacks == 1 and measured_frames:
+        result['measurements'] = measured_frames[0]
+    else:
+        result['frames'] = measured_frames
+    fork_rows = fork.get('raw_engine_receipts', [])
+    prior = [i for i, line in enumerate(engine_lines) if len(fork_rows) == 2 and line == fork_rows[1]]
+    if len(prior) != 1 or not prior[0] < markers[0][0] < markers[1][0]:
+        errors.append('child fork result, UI arm and result order invalid')
+    fork_native = fork.get('raw_native_receipts', [])
+    native_prior = [i for i, line in enumerate(stderr_lines)
+                    if len(fork_native) == 1 and line == fork_native[0]]
+    first_ui = next((i for i, line in enumerate(stderr_lines) if 'X4 UI OVERLAY' in line), -1)
+    if len(native_prior) != 1 or not native_prior[0] < first_ui:
+        errors.append('native child fork result must occur exactly once before UI evidence')
+    result['callback_tick'] = 9
+    result['callback_count'] = callbacks
+    result['limitations'] = ['bounded native-guarded Move callbacks only; no persistent UI, reader exclusion or gameplay acceptance']
+    result['pass'] = not errors
+    return result
+
+
+def collect_ui_overlay_evidence(profile, stderr, slot, enabled, fork, callbacks=1):
+    paths = {'engine_sha256': profile / 'engine-output.log', 'stderr_sha256': stderr}
+    if enabled and slot == 2:
+        paths['native_fd_sha256'] = profile / 'controller-lifecycle.log'
+    lines, hashes, errors = {}, {}, []
+    for key, path in paths.items():
+        try:
+            lines[key] = path.read_text(errors='strict').splitlines(keepends=True)
+            hashes[key] = sha(path)
+        except (OSError, UnicodeError) as error:
+            lines[key] = []
+            errors.append('UI overlay file unavailable: ' + str(error))
+    result = parse_ui_overlay_evidence(lines['engine_sha256'], lines['stderr_sha256'],
+                                     lines.get('native_fd_sha256', []), slot, enabled, fork, callbacks)
+    result.update(hashes)
+    if errors:
+        result['errors'].extend(errors)
+        result['pass'] = False
+    if enabled and slot == 2:
+        for key, label in (('engine_sha256', 'engine'), ('native_fd_sha256', 'lifecycle'),
+                           ('stderr_sha256', 'stderr')):
+            if key not in hashes or fork.get(key) != hashes[key]:
+                result['errors'].append(f'UI overlay and fork proofs refer to different or missing {label} bytes')
+                result['pass'] = False
+    return result
+
+
+def validate_presentation_fork(options, frames):
+    enabled = options.get('player_presentation_fork_probe', False)
+    if type(enabled) is not bool:
+        raise SystemExit('player_presentation_fork_probe must be a boolean')
+    if enabled and (frames < 5 or options.get('player_presentation_probe') is not True or
+                    not (options.get('player_lifetime_preload') or options.get('player_lifetime_sha256')) or
+                    options.get('fork_save')):
+        raise SystemExit('presentation fork requires independent >=5 frames, presentation and lifetime; excludes fork-save')
+    return enabled
+
+
+def presentation_fork_sources(repo):
+    sources = [repo / 'src/native/engine/linux' / name for name in
+               ('player_presentation_fork_probe.h', 'player_presentation_overlay.h',
+                'gate_player_presentation_fork.h', 'gate_fork_save.h', 'gate_linux.c')]
+    if not all(path.is_file() for path in sources):
+        raise SystemExit('presentation fork requires all frozen native source files')
+    return sources
+
+
+def validate_presentation_fork_config(config, enabled):
+    values = re.findall(r'(?m)^\s*X4LAN_CONFIG\.native_gate_linux_presentation_fork_probe\s*=\s*(.*?)\s*$', config)
+    if values != (['true'] if enabled else []):
+        raise SystemExit('presentation fork config does not match frozen option')
+
+
+def presentation_fork_environment(enabled):
+    return {'X4_DEV_PRESENTATION_FORK': '1'} if enabled else {}
+
+
+def collect_preload_evidence(result, local, games, run_dir, manifest, *, view_query_enabled,
+                             ui_callback_enabled, lifetime_preload, fork_enabled, recurring, physics_frames,
+                             ui_overlay_enabled=False):
+    """Retain independent fork diagnostics before preserving the first observer failure."""
+    fork_errors = []
+    if fork_enabled or 'player_presentation_fork_probe' in manifest:
+        for slot, (_, profile) in zip(local, games):
+            stderr = run_dir / f'game{slot}-stderr.log' if recurring else run_dir / f'game{slot}-stdout.log'
+            fork = collect_presentation_fork_evidence(profile, stderr, slot, fork_enabled)
+            if fork_enabled:
+                result.setdefault('presentation_fork_evidence', {})[str(slot)] = fork
+            if not fork['pass']:
+                fork_errors.append(f'client {slot}: invalid presentation fork evidence: {fork["errors"]}')
+    overlay_errors = []
+    if ui_overlay_enabled or 'player_ui_overlay_probe' in manifest:
+        for slot, (_, profile) in zip(local, games):
+            stderr = run_dir / f'game{slot}-stderr.log' if recurring else run_dir / f'game{slot}-stdout.log'
+            fork = result.get('presentation_fork_evidence', {}).get(str(slot), {})
+            evidence = collect_ui_overlay_evidence(profile, stderr, slot, ui_overlay_enabled, fork,
+                                                   manifest.get('player_ui_overlay_callbacks', 1))
+            if ui_overlay_enabled:
+                result.setdefault('ui_overlay_evidence', {})[str(slot)] = evidence
+            if not evidence['pass']:
+                overlay_errors.append(f'client {slot}: invalid UI overlay evidence: {evidence["errors"]}')
+    plan_kick_enabled = validate_plan_kick(manifest)
+    if plan_kick_enabled or 'player_ui_plan_kick_probe' in manifest:
+        from linux_ui_plan_kick_evidence import collect_plan_kick_evidence
+        for slot, (_, profile) in zip(local, games):
+            stderr = run_dir / f'game{slot}-stderr.log' if recurring else run_dir / f'game{slot}-stdout.log'
+            overlay = result.get('ui_overlay_evidence', {}).get(str(slot), {})
+            evidence = collect_plan_kick_evidence(profile, stderr, slot, plan_kick_enabled, overlay)
+            if plan_kick_enabled:
+                result.setdefault('ui_plan_kick_evidence', {})[str(slot)] = evidence
+            if not evidence['pass']:
+                overlay_errors.append(f'client {slot}: invalid plan-kick evidence: {evidence["errors"]}')
+    seat_query_enabled = validate_seat_query(manifest)
+    if seat_query_enabled or 'player_ui_seat_query_probe' in manifest:
+        from linux_ui_seat_query_evidence import collect_ui_seat_query_evidence
+        for slot, (_, profile) in zip(local, games):
+            stderr = run_dir / f'game{slot}-stderr.log' if recurring else run_dir / f'game{slot}-stdout.log'
+            overlay = result.get('ui_overlay_evidence', {}).get(str(slot), {})
+            fork = result.get('presentation_fork_evidence', {}).get(str(slot), {})
+            evidence = collect_ui_seat_query_evidence(profile, stderr, slot, seat_query_enabled, overlay, fork)
+            if seat_query_enabled:
+                result.setdefault('ui_seat_query_evidence', {})[str(slot)] = evidence
+            if not evidence['pass']:
+                overlay_errors.append(f'client {slot}: invalid seat-query evidence: {evidence["errors"]}')
+    live_pose_enabled = validate_live_pose_observer(manifest)
+    if live_pose_enabled or 'player_ui_live_pose_observer' in manifest:
+        validate_live_pose_evidence_contract(manifest)
+        from linux_ui_live_pose_observer_evidence import collect_ui_live_pose_observer_evidence
+        from linux_ui_pose_scope_evidence import collect_ui_pose_scope_evidence
+        for slot, (_, profile) in zip(local, games):
+            stderr = run_dir / f'game{slot}-stderr.log' if recurring else run_dir / f'game{slot}-stdout.log'
+            overlay = result.get('ui_overlay_evidence', {}).get(str(slot), {})
+            fork = result.get('presentation_fork_evidence', {}).get(str(slot), {})
+            query = result.get('ui_seat_query_evidence', {}).get(str(slot), {})
+            evidence = collect_ui_live_pose_observer_evidence(profile, stderr, slot, live_pose_enabled,
+                                                               overlay, fork, query)
+            if live_pose_enabled:
+                result.setdefault('ui_live_pose_observer_evidence', {})[str(slot)] = evidence
+            if not evidence['pass']:
+                overlay_errors.append(f'client {slot}: invalid live-pose observation: {evidence["errors"]}')
+            scope = collect_ui_pose_scope_evidence(profile, stderr, slot, live_pose_enabled, evidence, overlay)
+            if live_pose_enabled:
+                result.setdefault('ui_pose_scope_evidence', {})[str(slot)] = scope
+            if not scope['pass']:
+                overlay_errors.append(f'client {slot}: invalid pose-scope observation: {scope["errors"]}')
+            from linux_ui_seat_correction_evidence import collect_ui_seat_correction_evidence
+            correction_enabled = validate_seat_correction(manifest, frozen=True)
+            correction = collect_ui_seat_correction_evidence(
+                profile, stderr, slot, correction_enabled, overlay, fork, query, evidence, scope)
+            if correction_enabled:
+                result.setdefault('ui_seat_correction_evidence', {})[str(slot)] = correction
+            if not correction['pass']:
+                overlay_errors.append(f'client {slot}: invalid seat correction evidence: {correction["errors"]}')
+    if 'ui_callback_observer' in manifest and not ui_callback_enabled:
+        for slot, (_, profile) in zip(local, games):
+            engine_text = (profile / 'engine-output.log').read_text(errors='strict')
+            stderr_text = (run_dir / f'game{slot}-stderr.log').read_text(errors='strict')
+            if 'LINUX_UI_CALLBACK_' in engine_text or 'X4 UI CALLBACK RESULT' in stderr_text:
+                raise ValueError(f'client {slot}: unexpected disabled UI callback evidence')
+    if view_query_enabled:
+        result['player_view_query_evidence'] = {}
+        result['player_view_query_receipts'] = {}
+        view_errors = []
+        for slot, (_, profile) in zip(local, games):
+            try:
+                with (run_dir / f'game{slot}-stderr.log').open(errors='strict') as stream:
+                    receipts = [line.rstrip('\n') for line in stream if 'X4 VIEW QUERY PRELOAD' in line]
+            except (OSError, UnicodeError):
+                receipts = []
+            result['player_view_query_receipts'][str(slot)] = receipts
+            if not validate_view_query_receipts(receipts):
+                view_errors.append(f'client {slot}: missing, repeated or refused view query observer activation')
+            evidence = collect_view_query_evidence(profile / 'engine-output.log', slot, physics_frames)
+            result['player_view_query_evidence'][str(slot)] = evidence
+            if ui_callback_enabled:
+                try:
+                    engine_lines = (profile / 'engine-output.log').read_text(errors='strict').splitlines()
+                    stderr_lines = (run_dir / f'game{slot}-stderr.log').read_text(errors='strict').splitlines()
+                    presentation_lines = (profile / 'controller-lifecycle.log').read_text(errors='strict').splitlines(keepends=True)
+                    callback = parse_ui_callback_evidence(engine_lines, stderr_lines, presentation_lines, slot, physics_frames)
+                except (OSError, UnicodeError):
+                    callback = {'pass': False, 'errors': ['callback evidence files unreadable']}
+                result.setdefault('ui_callback_evidence', {})[str(slot)] = callback
+                if not callback['pass']:
+                    view_errors.append(f'client {slot}: invalid UI callback evidence: {callback["errors"]}')
+            if not evidence['pass']:
+                view_errors.append(f'client {slot}: invalid view query evidence: {evidence["errors"]}')
+        if view_errors:
+            raise ValueError('; '.join(view_errors))
+    if lifetime_preload:
+        result['player_lifetime_receipts'] = {}
+        for slot in local:
+            stderr = run_dir / f'game{slot}-stderr.log'
+            with stderr.open(errors='strict') as stream:
+                receipts = [line.rstrip('\n') for line in stream if 'X4 PLAYER LIFETIME PRELOAD' in line]
+            result['player_lifetime_receipts'][str(slot)] = receipts
+            if not validate_lifetime_receipts(receipts):
+                raise ValueError(f'client {slot}: missing, repeated or refused lifetime preload activation')
+    if fork_errors or overlay_errors:
+        raise ValueError('; '.join(fork_errors + overlay_errors))
+
+
+def collect_presentation_fork_evidence(profile, stderr, slot, enabled):
+    # Read streams independently: an absent/truncated trace must not hide stderr refusal.
+    paths = {'engine_sha256': profile / 'engine-output.log', 'stderr_sha256': stderr}
+    if enabled:
+        paths['native_fd_sha256'] = profile / 'controller-lifecycle.log'
+    lines, hashes, errors = {}, {}, []
+    for key, path in paths.items():
+        try:
+            lines[key] = path.read_text(errors='strict').splitlines(keepends=True)
+            hashes[key] = sha(path)
+        except (OSError, UnicodeError) as error:
+            lines[key] = []
+            errors.append('presentation fork file unavailable: ' + str(error))
+    engine_lines, stderr_lines = lines['engine_sha256'], lines['stderr_sha256']
+    native = [line for line in stderr_lines if 'X4 PRESENTATION FORK' in line]
+    markers = [line for line in engine_lines if 'LINUX_PRESENTATION_FORK' in line]
+    if errors:
+        return {'pass': False, 'errors': errors, 'raw_native_receipts': native,
+                'raw_engine_receipts': markers, **hashes}
+    if not enabled:
+        unexpected = native or any('PRESENTATION_FORK' in line for line in engine_lines)
+        return {'pass': not unexpected, 'enabled': False,
+                'errors': ['unexpected presentation fork evidence while disabled'] if unexpected else []}
+    result = parse_presentation_fork_evidence(engine_lines, stderr_lines, lines['native_fd_sha256'], slot)
+    result.update(hashes)
+    return result
+
+
+def parse_presentation_fork_evidence(engine_lines, stderr_lines, trace_lines, slot):
+    """Bind the child's measured roundtrip to the existing parent identities."""
+    result = {'pass': False, 'errors': [], 'readiness_proven': False, 'safe_resume_proven': False}
+    errors = result['errors']
+    if type(slot) is not int or slot not in (1, 2):
+        errors.append('invalid presentation fork slot')
+        return result
+    markers = [(i, line) for i, line in enumerate(engine_lines) if 'LINUX_PRESENTATION_FORK' in line]
+    result['raw_engine_receipts'] = [line for _, line in markers]
+    raw = [line for line in stderr_lines if 'X4 PRESENTATION FORK' in line]
+    result['raw_native_receipts'] = raw
+    if (len(markers) != 2 or any(len(line) > 4096 or line.count('LINUX_PRESENTATION_FORK') != 1 or not line.endswith('\n') for _, line in markers) or
+            len(raw) != 1 or len(raw[0]) > 4096 or not raw[0].endswith('\n')):
+        errors.append('missing, duplicate, truncated or oversized presentation fork receipts')
+        return result
+    prefix = r'.*?\[X4LAN\] NATIVE_GATE '
+    if not re.fullmatch(prefix + rf'LINUX_PRESENTATION_FORK_ARMED tick=7 slot={slot}\n', markers[0][1]):
+        errors.append('invalid presentation fork arm')
+    pointer, number = r'([1-9a-f][0-9a-f]{0,15})', r'(0|[1-9][0-9]{0,19})'
+    payload = (r'v=1 status=pass parent_unchanged=1 child_reaped=1 lease_held=0 '
+               + ' '.join(name + '=' + pointer for name in ('p1', 'p2', 'room')) + ' '
+               + ' '.join(name + '=' + number for name in ('p1_ship', 'p2_ship', 'before', 'overlay', 'restored'))
+               + ' live=' + pointer + ' cached=' + pointer + ' refs=' + number + ',' + number + ',' + number
+               + ' marker=' + number + ',' + number + r' release_attempts=1')
+    match = re.fullmatch(prefix + rf'LINUX_PRESENTATION_FORK_RESULT tick=8 slot={slot} (' + payload + r')\n', markers[1][1])
+    if not match:
+        errors.append('invalid presentation fork result grammar or success state')
+        return result
+    receipt = match.group(1)
+    if raw != ['X4 PRESENTATION FORK RESULT ' + receipt + '\n']:
+        errors.append('native and engine presentation fork receipts differ')
+    names = ('p1', 'p2', 'room', 'p1_ship', 'p2_ship', 'before', 'overlay', 'restored',
+             'live', 'cached', 'refs_before', 'refs_acquired', 'refs_after', 'marker_before', 'marker_after')
+    values = dict(zip(names, match.groups()[1:]))
+    parsed = {key: int(value, 16 if key in ('p1', 'p2', 'room', 'live', 'cached') else 10)
+              for key, value in values.items()}
+    result['measurements'] = parsed
+    if any(value > 0xffffffffffffffff for value in parsed.values()):
+        errors.append('presentation fork field outside native uint64 range')
+    from linux_player_presentation_evidence import validate_presentation_rows
+    presentation = validate_presentation_rows(trace_lines, slot)
+    if not presentation['pass']:
+        errors.append('missing or invalid authenticated presentation identities')
+    else:
+        first, second = presentation['observations']
+        if (parsed['p1'] != first['player'] or parsed['p2'] != second['player'] or
+                parsed['room'] != second['parent'] or parsed['p1_ship'] != presentation['occupied_runtime']):
+            errors.append('presentation fork player, room or P1 ship identity mismatch')
+    runtimes = set()
+    for line in trace_lines:
+        if 'physics=body ' not in line or ' index=0 ' not in line:
+            continue
+        runtime = re.findall(r' runtime=([^ \n]*)', line)
+        roles = re.findall(r' role=([^ \n]*)', line)
+        slots = re.findall(r' slot=([^ \n]*)', line)
+        if (not line.startswith('X4LAN LIFECYCLE_DISCARD physics=body ') or len(runtime) != 1 or
+                not re.fullmatch(r'[0-9]{1,20}', runtime[0]) or
+                (roles and roles != ['p2']) or (slots and slots != [str(slot)])):
+            errors.append('malformed retained P2 body runtime, role or slot')
+            continue
+        value = int(runtime[0])
+        if value > 0xffffffffffffffff:
+            errors.append('retained P2 body runtime outside uint64 range')
+            continue
+        runtimes.add(value)
+    if runtimes != {parsed['p2_ship']}:
+        errors.append('presentation fork P2 ship differs from retained body evidence')
+    if (not parsed['p1_ship'] or not parsed['p2_ship'] or parsed['p1_ship'] == parsed['p2_ship'] or
+            parsed['before'] != parsed['p1_ship'] or parsed['restored'] != parsed['p1_ship'] or
+            parsed['overlay'] != parsed['p2_ship'] or parsed['live'] != parsed['room'] or parsed['cached'] != parsed['room']):
+        errors.append('presentation fork P1/P2/P1 roundtrip or room mismatch')
+    if (not 1 < parsed['refs_before'] < 0xffffffff or parsed['refs_acquired'] != parsed['refs_before'] + 1 or
+            parsed['refs_after'] != parsed['refs_before'] or parsed['marker_before'] != 2 or parsed['marker_after'] != 2):
+        errors.append('presentation fork reference or marker imbalance')
+    prior = [i for i, line in enumerate(engine_lines)
+             if re.fullmatch(prefix + rf'LINUX_PRESENTATION_PROBE tick=7 slot={slot}\n', line)]
+    if len(prior) != 1 or not prior[0] < markers[0][0] < markers[1][0]:
+        errors.append('presentation probe, fork arm and result ordering invalid')
+    result['limitations'] = ['child-only measured getter roundtrip; no UI handler, reader exclusion or gameplay acceptance']
+    result['pass'] = not errors
+    return result
+
+
+def validate_ui_callback_observer(options, frames):
+    enabled = options.get('ui_callback_observer', False)
+    if type(enabled) is not bool:
+        raise SystemExit('ui_callback_observer must be a boolean')
+    if enabled and (frames < 5 or options.get('player_view_query_observer') is not True or
+                    options.get('player_presentation_probe') is not True):
+        raise SystemExit('UI callback observer requires view-query, presentation, and at least 5 independent frames')
+    return enabled
+
+
+def validate_ui_callback_config(config, enabled):
+    values = re.findall(r'(?m)^\s*X4LAN_CONFIG\.native_gate_linux_ui_callback_observer\s*=\s*(.*?)\s*$', config)
+    if (enabled and values != ['true']) or (not enabled and values not in ([], ['false'])):
+        raise SystemExit('UI callback config does not match its frozen option')
+
+
+def parse_ui_callback_evidence(engine_lines, stderr_lines, presentation_lines, slot, frames):
+    """Validate one drained callback epoch; this does not establish exclusion."""
+    errors = []
+    if type(slot) is not int or slot not in (1, 2) or type(frames) is not int or not 5 <= frames <= 600:
+        return {'pass': False, 'errors': ['invalid callback evidence parameters']}
+    prefix = 'LINUX_UI_CALLBACK_'
+    rows = [line[line.index(prefix):].rstrip('\n') for line in engine_lines if prefix in line]
+    close = f'LINUX_UI_CALLBACK_CLOSE tick={frames + 3} slot={slot}'
+    counters = r'[0-9]{1,20}(?:/[0-9]{1,20}){8}'
+    pattern = (rf'LINUX_UI_CALLBACK_RESULT tick={frames + 4} slot={slot} '
+               r'(v=1 owner=([1-9][0-9]{0,9}) object=([1-9a-f][0-9a-f]{0,15}) '
+               rf'move=({counters}) render=({counters}))')
+    match = re.fullmatch(pattern, rows[1]) if len(rows) == 2 else None
+    if len(rows) != 2 or rows[0] != close or not match:
+        errors.append('missing, duplicated, malformed or reordered close/result')
+        return {'pass': False, 'errors': errors}
+    payload, owner, obj, move, render = match.groups()
+    owner = int(owner)
+    if owner > 0xffffffff or int(obj, 16) > 0xffffffffffffffff:
+        errors.append('invalid callback identity')
+    parsed = []
+    for text in (move, render):
+        fields = text.split('/')
+        if len(fields) != 9 or any(not re.fullmatch(r'0|[1-9][0-9]*', x) for x in fields):
+            errors.append('malformed callback counters')
+            continue
+        values = [int(x) for x in fields]
+        if any(x > 0xffffffffffffffff for x in values) or not values[0] or values[0] != values[1] or any(values[3:8]) or values[8] != owner:
+            errors.append('unbalanced, foreign, nested, changed or empty callback scope')
+        parsed.append(values)
+    from linux_player_presentation_evidence import validate_presentation_rows
+    presentation = validate_presentation_rows(presentation_lines, slot)
+    if not presentation['pass'] or int(obj, 16) != presentation.get('ui_plan', {}).get('presenter', -9) + 8:
+        errors.append('callback object does not match authenticated presentation owner')
+    arm = [index for index, line in enumerate(engine_lines) if 'LINUX_VIEW_QUERY_ARMED' in line]
+    arm_rows = [engine_lines[index].split('LINUX_VIEW_QUERY_ARMED', 1)[1].rstrip('\n') for index in arm]
+    if arm_rows != [f' tick=7 slot={slot}']:
+        errors.append('callback arm tick or slot invalid')
+    close_index = [index for index, line in enumerate(engine_lines) if 'LINUX_UI_CALLBACK_CLOSE' in line]
+    result_index = [index for index, line in enumerate(engine_lines) if 'LINUX_UI_CALLBACK_RESULT' in line]
+    if len(arm) != 1 or len(close_index) != 1 or len(result_index) != 1 or not arm[0] < close_index[0] < result_index[0]:
+        errors.append('callback arm, close and result order invalid')
+    raw = [line.rstrip('\n') for line in stderr_lines if 'X4 UI CALLBACK RESULT' in line]
+    if raw != ['X4 UI CALLBACK RESULT ' + payload]:
+        errors.append('missing, duplicate or mismatched deferred preload receipt')
+    return {'pass': not errors, 'errors': errors, 'owner': owner, 'object': obj,
+            'move': parsed[0] if len(parsed) == 2 else None,
+            'render': parsed[1] if len(parsed) == 2 else None,
+            'coverage': 'callbacks entered after arm and before close request',
+            'readiness_proven': False}
+
+
+def view_query_sources(repo):
+    sources = [repo / name for name in VIEW_QUERY_SOURCES]
+    if not all(source.is_file() for source in sources):
+        raise SystemExit('view query observer requires all frozen source files')
+    return sources
+
+
+def validate_view_query_bundle(root, manifest, network_physics):
+    enabled = validate_view_query_observer(manifest, manifest.get('independent_keyboard_frames', 0))
+    library = 'player_view_query/' + PLAYER_VIEW_QUERY
+    files = manifest.get('files', {})
+    if not isinstance(files, dict):
+        raise SystemExit('view query observer file inventory must be a mapping')
+    digest = manifest.get('player_view_query_sha256')
+    size = manifest.get('player_view_query_size')
+    if not enabled:
+        if (size is not None or digest is not None or (root / library).exists() or
+                any(name == library or 'player_view_query_preload' in name for name in files)):
+            raise SystemExit('disabled view query observer has frozen observer artifacts')
+        return False
+    if not network_physics:
+        raise SystemExit('view query observer requires disposable independent network physics')
+    if type(size) is not int or size <= 0 or not (root / library).is_file() or (root / library).stat().st_size != size:
+        raise SystemExit('view query observer library size is missing or inconsistent')
+    if not isinstance(digest, str) or re.fullmatch('[0-9a-f]{64}', digest) is None or files.get(library) != digest:
+        raise SystemExit('view query observer library hash is missing or inconsistent')
+    for name in [library, *('source-receipts/' + source for source in VIEW_QUERY_SOURCES)]:
+        expected = files.get(name)
+        path = root / name
+        if (not isinstance(expected, str) or re.fullmatch('[0-9a-f]{64}', expected) is None or
+                not path.is_file() or path.is_symlink() or sha(path) != expected):
+            raise SystemExit('view query observer requires intact library and source receipts: ' + name)
+    return True
+
+
+def validate_view_query_config(config, enabled):
+    assignments = re.findall(r'(?m)^\s*X4LAN_CONFIG\.native_gate_linux_view_query_observer\s*=\s*(.*?)\s*$', config)
+    if assignments != (['true'] if enabled else []):
+        raise SystemExit('view query observer config does not match the frozen option')
+
+
+def view_query_environment(env, case, digest, size):
+    # Keep the existing lifetime/math order and append the observer for this owned X4 only.
+    return dict(env, LD_PRELOAD=' '.join(filter(None, (env.get('LD_PRELOAD'), str(case / PLAYER_VIEW_QUERY)))),
+                X4MP_VIEW_QUERY_OBSERVER='1', X4MP_VIEW_QUERY_PRELOAD_SHA256=digest,
+                X4MP_VIEW_QUERY_PRELOAD_SIZE=str(size))
+
+
+def validate_view_query_receipts(receipts):
+    return receipts == ['X4 VIEW QUERY PRELOAD ACTIVE version=1']
+
+
+def parse_view_query_evidence(lines, slot, frames):
+    """Validate the frozen observer report, without treating queries as readiness."""
+    errors, rows = [], []
+    result = {'pass': False, 'errors': errors, 'rows': rows, 'raw_markers': [],
+              'observation_complete': False, 'readiness_proven': False,
+              'row_scope': 'outside_marked_frame'}
+    if type(slot) is not int or slot not in (1, 2) or type(frames) is not int or not 4 <= frames <= 600:
+        errors.append('invalid view query slot or frame window')
+        return result
+    markers = [line for line in lines if 'LINUX_VIEW_QUERY' in line]
+    result['raw_markers'] = markers
+    prefix = r'.*?\[X4LAN\] NATIVE_GATE '
+    armed = re.compile(prefix + r'LINUX_VIEW_QUERY_ARMED tick=7 slot=' + str(slot) + r'\n')
+    report = re.compile(prefix + r'LINUX_VIEW_QUERY_RESULT tick=' + str(4 + frames) +
+        r' slot=' + str(slot) + r' v=1 finished=1 ui_calls=([0-9]{1,20}) worker_calls=([0-9]{1,20}) '
+        r'other_calls=([0-9]{1,20}) probe_calls=([0-9]{1,20}) overflow=([0-9]{1,20}) rows=([0-9]{1,2}) data=([^\n]*)\n')
+    if (len(markers) != 2 or any(len(line) > 16640 or line.count('LINUX_VIEW_QUERY') != 1 for line in markers) or
+            not armed.fullmatch(markers[0])):
+        errors.append('missing, repeated, malformed or misordered view query markers')
+        return result
+    match = report.fullmatch(markers[1])
+    if not match:
+        errors.append('invalid view query final report, tick, version or slot')
+        return result
+    counts = dict(zip(('ui_calls', 'worker_calls', 'other_calls', 'probe_calls', 'overflow', 'row_count'),
+                      map(int, match.groups()[:6])))
+    result.update(counts)
+    if any(value > (1 << 64) - 1 for value in counts.values()) or counts['row_count'] > 64:
+        errors.append('view query counts exceed native bounds')
+        return result
+    data = match.group(7)
+    entries = data.split(';') if data else []
+    if len(entries) != counts['row_count']:
+        errors.append('view query row count mismatch')
+        return result
+    grammar = re.compile(r'([0-9a-f]{1,16})/([0-9]{1,20})/([0-9]{1,20})/([0-9]{1,20})/([0-9]{1,20})/([01])/0')
+    seen, previous_first = set(), 7
+    for entry in entries:
+        match = grammar.fullmatch(entry)
+        if not match:
+            errors.append('malformed view query row')
+            continue
+        caller = int(match.group(1), 16)
+        value, first, last, count, in_image = map(int, match.groups()[1:])
+        key = (caller, value, in_image)
+        if (not caller or max(value, first, last, count) > (1 << 64) - 1 or not count or
+                not 7 <= first <= last <= 4 + frames or first < previous_first or key in seen or
+                in_image != int(0x656000 <= caller < 0x2c730a9)):
+            errors.append('invalid view query row identity, range, count or order')
+        seen.add(key)
+        previous_first = first
+        rows.append(dict(caller=match.group(1), result=value, first_tick=first, last_tick=last,
+                         count=count, in_image=in_image, probe=0))
+    retained = sum(row['count'] for row in rows)
+    ordinary = counts['ui_calls'] - counts['probe_calls']
+    if (ordinary < 0 or retained + counts['overflow'] > ordinary or
+            (counts['overflow'] and counts['row_count'] != 64)):
+        errors.append('inconsistent view query counter totals or overflow')
+    result['unrepresented_ui_calls'] = ordinary - retained - counts['overflow']
+    result['observation_complete'] = not errors and not counts['overflow'] and result['unrepresented_ui_calls'] == 0
+    result['limitations'] = ['outside_marked_frame includes unmarked menu/default-notice/pause work; not stock-UI-only',
+                              'query observation does not establish player view or readiness']
+    if counts['overflow']:
+        result['limitations'].append('native row capacity exceeded; callers were omitted')
+    if result['unrepresented_ui_calls']:
+        result['limitations'].append('UI counters include calls without retained rows')
+    result['pass'] = not errors
+    return result
+
+
+def collect_view_query_evidence(engine, slot, frames):
+    # Read linewise and keep only the two bounded receipts, never the world dump.
+    try:
+        markers = []
+        with Path(engine).open(encoding='utf-8', errors='strict') as stream:
+            for line in stream:
+                if 'LINUX_VIEW_QUERY' in line:
+                    if len(line) > 16640 or len(markers) == 2:
+                        return {'pass': False, 'errors': ['oversized or repeated view query receipt'],
+                                'rows': [], 'observation_complete': False, 'readiness_proven': False}
+                    markers.append(line)
+        result = parse_view_query_evidence(markers, slot, frames)
+        result['engine_sha256'] = sha(Path(engine))
+        return result
+    except (OSError, UnicodeError) as error:
+        return {'pass': False, 'errors': ['view query engine log unavailable: ' + str(error)],
+                'rows': [], 'observation_complete': False, 'readiness_proven': False}
+
+
+def recurring_diagnostic_sources(repo):
+    engine = repo / 'src/native/engine/linux'
+    sources = [engine / name for name in (
+        'gate_player_recurring_receipt.h', 'gate_player_recurring_pause.h')]
+    if not all(source.is_file() for source in sources):
+        raise SystemExit('recurring diagnostics require both frozen receipt and pause headers')
+    return sources
+
+
+def freeze_source_receipts(repo, out, sources):
+    for source in sources:
+        destination = out / 'source-receipts' / source.relative_to(repo)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, destination)
+
+
+def validate_rolling_leaf_ticks(value, rolling_slices, ticks):
+    if value is None:
+        return
+    if (not isinstance(value, (list, tuple)) or len(value) != 2 or
+        any(type(tick) is not int for tick in value) or
+        type(rolling_slices) is not int or not 1 <= rolling_slices <= 18000 or
+        type(ticks) is not int or not 1 <= value[0] < value[1] <= min(18000, ticks)):
+        raise SystemExit('--world-rolling-leaf-ticks requires rolling census and two ordered ticks within the run')
+
+
+def validate_rolling_raw_ids(ids, leaf_ticks):
+    if ids is None:
+        return
+    if (leaf_ticks is None or not isinstance(ids, (list, tuple)) or not 1 <= len(ids) <= 8 or
+        any(not isinstance(value, str) or re.fullmatch('[0-7][0-9a-f]{15}', value) is None or
+            value == '0000000000000000' for value in ids) or len(set(ids)) != len(ids)):
+        raise SystemExit('--world-rolling-raw-ids requires leaf ticks and 1..8 unique nonzero saved IDs as 16 lowercase hex digits')
+
+
+def validate_throttle_probe(options, independent_frames):
+    enabled = options.get('player_throttle_probe', False)
+    warm = options.get('player_throttle_warm_probe', False)
+    if type(enabled) is not bool or type(warm) is not bool:
+        raise SystemExit('throttle probe options must be booleans')
+    if enabled and warm:
+        raise SystemExit('throttle probe modes are mutually exclusive')
+    if (enabled or warm) and (independent_frames < (3 if warm else 2) or
+                              options.get('player_external_camera_probe')):
+        raise SystemExit('throttle probe requires independent keyboard frames and excludes the camera probe')
+    return enabled or warm
+
+
+def throttle_probe_sources(repo):
+    source = repo / 'src/native/engine/linux/gate_player_throttle_discard.h'
+    if not source.is_file():
+        raise SystemExit('throttle probe requires gate_player_throttle_discard.h')
+    return [source]
+
+
+def throttle_probe_environment(manifest, network_physics):
+    enabled = validate_throttle_probe(manifest, manifest.get('independent_keyboard_frames', 0))
+    if enabled and not network_physics:
+        raise SystemExit('throttle probe requires disposable independent network physics')
+    warm = manifest.get('player_throttle_warm_probe', False)
+    expected_start = 6 if warm else 5 if enabled else None
+    expected_mode = 'state13-warm-discard' if warm else 'state13-discard' if enabled else None
+    if ((warm and ('player_throttle_start_tick' not in manifest or
+                   'player_throttle_environment' not in manifest)) or
+            (expected_start is not None and type(manifest.get('player_throttle_start_tick', expected_start)) is not int) or
+            manifest.get('player_throttle_start_tick', expected_start) != expected_start or
+            manifest.get('player_throttle_environment', expected_mode) != expected_mode):
+        raise SystemExit('throttle probe frozen schedule or environment mismatch')
+    return {'X4_DEV_P2_THROTTLE': expected_mode} if enabled else {}
+
+
+def validate_presentation_probe(options, independent_frames):
+    enabled = options.get('player_presentation_probe', False)
+    if type(enabled) is not bool:
+        raise SystemExit('player_presentation_probe must be a boolean')
+    if enabled and independent_frames < 4:
+        raise SystemExit('--player-presentation-probe requires at least 4 independent keyboard frames')
+    return enabled
+
+
+def validate_presentation_config(config, enabled):
+    assignments = re.findall(r'(?m)^\s*X4LAN_CONFIG\.native_gate_linux_presentation_probe\s*=\s*(.*?)\s*$', config)
+    if (enabled and assignments != ['true']) or (not enabled and assignments not in ([], ['false'])):
+        raise SystemExit('composed presentation config does not match the frozen option')
+
+
+def presentation_probe_sources(repo):
+    sources = [repo / 'src/native/engine/linux' / name for name in
+               ('gate_player_presentation_probe.h', 'player_presentation_probe.h')]
+    if not all(source.is_file() for source in sources):
+        raise SystemExit('presentation probe requires both native presentation headers')
+    return sources
+
+
+def validate_external_camera(options, independent_frames):
+    enabled = options.get('player_external_camera_probe', False)
+    if type(enabled) is not bool:
+        raise SystemExit('player_external_camera_probe must be a boolean')
+    if enabled and independent_frames < 3:
+        raise SystemExit('--player-external-camera-probe requires at least 3 independent keyboard frames')
+    return enabled
+
+
+def validate_external_camera_config(config, enabled):
+    assignments = re.findall(r'(?m)^\s*X4LAN_CONFIG\.native_gate_linux_external_camera_probe\s*=\s*(.*?)\s*$', config)
+    if (enabled and assignments != ['true']) or (not enabled and assignments not in ([], ['false'])):
+        raise SystemExit('composed external camera config does not match the frozen option')
+
+
+def validate_network_physics(manifest, physics, frames, ticks):
+    network_frames = validate_independent_keyboard(manifest, ticks)
+    validate_external_camera(manifest, network_frames)
+    validate_presentation_probe(manifest, network_frames)
+    validate_presentation_fork(manifest, network_frames)
+    validate_ui_overlay(manifest, network_frames)
+    validate_view_query_observer(manifest, network_frames)
+    validate_throttle_probe(manifest, network_frames)
+    if not network_frames and manifest.get('independent_keyboard_mode') is not None:
+        raise SystemExit('independent keyboard mode requires a nonzero frozen frame count')
+    if network_frames and (not physics or frames != network_frames or
+            manifest.get('independent_keyboard_mode') != 'independent_keyboard' or
+            manifest.get('stock_keyboard_replay_last_capture') != network_frames + 2):
+        raise SystemExit('independent keyboard bundle requires matching --controller-physics-discard --controller-physics-frames and frozen capture window')
+    return bool(network_frames)
+
+
+def physics_environment_mode(frames, network=False):
+    return 'network-frames-discard' if network else ('bounded-frames-discard' if frames > 1 else 'single-frame-discard')
+
+
+def collect_network_client(arguments, stderr, frames, slot, camera=False, throttle=False, throttle_start_tick=5, presentation=False):
+    kwargs = {'allow_camera': True} if camera else {}
+    if presentation:
+        kwargs['allow_presentation'] = True
+    if throttle:
+        kwargs['allow_throttle'] = True
+        kwargs['throttle_start_tick'] = throttle_start_tick
+    evidence = collect_network_physics_evidence(*arguments, frame_count=frames, stderr=stderr, slot=slot, **kwargs)
+    evidence.update(mode='independent_keyboard', stderr_path=str(stderr))
+    evidence.setdefault('validation_pending', False)
+    if stderr.is_file():
+        evidence['stderr_sha256'] = sha(stderr)
+    return evidence
+
+
+def add_camera_evidence(physics_result, run_dir, profiles):
+    camera_result = collect_camera_evidence(run_dir, profiles)
+    physics_result['camera_probe_result'] = camera_result
+    physics_result['pass'] = physics_result['pass'] and camera_result['pass']
+
+
+def network_peer_errors(clients, frames, throttle=False):
+    """A local parser pass also needs both peers to agree on both slot streams."""
+    if set(clients) != {'1', '2'}:
+        return ['network evidence requires both local clients']
+    for slot, evidence in clients.items():
+        records = evidence.get('slot_records')
+        if (evidence.get('pass') is not True or evidence.get('errors') or
+                evidence.get('validation_pending') or evidence.get('slot') != int(slot) or
+                not isinstance(records, dict) or set(records) != {'1', '2'}):
+            return ['network client evidence failed, incomplete or pending']
+        if any(not isinstance(rows, list) or len(rows) != frames or
+               any(not isinstance(row, str) or not re.fullmatch(r'(?:[0-9a-f]{2})+', row) for row in rows)
+               for rows in records.values()):
+            return ['network slot records are missing or incomplete']
+    if clients['1']['slot_records'] != clients['2']['slot_records']:
+        return ['network applied slot records differ between peers']
+    if throttle:
+        if compare_throttle_peers is None:
+            return ['strict throttle peer validator unavailable']
+        return compare_throttle_peers(clients['1'], clients['2'])
+    return []
+
+
+def validate_lifecycle_discard(manifest, ticks):
+    if manifest.get('independent_keyboard_frames'):
+        validate_independent_keyboard(manifest, ticks)
+    retain = manifest.get('player_factory_retain_until')
+    if not (manifest.get('player_factory_probe') and manifest.get('stock_keyboard_observer')
+            and manifest.get('serial_pathing') and isinstance(retain, int) and 5 < retain < ticks):
+        raise SystemExit('--controller-lifecycle-discard requires bundled factory probe, retention >5 and <ticks, observer and serial pathing')
+    conflicts = ('player_control_boundary_probe', 'player_control_bank_probe',
+                 'player_reference_probe', 'stock_keyboard_replay_probe', 'player_seat_preflight')
+    if any(manifest.get(key) for key in conflicts
+           if key != 'stock_keyboard_replay_probe' or not manifest.get('independent_keyboard_frames')):
+        raise SystemExit('--controller-lifecycle-discard conflicts with boundary/bank/reference/replay/seat probes')
+
+
+def validate_recurring_readiness(manifest, ticks, end):
+    if type(end) is not int or not 5 <= end <= 1000 or ticks <= end:
+        raise SystemExit('--controller-recurring-end must be 5..1000 and less than effective --ticks')
+    if not (manifest.get('stock_keyboard_observer') and manifest.get('serial_pathing')):
+        raise SystemExit('--controller-recurring-readiness requires bundled observer and serial pathing')
+    if manifest.get('player_control_boundary_probe') or manifest.get('player_control_bank_probe'):
+        raise SystemExit('recurring readiness conflicts with control-boundary and control-bank probes')
+
+
+def physics_window_end(enabled, frame_count, requested_end, ticks, *, network=False):
+    maximum = 600 if network else 180
+    if type(frame_count) is not int or not 1 <= frame_count <= maximum:
+        raise SystemExit(f'--controller-physics-frames must be 1..{maximum} for this mode')
+    if not enabled:
+        if frame_count != 1:
+            raise SystemExit('--controller-physics-frames requires --controller-physics-discard')
+        return requested_end
+    expected = 4 + frame_count
+    if requested_end is not None and requested_end != expected:
+        raise SystemExit('--controller-recurring-end must equal 4 + --controller-physics-frames')
+    if ticks <= expected:
+        raise SystemExit('physics frames require effective --ticks >= end+1')
+    return expected
+
+
+def collect_physics_client(arguments, stderr, frame_count):
+    if frame_count > 1:
+        if collect_recurring_physics_evidence is None:
+            raise RuntimeError('repeated physics evidence collector is unavailable')
+        evidence = collect_recurring_physics_evidence(*arguments, frame_count=frame_count, stderr=stderr)
+    else:
+        evidence = collect_physics_evidence(*arguments)
+        with stderr.open(errors='replace') as stream:
+            messages = [line for line in stream if 'PLAYER_CONTROL_RECURRING' in line]
+        if messages != ['X4LAN PLAYER_CONTROL_RECURRING_WORKER tick=5 tail=1 event=enter\n']:
+            evidence['errors'].append('physics requires one worker entry without release or main completion')
+        evidence.update(stderr_path=str(stderr), stderr_sha256=sha(stderr))
+        evidence['pass'] = not evidence['errors']
+    evidence['frame_count'] = frame_count
+    return evidence
+
+
+def recurring_readiness_evidence(lines, end):
+    ticks, errors = [], []
+    pattern = (r'X4LAN PLAYER_CONTROL_RECURRING tick=([1-9]\d*) completed=1 readiness_only=1 '
+               r'bank_writes=0 context_writes=0 reference_calls=0 other_threads_excluded=0')
+    for line in lines:
+        if is_fatal_gate_message(line) or 'PLAYER_CONTROL_RECURRING_FATAL' in line:
+            errors.append('fatal: ' + line.strip()[:300])
+        if 'PLAYER_CONTROL_RECURRING' not in line or 'PLAYER_CONTROL_RECURRING_FATAL' in line:
+            continue
+        match = re.fullmatch(pattern, line.rstrip('\n'))
+        if not match or not line.endswith('\n'):
+            errors.append('malformed recurring readiness record')
+        else:
+            ticks.append(int(match.group(1)))
+    if ticks != list(range(5, end + 1)):
+        errors.append('require exactly ordered unique ticks 5..end')
+    return {'pass': not errors, 'ticks': ticks, 'end': end, 'errors': errors,
+            'readiness_only': True, 'other_threads_excluded': False}
+
+
+def recurring_tail_readiness_evidence(lines, end):
+    events, ticks, errors = [], [], []
+    worker_pattern = (r'X4LAN PLAYER_CONTROL_RECURRING_WORKER tick=([1-9]\d*) '
+                      r'tail=1 event=(enter|release)\n')
+    main_pattern = (r'X4LAN PLAYER_CONTROL_RECURRING tick=([1-9]\d*) completed=1 readiness_only=1 '
+                    r'bank_writes=0 context_writes=0 reference_calls=0 other_threads_excluded=0 tail=1\n')
+    for line in lines:
+        if is_fatal_gate_message(line) or 'PLAYER_CONTROL_RECURRING_FATAL' in line:
+            errors.append('fatal: ' + line.strip()[:300])
+        if 'PLAYER_CONTROL_RECURRING' not in line or 'PLAYER_CONTROL_RECURRING_FATAL' in line:
+            continue
+        worker = re.fullmatch(worker_pattern, line)
+        main = re.fullmatch(main_pattern, line)
+        if worker:
+            events.append((worker.group(2), int(worker.group(1))))
+        elif main:
+            tick = int(main.group(1))
+            ticks.append(tick)
+            events.append(('complete', tick))
+        elif line == 'X4LAN PLAYER_CONTROL_RECURRING tail=1 hook_restored=1\n':
+            events.append(('restored', end + 1))
+        else:
+            errors.append('malformed recurring tail readiness record')
+    expected = [(event, tick) for tick in range(5, end + 1)
+                for event in ('enter', 'release', 'complete')] + [('restored', end + 1)]
+    if events != expected:
+        errors.append('require enter/release/completion per tick 5..end, then one hook restoration')
+    return {'pass': not errors, 'ticks': ticks, 'end': end, 'events': events, 'errors': errors,
+            'tail': True, 'hook_restored': events == expected,
+            'readiness_only': True, 'other_threads_excluded': False}
+
+
+def lifecycle_route_sample(text):
+    match = re.fullmatch(
+        r'X4LAN LIFECYCLE_DISCARD routes=sample getter=(transform|velocity|acceleration) '
+        r'mode=([01]) size=(64|32) expected=([0-9a-f]+) actual=([0-9a-f]+) match=1 canary=1', text)
+    if not match:
+        return None
+    getter, mode, size, expected, actual = match.groups()
+    required_size = 64 if getter == 'transform' else 32
+    if int(size) != required_size or len(expected) != required_size * 2 or expected != actual:
+        return None
+    return dict(getter=getter, mode=int(mode), size=required_size, expected=expected, actual=actual)
+
+
+def lifecycle_route_coverage(text):
+    """Canonical ship_flag still describes the held P2 ship under P1 globals."""
+    match = re.fullmatch(
+        r'X4LAN LIFECYCLE_DISCARD routes=coverage selected=(agent|player) '
+        r'global_authority=([01]) ship_flag=([01]) canonical_authority=([01]) '
+        r'canonical_ship_flag=([01]) time=([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)', text)
+    if not match:
+        return None
+    selected, authority, ship, canonical_authority, canonical_ship, time_text = match.groups()
+    time_value = float(time_text)
+    expected = 'agent' if authority == '1' or ship == '0' else 'player'
+    if selected != expected or not math.isfinite(time_value) or time_value <= 0:
+        return None
+    return dict(selected=selected, global_authority=int(authority), ship_flag=int(ship),
+                canonical_authority=int(canonical_authority), canonical_ship_flag=int(canonical_ship),
+                time=time_text)
+
+
+def lifecycle_input_sample(text):
+    match = re.fullmatch(
+        r'X4LAN LIFECYCLE_DISCARD input=(press|release) id=2 state=([01]) keys=([01]{4}) '
+        r'digital=([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)', text)
+    if not match:
+        return None
+    operation, state, keys, digital_text = match.groups()
+    wanted = ('1', '1000', 0) if operation == 'press' else ('0', '0000', -1)
+    digital = float(digital_text)
+    if (state, keys) != wanted[:2] or not math.isfinite(digital) or digital != wanted[2]:
+        return None
+    return dict(operation=operation, id=2, state=int(state), keys=keys, digital=digital_text)
+
+
+def lifecycle_discard_evidence(lines, returncode, strict=False, isolated=False, update=False, routes=False,
+                               injected_input=False):
+    routes = routes or injected_input
+    update = update or routes
+    isolated = isolated or update
+    core = ['before_take', 'after_take', 'before_release', 'after_release']
+    expected = ['initial', 'prepared', 'before_take', 'after_take', 'taken']
+    if injected_input:
+        expected += ['input_press']
+    if update:
+        core += ['before_update', 'after_update']
+        expected += ['before_update', 'after_update', 'update']
+        if injected_input:
+            expected += ['input_release']
+        expected += ['updated']
+    if routes:
+        core += ['before_routes', 'after_routes']
+        expected += ['before_routes', 'route_coverage', 'canonical_routes']
+        expected += [f'route:{getter}:{mode}' for getter in ('transform', 'velocity', 'acceleration')
+                     for mode in (0, 1)]
+        expected += ['canonical_routes_after', 'routes', 'after_routes', 'routes_returned']
+    expected += ['before_release', 'after_release', 'released']
+    if isolated:
+        expected += ['isolation', 'canonical_restored']
+    stages, events, snapshots, finals, errors, updates = [], [], [], [], [], []
+    route_samples = []
+    route_coverage = []
+    input_samples = []
+    snapshot_pattern = (
+        r'X4LAN LIFECYCLE_DISCARD snapshot=(initial|prepared|taken|updated|released|canonical_restored|canonical_routes|canonical_routes_after|routes_returned) '
+        r'changed_bytes=(\d+) bank=([0-9a-f]{1992}) zone=([0-9a-f]+) zone_count=(\d+) '
+        r'animation_a=([0-9a-f]+) animation_b=([0-9a-f]+) controller=([0-9a-f]+) '
+        r'controller_vtable=([0-9a-f]+) contexts_ok=([01]) contexts_valid=1 '
+        r'contexts_nodes=(\d+) contexts_mask=([0-7]) contexts_payloads=([0-9a-f]{96})')
+    for line in lines:
+        if is_fatal_gate_message(line):
+            errors.append('fatal gate message: ' + line.strip()[:300])
+        if 'X4LAN LIFECYCLE_DISCARD' not in line:
+            if strict:
+                errors.append('unexpected dedicated trace line')
+            continue
+        text = line.strip()
+        stage = re.fullmatch(r'X4LAN LIFECYCLE_DISCARD stage=(\w+)(?: .*)?', text)
+        snapshot = re.fullmatch(snapshot_pattern, text)
+        final = re.fullmatch(r'X4LAN LIFECYCLE_DISCARD result=(pass|fail) reason=(\w+) exit=223 restored=0 resumed=0', text)
+        isolation = re.fullmatch(
+            r'X4LAN LIFECYCLE_DISCARD isolation=pass bind_hits=1 destructor_hits=1 '
+            r'contexts_preserved=1 zone_restored=1 bank_restored=1 '
+            r'singleton_restored=1 patch_restored=1', text)
+        expected_input = 'state2' if injected_input else 'none'
+        update_marker = re.fullmatch(
+            r'X4LAN LIFECYCLE_DISCARD update=pass calls=1 input=' + expected_input + r' worker=1 '
+            r'zone_matches=1 controller_identity=1 time=([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)', text)
+        route_sample = lifecycle_route_sample(text) if routes else None
+        coverage = lifecycle_route_coverage(text) if routes else None
+        input_sample = lifecycle_input_sample(text) if injected_input else None
+        if finals:
+            errors.append('lifecycle marker after final result')
+        if stage:
+            name = stage.group(1)
+            if name in core:
+                stages.append(name)
+                events.append(name)
+            elif name not in ('entered', 'before_singleton', 'after_singleton') or stages:
+                errors.append('unexpected extra stage')
+        elif snapshot:
+            fields = dict(zip(('label', 'changed_bytes', 'bank', 'zone', 'zone_count',
+                               'animation_a', 'animation_b', 'controller', 'controller_vtable',
+                               'contexts_ok', 'contexts_nodes', 'contexts_mask', 'contexts_payloads'),
+                              snapshot.groups()))
+            fields['contexts_valid'] = 1
+            events.append(fields['label'])
+            snapshots.append(fields)
+            if int(fields['changed_bytes']) > 996:
+                errors.append('changed_bytes exceeds bank length')
+            if int(fields['contexts_ok']) != int(fields['contexts_mask'] == '7'):
+                errors.append('contexts_ok inconsistent with contexts_mask')
+        elif final:
+            finals.append({'result': final.group(1), 'reason': final.group(2)})
+            if events != expected:
+                errors.append('final result before complete ordered unique events')
+            expected_reason = ('input_lifecycle_returned' if injected_input else
+                               'routed_lifecycle_returned' if routes else
+                               'updated_lifecycle_returned' if update else 'isolated_lifecycle_returned')
+            if isolated and final.group(2) != expected_reason:
+                errors.append('isolated final reason mismatch')
+        elif isolation and isolated:
+            events.append('isolation')
+        elif update_marker and update:
+            events.append('update')
+            time_value = float(update_marker.group(1))
+            updates.append({'calls': 1, 'input': expected_input, 'time': update_marker.group(1)})
+            if not math.isfinite(time_value) or time_value <= 0:
+                errors.append('update time must be finite and positive')
+        elif route_sample:
+            route_samples.append(route_sample)
+            events.append(f'route:{route_sample["getter"]}:{route_sample["mode"]}')
+        elif coverage:
+            route_coverage.append(coverage)
+            events.append('route_coverage')
+        elif input_sample:
+            input_samples.append(input_sample)
+            events.append('input_' + input_sample['operation'])
+        elif routes and text == ('X4LAN LIFECYCLE_DISCARD routes=pass samples=6 '
+                                 'bank_unchanged=1 singleton_canonical=1'):
+            events.append('routes')
+        else:
+            errors.append('malformed lifecycle marker')
+    if events != expected:
+        errors.append('missing, duplicate or reordered snapshots/stages')
+    if len(finals) != 1 or finals[0]['result'] != 'pass':
+        errors.append('require exactly one final pass marker')
+    if isolated and events == expected:
+        by_label = {snapshot['label']: snapshot for snapshot in snapshots}
+        initial, restored, released = (by_label[label] for label in
+                                       ('initial', 'canonical_restored', 'released'))
+        context_fields = ('contexts_valid', 'contexts_ok', 'contexts_nodes',
+                          'contexts_mask', 'contexts_payloads')
+        restored_fields = ('bank', 'zone', 'zone_count', 'animation_a', 'animation_b',
+                           *context_fields)
+        if restored['changed_bytes'] != '0' or any(initial[key] != restored[key] for key in restored_fields):
+            errors.append('canonical snapshot does not match initial globals')
+        if any(initial[key] != released[key] for key in context_fields):
+            errors.append('released contexts differ from initial contexts')
+        if routes:
+            route_fields = ('bank', 'zone', 'animation_a', 'animation_b', *context_fields)
+            for label in ('canonical_routes', 'canonical_routes_after'):
+                observed = by_label[label]
+                if (observed['changed_bytes'] != '0'
+                        or any(initial[key] != observed[key] for key in route_fields)
+                        or int(observed['zone_count']) != int(initial['zone_count']) + 1):
+                    errors.append(f'{label} does not preserve measured canonical globals and held zone')
+    if returncode != 223:
+        errors.append(f'expected process exit 223, got {returncode}')
+    return {'pass': not errors, 'returncode': returncode, 'stages': stages,
+            'events': events, 'snapshots': snapshots, 'finals': finals, 'errors': errors,
+            'isolated': isolated, 'update': update, 'updates': updates,
+            'routes': routes, 'route_samples': route_samples,
+            'route_coverage': route_coverage,
+            'injected_input': injected_input, 'input_samples': input_samples,
+            'restored': False, 'resumed': False}
+
+
+def collect_lifecycle_discard(trace, retained, engine, output, returncode, isolated=False, update=False, routes=False,
+                              injected_input=False):
+    """Only the private native FD is evidence; independently check both fatal logs."""
+    evidence = lifecycle_discard_evidence([], returncode, isolated=isolated, update=update, routes=routes,
+                                         injected_input=injected_input)
+    evidence['native_fd_path'] = str(trace)
+    evidence['retained_log'] = str(retained)
+    try:
+        with os.fdopen(os.open(trace, os.O_RDONLY | os.O_NOFOLLOW), 'rb') as stream:
+            if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+                raise OSError('native lifecycle trace is not a regular file')
+            data = stream.read(1 << 20)
+            if stream.read(1):
+                raise OSError('native lifecycle trace exceeds 1 MiB')
+        retained.write_bytes(data)
+        evidence = lifecycle_discard_evidence(data.decode('utf-8').splitlines(keepends=True),
+                                              returncode, strict=True, isolated=isolated, update=update, routes=routes,
+                                              injected_input=injected_input)
+        evidence.update(native_fd_path=str(trace), retained_log=str(retained),
+                        log_sha256=hashlib.sha256(data).hexdigest())
+        if not data.endswith(b'\n'):
+            evidence['errors'].append('incomplete final native trace line')
+    except (OSError, UnicodeError) as error:
+        evidence['errors'].append(f'native lifecycle trace unavailable/invalid: {error}')
+    for source in (engine, output):
+        try:
+            with source.open(errors='replace') as stream:
+                evidence['errors'].extend(f'{source.name}: {line.strip()[:300]}'
+                                          for line in stream if is_fatal_gate_message(line))
+        except OSError as error:
+            evidence['errors'].append(f'fatal log unavailable: {error}')
+    evidence['pass'] = not evidence['errors']
+    return evidence
+
+
+DISCARD_TAIL_BYTES = 4096
+
+
+def lifecycle_discard_terminal(path, *, network=False):
+    """Inspect only an exited child's bounded tail; this never validates a run."""
+    limit = (32 if network else 8) * 1024 * 1024
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        with os.fdopen(fd, 'rb') as stream:
+            before = os.fstat(stream.fileno())
+            if not stat.S_ISREG(before.st_mode):
+                raise ValueError('trace is not a regular file')
+            if not 0 < before.st_size <= limit:
+                raise ValueError(f'trace is empty or exceeds {limit // (1024 * 1024)} MiB')
+            offset = max(0, before.st_size - DISCARD_TAIL_BYTES)
+            stream.seek(offset)
+            tail = stream.read(DISCARD_TAIL_BYTES)
+            after = os.fstat(stream.fileno())
+            if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
+                raise ValueError('trace changed after child exit')
+        if offset:
+            _, separator, tail = tail.partition(b'\n')
+            if not separator:
+                raise ValueError('terminal receipt exceeds tail bound')
+        lines = tail.splitlines(keepends=True)
+        terminal = re.fullmatch(
+            rb'X4LAN LIFECYCLE_DISCARD result=(pass|fail) reason=([A-Za-z0-9_]{1,128}) '
+            rb'exit=223 restored=0 resumed=0\n', lines[-1] if lines else b'')
+        if not terminal or sum(b'X4LAN LIFECYCLE_DISCARD result=' in line for line in lines) != 1:
+            raise ValueError('missing, malformed, truncated or repeated terminal receipt in trace tail')
+        return terminal[1].decode('ascii'), terminal[2].decode('ascii')
+    except (OSError, ValueError) as error:
+        raise RuntimeError(f'lifecycle discard terminal evidence unavailable: {error}') from error
+
+
+def lifecycle_discard_wait(returncodes, traces, *, network=False):
+    """A failure exits promptly; a success waits for its peer and full validation."""
+    for slot, code in returncodes.items():
+        if code is not None and code != 223:
+            raise RuntimeError(f'client {slot}: lifecycle discard expected exit 223, got {code}')
+    for slot, code in returncodes.items():
+        if code == 223:
+            if slot not in traces:
+                raise RuntimeError(f'client {slot}: lifecycle discard trace path missing')
+            try:
+                verdict, reason = lifecycle_discard_terminal(traces[slot], network=network)
+            except RuntimeError as error:
+                raise RuntimeError(f'client {slot}: {error}') from error
+            if verdict == 'fail':
+                raise RuntimeError(f'client {slot}: lifecycle discard reported failure: {reason}')
+    return bool(returncodes) and all(code == 223 for code in returncodes.values())
+
+
 def bundle(args):
     repo = Path(__file__).resolve().parents[2]
+    caller_stride = args.runtime_id_caller_stride
+    if caller_stride is not None and (not 1 <= caller_stride <= 3600 or
+            not args.runtime_id_callers or not args.runtime_ids):
+        raise SystemExit('--runtime-id-caller-stride requires --runtime-id-callers, --runtime-ids and 1..3600')
+    independent_frames = validate_independent_keyboard(vars(args), args.ticks)
+    validate_rolling_leaf_ticks(args.world_rolling_leaf_ticks, args.world_rolling_slices, args.ticks)
+    validate_rolling_raw_ids(args.world_rolling_raw_ids, args.world_rolling_leaf_ticks)
+    validate_external_camera(vars(args), independent_frames)
+    presentation_enabled = validate_presentation_probe(vars(args), independent_frames)
+    view_query_enabled = validate_view_query_observer(vars(args), independent_frames)
+    ui_overlay_enabled = validate_ui_overlay(vars(args), independent_frames)
+    overlay_sources = ui_overlay_sources(repo) if ui_overlay_enabled else []
+    plan_kick_enabled = validate_plan_kick(vars(args))
+    if plan_kick_enabled:
+        overlay_sources.extend(plan_kick_sources(repo))
+    seat_query_enabled = validate_seat_query(vars(args))
+    if seat_query_enabled:
+        overlay_sources.extend(seat_query_sources(repo))
+    seat_correction_enabled = validate_seat_correction(vars(args))
+    if seat_correction_enabled:
+        overlay_sources.extend(seat_correction_sources(repo))
+    live_pose_enabled = validate_live_pose_observer(vars(args))
+    if live_pose_enabled:
+        overlay_sources.extend(live_pose_observer_sources(repo))
+    fork_enabled = validate_presentation_fork(vars(args), independent_frames)
+    fork_sources = presentation_fork_sources(repo) if fork_enabled else []
+    ui_callback_enabled = validate_ui_callback_observer(vars(args), independent_frames)
+    view_sources = view_query_sources(repo) if view_query_enabled else []
+    throttle_enabled = validate_throttle_probe(vars(args), independent_frames)
+    throttle_sources = throttle_probe_sources(repo) if throttle_enabled else []
+    presentation_sources = presentation_probe_sources(repo) if presentation_enabled else []
+    if args.player_external_camera_probe:
+        camera_sources = ('gate_player_camera_probe.h', 'player_camera_probe.h',
+                          'gate_player_camera_id_scope.h', 'gate_player_camera_context_anchor.h',
+                          'input_context_census.h')
+        if not all((repo / 'src/native/engine/linux' / name).is_file() for name in camera_sources):
+            raise SystemExit('external camera probe requires all native camera headers')
+    if args.player_control_boundary_probe:
+        validate_control_boundary_probe(args.stock_keyboard_observer, args.serial_pathing, args.ticks,
+            (args.player_control_bank_probe, args.player_factory_probe, args.player_reference_probe,
+             args.stock_keyboard_replay_probe, args.player_seat_preflight))
+    if args.player_control_bank_probe:
+        validate_control_bank_probe(args.stock_keyboard_observer, args.serial_pathing, args.ticks,
+                                    args.stock_keyboard_replay_probe, args.player_reference_probe)
+    if args.player_seat_preflight:
+        validate_seat_preflight(args.player_factory_probe, args.player_factory_retain_until,
+                                args.stock_keyboard_observer, args.serial_pathing, args.ticks)
+    if args.player_control_bank_census:
+        if not args.stock_keyboard_observer or not args.serial_pathing or args.ticks < 4:
+            raise SystemExit('--player-control-bank-census requires observer, serial pathing and at least four ticks')
+        if args.stock_keyboard_replay_probe:
+            raise SystemExit('run the control-bank census separately from the keyboard replay probe')
+    validate_factory_retention(args.player_factory_retain_until, args.player_factory_probe, args.ticks)
+    if args.player_factory_probe and (not args.stock_keyboard_observer or not args.serial_pathing or args.ticks < 3):
+        raise SystemExit('--player-factory-probe requires the observer, serial pathing and at least three ticks')
+    if args.player_factory_probe and (args.player_reference_probe or (args.stock_keyboard_replay_probe and not independent_frames)):
+        raise SystemExit('run the player factory probe separately from other player experiments')
+    if args.player_reference_probe and (not args.stock_keyboard_observer or not args.serial_pathing or args.ticks < 3):
+        raise SystemExit('--player-reference-probe requires the observer, serial pathing and at least three ticks')
+    if args.player_reference_probe and args.stock_keyboard_replay_probe:
+        raise SystemExit('run the player reference and keyboard replay probes separately')
+    replay_last_capture = None
+    if args.stock_keyboard_replay_probe:
+        if not args.stock_keyboard_observer or args.clients != 2:
+            raise SystemExit('--stock-keyboard-replay-probe requires --stock-keyboard-observer and --clients 2')
+        # Linux overlays are bare and expose no lookahead option: unset means 0
+        # in the probe. Leave lookahead + 2 ticks to drain delayed captures.
+        lookahead = 0
+        replay_last_capture = independent_frames + 2 if independent_frames else args.ticks - (lookahead + 2)
+        if replay_last_capture < 3:
+            raise SystemExit('--stock-keyboard-replay-probe requires at least 5 ticks')
     if args.ticks < 1 or args.stride < 1:
         raise SystemExit('--ticks and --stride must be positive')
     if args.status_stride is not None and not 1 <= args.status_stride <= 3600:
@@ -294,6 +1876,10 @@ def bundle(args):
             command.append('--' + name.replace('_', '-'))
     if args.world_rolling_slices is not None:
         command += ['--world-rolling-slices', str(args.world_rolling_slices)]
+    if args.world_rolling_leaf_ticks is not None:
+        command += ['--world-rolling-leaf-ticks', *map(str, args.world_rolling_leaf_ticks)]
+    if args.world_rolling_raw_ids is not None:
+        command += ['--world-rolling-raw-ids', *args.world_rolling_raw_ids]
     if args.economy_watch is not None:
         command += ['--economy-watch', args.economy_watch,
                     '--economy-watch-window', *map(str, args.economy_watch_window)]
@@ -306,9 +1892,52 @@ def bundle(args):
         command += ['--status-stride', str(args.status_stride)]
     if args.probe_profile:
         command.append('--probe-profile')
+    if args.stock_keyboard_observer:
+        command.append('--stock-keyboard-observer')
+    if args.player_control_bank_census:
+        command.append('--player-control-bank-census')
+    if args.player_control_bank_probe:
+        command.append('--player-control-bank-probe')
+    if args.player_control_boundary_probe:
+        command.append('--player-control-boundary-probe')
+    if args.player_seat_preflight:
+        command.append('--player-seat-preflight')
+    if args.player_factory_probe:
+        command.append('--player-factory-probe')
+    if args.player_factory_retain_until is not None:
+        command.extend(('--player-factory-retain-until', str(args.player_factory_retain_until)))
+    if args.player_reference_probe:
+        command.append('--player-reference-probe')
     if args.seed_rng:
         command.append('--seed-rng')
-    if args.clients > 2:
+    if args.stock_keyboard_replay_probe:
+        command += ['--stock-keyboard-replay-probe',
+                    '--stock-keyboard-replay-last-capture', str(replay_last_capture)]
+    if independent_frames:
+        command += ['--independent-keyboard-frames', str(independent_frames)]
+    if view_query_enabled:
+        command.append('--player-view-query-observer')
+    if ui_overlay_enabled:
+        command.append('--player-ui-overlay-probe')
+        if args.player_ui_overlay_callbacks != 1:
+            command += ['--player-ui-overlay-callbacks', str(args.player_ui_overlay_callbacks)]
+    if plan_kick_enabled:
+        command.append('--player-ui-plan-kick-probe')
+    if seat_query_enabled:
+        command.append('--player-ui-seat-query-probe')
+    if live_pose_enabled:
+        command.append('--player-ui-live-pose-observer')
+    if seat_correction_enabled:
+        command.append('--player-ui-seat-correction')
+    if fork_enabled:
+        command.append('--player-presentation-fork-probe')
+    if ui_callback_enabled:
+        command.append('--ui-callback-observer')
+    if args.player_external_camera_probe:
+        command.append('--player-external-camera-probe')
+    if presentation_enabled:
+        command.append('--player-presentation-probe')
+    if args.clients > 2 or args.stock_keyboard_replay_probe:
         command.append('--session-clients')
     if args.path_determinism:
         command += ['--path-determinism', str(args.path_determinism)]
@@ -342,6 +1971,8 @@ def bundle(args):
         command.append('--runtime-ids')
     if args.runtime_id_callers:
         command.append('--runtime-id-callers')
+    if caller_stride is not None:
+        command += ['--runtime-id-caller-stride', str(caller_stride)]
     if args.runtime_ids_local:
         command.append('--runtime-ids-local')
     if args.script_rng:
@@ -484,14 +2115,46 @@ def bundle(args):
     subprocess.run(command, check=True)
     extension = out / 'extension/x4_lan_lab'
     compose_extension_template(overlay, extension, args.extension_base)
+    if view_query_enabled:
+        subprocess.run([sys.executable, str(repo / 'tools/dev/build_player_view_query_preload.py'),
+                        '--zig', str(args.zig)], check=True)
+        (out / 'player_view_query').mkdir()
+        shutil.copy2(repo / '.local/player-view-query' / PLAYER_VIEW_QUERY,
+                     out / 'player_view_query' / PLAYER_VIEW_QUERY)
     if args.portable_math:
         subprocess.run([sys.executable, str(repo / 'tools/dev/build_portable_math_preload.py'), '--zig', str(args.zig)], check=True)
         (out / 'portable_math').mkdir()
         shutil.copy2(repo / '.local/portable-math/preload' / PORTABLE_MATH, out / 'portable_math' / PORTABLE_MATH)
+    if args.player_lifetime_preload:
+        validate_lifecycle_discard(vars(args), args.ticks)
+        subprocess.run([sys.executable, str(repo / 'tools/dev/build_player_lifetime_preload.py'),
+                        '--zig', str(args.zig)], check=True)
+        (out / 'player_lifetime').mkdir()
+        shutil.copy2(repo / '.local/player-lifetime' / PLAYER_LIFETIME, out / 'player_lifetime' / PLAYER_LIFETIME)
     missing = [name for name in ('ui/native_gate_probe.lua', 'ui/sha256.lua') if not (extension / name).is_file()]
     if missing:
         raise SystemExit(f'the composed lockstep extension lacks required files: {missing}')
     config = (extension / 'ui/config.lua').read_text()
+    validate_view_query_config(config, view_query_enabled)
+    validate_ui_callback_config(config, ui_callback_enabled)
+    validate_presentation_fork_config(config, fork_enabled)
+    validate_ui_overlay_config(config, ui_overlay_enabled, args.player_ui_overlay_callbacks)
+    validate_plan_kick_config(config, plan_kick_enabled)
+    validate_seat_query_config(config, seat_query_enabled)
+    validate_live_pose_observer_config(config, live_pose_enabled)
+    validate_seat_correction_config(config, seat_correction_enabled)
+    leaf_assignment = re.findall(r'(?m)^\s*X4LAN_CONFIG\.native_gate_world_rolling_leaf_ticks\s*=\s*(.*?)\s*$', config)
+    expected_leaf = [] if args.world_rolling_leaf_ticks is None else [
+        '{%d,%d}' % tuple(args.world_rolling_leaf_ticks)]
+    if leaf_assignment != expected_leaf:
+        raise SystemExit('composed rolling leaf config does not match the frozen option')
+    raw_assignment = re.findall(r'(?m)^\s*X4LAN_CONFIG\.native_gate_world_rolling_raw_ids\s*=\s*(.*?)\s*$', config)
+    expected_raw = [] if args.world_rolling_raw_ids is None else [
+        '{' + ','.join('"' + value + '"' for value in args.world_rolling_raw_ids) + '}']
+    if raw_assignment != expected_raw:
+        raise SystemExit('composed rolling raw config does not match the frozen option')
+    validate_external_camera_config(config, args.player_external_camera_probe)
+    validate_presentation_config(config, presentation_enabled)
     for token in ('@X4LANE_PORT@', '@X4LANE_TOKEN@', '@X4LANE_SLOT@'):
         if token not in config:
             raise SystemExit(f'composed config lacks {token}')
@@ -508,9 +2171,84 @@ def bundle(args):
     shutil.copy2(args.snapshot, out / 'snapshot' / SLOT_SAVE)
     shutil.copy2(repo / 'tools/dev/native_gate_relay.py', out / 'native_gate_relay.py')
     shutil.copy2(Path(__file__), out / 'linux_gate_live.py')
+    shutil.copy2(Path(__file__).with_name('linux_ui_seat_pose_evidence.py'), out / 'linux_ui_seat_pose_evidence.py')
+    shutil.copy2(Path(__file__).with_name('linux_ui_plan_kick_evidence.py'), out / 'linux_ui_plan_kick_evidence.py')
+    shutil.copy2(Path(__file__).with_name('linux_ui_seat_query_evidence.py'), out / 'linux_ui_seat_query_evidence.py')
+    shutil.copy2(Path(__file__).with_name('linux_ui_live_pose_observer_evidence.py'), out / 'linux_ui_live_pose_observer_evidence.py')
+    shutil.copy2(Path(__file__).with_name('linux_ui_pose_scope_evidence.py'), out / 'linux_ui_pose_scope_evidence.py')
+    shutil.copy2(Path(__file__).with_name('linux_ui_seat_correction_evidence.py'), out / 'linux_ui_seat_correction_evidence.py')
     shutil.copy2(Path(__file__).with_name('linux_gate_evidence.py'), out / 'linux_gate_evidence.py')
+    shutil.copy2(Path(__file__).with_name('linux_player_physics_evidence.py'), out / 'linux_player_physics_evidence.py')
+    frames_helper = Path(__file__).with_name('linux_player_frames_evidence.py')
+    if frames_helper.is_file():
+        shutil.copy2(frames_helper, out / frames_helper.name)
+        context_helper = Path(__file__).with_name('linux_player_context_evidence.py')
+        if not context_helper.is_file():
+            raise SystemExit('recurring physics evidence requires its context policy collector')
+        shutil.copy2(context_helper, out / context_helper.name)
+        presentation_helper = Path(__file__).with_name('linux_player_presentation_evidence.py')
+        if not presentation_helper.is_file():
+            raise SystemExit('recurring physics evidence requires its presentation collector')
+        shutil.copy2(presentation_helper, out / presentation_helper.name)
     for helper in ('world_motion_evidence.py', 'native_world_evidence.py', 'economy_watch_config.py', 'navmesh_post_config.py'):
         shutil.copy2(Path(__file__).with_name(helper), out / helper)
+    camera_helper = Path(__file__).with_name('linux_player_camera_evidence.py')
+    if camera_helper.is_file():
+        shutil.copy2(camera_helper, out / camera_helper.name)
+    elif args.player_external_camera_probe:
+        raise SystemExit('external camera probe requires its strict camera evidence collector')
+    network_helper = Path(__file__).with_name('linux_player_network_evidence.py')
+    if network_helper.is_file():
+        shutil.copy2(network_helper, out / network_helper.name)
+    elif independent_frames:
+        raise SystemExit('independent keyboard physics requires the network evidence collector')
+    if independent_frames or args.player_lifetime_preload or (args.stock_keyboard_observer and args.serial_pathing):
+        # Freeze the actual helper/header sources alongside the compiled module.
+        source_paths = []
+        if args.stock_keyboard_observer and args.serial_pathing:
+            source_paths.extend(recurring_diagnostic_sources(repo))
+            for name in ('player_context_policy.h', 'gate_player_context_policy_adapter.h',
+                         'input_context_census.h', 'gate_player_camera_context_anchor.h'):
+                source = repo / 'src/native/engine/linux' / name
+                if not source.is_file():
+                    raise SystemExit('recurring context policy requires ' + name)
+                source_paths.append(source)
+        if args.player_lifetime_preload:
+            source_paths.extend(lifetime_preload_sources(repo))
+        if independent_frames:
+            source_paths.extend((repo / 'src/native/engine/linux').glob('gate_player_*.h'))
+        network_header = repo / 'src/native/engine/linux/gate_player_physics_network.h'
+        if independent_frames and not network_header.is_file():
+            raise SystemExit('independent keyboard physics requires gate_player_physics_network.h')
+        if args.player_external_camera_probe:
+            camera_header = repo / 'src/native/engine/linux/gate_player_camera_probe.h'
+            camera_core = repo / 'src/native/engine/linux/player_camera_probe.h'
+            camera_scope = repo / 'src/native/engine/linux/gate_player_camera_id_scope.h'
+            camera_census = repo / 'src/native/engine/linux/input_context_census.h'
+            camera_anchor = repo / 'src/native/engine/linux/gate_player_camera_context_anchor.h'
+            if not all(path.is_file() for path in (camera_header, camera_core, camera_scope, camera_census, camera_anchor)):
+                raise SystemExit('external camera probe requires all native camera headers')
+            source_paths.extend((camera_core, camera_census, camera_anchor))
+        source_paths.extend(view_sources)
+        if ui_callback_enabled:
+            source_paths.append(repo / 'src/native/engine/linux/gate_linux.c')
+        source_paths.extend(throttle_sources)
+        source_paths.extend(presentation_sources)
+        source_paths.extend(fork_sources)
+        source_paths.extend(overlay_sources)
+        source_paths += [repo / 'tools/dev' / name for name in
+                         ('linux_gate_live.py', 'build_native_gate_overlay.py', 'native_gate_probe.lua',
+                          'native_gate_linux_keyboard.lua')]
+        freeze_source_receipts(repo, out, source_paths)
+    if args.world_rolling_leaf_ticks is not None:
+        leaf_sources = (repo / 'src/native/engine/linux/gate_world.h', repo / 'src/native/engine/linux/gate_linux.c',
+                        repo / 'src/native/engine/linux/gate_world_digest_cache.h',
+                        repo / 'src/native/engine/linux/gate_world_classes.h',
+                        repo / 'src/native/engine/linux/gate_world_created.h',
+                        repo / 'src/native/engine/lockstep_world_nav.h', repo / 'src/native/engine/lockstep_sha256.h',
+                        repo / 'tools/dev/native_gate_probe.lua', repo / 'tools/dev/build_native_gate_overlay.py',
+                        repo / 'tools/dev/linux_gate_live.py')
+        freeze_source_receipts(repo, out, leaf_sources)
     shutil.rmtree(work)
     commit = subprocess.run(['git', '-C', str(repo), 'rev-parse', 'HEAD'], capture_output=True, text=True).stdout.strip()
     files = {p.relative_to(out).as_posix(): sha(p) for p in sorted(out.rglob('*')) if p.is_file()}
@@ -532,8 +2270,16 @@ def bundle(args):
         'navmesh_post_observe',
         'world_log_mode',
         'world_rolling_slices',
+        'world_rolling_leaf_ticks', 'world_rolling_raw_ids',
         'status_stride',
         'probe_profile',
+        'player_control_bank_census',
+        'player_control_bank_probe',
+        'player_control_boundary_probe',
+        'player_seat_preflight',
+        'stock_keyboard_observer',
+        'stock_keyboard_replay_probe',
+        'player_reference_probe', 'player_factory_probe', 'player_factory_retain_until',
         'runtime_ids',
         'runtime_id_callers',
         'runtime_ids_local',
@@ -610,6 +2356,20 @@ def bundle(args):
         'gate_so_sha256': files['extension/x4_lan_lab/native/x4lan_gate.so'],
         'files': files,
         'portable_math_sha256': files.get(f'portable_math/{PORTABLE_MATH}'),
+        'player_lifetime_sha256': files.get(f'player_lifetime/{PLAYER_LIFETIME}'),
+        'player_view_query_observer': view_query_enabled,
+        'ui_callback_observer': ui_callback_enabled,
+        'player_presentation_fork_probe': fork_enabled,
+        'player_ui_plan_kick_probe': plan_kick_enabled,
+        'player_ui_seat_query_probe': seat_query_enabled,
+        'player_ui_live_pose_observer': live_pose_enabled,
+        'player_ui_seat_correction': seat_correction_enabled,
+        'player_ui_seat_correction_evidence_version': 1 if seat_correction_enabled else None,
+        'player_ui_live_pose_observer_evidence_version': 2 if live_pose_enabled else None,
+        'player_ui_overlay_probe': ui_overlay_enabled,
+        'player_ui_overlay_callbacks': args.player_ui_overlay_callbacks,
+        'player_view_query_sha256': files.get(f'player_view_query/{PLAYER_VIEW_QUERY}'),
+        'player_view_query_size': (out / 'player_view_query' / PLAYER_VIEW_QUERY).stat().st_size if view_query_enabled else None,
         'seed_rng': bool(args.seed_rng),
         'world_hash_watch': args.world_hash_watch or [],
         'fork_save': args.fork_save and {
@@ -621,10 +2381,24 @@ def bundle(args):
         },
     }
     manifest.update({name: getattr(args, name) for name in recorded_options})
+    if caller_stride is not None:
+        manifest['runtime_id_caller_stride'] = caller_stride
     manifest['economy_watch'] = args.economy_watch
     manifest['economy_watch_window'] = args.economy_watch_window
     manifest['world_motion_watch'] = args.world_motion_watch
     manifest['world_motion_window'] = args.world_motion_window
+    manifest['stock_keyboard_replay_last_capture'] = replay_last_capture
+    manifest['independent_keyboard_frames'] = independent_frames
+    manifest['player_external_camera_probe'] = bool(args.player_external_camera_probe)
+    manifest['player_presentation_probe'] = presentation_enabled
+    manifest['player_throttle_probe'] = bool(args.player_throttle_probe)
+    manifest['player_throttle_warm_probe'] = bool(args.player_throttle_warm_probe)
+    manifest['player_throttle_start_tick'] = (6 if args.player_throttle_warm_probe else
+                                               5 if throttle_enabled else None)
+    manifest['player_throttle_environment'] = (
+        'state13-warm-discard' if args.player_throttle_warm_probe else
+        'state13-discard' if throttle_enabled else None)
+    manifest['independent_keyboard_mode'] = 'independent_keyboard' if independent_frames else None
     manifest['created_rows'] = bool(args.created_rows)
     manifest['snapshot_seed'] = world_seed
     manifest['preset'] = args.preset
@@ -814,6 +2588,8 @@ class LogWatch:
         lines = (self.carry + data).split(b'\n')
         self.carry = lines.pop()
         for line in lines:
+            if b'PLAYER_CONTROL_RECURRING_FATAL' in line and self.failure is None:
+                self.failure = line.decode(errors='replace')[:300]
             if b'NATIVE_GATE' not in line:
                 continue
             text = line.decode(errors='replace')
@@ -912,9 +2688,10 @@ WIRE_CRYPTO_TOKEN = '@X4LANE_WIRE_CRYPTO@'
 CREDENTIAL = re.compile(r'x4c1:[0-9a-f]{64}:[0-9a-f]{64}')
 
 
-def case_config(text, port, token, slot, clients, credential=None):
+def case_config(text, port, token, slot, clients, credential=None, relay_host=None, arm_at=None):
     """A client's config.lua: the session's port, token, slot and size; with wire crypto (bundle --wire-crypto) the slot's
     credential (native_gate_crypto.py credential for this token and slot; a secret, never logged)."""
+    relay_host, arm_at = remote_session_options(relay_host, arm_at, external=True)
     wants = WIRE_CRYPTO_TOKEN in text
     if wants and not credential:
         raise RuntimeError(f'the bundle has wire crypto: slot {slot} needs a credential (run --wire-crypto-credentials)')
@@ -924,7 +2701,31 @@ def case_config(text, port, token, slot, clients, credential=None):
         raise RuntimeError(f'slot {slot}: not a wire crypto credential (x4c1:<64 hex>:<64 hex>)')
     text = (text.replace('@X4LANE_PORT@', str(port)).replace('@X4LANE_TOKEN@', token)
             .replace('@X4LANE_SLOT@', f'p{slot}').replace('@X4LANE_CLIENTS@', str(clients)))
-    return text.replace(WIRE_CRYPTO_TOKEN, credential or '')
+    text = text.replace(WIRE_CRYPTO_TOKEN, credential or '')
+    if relay_host is not None or arm_at is not None:
+        text += '\n'
+        if relay_host is not None:
+            text += f"X4LAN_CONFIG.native_gate_relay_host = '{relay_host}'\n"
+        if arm_at is not None:
+            text += f'X4LAN_CONFIG.native_gate_arm_at = {arm_at}\n'
+    return text
+
+
+def remote_session_options(host, arm_at, external, now=None):
+    """Validate remote settings before inserting them into private Lua config."""
+    if (host is not None or arm_at is not None) and not external:
+        raise ValueError('--relay-host and --arm-at require an external relay')
+    if host is not None:
+        if not isinstance(host, str):
+            raise ValueError('--relay-host must be a dotted IPv4 address')
+        try:
+            host = str(ipaddress.IPv4Address(host))
+        except ipaddress.AddressValueError:
+            raise ValueError('--relay-host must be a dotted IPv4 address') from None
+    if arm_at is not None:
+        if type(arm_at) is not int or arm_at <= 0 or arm_at <= (time.time() if now is None else now):
+            raise ValueError('--arm-at must be a future integer UTC second')
+    return host, arm_at
 
 
 def load_credentials(path):
@@ -938,7 +2739,8 @@ def load_credentials(path):
     return {int(k): v for k, v in data.items()}
 
 
-def stage_case(root, run, slot, game, userhome, port, token, clients=2, credential=None, snapshot=True):
+def stage_case(root, run, slot, game, userhome, port, token, clients=2, credential=None, snapshot=True,
+               relay_host=None, arm_at=None):
     """One private instance: HOME, profile 45841 (autosave off), snapshot, extensions."""
     case = run / f'case{slot}'
     profile = case / 'home/.config/EgoSoft/X4/45841'
@@ -969,7 +2771,7 @@ def stage_case(root, run, slot, game, userhome, port, token, clients=2, credenti
     lab = case / 'extensions/x4_lan_lab'
     shutil.copytree(root / 'extension/x4_lan_lab', lab)
     config = lab / 'ui/config.lua'
-    config.write_text(case_config(config.read_text(), port, token, slot, clients, credential))
+    config.write_text(case_config(config.read_text(), port, token, slot, clients, credential, relay_host, arm_at))
     if credential:
         config.chmod(0o600)
     ids = sorted(p.name for p in (case / 'extensions').iterdir())
@@ -977,6 +2779,10 @@ def stage_case(root, run, slot, game, userhome, port, token, clients=2, credenti
         raise RuntimeError('unexpected extension in the private view')
     (profile / 'content.xml').write_text('<?xml version="1.0"?><content>' + ''.join(
         f'<extension id="{n}" enabled="true" />' for n in ids) + '</content>\n')
+    if (root / 'player_view_query' / PLAYER_VIEW_QUERY).is_file():
+        shutil.copyfile(root / 'player_view_query' / PLAYER_VIEW_QUERY, case / PLAYER_VIEW_QUERY)
+    if (root / 'player_lifetime' / PLAYER_LIFETIME).is_file():
+        shutil.copyfile(root / 'player_lifetime' / PLAYER_LIFETIME, case / PLAYER_LIFETIME)
     if (root / 'portable_math' / PORTABLE_MATH).is_file():
         shutil.copyfile(root / 'portable_math' / PORTABLE_MATH, case / PORTABLE_MATH)
     lock = case / 'x4.lock'
@@ -994,7 +2800,39 @@ def launch_order(text, clients):
     return order
 
 
-def collect_run_evidence(run_dir, slots, cases, ticks, manifest):
+def retain_gate_log(source, retained, extracted, writers_closed):
+    """Extract the gate stream from the engine log after owned writers exit.
+
+    The process stdout log is a separate stream and may end mid-line during
+    teardown. Refuse to publish or validate a potentially incomplete snapshot.
+    """
+    if not writers_closed:
+        raise RuntimeError('cannot retain engine log while owned writers may still run')
+    if not source.is_file():
+        raise RuntimeError(f'engine log missing: {source}')
+    shutil.copyfile(source, retained)
+    with extracted.open('w', encoding='utf-8') as output:
+        for line in gate_lines(retained):
+            marker = line.find('[X4LAN] NATIVE_GATE ')
+            if marker >= 0:
+                output.write(line[marker:] + '\n')
+
+
+def completed_client_evidence(engine_log, process_output):
+    """Keep engine records and fatal messages written directly to stderr.
+
+    X4 can repeat ordinary engine messages on stdout. Only fatal records from
+    that separate retained stream are added, so duplicated progress cannot be
+    mistaken for a second native capture. A fatal always invalidates the run.
+    """
+    yield from gate_lines(engine_log)
+    if process_output.is_file():
+        for line in gate_lines(process_output):
+            if is_fatal_gate_message(line):
+                yield line
+
+
+def collect_run_evidence(run_dir, slots, cases, ticks, manifest, writers_closed):
     """Retain both logs and installed config, then validate the complete evidence."""
     result = {}
     logs_by_slot = {}
@@ -1002,17 +2840,24 @@ def collect_run_evidence(run_dir, slots, cases, ticks, manifest):
         client = run_dir / f'client{slot}'
         (client / 'installed').mkdir(parents=True, exist_ok=True)
         log = profile / 'engine-output.log'
-        if log.exists():
-            shutil.copyfile(log, client / 'engine-output.log')
+        retained_log = client / 'engine-output.log'
+        retain_gate_log(log, retained_log, run_dir / f'game{slot}.log', writers_closed)
         shutil.copyfile(case / 'extensions/x4_lan_lab/ui/config.lua', client / 'installed/x4_lan_lab-config.lua')
         if (case / 'portable-math.log').is_file():
             shutil.copyfile(case / 'portable-math.log', client / 'portable-math.log')
-        retained_log = client / 'engine-output.log'
-        logs_by_slot[slot] = gate_lines(retained_log) if retained_log.exists() else ()
+        process_output = run_dir / f'game{slot}-stdout.log'
+        needs_process_output = (manifest.get('player_control_bank_probe') or
+                                manifest.get('player_control_boundary_probe'))
+        if needs_process_output and not process_output.is_file():
+            probe_name = 'control-bank' if manifest.get('player_control_bank_probe') else 'control-boundary'
+            raise RuntimeError(f'{probe_name} process output missing: {process_output}')
+        logs_by_slot[slot] = completed_client_evidence(retained_log, process_output)
     result.update(validate_evidence(logs_by_slot, ticks, manifest['stride'],
                                     rolling_slices=manifest.get('world_rolling_slices'),
                                     motion_watch=manifest.get('world_motion_watch'),
-                                    motion_window=manifest.get('world_motion_window')))
+                                    motion_window=manifest.get('world_motion_window'),
+                                    player_control_bank_probe=manifest.get('player_control_bank_probe', False),
+                                    player_control_boundary_probe=manifest.get('player_control_boundary_probe', False)))
     try:
         result['relay'] = json.loads((run_dir / 'relay.json').read_text())
     except (OSError, ValueError):
@@ -1038,9 +2883,155 @@ def run(args):
             or not (root / MARKER).is_file() or root.stat().st_uid not in (0, user.pw_uid)):
         raise SystemExit(f'{root} is not a staged live-test root under {userhome} with {MARKER}')
     manifest = json.loads((root / 'manifest.json').read_text())
+    ticks = manifest['ticks'] if args.ticks is None else args.ticks
+    validate_rolling_leaf_ticks(manifest.get('world_rolling_leaf_ticks'), manifest.get('world_rolling_slices'), ticks)
+    validate_rolling_raw_ids(manifest.get('world_rolling_raw_ids'), manifest.get('world_rolling_leaf_ticks'))
+    input_lifecycle = getattr(args, 'controller_lifecycle_input_discard', False)
+    physics = getattr(args, 'controller_physics_discard', False)
+    physics_frames = getattr(args, 'controller_physics_frames', 1)
+    network_physics = validate_network_physics(manifest, physics, physics_frames, ticks)
+    view_query_enabled = validate_view_query_bundle(root, manifest, network_physics)
+    ui_overlay_enabled = validate_ui_overlay(manifest, manifest.get('independent_keyboard_frames', 0))
+    if ui_overlay_enabled:
+        if not network_physics:
+            raise SystemExit('UI overlay requires disposable independent network physics')
+        for source in UI_OVERLAY_SOURCES:
+            receipt = 'source-receipts/' + source
+            if receipt not in manifest.get('files', {}) or not (root / receipt).is_file():
+                raise SystemExit('UI overlay requires its frozen source receipts')
+    plan_kick_enabled = validate_plan_kick(manifest)
+    if plan_kick_enabled:
+        for source in PLAN_KICK_SOURCES:
+            receipt = 'source-receipts/' + source
+            if receipt not in manifest.get('files', {}) or not (root / receipt).is_file():
+                raise SystemExit('plan-kick requires its frozen source receipts')
+        if ('linux_ui_plan_kick_evidence.py' not in manifest.get('files', {}) or
+                not (root / 'linux_ui_plan_kick_evidence.py').is_file()):
+            raise SystemExit('plan-kick requires its frozen evidence collector')
+    seat_query_enabled = validate_seat_query(manifest)
+    if seat_query_enabled:
+        for source in SEAT_QUERY_SOURCES:
+            receipt = 'source-receipts/' + source
+            if receipt not in manifest.get('files', {}) or not (root / receipt).is_file():
+                raise SystemExit('seat-query requires its frozen source receipts')
+        if ('linux_ui_seat_query_evidence.py' not in manifest.get('files', {}) or
+                not (root / 'linux_ui_seat_query_evidence.py').is_file()):
+            raise SystemExit('seat-query requires its frozen evidence collector')
+    live_pose_enabled = validate_live_pose_observer(manifest)
+    validate_live_pose_evidence_contract(manifest)
+    seat_correction_enabled = validate_seat_correction(manifest, frozen=True)
+    if seat_correction_enabled:
+        for source in SEAT_CORRECTION_SOURCES:
+            receipt = 'source-receipts/' + source
+            if receipt not in manifest.get('files', {}) or not (root / receipt).is_file():
+                raise SystemExit('seat correction requires all frozen source receipts')
+        helper = 'linux_ui_seat_correction_evidence.py'
+        if helper not in manifest.get('files', {}) or not (root / helper).is_file():
+            raise SystemExit('seat correction requires its frozen collector')
+    if live_pose_enabled:
+        for source in LIVE_POSE_SOURCES:
+            receipt = 'source-receipts/' + source
+            if receipt not in manifest.get('files', {}) or not (root / receipt).is_file():
+                raise SystemExit('live-pose observer requires its frozen source receipts')
+        for helper in ('linux_ui_live_pose_observer_evidence.py', 'linux_ui_pose_scope_evidence.py'):
+            if helper not in manifest.get('files', {}) or not (root / helper).is_file():
+                raise SystemExit('live-pose observer requires both frozen evidence collectors')
+    fork_enabled = validate_presentation_fork(manifest, manifest.get('independent_keyboard_frames', 0))
+    if fork_enabled:
+        if not network_physics:
+            raise SystemExit('presentation fork requires disposable independent network physics')
+        for name in ('player_presentation_fork_probe.h', 'player_presentation_overlay.h',
+                     'gate_player_presentation_fork.h', 'gate_fork_save.h', 'gate_linux.c'):
+            receipt = 'source-receipts/src/native/engine/linux/' + name
+            if receipt not in manifest.get('files', {}) or not (root / receipt).is_file():
+                raise SystemExit('presentation fork requires its frozen source receipts')
+    ui_callback_enabled = validate_ui_callback_observer(manifest, manifest.get('independent_keyboard_frames', 0))
+    if ui_callback_enabled and not network_physics:
+        raise SystemExit('UI callback observer requires disposable network physics')
+    if ui_callback_enabled and 'source-receipts/src/native/engine/linux/gate_linux.c' not in manifest.get('files', {}):
+        raise SystemExit('UI callback observer requires sealed gate source')
+    throttle_environment = throttle_probe_environment(manifest, network_physics)
+    throttle_receipt = 'source-receipts/src/native/engine/linux/gate_player_throttle_discard.h'
+    if throttle_environment and (throttle_receipt not in manifest.get('files', {}) or
+                                 not (root / throttle_receipt).is_file()):
+        raise SystemExit('throttle probe requires its frozen native header receipt')
+    presentation_enabled = manifest.get('player_presentation_probe', False)
+    camera_enabled = manifest.get('player_external_camera_probe', False)
+    if camera_enabled and (collect_camera_evidence is None or not (root / 'linux_player_camera_evidence.py').is_file()):
+        raise SystemExit('external camera probe requires its bundled strict camera evidence collector')
+    lifetime_preload = physics or getattr(args, 'player_lifetime_preload', False)
+    recurring_tail = getattr(args, 'controller_recurring_tail_readiness', False) or physics
+    recurring = getattr(args, 'controller_recurring_readiness', False) or recurring_tail
+    recurring_end = getattr(args, 'controller_recurring_end', None)
+    recurring_end = physics_window_end(physics, physics_frames, recurring_end, ticks, network=network_physics)
+    if recurring_end is not None and not recurring:
+        raise SystemExit('--controller-recurring-end requires a recurring readiness mode')
+    recurring_end = 30 if recurring_end is None else recurring_end
+    if lifetime_preload and not manifest.get('player_lifetime_sha256'):
+        raise SystemExit('lifetime preload requires a bundle with --player-lifetime-preload')
+    if lifetime_preload and not recurring_tail:
+        raise SystemExit('lifetime preload requires tail readiness or disposable physics mode')
+    if physics_frames > 1 and not network_physics and (collect_recurring_physics_evidence is None or
+            'linux_player_frames_evidence.py' not in manifest.get('files', {}) or
+            not (root / 'linux_player_frames_evidence.py').is_file()):
+        raise SystemExit('repeated physics requires the bundled linux_player_frames_evidence.py collector')
+    if network_physics and (collect_network_physics_evidence is None or
+            'linux_player_network_evidence.py' not in manifest.get('files', {}) or
+            not (root / 'linux_player_network_evidence.py').is_file()):
+        raise SystemExit('independent keyboard physics requires its bundled strict network collector')
+    routes_lifecycle = getattr(args, 'controller_lifecycle_routes_discard', False) or input_lifecycle
+    update_lifecycle = getattr(args, 'controller_lifecycle_update_discard', False) or routes_lifecycle
+    selected_modes = [getattr(args, field, False) for field in
+                      ('controller_lifecycle_discard', 'controller_lifecycle_isolated_discard',
+                       'controller_lifecycle_update_discard', 'controller_lifecycle_routes_discard',
+                       'controller_lifecycle_input_discard', 'controller_recurring_readiness',
+                       'controller_recurring_tail_readiness', 'controller_physics_discard')]
+    isolated_lifecycle = getattr(args, 'controller_lifecycle_isolated_discard', False) or update_lifecycle
+    if sum(selected_modes) > 1:
+        raise SystemExit('choose one controller experiment mode')
+    lifecycle = getattr(args, 'controller_lifecycle_discard', False) or isolated_lifecycle or physics
+    if lifecycle:
+        validate_lifecycle_discard(manifest, ticks)
+    if recurring:
+        validate_recurring_readiness(manifest, ticks, recurring_end)
+    if manifest.get('player_control_boundary_probe'):
+        validate_control_boundary_probe(manifest.get('stock_keyboard_observer'),
+            manifest.get('serial_pathing'), ticks,
+            (manifest.get(key) for key in ('player_control_bank_probe', 'player_factory_probe',
+             'player_reference_probe', 'stock_keyboard_replay_probe', 'player_seat_preflight')))
+    if manifest.get('player_control_bank_probe'):
+        validate_control_bank_probe(manifest.get('stock_keyboard_observer'),
+                                    manifest.get('serial_pathing'), ticks,
+                                    manifest.get('stock_keyboard_replay_probe'),
+                                    manifest.get('player_reference_probe'))
+    if manifest.get('player_seat_preflight'):
+        validate_seat_preflight(manifest.get('player_factory_probe'),
+                                manifest.get('player_factory_retain_until'),
+                                manifest.get('stock_keyboard_observer'),
+                                manifest.get('serial_pathing'), ticks)
+    validate_factory_retention(manifest.get('player_factory_retain_until'),
+                               manifest.get('player_factory_probe'), ticks)
+    if manifest.get('player_control_bank_census') and ticks < 4:
+        raise SystemExit('--player-control-bank-census requires at least four ticks')
+    if presentation_enabled:
+        for name in ('gate_player_presentation_probe.h', 'player_presentation_probe.h'):
+            receipt = 'source-receipts/src/native/engine/linux/' + name
+            if receipt not in manifest.get('files', {}) or not (root / receipt).is_file():
+                raise SystemExit('presentation probe requires both frozen native header receipts')
     for rel, digest in manifest['files'].items():
         if sha(root / rel) != digest:
             raise SystemExit(f'bundle file changed: {rel}')
+    validate_presentation_config((root / 'extension/x4_lan_lab/ui/config.lua').read_text(encoding='utf-8'),
+                                 presentation_enabled)
+    validate_view_query_config((root / 'extension/x4_lan_lab/ui/config.lua').read_text(), view_query_enabled)
+    validate_ui_callback_config((root / 'extension/x4_lan_lab/ui/config.lua').read_text(), ui_callback_enabled)
+    validate_presentation_fork_config((root / 'extension/x4_lan_lab/ui/config.lua').read_text(), fork_enabled)
+    validate_ui_overlay_config((root / 'extension/x4_lan_lab/ui/config.lua').read_text(), ui_overlay_enabled,
+                               manifest.get('player_ui_overlay_callbacks', 1))
+    validate_plan_kick_config((root / 'extension/x4_lan_lab/ui/config.lua').read_text(), plan_kick_enabled)
+    validate_seat_query_config((root / 'extension/x4_lan_lab/ui/config.lua').read_text(), seat_query_enabled)
+    validate_live_pose_observer_config((root / 'extension/x4_lan_lab/ui/config.lua').read_text(), live_pose_enabled)
+    validate_seat_correction_config((root / 'extension/x4_lan_lab/ui/config.lua').read_text(), seat_correction_enabled)
     world_seed = snapshot_seed(root / 'snapshot' / SLOT_SAVE)
     if manifest.get('snapshot_seed', world_seed) != world_seed:
         raise SystemExit('bundle seed differs from its snapshot')
@@ -1077,11 +3068,19 @@ def run(args):
     external = args.relay_port is not None
     if external != bool(args.relay_token) or external != bool(args.local_slots):
         raise SystemExit('--relay-port, --relay-token and --local-slots go together')
+    try:
+        relay_host, arm_at = remote_session_options(args.relay_host, args.arm_at, external)
+    except ValueError as error:
+        raise SystemExit(f'REFUSED: {error}') from None
+    if external and relay_host is None:
+        relay_host = '127.0.0.1'
     if external and (not 1024 <= args.relay_port <= 65535 or not re.fullmatch(r'[0-9a-f]{32}', args.relay_token)):
         raise SystemExit('--relay-port must be 1024..65535 and --relay-token 32 lowercase hex')
     local = sorted({int(part) for part in args.local_slots.split(',')}) if external else list(range(1, clients + 1))
     if not local or any(not 1 <= slot <= clients for slot in local):
         raise SystemExit(f'--local-slots must name slots of 1..{clients}')
+    if lifecycle and len(local) != 2:
+        raise SystemExit('--controller-lifecycle-discard requires two local clients')
     needed = args.min_memory_gib if args.min_memory_gib is not None else 6.5 * len(local)
     if memory < needed:
         problems.append(f'MemAvailable {memory:.1f} GiB < {needed} GiB for {clients} instances')
@@ -1105,7 +3104,6 @@ def run(args):
                                             'portable_math': bool(manifest.get('portable_math_sha256')), 'seed_rng': manifest.get('seed_rng'),
                                             'gate_so_sha256': manifest['gate_so_sha256']}))
         return
-    ticks = manifest['ticks'] if args.ticks is None else args.ticks
     if manifest.get('navmesh_post_observe') is not None:
         from navmesh_post_config import validate_window
         validate_window(manifest['navmesh_post_observe'], ticks)
@@ -1137,16 +3135,43 @@ def run(args):
         credentials = load_credentials(args.wire_crypto_credentials)
         if any(slot not in credentials for slot in local):
             raise SystemExit(f'--wire-crypto-credentials lacks a credential for slots {[s for s in local if s not in credentials]}')
-    by_slot = {slot: stage_case(root, run_dir, slot, game, steam_home, port, token, clients, credentials.get(slot)) for slot in local}
+    by_slot = {slot: stage_case(root, run_dir, slot, game, steam_home, port, token, clients, credentials.get(slot),
+                                relay_host=relay_host, arm_at=arm_at) for slot in local}
     cases = [by_slot[slot] for slot in local]
     for path in [run_dir, *run_dir.rglob('*')]:
         if os.geteuid() == 0 and not path.is_symlink():
             os.chown(path, user.pw_uid, user.pw_gid)
     result = {'name': name, 'ticks': ticks, 'port': port, 'memory_available_gib': round(memory, 1), 'discard_layer': discard,
               'manifest_commit': manifest['commit'], 'gate_so_sha256': manifest['gate_so_sha256'], 'steam_before': steam,
+              'player_lifetime_sha256': manifest.get('player_lifetime_sha256'),
+              'player_lifetime_enabled': lifetime_preload,
+              'player_presentation_fork_probe': fork_enabled,
+              'player_ui_plan_kick_probe': plan_kick_enabled,
+              'player_ui_seat_query_probe': seat_query_enabled,
+              'player_ui_live_pose_observer': live_pose_enabled,
+              'player_ui_seat_correction': seat_correction_enabled,
+              'player_ui_seat_correction_evidence_version': manifest.get('player_ui_seat_correction_evidence_version'),
+              'player_ui_live_pose_observer_evidence_version': manifest.get('player_ui_live_pose_observer_evidence_version'),
+              'player_ui_overlay_probe': ui_overlay_enabled,
+              'player_ui_overlay_callbacks': manifest.get('player_ui_overlay_callbacks', 1),
+              'player_view_query_observer': view_query_enabled,
+              'player_view_query_sha256': manifest.get('player_view_query_sha256'),
+              'player_throttle_probe': bool(manifest.get('player_throttle_probe', False)),
+              'player_throttle_warm_probe': bool(manifest.get('player_throttle_warm_probe', False)),
               'portable_math_sha256': manifest.get('portable_math_sha256'), 'seed_rng': manifest.get('seed_rng'), 'launch_order': order,
-              'external_relay': external, 'local_slots': local, 'snapshot_seed': world_seed}
-    procs, starts, logs = [], {}, []
+              'external_relay': external, 'relay_host': relay_host if external else None, 'arm_at': arm_at,
+              'local_slots': local, 'snapshot_seed': world_seed}
+    if lifecycle:
+        result['physics_discard' if physics else 'lifecycle_discard'] = {'pass': False, 'clients': {}, 'restored': False,
+                                       'resumed': False, 'tickrunaccepted': False}
+        if physics:
+            result['physics_discard']['frame_count'] = physics_frames
+            if network_physics:
+                result['physics_discard'].update(mode='independent_keyboard', validation_pending=True)
+    if recurring and not physics:
+        result['recurring_readiness'] = {'pass': False, 'end': recurring_end, 'tail': recurring_tail, 'clients': {},
+                                         'readiness_only': True, 'other_threads_excluded': False}
+    procs, starts, logs, games = [], {}, [], []
     cancelled = []
     # bwrap binds each private lock over this path, and cannot create it in the read-only view.
     lock_target = Path('/tmp/EGOSOFT_X4.lock')
@@ -1157,16 +3182,20 @@ def run(args):
     for number in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
         signal.signal(number, lambda *_: cancelled.append(1))
 
-    def launch(label, command, env=None, as_user=False):
+    def launch(label, command, env=None, as_user=False, stderr_path=None):
         log = (run_dir / f'{label}.log').open('wb')
         logs.append(log)
+        error_log = subprocess.STDOUT
+        if stderr_path is not None:
+            error_log = stderr_path.open('wb')
+            logs.append(error_log)
         extra = {'user': user.pw_uid, 'group': user.pw_gid, 'extra_groups': []} if as_user and os.geteuid() == 0 else {}
         parent = os.getpid()
 
         def parent_death():
             if ctypes.CDLL(None).prctl(1, signal.SIGKILL) != 0 or os.getppid() != parent:
                 os._exit(125)
-        proc = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT, start_new_session=True,
+        proc = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=log, stderr=error_log, start_new_session=True,
                                 env=env, preexec_fn=parent_death, **extra)
         starts[proc.pid] = start_ticks(proc.pid)
         procs.append(proc)
@@ -1216,13 +3245,45 @@ def run(args):
                 env.update(VK_LAYER_PATH=str(layer), VK_INSTANCE_LAYERS='VK_LAYER_X4MP_discard', X4MP_VK_DISCARD='1')
             if manifest.get('portable_math_sha256'):
                 env.update(portable_math_env(case))
+            if lifetime_preload:
+                env['LD_PRELOAD'] = ' '.join(filter(None, (str(case / PLAYER_LIFETIME), env.get('LD_PRELOAD'))))
+                env['X4MP_PLAYER_LIFETIME_PRELOAD'] = '1'
+            if view_query_enabled:
+                env = view_query_environment(env, case, manifest['player_view_query_sha256'],
+                                             manifest['player_view_query_size'])
+                if ui_callback_enabled:
+                    env['X4MP_UI_CALLBACK_OBSERVER'] = '1'
+            env.update(presentation_fork_environment(fork_enabled))
+            env.update(ui_overlay_environment(ui_overlay_enabled, slot, manifest.get('player_ui_overlay_callbacks', 1)))
+            env.update(plan_kick_environment(plan_kick_enabled, slot))
+            env.update(seat_query_environment(seat_query_enabled, slot))
+            env.update(live_pose_observer_environment(live_pose_enabled, slot))
+            env.update(seat_correction_environment(seat_correction_enabled, slot))
+            if physics:
+                env['X4_DEV_PLAYER_PHYSICS'] = physics_environment_mode(physics_frames, network_physics)
+                env['X4_DEV_PLAYER_LIFECYCLE_LOG'] = str(profile / 'controller-lifecycle.log')
+                env.update(throttle_environment)
+            elif lifecycle:
+                env['X4_DEV_PLAYER_LIFECYCLE'] = ('take-release-input-discard' if input_lifecycle else
+                    'take-release-routes-discard' if routes_lifecycle else
+                    'take-release-update-discard' if update_lifecycle else
+                    'take-release-isolated-discard' if isolated_lifecycle else 'take-release-discard')
+                env['X4_DEV_PLAYER_LIFECYCLE_LOG'] = str(profile / 'controller-lifecycle.log')
+            if recurring:
+                env['X4LAN_PLAYER_CONTROL_RECURRING'] = '1'
+                env['X4LAN_PLAYER_CONTROL_RECURRING_END'] = str(recurring_end)
+                if recurring_tail:
+                    env['X4LAN_PLAYER_CONTROL_RECURRING_TAIL'] = '1'
             program = [str(case / 'game/X4'), '-personalfolderid', '45841', '-skipintro', '-debug', 'scripts',
                        '-logfile', 'engine-output.log', '-nocputhrottle', '-noworkshopsync', f'-seed:{world_seed}']
-            games_by_slot[slot] = (launch(f'game{slot}', namespace_command(case, game, dlc_binds, lock, env, program, args.user, shm)), profile)
+            games_by_slot[slot] = (launch(f'game{slot}-stdout', namespace_command(case, game, dlc_binds, lock, env, program, args.user, shm),
+                stderr_path=run_dir / f'game{slot}-stderr.log' if recurring else None), profile)
         games = [games_by_slot[slot] for slot in local]
         result['started'] = time.time()
         deadline = time.monotonic() + args.timeout
         watches = [LogWatch(profile / 'engine-output.log') for _, profile in games]
+        process_watches = [LogWatch(run_dir / f'game{slot}-stdout.log') for slot in local]
+        error_watches = [LogWatch(run_dir / f'game{slot}-stderr.log') if recurring else None for slot in local]
         stopped_at = {}
         while True:
             if cancelled:
@@ -1231,12 +3292,29 @@ def run(args):
                 raise RuntimeError('timeout (loading or relay); see the client logs')
             if steam_identity(steam_home, user.pw_uid) != steam:
                 raise RuntimeError('Steam client identity changed')
-            for slot, watch, (proc, _) in zip(local, watches, games):
+            for slot, watch, process_watch, error_watch, (proc, _) in zip(local, watches, process_watches, error_watches, games):
                 watch.poll()
+                process_watch.poll()
+                if error_watch is not None:
+                    error_watch.poll()
+                if recurring and (watch.failure or process_watch.failure or error_watch.failure):
+                    raise RuntimeError(f'client {slot}: {watch.failure or process_watch.failure or error_watch.failure}')
+                if lifecycle:
+                    if watch.failure or process_watch.failure:
+                        raise RuntimeError(f'client {slot}: {watch.failure or process_watch.failure}')
+                    continue
                 if proc.poll() is not None and not watch.stopped and not watch.failure:
                     raise RuntimeError(f'client {slot}: X4 exited before its STOP line')
                 if watch.stopped or watch.failure:
                     stopped_at.setdefault(slot, time.monotonic())
+            if lifecycle:
+                if lifecycle_discard_wait(
+                        {slot: proc.poll() for slot, (proc, _) in zip(local, games)},
+                        {slot: profile / 'controller-lifecycle.log' for slot, (_, profile) in zip(local, games)},
+                        network=network_physics):
+                    break
+                time.sleep(0.1)
+                continue
             index = {slot: i for i, slot in enumerate(local)}
             error = stop_error({slot: watches[index[slot]].failure or watches[index[slot]].stop_reason for slot in stopped_at},
                                stopped_at, time.monotonic(), len(local))
@@ -1283,8 +3361,54 @@ def run(args):
     # Even failed postprocessing must leave an explicit result next to the raw logs.
     result['pass'] = False
     try:
-        result.update(collect_run_evidence(run_dir, local, cases, ticks, manifest))
-        result['pass'] = (
+        collect_preload_evidence(result, local, games, run_dir, manifest,
+                                 view_query_enabled=view_query_enabled, ui_callback_enabled=ui_callback_enabled,
+                                 lifetime_preload=lifetime_preload, fork_enabled=fork_enabled,
+                                 recurring=recurring, physics_frames=physics_frames,
+                                 ui_overlay_enabled=ui_overlay_enabled)
+        if lifecycle:
+            clients_evidence = {}
+            for slot, (proc, profile) in zip(local, games):
+                arguments = (profile / 'controller-lifecycle.log',
+                             run_dir / f'client{slot}-controller-lifecycle.log',
+                             profile / 'engine-output.log', run_dir / f'game{slot}-stdout.log', proc.returncode)
+                if physics:
+                    stderr = run_dir / f'game{slot}-stderr.log'
+                    if network_physics:
+                        clients_evidence[str(slot)] = collect_network_client(
+                            arguments, stderr, physics_frames, slot,
+                            camera=camera_enabled, throttle=bool(throttle_environment),
+                            throttle_start_tick=manifest.get('player_throttle_start_tick') or 5,
+                            presentation=presentation_enabled)
+                    else:
+                        clients_evidence[str(slot)] = collect_physics_client(arguments, stderr, physics_frames)
+                else:
+                    clients_evidence[str(slot)] = collect_lifecycle_discard(
+                        *arguments, isolated=isolated_lifecycle, update=update_lifecycle,
+                        routes=routes_lifecycle, injected_input=input_lifecycle)
+            result['physics_discard' if physics else 'lifecycle_discard'] = {
+                'pass': len(local) == 2 and set(clients_evidence) == {str(slot) for slot in local}
+                        and all(item['pass'] for item in clients_evidence.values())
+                        and not result.get('error') and not result.get('cleanup_errors')
+                        and not result['owned_processes_remaining']
+                        and result['steam_unchanged'] and not result['x4_left'],
+                'clients': clients_evidence, 'restored': False, 'resumed': False,
+                'tickrunaccepted': False}
+            if physics:
+                result['physics_discard']['frame_count'] = physics_frames
+                if network_physics:
+                    result['physics_discard'].update(mode='independent_keyboard', validation_pending=False)
+                    peer_errors = network_peer_errors(clients_evidence, physics_frames,
+                                                      throttle=bool(throttle_environment))
+                    result['physics_discard']['peer_errors'] = peer_errors
+                    result['physics_discard']['pass'] = result['physics_discard']['pass'] and not peer_errors
+                    if camera_enabled:
+                        profiles = {str(slot): profile for slot, (_, profile) in zip(local, games)}
+                        add_camera_evidence(result['physics_discard'], run_dir, profiles)
+        else:
+            result.update(collect_run_evidence(run_dir, local, cases, ticks, manifest,
+                                           writers_closed=not result.get('cleanup_errors') and not result['owned_processes_remaining']))
+        result['pass'] = not lifecycle and (
             not result.get('error')
             and not result.get('cleanup_errors')
             and result['steam_unchanged']
@@ -1293,10 +3417,32 @@ def run(args):
             and (external or (result['relay'] and result['relay'].get('verdict') == 'pass'))
             and all(result.get('portable_math_active', [True]))
         )
+        if recurring and not physics:
+            clients_evidence = {}
+            for slot in local:
+                path = run_dir / f'game{slot}-stderr.log'
+                with path.open(errors='replace') as stream:
+                    parser = recurring_tail_readiness_evidence if recurring_tail else recurring_readiness_evidence
+                    evidence = parser(stream, recurring_end)
+                evidence.update(stderr_path=str(path), stderr_sha256=sha(path))
+                for source in (run_dir / f'game{slot}-stdout.log', by_slot[slot][1] / 'engine-output.log'):
+                    with source.open(errors='replace') as stream:
+                        fatal = [line.strip()[:300] for line in stream if is_fatal_gate_message(line)
+                                 or 'PLAYER_CONTROL_RECURRING_FATAL' in line]
+                    evidence['errors'].extend(fatal)
+                evidence['pass'] = not evidence['errors']
+                clients_evidence[str(slot)] = evidence
+            result['recurring_readiness'] = {
+                'pass': result['pass'] and set(clients_evidence) == {str(slot) for slot in local}
+                        and all(client['pass'] for client in clients_evidence.values()),
+                'full_tick_evidence_pass': result['pass'], 'clients': clients_evidence,
+                'end': recurring_end, 'tail': recurring_tail,
+                'readiness_only': True, 'other_threads_excluded': False}
+            result['pass'] = result['pass'] and result['recurring_readiness']['pass']
     except Exception as error:
         result['postprocessing_error'] = str(error)
     (run_dir / 'run-result.json').write_text(json.dumps(result, indent=2, default=str) + '\n')
-    print('LINUX_GATE_LIVE ' + json.dumps({k: result.get(k) for k in ('name', 'pass', 'error', 'postprocessing_error', 'stops', 'world_identity', 'world_capture_problems', 'portable_math_active', 'world_hash_ticks',
+    print('LINUX_GATE_LIVE ' + json.dumps({k: result.get(k) for k in ('name', 'pass', 'lifecycle_discard', 'physics_discard', 'recurring_readiness', 'error', 'postprocessing_error', 'stops', 'world_identity', 'world_capture_problems', 'portable_math_active', 'world_hash_ticks',
                                                                     'world_hash_first_difference', 'evidence_errors', 'steam_unchanged', 'x4_left')}))
     print(f'results: {run_dir}')
     raise SystemExit(0 if result['pass'] else 1)
@@ -1313,6 +3459,10 @@ def main(argv=None):
                    help='opt-in Linux simulation test configuration; omit for manual hook experiments')
     b.add_argument('--world-log-mode', choices=('full', 'hashes'), default='full',
                    help='hashes suppresses object detail logs while keeping every full world capture')
+    b.add_argument('--world-rolling-raw-ids', nargs='+', metavar='SAVED_HEX',
+                   help='default-off raw canonical bytes for 1..8 unique 16-digit lowercase saved IDs; requires leaf ticks')
+    b.add_argument('--world-rolling-leaf-ticks', type=int, nargs=2, metavar=('FIRST', 'SECOND'),
+                   help='diagnostic per-object domain hashes at two rolling ticks')
     b.add_argument('--world-rolling-slices', type=int, metavar='N',
                    help='experimental per-tick object slices; requires hashes-only logging, changes census coverage timing')
     b.add_argument('--economy-watch', metavar='SAVED_ID', help='read-only station economy deadline evidence')
@@ -1328,6 +3478,55 @@ def main(argv=None):
                    help='thin diagnostic status logs every N ticks (1..3600)')
     b.add_argument('--probe-profile', action='store_true',
                    help='record probe timings for scan/output performance comparisons')
+    b.add_argument('--stock-keyboard-observer', action='store_true',
+                   help='observe selected native keyboard handlers; leaves local controls unchanged')
+    b.add_argument('--player-control-bank-census', action='store_true',
+                   help='read-only Linux control-bank census; requires observer, serial pathing and at least four ticks')
+    b.add_argument('--player-seat-preflight', action='store_true',
+                   help='read-only retained-player seat inspection at tick four; no seating or controls')
+    b.add_argument('--player-control-bank-probe', action='store_true',
+                   help='reserved control-bank roundtrip diagnostic; native activation is currently withheld')
+    b.add_argument('--player-control-boundary-probe', action='store_true',
+                   help='readiness-only tick-five main/worker rendezvous; does not exchange player state')
+    b.add_argument('--player-factory-retain-until', type=int, metavar='TICK',
+                   help='retain the diagnostic P2 result until this tick; requires the factory probe')
+    b.add_argument('--ui-callback-observer', action='store_true',
+                   help='bounded UI callback scope observation; requires view-query and presentation probes')
+    b.add_argument('--player-view-query-observer', action='store_true',
+                   help='default-off pre-main view query observer; requires independent >=4 frames and lifetime preload')
+    b.add_argument('--player-lifetime-preload', action='store_true',
+                   help='bundle default-off pre-main lifetime guard for disposable physics experiments only')
+    b.add_argument('--player-factory-probe', action='store_true',
+                   help='isolated Linux construct/restore/dispose diagnostic; not playable controls')
+    b.add_argument('--player-reference-probe', action='store_true',
+                   help='default-off read-only P1 reference inspection; requires observer and serial pathing')
+    b.add_argument('--stock-keyboard-replay-probe', action='store_true',
+                   help='default-off two-client single-ship keyboard proof; requires observer, not independent player controls')
+    throttle_modes = b.add_mutually_exclusive_group()
+    throttle_modes.add_argument('--player-throttle-probe', action='store_true',
+                   help='default-off disposable STATE13 P2 throttle diagnostic; requires independent keyboard physics')
+    throttle_modes.add_argument('--player-throttle-warm-probe', action='store_true',
+                   help='disposable STATE13 probe after a neutral Update; requires at least 3 independent frames')
+    b.add_argument('--player-ui-seat-correction', action='store_true',
+                   help='default-off coupled Move seat correction; requires explicit live observer, seat query and overlay160')
+    b.add_argument('--player-ui-live-pose-observer', action='store_true',
+                   help='guest-only bounded native pose-entry observation; requires explicit seat query and overlay160')
+    b.add_argument('--player-ui-seat-query-probe', action='store_true',
+                   help='guest parent-worker stock seat-query diagnostic; requires explicit overlay160')
+    b.add_argument('--player-ui-plan-kick-probe', action='store_true',
+                   help='guest-only disposable plan handler/RNG diagnostic; requires explicit overlay160')
+    b.add_argument('--player-ui-overlay-callbacks', type=int, choices=(1, 8, 160), default=1,
+                   help='bounded UI overlay callback count; 8/160 require the explicit probe and >=count+5 frames')
+    b.add_argument('--player-ui-overlay-probe', action='store_true',
+                   help='default-off client2 bounded UI overlay (one callback by default); requires fork/view-query/callbacks and >=6 independent frames')
+    b.add_argument('--player-presentation-fork-probe', action='store_true',
+                   help='default-off disposable child presentation getter probe; requires independent >=5 frames and presentation')
+    b.add_argument('--player-presentation-probe', action='store_true',
+                   help='default-off read-only presentation identity probe; requires >=4 independent frames')
+    b.add_argument('--player-external-camera-probe', action='store_true',
+                   help='default-off disposable external-camera diagnostic; requires >=3 independent keyboard frames')
+    b.add_argument('--independent-keyboard-frames', type=int, default=0, metavar='N',
+                   help='explicit disposable two-player keyboard physics window, 2..600; requires all probe flags')
     b.add_argument('--extension-base', type=Path, help='explicit historical extension base (default: current minimal lockstep base)')
     b.add_argument('--portable-math', action='store_true', help='preload libx4mp_portable_math.so with its decimal and exact_reciprocal patches')
     b.add_argument('--seed-rng', action='store_true', help='key the MoveWorker RNG word each frame (boot option 2)')
@@ -1338,6 +3537,8 @@ def main(argv=None):
     b.add_argument('--md-resume-rng', action='store_true', help='load-time MD cue delays on per-cue streams')
     b.add_argument('--runtime-ids', action='store_true', help='the same runtime IDs on every client (set mode)')
     b.add_argument('--runtime-id-callers', action='store_true', help='the table of who allocates runtime IDs (needs --runtime-ids)')
+    b.add_argument('--runtime-id-caller-stride', type=int, metavar='N',
+                   help='emit full runtime ID caller tables every N ticks (1..3600; needs --runtime-id-callers)')
     b.add_argument('--runtime-ids-local', action='store_true', help='what only the view asks for takes runtime IDs from its own lists (needs --runtime-ids and --created-identities)')
     b.add_argument('--script-rng', choices=('observe', 'key'), help='AI scripts and MD cues on per-script streams')
     b.add_argument('--script-rng-mask', type=int, choices=range(1, 8), metavar='1..7', help='1 AI scripts, 2 MD cues, 4 also boot phase 2 (default 3)')
@@ -1469,6 +3670,29 @@ def main(argv=None):
     b.add_argument('--stride', type=int, default=60, help='world hash capture every N ticks (and tick 1)')
     r = sub.add_parser('run', help='run on Linux as the Steam user, or select one as root')
     r.add_argument('--root', type=Path, required=True)
+    lifecycle_modes = r.add_mutually_exclusive_group()
+    lifecycle_modes.add_argument('--controller-lifecycle-discard', action='store_true',
+                   help='RUN-only disposable take/release experiment; expects exit 223, never accepts a tick run')
+    lifecycle_modes.add_argument('--controller-lifecycle-isolated-discard', action='store_true',
+                   help='RUN-only isolated take/release globals experiment; still discards the process with exit 223')
+    lifecycle_modes.add_argument('--controller-lifecycle-update-discard', action='store_true',
+                   help='RUN-only one native controller Update without synthetic input; isolated disposable experiment')
+    lifecycle_modes.add_argument('--controller-lifecycle-routes-discard', action='store_true',
+                   help='RUN-only bounded getter routes after one isolated controller Update; disposable state probe')
+    lifecycle_modes.add_argument('--controller-lifecycle-input-discard', action='store_true',
+                   help='RUN-only native STATE press/Update/release with bounded getter routes; disposable input probe')
+    lifecycle_modes.add_argument('--controller-recurring-readiness', action='store_true',
+                   help='RUN-only main/worker readiness observations at ticks 5..end; full STOP evidence required')
+    lifecycle_modes.add_argument('--controller-recurring-tail-readiness', action='store_true',
+                   help='RUN-only worker-tail readiness at ticks 5..end and hook restoration at end+1; full STOP required')
+    lifecycle_modes.add_argument('--controller-physics-discard', action='store_true',
+                   help='RUN-only bounded retained P2 physics passes; abort on callbacks and discard process at worker tail')
+    r.add_argument('--controller-physics-frames', type=int, default=1, metavar='N',
+                   help='RUN-only bounded physics passes (1..180 scripted, 1..600 independent network; default 1); nondefault requires physics discard')
+    r.add_argument('--player-lifetime-preload', action='store_true',
+                   help='activate the bundled lifetime guard without binding objects during tail readiness')
+    r.add_argument('--controller-recurring-end', type=int, metavar='TICK',
+                   help='last readiness tick (5..1000, default 30); requires readiness mode and ticks > end')
     r.add_argument('--user', default='x4server')
     r.add_argument('--display', help='use this existing local X11 display instead of private Xvfb instances, e.g. :0')
     r.add_argument('--vulkan-icd', type=Path, help='Vulkan driver JSON; default: detected 64-bit Mesa lavapipe ICD')
@@ -1482,9 +3706,11 @@ def main(argv=None):
     r.add_argument('--steam-home', type=Path, help='the directory whose .steam belongs to the running Steam client (default ~USER; snap Steam: ~USER/snap/steam/common)')
     r.add_argument('--shm', type=Path, help="bind this directory over /dev/shm for X4 (a confined Steam client's shared memory, e.g. /dev/shm/snap.steam)")
     r.add_argument('--preflight', action='store_true', help='only check the host requirements and the bundle; start nothing')
-    r.add_argument('--relay-port', type=int, help='mixed session: use the relay already listening on 127.0.0.1:PORT of this host '
-                   '(e.g. one serving Windows clients too) instead of starting one; needs --relay-token and --local-slots')
+    r.add_argument('--relay-port', type=int, help='use an external relay instead of starting one; '
+                   'needs --relay-token and --local-slots')
     r.add_argument('--relay-token', help='the token of that relay (32 hex)')
+    r.add_argument('--relay-host', help='external relay dotted IPv4 address (default 127.0.0.1)')
+    r.add_argument('--arm-at', type=int, metavar='UTC_SECOND', help='external session: agreed future UTC second to load')
     r.add_argument('--local-slots', metavar='2', help='mixed session: the slots this host runs (the others join from elsewhere)')
     r.add_argument('--wire-crypto-credentials', type=Path, metavar='FILE',
                    help='a bundle built with --wire-crypto: JSON {"<slot>": "x4c1:...", ...} (native_gate_crypto.py credential for '

@@ -96,6 +96,9 @@ def replay_plan(path):
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument('--mass-jacobi-order', action='store_true',
+                   help='opt-in Windows mass Jacobi multiply-then-divide theta order; '
+                        'snapshot boot only; Linux reports its existing native order')
     gate = p.add_mutually_exclusive_group(required=True)
     gate.add_argument('--gate-dll', type=Path, help='Windows gate x4lan_gate_64.dll')
     gate.add_argument('--gate-so', type=Path, help='Linux gate core x4lan_gate.so (src/native/engine/linux): snapshot clock runs, '
@@ -163,8 +166,8 @@ def main():
                    '(native_gate_warp_exit; Windows is that order)')
     p.add_argument('--flight-limits', action='store_true', help="the Linux gate: the engine parameters' limit words with the "
                    "hoisted reciprocal (native_gate_flight_limits; Windows is that order)")
-    p.add_argument('--body1-mass', choices=('fallback',), help="the Linux gate: a ship's second body gets the empty compound's "
-                   "mass properties at creation, Windows' value (native_gate_body1_mass)")
+    p.add_argument('--body1-mass', choices=('fallback',), help="normalize a ship second body to the empty compound mass properties at creation "
+                   "on either gate (native_gate_body1_mass)")
     p.add_argument('--ik-wrap', action='store_true', help="the Linux gate: a skeleton joint's wrapped target as (t2 + value) - pi, "
                    "the Windows order (native_gate_ik_wrap)")
     p.add_argument('--ik-step', action='store_true', help="the Linux gate: the skeleton joints' fixed-step divisions by 0.02 as "
@@ -229,12 +232,18 @@ def main():
                    help='native_gate_tick_hz: simulation steps per second (the relay needs the same --tick-hz; the session defaults use 30)')
     p.add_argument('--loadout-order-rows', type=int, nargs=2, metavar=('FROM', 'TO'), help='LOADOUT_ROWs in this tick window, at most 600 ticks (needs --loadout-order and --world-identities)')
     p.add_argument('--runtime-id-callers', action='store_true', help='the Linux gate: the table of who allocates runtime IDs, RUNTIME_IDS_CALLER rows (needs --runtime-ids)')
+    p.add_argument('--runtime-id-caller-stride', type=int, metavar='N',
+                   help='full runtime ID caller tables every N ticks (1..3600; needs --runtime-id-callers)')
     p.add_argument('--runtime-ids-local', action='store_true', help='the Linux gate: what only the view asks for takes runtime IDs from its own lists (native_gate_runtime_ids_local; needs --runtime-ids and --created-identities)')
     p.add_argument('--travel-snapshot', action='store_true', help='the Linux gate: the wingman travel decision reads a per-pass snapshot of the leader flag (needs --serial-pathing and path determinism bit 2)')
     p.add_argument('--travel-determinism', action='store_true',
                    help='experimental Linux ordered pathing batches; requires serial pathing, budget lift and saved identities')
     p.add_argument('--world-log-mode', choices=('full', 'hashes'), default='full',
                    help='hashes retains complete captures and their digests without per-object log rows')
+    p.add_argument('--world-rolling-raw-ids', nargs='+', metavar='SAVED_HEX',
+                   help='default-off raw canonical bytes for 1..8 unique 16-digit lowercase saved IDs; requires leaf ticks')
+    p.add_argument('--world-rolling-leaf-ticks', type=int, nargs=2, metavar=('FIRST', 'SECOND'),
+                   help='diagnostic per-object domain hashes on two bounded rolling ticks')
     p.add_argument('--world-rolling-slices', type=int, metavar='N',
                    help='experimental Linux census: sample one of N object ranges each tick; not an instantaneous world snapshot')
     p.add_argument('--economy-watch', metavar='SAVED_ID', help='read-only Linux station economy deadlines')
@@ -250,6 +259,45 @@ def main():
                    help='thin diagnostic status logs every N ticks (1..3600)')
     p.add_argument('--probe-profile', action='store_true',
                    help='measure probe sections, including world scan and detailed log output')
+    p.add_argument('--stock-keyboard-observer', action='store_true',
+                   help='Linux-only selected keyboard diagnostic; local controls still run normally')
+    p.add_argument('--player-control-bank-census', action='store_true',
+                   help='Linux read-only control-bank census; requires observer, serial pathing and a snapshot')
+    p.add_argument('--player-control-bank-probe', action='store_true',
+                   help='reserved Linux control-bank diagnostic; native activation is currently withheld')
+    p.add_argument('--player-control-boundary-probe', action='store_true',
+                   help='Linux main/worker rendezvous readiness diagnostic; no player state exchange')
+    p.add_argument('--player-seat-preflight', action='store_true',
+                   help='read-only retained-player seat inspection; requires release after tick four')
+    p.add_argument('--player-factory-retain-until', type=int, metavar='TICK',
+                   help='retain the diagnostic P2 result until this tick; requires the factory probe')
+    p.add_argument('--player-factory-probe', action='store_true',
+                   help='isolated Linux diagnostic: construct, restore and dispose a second Player; not playable controls')
+    p.add_argument('--player-reference-probe', action='store_true',
+                   help='Linux-only read-only P1 reference inspection; requires observer and serial pathing')
+    p.add_argument('--stock-keyboard-replay-probe', action='store_true',
+                   help='Linux-only two-client single-ship keyboard proof; requires observer, not independent player controls')
+    p.add_argument('--player-ui-seat-correction', action='store_true')
+    p.add_argument('--player-ui-live-pose-observer', action='store_true')
+    p.add_argument('--player-ui-seat-query-probe', action='store_true')
+    p.add_argument('--player-ui-plan-kick-probe', action='store_true')
+    p.add_argument('--player-ui-overlay-callbacks', type=int, choices=(1, 8, 160), default=1)
+    p.add_argument('--player-ui-overlay-probe', action='store_true',
+                   help='default-off client2 bounded UI overlay (one callback by default); requires fork/view-query/callbacks and >=6 independent frames')
+    p.add_argument('--player-presentation-fork-probe', action='store_true',
+                   help='disposable Linux child presentation probe; independent >=5 frames, excludes fork-save')
+    p.add_argument('--player-presentation-probe', action='store_true',
+                   help='default-off read-only Linux presentation identity diagnostic; requires >=4 independent frames')
+    p.add_argument('--ui-callback-observer', action='store_true',
+                   help='observe bounded UI callback scopes; requires view-query and presentation probes')
+    p.add_argument('--player-view-query-observer', action='store_true',
+                   help='observe native own-ship queries without changing their results; requires >=4 independent frames')
+    p.add_argument('--player-external-camera-probe', action='store_true',
+                   help='default-off disposable Linux external-camera diagnostic; requires >=3 independent frames')
+    p.add_argument('--independent-keyboard-frames', type=int, default=0, metavar='N',
+                   help='explicit Linux-only disposable independent keyboard window, 2..600')
+    p.add_argument('--stock-keyboard-replay-last-capture', type=int, default=480, metavar='TICK',
+                   help='last capture tick for --stock-keyboard-replay-probe (at least 3; default 480)')
     p.add_argument('--gravidar-deadlines', action='store_true', help='the Linux gate: factor-pass deadlines rebased at the first gated Move, low-attention passes keyed (needs --gravidar)')
     p.add_argument('--gravidar', action='store_true', help='the Linux gate: the gated Gravidar pass with keyed units, time sync and the sector round-robin in saved order (needs --serial-pathing, --world-identities, --gate-so)')
     p.add_argument('--event-rows', type=int, metavar='TICKS', help='native_gate_event_rows: one EVENT_ROW per due event in the boot passes and the first TICKS gated ticks, up to 600 (20000 on the Linux gate; needs --event-order)')
@@ -361,6 +409,97 @@ def main():
                         'fixtures are always bare (the default stack needs the battle snapshot and the Windows modules)')
     p.add_argument('--out', type=Path, required=True)
     args = p.parse_args()
+    if args.runtime_id_caller_stride is not None and (not 1 <= args.runtime_id_caller_stride <= 3600 or
+            not args.runtime_id_callers or not args.runtime_ids):
+        p.error('--runtime-id-caller-stride requires --runtime-id-callers, --runtime-ids and 1..3600')
+    if args.player_control_boundary_probe:
+        if not (args.gate_so and args.snapshot and args.stock_keyboard_observer and args.serial_pathing):
+            p.error('--player-control-boundary-probe requires Linux, a snapshot, observer and serial pathing')
+        if any((args.player_control_bank_probe, args.player_factory_probe, args.player_reference_probe,
+                args.stock_keyboard_replay_probe, args.player_seat_preflight)):
+            p.error('run the control-boundary probe separately from player mutation experiments')
+    if args.player_control_bank_probe:
+        if not (args.gate_so and args.snapshot and args.stock_keyboard_observer and args.serial_pathing):
+            p.error('--player-control-bank-probe requires Linux, a snapshot, observer and serial pathing')
+        if args.stock_keyboard_replay_probe or args.player_reference_probe:
+            p.error('run the control-bank probe separately from keyboard replay and reference probes')
+    if args.player_seat_preflight:
+        if not (args.gate_so and args.snapshot and args.stock_keyboard_observer and
+                args.serial_pathing and args.player_factory_probe):
+            p.error('--player-seat-preflight requires Linux, a snapshot, observer, serial pathing and factory probe')
+        if args.player_factory_retain_until is None or not 5 <= args.player_factory_retain_until <= 36000:
+            p.error('--player-seat-preflight requires --player-factory-retain-until in 5..36000')
+    if args.stock_keyboard_replay_last_capture < 3:
+        p.error('--stock-keyboard-replay-last-capture must be at least 3')
+    if args.player_control_bank_census:
+        if not (args.gate_so and args.snapshot and args.stock_keyboard_observer and args.serial_pathing):
+            p.error('--player-control-bank-census requires Linux, a snapshot, --stock-keyboard-observer and --serial-pathing')
+        if args.stock_keyboard_replay_probe:
+            p.error('run the control-bank census separately from the keyboard replay probe')
+    if args.player_factory_retain_until is not None:
+        if not args.player_factory_probe:
+            p.error('--player-factory-retain-until requires --player-factory-probe')
+        if not 4 <= args.player_factory_retain_until <= 36000:
+            p.error('--player-factory-retain-until must be between 4 and 36000')
+    if args.player_factory_probe and not (args.gate_so and args.snapshot and
+                                        args.stock_keyboard_observer and args.serial_pathing):
+        p.error('--player-factory-probe requires Linux, a snapshot, --stock-keyboard-observer and --serial-pathing')
+    if args.player_presentation_probe and args.independent_keyboard_frames < 4:
+        p.error('--player-presentation-probe requires at least 4 independent keyboard frames')
+    if args.player_ui_seat_correction and not args.player_ui_live_pose_observer:
+        p.error('seat correction requires explicit live observer, seat query and UI overlay160')
+    if args.player_ui_live_pose_observer and (not args.player_ui_seat_query_probe or
+            not args.player_ui_overlay_probe or args.player_ui_overlay_callbacks != 160):
+        p.error('live-pose observer requires explicit seat query and UI overlay160')
+    if args.player_ui_seat_query_probe and (not args.player_ui_overlay_probe or args.player_ui_overlay_callbacks != 160):
+        p.error('seat-query requires explicit UI overlay160')
+    if args.player_ui_plan_kick_probe and (not args.player_ui_overlay_probe or args.player_ui_overlay_callbacks != 160):
+        p.error('plan-kick requires explicit UI overlay160')
+    if args.player_ui_overlay_callbacks != 1 and (not args.player_ui_overlay_probe or
+            args.independent_keyboard_frames < args.player_ui_overlay_callbacks + 5):
+        p.error('multiple UI overlay callbacks require the explicit probe and >=count+5 independent frames')
+    if args.player_ui_overlay_probe and (args.independent_keyboard_frames < 6 or
+            not args.player_presentation_fork_probe or not args.player_presentation_probe or
+            not args.player_view_query_observer or not args.ui_callback_observer):
+        p.error('--player-ui-overlay-probe requires fork/presentation/view-query/callbacks and >=6 independent frames')
+    if args.player_presentation_fork_probe and (not args.player_presentation_probe or
+            args.independent_keyboard_frames < 5 or args.fork_save):
+        p.error('--player-presentation-fork-probe requires presentation and independent >=5 frames; excludes fork-save')
+    if args.ui_callback_observer and (not args.player_view_query_observer or
+                                      not args.player_presentation_probe or args.independent_keyboard_frames < 5):
+        p.error('--ui-callback-observer requires view-query, presentation, and at least 5 independent frames')
+    if args.player_view_query_observer and args.independent_keyboard_frames < 4:
+        p.error('--player-view-query-observer requires at least 4 independent keyboard frames')
+    if args.player_external_camera_probe and args.independent_keyboard_frames < 3:
+        p.error('--player-external-camera-probe requires at least 3 independent keyboard frames')
+    if args.independent_keyboard_frames != 0:
+        if not (2 <= args.independent_keyboard_frames <= 600 and args.gate_so and args.snapshot and
+                args.stock_keyboard_observer and args.serial_pathing and args.player_factory_probe and
+                args.stock_keyboard_replay_probe):
+            p.error('independent keyboard frames require 2..600, Linux snapshot, observer, serial pathing, factory and replay')
+        if args.stock_keyboard_replay_last_capture != args.independent_keyboard_frames + 2:
+            p.error('independent keyboard last capture must equal frames+2 (last apply frames+4)')
+    if args.player_factory_probe and any((args.player_reference_probe, args.stock_keyboard_replay_probe and not args.independent_keyboard_frames,
+            args.player_probe, args.player_orders, args.command_test, args.command_replay,
+            args.docking_state, args.docking_shape_rng, args.docking_shape_refresh)):
+        p.error('run the player factory probe separately from other player experiments')
+    if args.player_reference_probe and not (args.gate_so and args.snapshot and
+                                          args.stock_keyboard_observer and args.serial_pathing):
+        p.error('--player-reference-probe requires Linux, a snapshot, --stock-keyboard-observer and --serial-pathing')
+    if args.player_reference_probe and args.stock_keyboard_replay_probe:
+        p.error('run the player reference and keyboard replay probes separately')
+    if args.stock_keyboard_replay_last_capture != 480 and not args.stock_keyboard_replay_probe:
+        p.error('--stock-keyboard-replay-last-capture requires --stock-keyboard-replay-probe')
+    if args.stock_keyboard_replay_probe:
+        if not args.gate_so or not args.snapshot or not args.stock_keyboard_observer:
+            p.error('--stock-keyboard-replay-probe requires --gate-so, --snapshot and --stock-keyboard-observer')
+        if any((args.player_probe, args.player_orders, args.command_test, args.command_replay,
+                args.docking_state, args.docking_shape_rng, args.docking_shape_refresh)):
+            p.error('--stock-keyboard-replay-probe excludes other player mutation experiments')
+        # Stock-v3 sections need wire 3; this proof admits exactly two clients.
+        args.session_clients = True
+    if args.mass_jacobi_order and not args.snapshot:
+        p.error('--mass-jacobi-order requires the snapshot boot')
     if args.session_clients and (args.command_test or args.player_probe or args.docking_state or args.docking_shape_rng):
         p.error('--session-clients excludes the two-player command, player and docking fixtures')
     if args.player_probe:
@@ -389,6 +528,15 @@ def main():
             if hashlib.sha256(args.snapshot.read_bytes()).hexdigest()!=snapshot_checksum:
                 raise ValueError('snapshot changed while validating the fixture')
         except (ValueError,OSError,ET.ParseError) as error:p.error(str(error))
+    replay_neutral_ship = None
+    if args.stock_keyboard_replay_probe:
+        try:
+            snapshot_checksum = snapshot_checksum or hashlib.sha256(args.snapshot.read_bytes()).hexdigest()
+            replay_neutral_ship = (fixture or snapshot_fixture(args.snapshot))[0]
+            if hashlib.sha256(args.snapshot.read_bytes()).hexdigest() != snapshot_checksum:
+                raise ValueError('snapshot changed while validating the neutral fixture ship')
+        except (ValueError, OSError, ET.ParseError) as error:
+            p.error(str(error))
     player_order_lines=None
     if args.player_orders:
         if args.mode!='battle' or not args.snapshot:p.error('--player-orders requires a battle snapshot')
@@ -414,6 +562,16 @@ def main():
         p.error('--status-stride must be between 1 and 3600')
     if args.world_hash_schema=='WORLD_IMPORTED_2' and args.world_hash_stride is None:
         p.error('--world-hash-schema WORLD_IMPORTED_2 requires --world-hash-stride')
+    if args.world_rolling_leaf_ticks is not None:
+        first, second = args.world_rolling_leaf_ticks
+        if args.world_rolling_slices is None or not 1 <= first < second <= 18000:
+            p.error('--world-rolling-leaf-ticks requires rolling census and 1 <= first < second <= 18000')
+    if args.world_rolling_raw_ids is not None:
+        ids = args.world_rolling_raw_ids
+        if (args.world_rolling_leaf_ticks is None or not 1 <= len(ids) <= 8 or
+            any(re.fullmatch('[0-7][0-9a-f]{15}', value) is None or value == '0000000000000000' for value in ids) or
+            len(set(ids)) != len(ids)):
+            p.error('--world-rolling-raw-ids requires leaf ticks and 1..8 unique nonzero 16-digit lowercase saved IDs')
     if args.world_rolling_slices is not None:
         if not args.created_identities:
             p.error('--world-rolling-slices requires --created-identities')
@@ -442,6 +600,8 @@ def main():
             p.error(str(error))
         if not args.gate_so or not args.snapshot or not args.world_identities:
             p.error('--navmesh-post-observe requires Linux, a snapshot and --world-identities')
+    if args.stock_keyboard_observer and (not args.gate_so or not args.snapshot):
+        p.error('--stock-keyboard-observer requires a Linux gate and isolated snapshot')
     if args.world_motion_watch is not None or args.world_motion_window is not None:
         from world_motion_evidence import validate_configuration
         try:
@@ -602,7 +762,7 @@ def main():
             p.error('--gate-so supports the snapshot boot with --mode clock or battle only')
         if args.mode == 'battle' and not args.snapshot_prebind:
             p.error('--gate-so --mode battle needs --snapshot-prebind (the Linux gate binds the snapshot fixture)')
-        allowed = {'gate_so', 'snapshot', 'mode', 'session_clients', 'seed_rng', 'out', 'serial_pathing', 'path_determinism', 'region_rng', 'ai_wait_rng', 'md_resume_rng', 'boot_hold', 'event_order', 'event_rows', 'event_rng', 'event_rng_rows_window', 'build_rng', 'economy_load_rng', 'gravidar', 'gravidar_deadlines', 'travel_snapshot', 'runtime_ids', 'runtime_id_callers', 'runtime_ids_local','script_rng', 'script_rng_mask', 'script_rng_rows', 'script_rng_rows_window', 'script_rng_trace', 'script_rng_natural', 'script_rng_unmapped', 'md_timed_rng', 'find_order', 'loadout_order', 'loadout_order_rows', 'attention_all', 'nav_key', 'step_trace', 'step_trace_ticks', 'step_chain', 'fp_redirect', 'fp_redirect_watch', 'fp_redirect_ticks', 'fp_redirect_solver', 'coverage', 'coverage_list', 'coverage_from', 'tick_hz','gravidar_wide', 'spawn_rng', 'weapon_fire_rng', 'engine_refresh_rng', 'spline_join_all', 'actor_rng_all', 'actor_rng_rows', 'player_timer', 'tempzone_order', 'warp_rng', 'warp_exit', 'flight_limits', 'body1_mass', 'body_step_diag', 'velocity_diag', 'impulse_diag', 'ik_diag', 'ik_step', 'ik_wrap', 'mining_camera', 'mass_traffic', 'region_pass', 'pass_stride', 'created_identities', 'created_load', 'portable_created', 'nav_cadence', 'nav_params_init', 'nav_probe_init', 'nav_diag', 'nav_rng', 'nav_initial_refresh', 'attention_diag', 'attention_rng', 'attention_initial_refresh', 'shape_diag', 'shape_rng', 'shape_initial_refresh', 'shape_refresh', 'radar_rng', 'radar_initial_refresh', 'steer_roll', 'avoid_angle', 'probes_diag', 'pursuit_speed',
+        allowed = {'gate_so', 'snapshot', 'mode', 'session_clients', 'seed_rng', 'out', 'serial_pathing', 'path_determinism', 'region_rng', 'ai_wait_rng', 'md_resume_rng', 'boot_hold', 'event_order', 'event_rows', 'event_rng', 'event_rng_rows_window', 'build_rng', 'economy_load_rng', 'gravidar', 'gravidar_deadlines', 'travel_snapshot', 'runtime_ids', 'runtime_id_callers', 'runtime_id_caller_stride', 'runtime_ids_local','script_rng', 'script_rng_mask', 'script_rng_rows', 'script_rng_rows_window', 'script_rng_trace', 'script_rng_natural', 'script_rng_unmapped', 'md_timed_rng', 'find_order', 'loadout_order', 'loadout_order_rows', 'attention_all', 'nav_key', 'step_trace', 'step_trace_ticks', 'step_chain', 'fp_redirect', 'fp_redirect_watch', 'fp_redirect_ticks', 'fp_redirect_solver', 'coverage', 'coverage_list', 'coverage_from', 'tick_hz','gravidar_wide', 'spawn_rng', 'weapon_fire_rng', 'engine_refresh_rng', 'spline_join_all', 'actor_rng_all', 'actor_rng_rows', 'player_timer', 'tempzone_order', 'warp_rng', 'warp_exit', 'flight_limits', 'body1_mass', 'body_step_diag', 'velocity_diag', 'impulse_diag', 'ik_diag', 'ik_step', 'ik_wrap', 'mining_camera', 'mass_traffic', 'region_pass', 'pass_stride', 'created_identities', 'created_load', 'portable_created', 'nav_cadence', 'nav_params_init', 'nav_probe_init', 'nav_diag', 'nav_rng', 'nav_initial_refresh', 'attention_diag', 'attention_rng', 'attention_initial_refresh', 'shape_diag', 'shape_rng', 'shape_initial_refresh', 'shape_refresh', 'radar_rng', 'radar_initial_refresh', 'steer_roll', 'avoid_angle', 'probes_diag', 'pursuit_speed',
                    'fork_save', 'fork_save_budget_ms', 'fork_save_watchdog', 'fork_save_every', 'fork_save_slot', 'world_identities', 'world_hash_stride', 'world_hash_schema', 'world_hash_watch', 'world_hash_shields',
                    'fp_redirect_drones', 'world_health_ticks', 'fp_attack_capture', 'fp_attack_watch'}
         allowed.add('travel_determinism')
@@ -610,8 +770,11 @@ def main():
         allowed.update(('snapshot_prebind', 'actor_diag', 'strict_state', 'shield_refresh', 'order_state', 'fleet_state',
                         'flight_diag', 'flight_rng', 'flight_full', 'avoidance_refresh', 'steering_init', 'agent_full', 'spline_diag', 'spline_refresh', 'spline_state', 'params_init', 'strict_physics', 'body_diag', 'params_diag'))
         allowed.add('path_transform_observe')
+        allowed.add('mass_jacobi_order')
+        allowed.update(('player_control_boundary_probe', 'player_control_bank_probe', 'player_seat_preflight', 'player_control_bank_census', 'stock_keyboard_observer', 'player_reference_probe', 'player_factory_probe', 'player_factory_retain_until', 'stock_keyboard_replay_probe',
+                        'stock_keyboard_replay_last_capture', 'independent_keyboard_frames', 'player_external_camera_probe', 'player_presentation_probe', 'player_view_query_observer', 'ui_callback_observer', 'player_presentation_fork_probe', 'player_ui_overlay_probe', 'player_ui_overlay_callbacks', 'player_ui_plan_kick_probe', 'player_ui_seat_query_probe', 'player_ui_live_pose_observer', 'player_ui_seat_correction'))
         allowed.update(('world_motion_watch', 'world_motion_window', 'economy_watch', 'economy_watch_window', 'navmesh_post_observe'))
-        allowed.update(('world_log_mode', 'world_rolling_slices', 'probe_profile', 'status_stride'))
+        allowed.update(('world_log_mode', 'world_rolling_slices', 'world_rolling_leaf_ticks', 'world_rolling_raw_ids', 'probe_profile', 'status_stride'))
         unported = sorted(k for k, v in vars(args).items() if k not in allowed and v != p.get_default(k))
         if unported:
             p.error('not ported to the Linux gate: ' + ', '.join('--' + k.replace('_', '-') for k in unported))
@@ -691,6 +854,10 @@ def main():
         # Relayed UI FFI calls' section codec (native_gate_ui_relay, lockstep_ui_exports.h).
         shutil.copy2(root/'tools/dev/native_gate_ffi_relay_core.lua',args.out/'ui/native_gate_ffi_relay_core.lua')
         ui_files = 'ui/native_gate_inputs_core.lua\nui/native_gate_ffi_relay_core.lua\n'+ui_files
+    if args.stock_keyboard_replay_probe:
+        shutil.copy2(root / 'tools/dev/native_gate_linux_keyboard.lua',
+                     args.out / 'ui/native_gate_linux_keyboard.lua')
+        ui_files = 'ui/native_gate_linux_keyboard.lua\n' + ui_files
     # The session defaults (native_gate_defaults.lua): a battle snapshot session on the Windows gate runs the default stack;
     # every other overlay is the bare gate, said in its config and in the probe's log (DEFAULTS_OFF).
     fixtures = [name for name in ('command_test', 'player_probe', 'docking_state', 'docking_shape_rng', 'docking_shape_refresh')
@@ -718,6 +885,52 @@ X4LAN_CONFIG.token = "@X4LANE_TOKEN@"
 X4LAN_CONFIG.slot = "@X4LANE_SLOT@"
 ''' % args.mode)
     with (args.out / 'ui/config.lua.append').open('a') as config:
+        if args.stock_keyboard_observer:
+            config.write('X4LAN_CONFIG.native_gate_stock_keyboard_observer = true\n')
+        if args.player_control_bank_census:
+            config.write('X4LAN_CONFIG.native_gate_player_control_bank_census = true\n')
+        if args.player_control_bank_probe:
+            config.write('X4LAN_CONFIG.native_gate_player_control_bank_probe = true\n')
+        if args.player_control_boundary_probe:
+            config.write('X4LAN_CONFIG.native_gate_player_control_boundary_probe = true\n')
+        if args.player_seat_preflight:
+            config.write('X4LAN_CONFIG.native_gate_player_seat_preflight = true\n')
+        if args.player_factory_probe:
+            config.write('X4LAN_CONFIG.native_gate_player_factory_probe = true\n')
+        if args.player_factory_retain_until is not None:
+            config.write(f'X4LAN_CONFIG.native_gate_player_factory_retain_until = {args.player_factory_retain_until}\n')
+        if args.player_reference_probe:
+            config.write('X4LAN_CONFIG.native_gate_player_reference_probe = true\n')
+        if args.player_ui_seat_correction:
+            config.write('X4LAN_CONFIG.native_gate_linux_ui_seat_correction = true\n')
+        if args.player_ui_live_pose_observer:
+            config.write('X4LAN_CONFIG.native_gate_linux_ui_live_pose_observer = true\n')
+        if args.player_ui_seat_query_probe:
+            config.write('X4LAN_CONFIG.native_gate_linux_ui_seat_query_probe = true\n')
+        if args.player_ui_plan_kick_probe:
+            config.write('X4LAN_CONFIG.native_gate_linux_ui_plan_kick_probe = true\n')
+        if args.player_ui_overlay_probe:
+            config.write('X4LAN_CONFIG.native_gate_linux_ui_overlay_probe = true\n')
+            if args.player_ui_overlay_callbacks != 1:
+                config.write(f'X4LAN_CONFIG.native_gate_linux_ui_overlay_callbacks = {args.player_ui_overlay_callbacks}\n')
+        if args.player_presentation_fork_probe:
+            config.write('X4LAN_CONFIG.native_gate_linux_presentation_fork_probe = true\n')
+        if args.player_presentation_probe:
+            config.write('X4LAN_CONFIG.native_gate_linux_presentation_probe = true\n')
+        if args.ui_callback_observer:
+            config.write('X4LAN_CONFIG.native_gate_linux_ui_callback_observer = true\n')
+        if args.player_view_query_observer:
+            config.write('X4LAN_CONFIG.native_gate_linux_view_query_observer = true\n')
+        if args.player_external_camera_probe:
+            config.write('X4LAN_CONFIG.native_gate_linux_external_camera_probe = true\n')
+        if args.stock_keyboard_replay_probe:
+            config.write('X4LAN_CONFIG.native_gate_stock_keyboard_replay_probe = '
+                         f"{{last_capture={args.stock_keyboard_replay_last_capture}, neutral_ship='{replay_neutral_ship}'" +
+                         (', independent_players=true, delay=2, lookahead=0' if args.independent_keyboard_frames else '') + '}\n')
+            if args.independent_keyboard_frames:
+                config.write('X4LAN_CONFIG.native_gate_lookahead = 0\n')
+        if args.mass_jacobi_order:
+            config.write('X4LAN_CONFIG.native_gate_mass_jacobi_order = true\n')
         if args.navmesh_post_observe is not None:
             config.write('X4LAN_CONFIG.native_gate_navmesh_post_observe = {%d,%d}\n' % tuple(args.navmesh_post_observe))
         if args.economy_watch is not None:
@@ -730,13 +943,19 @@ X4LAN_CONFIG.slot = "@X4LANE_SLOT@"
             config.write('X4LAN_CONFIG.native_gate_world_detail_rows = false\n')
         if args.world_rolling_slices is not None:
             config.write(f'X4LAN_CONFIG.native_gate_world_rolling_slices = {args.world_rolling_slices}\n')
+        if args.world_rolling_leaf_ticks is not None:
+            config.write('X4LAN_CONFIG.native_gate_world_rolling_leaf_ticks = {%d,%d}\n' % tuple(args.world_rolling_leaf_ticks))
+        if args.world_rolling_raw_ids is not None:
+            config.write('X4LAN_CONFIG.native_gate_world_rolling_raw_ids = {' +
+                         ','.join('"' + value + '"' for value in args.world_rolling_raw_ids) + '}\n')
         if args.status_stride is not None:
             config.write(f'X4LAN_CONFIG.native_gate_status_stride = {args.status_stride}\n')
         if args.probe_profile:
             config.write('X4LAN_CONFIG.native_gate_probe_profile = true\n')
     if args.session_clients:
         with (args.out/'ui/config.lua.append').open('a') as config:
-            config.write('X4LAN_CONFIG.native_gate_clients = @X4LANE_CLIENTS@\n')
+            clients = '2' if args.stock_keyboard_replay_probe else '@X4LANE_CLIENTS@'
+            config.write(f'X4LAN_CONFIG.native_gate_clients = {clients}\n')
     if args.command_test:
         with (args.out/'ui/config.lua.append').open('a') as config:
             config.write(f'X4LAN_CONFIG.native_gate_command_test = "{args.command_test}"\n')
@@ -915,8 +1134,8 @@ X4LAN_CONFIG.slot = "@X4LANE_SLOT@"
         with (args.out/'ui/config.lua.append').open('a') as config:
             config.write('X4LAN_CONFIG.native_gate_flight_limits = true\n')
     if args.body1_mass:
-        if not args.gate_so or not args.snapshot:
-            p.error('--body1-mass needs --gate-so and the snapshot boot')
+        if not args.snapshot:
+            p.error('--body1-mass needs the snapshot boot')
         with (args.out/'ui/config.lua.append').open('a') as config:
             config.write(f"X4LAN_CONFIG.native_gate_body1_mass = '{args.body1_mass}'"+chr(10))
     if args.ik_wrap:
@@ -1141,6 +1360,8 @@ X4LAN_CONFIG.slot = "@X4LANE_SLOT@"
             p.error('--runtime-id-callers needs --runtime-ids')
         with (args.out/'ui/config.lua.append').open('a') as config:
             config.write('X4LAN_CONFIG.native_gate_runtime_ids_callers = true\n')
+            if args.runtime_id_caller_stride is not None:
+                config.write(f'X4LAN_CONFIG.native_gate_runtime_ids_caller_stride = {args.runtime_id_caller_stride}\n')
     if args.runtime_ids_local:
         if not args.runtime_ids or not args.created_identities:
             p.error('--runtime-ids-local needs --runtime-ids and --created-identities')

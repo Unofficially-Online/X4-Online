@@ -65,7 +65,55 @@ static unsigned char test_pstk_weapon_aim(unsigned char *region,float *out) {
     pstk_aim_fn fn=*(pstk_aim_fn*)(region+PSTK_SHOOT_VTABLE+8*PSTK_AIM_SLOT);float second[4];
     return fn(test_pnat_controller,out,second,test_pstk_zone,test_pnat_ship,NULL,1.5f,-2.5f,1,0,1,0,1);
 }
+/* Structural admission must not bypass the Windows adapter's live policy. */
+static void test_pstk_codec_policy(void) {
+    const unsigned old_families=uirep_families;
+    const int old_foot=pfoot_armed;
+    pstk_record record={0},decoded;
+    unsigned char bytes[PSTK_BYTES_MAX];
+    record.count=1;
+    for(unsigned foot=0;foot<2;++foot) {
+        pfoot_armed=(int)foot;
+        record.events[0]=(pstk_event){PSTK_SPACE,PFOOT_CONTEXT,1};
+        unsigned length=pstk_encode(&record,bytes);
+        assert(stock_input_decode(bytes,length,&decoded));
+        assert(!!pstk_decode(bytes,length,&decoded)==!!foot);
+        record.events[0].id=8;
+        length=pstk_encode(&record,bytes);
+        assert(pstk_decode(bytes,length,&decoded));
+        record.events[0].id=9;
+        length=pstk_encode(&record,bytes);
+        assert(stock_input_decode(bytes,length,&decoded) && !pstk_decode(bytes,length,&decoded));
+    }
+    pfoot_armed=0;
+    static const struct {unsigned kind,id,family;} conditional[]={
+        {PSTK_STATE,0x5b,UIREP_FAMILY_TARGET},
+        {PSTK_ACTION,0xaf,UIREP_FAMILY_DOCK},
+        {PSTK_ACTION,8,UIREP_FAMILY_WEAPONS}
+    };
+    for(unsigned index=0;index<sizeof(conditional)/sizeof(conditional[0]);++index) {
+        record.events[0]=(pstk_event){conditional[index].kind,(uint16_t)conditional[index].id,0};
+        unsigned length=pstk_encode(&record,bytes);
+        assert(stock_input_decode(bytes,length,&decoded));
+        uirep_families=0;
+        assert(!pstk_decode(bytes,length,&decoded));
+        uirep_families=conditional[index].family;
+        assert(pstk_decode(bytes,length,&decoded));
+        uirep_families=0;
+        assert(!pstk_decode(bytes,length,&decoded));
+    }
+    uirep_families=UIREP_FAMILIES;
+    record.events[0]=(pstk_event){PSTK_ACTION,0xb3,0}; /* autopilot remains local */
+    unsigned length=pstk_encode(&record,bytes);
+    assert(stock_input_decode(bytes,length,&decoded) && !pstk_decode(bytes,length,&decoded));
+    record.events[0]=(pstk_event){PSTK_ACTION,511,0};
+    length=pstk_encode(&record,bytes);
+    assert(stock_input_decode(bytes,length,&decoded) && !pstk_decode(bytes,length,&decoded));
+    pfoot_armed=old_foot;
+    uirep_families=old_families;
+}
 static void test_pstk_codec(void) {
+    test_pstk_codec_policy();
     pstk_record r,d;unsigned char b[PSTK_BYTES_MAX];
     memset(&r,0,sizeof(r));r.flags=PSTK_FLAG_ACTIVE|PSTK_FLAG_CURSOR;r.capture16=0x0102;r.cursor[0]=0.5f;r.cursor[2]=-1.0f;r.count=3;
     r.events[0]=(pstk_event){PSTK_SPACE,8,1};r.events[1]=(pstk_event){PSTK_STATE,0x11,1};r.events[2]=(pstk_event){PSTK_RANGE,4,test_pstk_bits(0.75f)};

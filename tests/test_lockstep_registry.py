@@ -10,8 +10,11 @@ REGISTRY = (ROOT/'docs/LOCKSTEP-REGISTRY.txt').read_text(encoding='utf-8')
 NOT_REASONS = {'PSLOT_STOP_WAIT', 'PFIRE_STOP', 'PNAT_STOP_IN_MENU', 'PNAT_FULL_STOP'}   # a count and flags, not stop reasons
 # Another define for an owner's code: the Linux gate's ports, the lookahead's drop (the protocol 5 number).
 ALIASES = {'LMT_STOP_REASON': 'MT_STOP_REASON', 'LXMC_STOP_REASON': 'RC_MINING_STOP', 'LOOKAHEAD_STOP_DROPPED': 'ADAPT_STOP_DROPPED',
-           'LINUX_EVENT_RNG_STOP_REASON': 'EVENT_RNG_STOP_REASON', 'LINUX_BUILD_RNG_STOP_REASON': 'BRNG_STOP_REASON'}
-CORE_PORTS = {'CREATED_STOP_REASON': 96, 'LSJ_STOP_REASON': 58}   # module defines that carry a core code (96 world created, 58 spline)
+           'LINUX_EVENT_RNG_STOP_REASON': 'EVENT_RNG_STOP_REASON', 'LINUX_BUILD_RNG_STOP_REASON': 'BRNG_STOP_REASON',
+           'LXSH_STOP_KEYS': 'RC_STOP_REASON', 'WBM_STOP_REASON': 'LXBM_STOP_REASON'}
+CORE_PORTS = {'CREATED_STOP_REASON': 96, 'LSJ_STOP_REASON': 58,
+              'LXN_INSTALL_STOP': 41, 'LXN_STOP_REASON': 42,
+              'LXSH_STOP_INSTALL': 45, 'LXSH_STOP_FAILURE': 46}  # Linux ports of the same core operations
 
 
 def sources():

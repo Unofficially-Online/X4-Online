@@ -2,7 +2,50 @@
  * 1 - (c + 1) * 0.53333336 (the folded constant is 0.8f / 1.5f rounded; the orders round apart; the reported pair
  * 3eaebbb8 / 3eaebbba exists); on the real executable the run's bytes and constants, the pin, the entry installed (jmp
  * rel32 to the stub: one mulss by the page's constant, the jump back) and restored. Included by test_gate_linux.c. */
+/* Synthetic code pages exercise real CAS/mprotect without executing engine code. */
+static int lxps_fail_close;
+static int lxps_test_protection(void *at,int open) {
+    if(!open && lxps_fail_close) return 0;
+    return open?gate_code_open(at,16):gate_code_close(at);
+}
+static void test_pursuit_speed_cleanup(void) {
+    unsigned char saved[sizeof(lxps_original)],to[5],foreign[5]={0x90,0x91,0x92,0x93,0x94};char perms[5];
+    assert(!lxps_installed && !lxps_page && !lxps_rx_pending);
+    memcpy(saved,LX(LXPS_VA),sizeof(saved));tl_write(LX(LXPS_VA),lxps_original,sizeof(saved));
+    lxps_page=gate_near_page(LX(LXPS_VA));assert(lxps_page && lxps_code(lxps_page,lxps_page));
+    assert(!mprotect(lxps_page,GATE_PAGE,PROT_READ|PROT_EXEC) && lxps_patch(to));
+    lxps_test_protect=lxps_test_protection;lxps_fail_close=1;
+    assert(!lxps_swap(lxps_original,to));
+    assert(lxps_installed && !lxps_restored && lxps_rx_pending && lxps_state()==1);
+    perms_of(LX(LXPS_VA),perms);assert(!strcmp(perms,"rwxp"));
+    {const int active=stats.active;stats.active=1;assert(!lxps_arm());stats.active=active;}
+    assert(!lxps_check());
+    lxps_restore(); /* bytes restored, protection still owed */
+    assert(lxps_installed && !lxps_restored && lxps_rx_pending && lxps_state()==0);
+    perms_of(LX(LXPS_VA),perms);assert(!strcmp(perms,"rwxp"));
+    lxps_fail_close=0;lxps_restore();
+    assert(!lxps_installed && lxps_restored && !lxps_rx_pending);
+    perms_of(LX(LXPS_VA),perms);assert(!strcmp(perms,"r-xp"));
+    /* A foreign entry is preserved and prevents a clean-restoration claim. */
+    assert(lxps_swap(lxps_original,to));tl_write(LX(LXPS_VA),foreign,5);
+    lxps_restore();assert(lxps_installed && !lxps_restored && !memcmp(LX(LXPS_VA),foreign,5));
+    tl_write(LX(LXPS_VA),to,5);lxps_restore();assert(!lxps_installed && lxps_restored);
+    /* Native bytes supplied externally still require a successful RX transition. */
+    assert(lxps_swap(lxps_original,to));tl_write(LX(LXPS_VA),lxps_original,sizeof(saved));
+    assert(!mprotect((void*)((uintptr_t)LX(LXPS_VA)&~(uintptr_t)(GATE_PAGE-1)),GATE_PAGE,PROT_READ|PROT_WRITE|PROT_EXEC));
+    lxps_restore();assert(!lxps_installed && lxps_restored);
+    perms_of(LX(LXPS_VA),perms);assert(!strcmp(perms,"r-xp"));
+    /* Exact first-five-byte restoration is insufficient if the instruction tail changed. */
+    assert(lxps_swap(lxps_original,to));unsigned char tail=lxps_original[5]^0x40;
+    tl_write(LX(LXPS_VA)+5,&tail,1);lxps_restore();
+    assert(lxps_installed && !lxps_restored && lxps_state()==0 && LX(LXPS_VA)[5]==tail);
+    tl_write(LX(LXPS_VA)+5,lxps_original+5,1);lxps_restore();assert(!lxps_installed && lxps_restored);
+    tl_write(LX(LXPS_VA),saved,sizeof(saved));munmap(lxps_page,GATE_PAGE);lxps_page=NULL;
+    lxps_test_protect=NULL;lxps_restored=0;lxps_stage="idle";
+    printf("pursuit_speed cleanup: post-CAS close failure, retry, foreign entry and exact instruction restoration PASS\n");
+}
 static void test_pursuit_speed_linux(void) {
+    test_pursuit_speed_cleanup();
     unsigned apart=0,pair=0;
     {volatile float k=0.8f/1.5f;uint32_t u;memcpy(&u,(const void*)&k,4);assert(u==0x3f088889u);}
     for(uint32_t bits=0x3e000000u;bits<0x3fc00000u;bits+=0x101u) {

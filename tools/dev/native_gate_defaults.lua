@@ -423,6 +423,9 @@ D.DIAGNOSTIC={
  {'native_gate_pilot_capture','PILOT_STOCK_CAPTURE row per captured record (the record is captured without it)'},
  {'native_gate_pilot_observe_native','native channel observation rows'},
  {'native_gate_player_observer','player controller observer'},
+ {'native_gate_linux_view_query_observer','Linux occupied-ship queries outside the marked probe frame'},
+ {'native_gate_world_rolling_leaf_ticks','selected detailed rolling-world observations'},
+ {'native_gate_world_rolling_raw_ids','selected raw rolling-world object observations'},
  {'native_gate_player_request_observer','player request observer'},
  {'native_gate_player_solver_observer','player solver observer'},
  {'native_gate_player_transition_observer','player transition observer'},
@@ -438,6 +441,12 @@ D.DIAGNOSTIC={
 }
 -- Neither a feature default nor a diagnostic: fixtures, experiments, alternatives and cross-platform keys. {'key','why'}.
 D.EXCLUDED={
+ {'native_gate_linux_ui_seat_correction','disposable coupled Move seat correction; never a session default'},
+ {'native_gate_linux_ui_live_pose_observer','disposable guest pose-entry observation; resident forwarder, never a session default'},
+ {'native_gate_linux_ui_seat_query_probe','disposable parent-worker stock seat query; may allocate cache, never a session default'},
+ {'native_gate_linux_ui_plan_kick_probe','disposable guest plan handler and TLS RNG diagnostic; never a session default'},
+ {'native_gate_linux_ui_overlay_callbacks','disposable bounded guest UI callback count; never a session default'},
+ {'native_gate_linux_ui_overlay_probe','disposable Linux experiment: bounded guest UI callbacks, never a session default'},
  {'native_gate_ui_exports','generic UI write guard (lockstep_ui_exports.h): opt-in beside native_gate_ui_guard (tools/build_soak_overlay.py --ui-guard)'},
  {'native_gate_ui_exports_block','generic UI write guard: the exports it refuses'},
  {'native_gate_ui_relay','generic UI write guard: exports relayed through the ffi section (--ui-relay)'},
@@ -504,7 +513,17 @@ D.EXCLUDED={
  {'native_gate_pursuit_speed','Linux gate only: the pursuit speed factor ((c+1) * -0.8) / 1.5 + 1 as Windows 1 - (c+1) * 0.53333336'},
  {'native_gate_avoid_angle','Linux gate only: the obstacle avoidance angle divisions by pi and pi/2 as Windows multiplications by 1/pi and 2/pi'},
  {'native_gate_body_step_diag','Linux gate only: the fixture bodies before and after the Jolt step (diagnostic)'},
- {'native_gate_body1_mass','Linux gate only: a ship second body gets the empty-compound mass properties at creation (Windows value)'},
+ {'native_gate_mass_jacobi_order','experimental Windows mass tensor arithmetic order; explicit opt-in'},
+ {'native_gate_stock_keyboard_replay_probe','Linux-only two-client single-ship keyboard proof; explicit opt-in, not independent player controls'},
+ {'native_gate_stock_keyboard_observer','Linux diagnostic only: observe and forward selected keyboard handlers; explicit opt-in'},
+ {'native_gate_player_control_bank_census','Linux read-only control-bank census; explicit opt-in, not independent controls'},
+ {'native_gate_player_seat_preflight','Linux read-only seat and input-context inspection; never permission to seat'},
+ {'native_gate_player_control_bank_probe','Linux canonical control-bank roundtrip; explicit opt-in, no independent player controls'},
+ {'native_gate_player_control_boundary_probe','Linux main/worker rendezvous readiness only; no player state exchange'},
+ {'native_gate_player_factory_probe','Linux experimental constructor diagnostic; isolated profile only'},
+ {'native_gate_player_factory_retain_until','Linux constructor diagnostic P2 reference retention; explicit opt-in'},
+ {'native_gate_player_reference_probe','Linux diagnostic only: read-only P1 reference inspection; native mutations disabled'},
+ {'native_gate_body1_mass','both gates: normalize a ship second body to empty-compound mass properties at creation'},
  {'native_gate_timer_resolution','timer experiment'},
  {'native_gate_tick_pace','unset = paced (false unpaces)'},
  {'native_gate_world_timing_fields','no reader in the probe (obsolete key)'},
@@ -558,6 +577,20 @@ D.STOP_REASONS={[1]='the relay stopped the session',[2]='not the main thread or 
  [175]='macro arena',[176]='path budget',[177]='economy load',[178]='cutscene ready',[179]='fp redirect',[180]='path transforms',
  [181]='body pose',[182]='render frames',[183]='render display',[184]='own-ship prediction',[185]='on foot',[186]='nav mesh',
  [187]='hybrid sectors',[188]='character play',[189]='flight limits',[190]='adaptive plan',[191]='adaptive source',[192]='adaptive quiet',[193]='adaptive dropped',[194]='adaptive pilot',[195]='UI write guard',[196]='speech clock',[197]='safe pos order',[198]='nav refresh watch',[199]='spline calc watch',[204]='body1 mass',[205]='body step',[206]='impulse',[207]='impulse',[208]='ik step',[209]='ik wrap',[210]='steer roll',[212]='avoid angle',[213]='pursuit speed',[211]='shape refresh'}
+
+D.STOP_REASONS[200] = 'hot join admission'
+D.STOP_REASONS[201] = 'economy load RNG'
+D.STOP_REASONS[202] = 'path transform observer'
+D.STOP_REASONS[203] = 'NavMesh producer observer'
+D.STOP_REASONS[214] = 'mass Jacobi order'
+D.STOP_REASONS[215] = 'Linux stock keyboard observer'
+D.STOP_REASONS[216] = 'Linux canonical keyboard replay probe'
+D.STOP_REASONS[217] = 'Linux player reference probe'
+D.STOP_REASONS[218] = 'Linux isolated player factory probe'
+D.STOP_REASONS[219] = 'Linux player control-bank census'
+D.STOP_REASONS[220] = 'Linux player seat preflight'
+D.STOP_REASONS[221] = 'Linux player control-bank restoration'
+D.STOP_REASONS[222] = 'Linux player control boundary rendezvous'
 
 local function on(v) return v~=nil and v~=false end
 local function copy(v)

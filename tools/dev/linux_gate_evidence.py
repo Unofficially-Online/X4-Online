@@ -120,7 +120,237 @@ def validate_client(slot, records, ticks, expected_ticks):
     return stop, identity
 
 
-def validate_evidence(logs_by_slot, ticks, stride, rolling_slices=None, motion_watch=None, motion_window=None):
+def validate_evidence(logs_by_slot, ticks, stride, rolling_slices=None, motion_watch=None,
+                      motion_window=None, player_control_bank_probe=False,
+                      player_control_boundary_probe=False):
+    """Add explicit probe receipts without changing default world validation."""
+    if not player_control_bank_probe and not player_control_boundary_probe:
+        return _validate_motion_world_evidence(logs_by_slot, ticks, stride, rolling_slices,
+                                               motion_watch, motion_window)
+    groups = {}
+    if player_control_bank_probe:
+        groups['player_control_bank_probe'] = {
+            slot: ControlBankProbeEvidence(slot, ticks) for slot in logs_by_slot}
+    if player_control_boundary_probe:
+        groups['player_control_boundary_probe'] = {
+            slot: ControlBoundaryEvidence(slot, ticks) for slot in logs_by_slot}
+
+    def observed_lines(slot, lines):
+        for line in lines:
+            for watchers in groups.values():
+                watchers[slot].observe(line)
+            yield line
+
+    result = _validate_motion_world_evidence(
+        {slot: observed_lines(slot, lines) for slot, lines in logs_by_slot.items()},
+        ticks, stride, rolling_slices, motion_watch, motion_window)
+    for name, watchers in groups.items():
+        probe_errors = []
+        samples = {}
+        for slot, watcher in watchers.items():
+            watcher.finish()
+            probe_errors.extend(watcher.errors)
+            if watcher.capture is not None:
+                samples[slot] = watcher.capture
+        if samples and any(sample != next(iter(samples.values())) for sample in samples.values()):
+            probe_errors.append(f'{name.upper()} captured evidence differs between clients')
+        result[name] = samples
+        result[name + '_errors'] = probe_errors
+        result['evidence_errors'].extend(probe_errors)
+    if player_control_boundary_probe:
+        result['player_control_boundary_scope'] = (
+            'main/worker rendezvous readiness only; no claim that other threads are excluded')
+    result['evidence_ok'] = not result['evidence_errors']
+    return result
+
+
+class ControlBoundaryEvidence:
+    """Tick-five readiness receipts; never a full writer-exclusion verdict."""
+    FIXED = {
+        'requested': '1', 'failure': '0', 'readiness_only': '1', 'bank_writes': '0',
+        'context_writes': '0', 'reference_calls': '0', 'other_threads_excluded': '0',
+    }
+    PENDING = {
+        'captured_tick': '0', 'main_parked': '0', 'worker_entered': '0',
+        'worker_released': '0', 'main_return_allowed': '0', 'complete': '0', 'state': '0',
+    }
+    COMPLETE = {
+        'captured_tick': '5', 'main_parked': '1', 'worker_entered': '1',
+        'worker_released': '1', 'main_return_allowed': '1', 'complete': '1', 'state': '126',
+    }
+    WAITING_MAIN_ACK = {**COMPLETE, 'main_return_allowed': '0', 'complete': '0', 'state': '62'}
+
+    def __init__(self, slot, ticks):
+        self.slot, self.ticks = slot, ticks
+        self.events = set()
+        self.last_tick = 1
+        self.stops = 0
+        self.capture = None
+        self.first_capture = None
+        self.errors = []
+
+    def error(self, message):
+        self.errors.append(f'client {self.slot}: PLAYER_CONTROL_BOUNDARY {message}')
+
+    def observe(self, line):
+        match = re.search(r'NATIVE_GATE PLAYER_CONTROL_BOUNDARY(_STOP)?(?:\s|$)(.*)$', line)
+        if not match:
+            return
+        fields = {}
+        for token in match[2].strip().split():
+            if token.count('=') != 1:
+                self.error('malformed status field')
+                return
+            name, value = token.split('=', 1)
+            if not name or not value or name in fields:
+                self.error('missing or duplicate status field')
+                return
+            fields[name] = value
+        is_stop = bool(match[1])
+        if is_stop:
+            self.stops += 1
+            if self.stops != 1:
+                self.error('duplicate STOP')
+            if 'tick' in fields:
+                self.error('unexpected STOP tick')
+            expected = self.COMPLETE
+            if not any(tick >= 6 for tick in self.events):
+                self.error('STOP before a tick-six-or-later event')
+        else:
+            tick_text = fields.pop('tick', '')
+            if not tick_text.isdecimal():
+                self.error('missing or invalid event tick')
+                return
+            tick = int(tick_text)
+            if tick in self.events:
+                self.error(f'duplicate event tick {tick}')
+            self.events.add(tick)
+            if not 2 <= tick <= self.ticks:
+                self.error(f'event tick {tick} outside requested run')
+            if tick <= self.last_tick:
+                self.error('events out of order')
+            self.last_tick = tick
+            if self.stops:
+                self.error('event after STOP')
+            expected = self.PENDING if tick < 5 else self.COMPLETE
+            if tick == 5 and fields.get('state') == '62':
+                expected = self.WAITING_MAIN_ACK
+        expected = {**self.FIXED, **expected}
+        if any(fields.get(key) != value for key, value in expected.items()):
+            self.error('unexpected capture, failure, write claim, or rendezvous state')
+            return
+        if fields['captured_tick'] == '5':
+            # Main acknowledgement may legitimately change after tick five.
+            stable = {key: value for key, value in fields.items()
+                      if key not in ('main_return_allowed', 'complete', 'state')}
+            if self.first_capture is None:
+                self.first_capture = stable
+            elif stable != self.first_capture:
+                self.error('stable captured fields changed')
+            if fields['complete'] == '1':
+                if self.capture is not None and fields != self.capture:
+                    self.error('complete cached evidence changed')
+                self.capture = fields
+
+    def finish(self):
+        if self.ticks < 6:
+            self.error('requested run is shorter than six ticks')
+        missing = set(range(2, self.ticks + 1)) - self.events
+        if missing:
+            self.error(f'missing event ticks {sorted(missing)}')
+        if self.capture is None:
+            self.error('missing successful tick-five readiness capture')
+        if self.stops != 1:
+            self.error('missing or duplicate STOP')
+
+
+class ControlBankProbeEvidence:
+    """One tick-five native capture may legitimately appear in many cached rows."""
+    SUCCESS = {
+        'requested': '1', 'attempted': '1', 'captured_tick': '5', 'complete': '1',
+        'clean': '1', 'canonical_bytes_restored': '1', 'input_tree_unchanged': '1',
+        'canonical_only': '1', 'native_update_calls': '0',
+        'temporary_requested_space': '0', 'cleanup_complete': '1', 'reason': 'none',
+    }
+
+    def __init__(self, slot, ticks):
+        self.slot, self.ticks = slot, ticks
+        self.events = set()
+        self.stops = 0
+        self.capture = None
+        self.success_event = False
+        self.errors = []
+
+    def error(self, message):
+        self.errors.append(f'client {self.slot}: PLAYER_CONTROL_BANK_PROBE {message}')
+
+    def observe(self, line):
+        match = re.search(r'NATIVE_GATE PLAYER_CONTROL_BANK_PROBE(_STOP)?(?:\s|$)(.*)$', line)
+        if not match:
+            return
+        is_stop = bool(match[1])
+        tokens = match[2].strip().split()
+        fields = {}
+        for token in tokens:
+            if token.count('=') != 1:
+                self.error('malformed status field')
+                return
+            name, value = token.split('=', 1)
+            if not name or not value or name in fields:
+                self.error('missing or duplicate status field')
+                return
+            fields[name] = value
+        if is_stop:
+            self.stops += 1
+            if self.stops != 1:
+                self.error('duplicate STOP')
+            if 'tick' in fields:
+                self.error('unexpected STOP tick')
+        else:
+            tick_text = fields.pop('tick', '')
+            if not tick_text.isdecimal():
+                self.error('missing or invalid event tick')
+                return
+            tick = int(tick_text)
+            if tick in self.events:
+                self.error(f'duplicate event tick {tick}')
+            self.events.add(tick)
+            if not 2 <= tick <= self.ticks:
+                self.error(f'event tick {tick} outside requested run')
+            if self.stops:
+                self.error('event after STOP')
+            if tick < 5:
+                pending = {'requested': '1', 'attempted': '0', 'captured_tick': '0', 'complete': '0'}
+                if any(fields.get(key) != value for key, value in pending.items()):
+                    self.error('early capture or malformed pending status')
+                return
+        if any(fields.get(key) != value for key, value in self.SUCCESS.items()):
+            self.error('missing or unsuccessful tick-five capture/restoration evidence')
+            return
+        before = fields.get('zone_count_before', '')
+        after = fields.get('zone_count_after', '')
+        if not before.isdecimal() or int(before) < 1 or after != before:
+            self.error('zone counts must be positive and unchanged')
+            return
+        if is_stop and not self.success_event:
+            self.error('STOP has no preceding successful event')
+        if self.capture is None:
+            self.capture = fields
+        elif self.capture != fields:
+            self.error('cached capture evidence changed')
+        if not is_stop:
+            self.success_event = True
+
+    def finish(self):
+        if self.ticks < 6:
+            self.error('requested run is shorter than six ticks')
+        if not self.success_event:
+            self.error('missing successful event at or after tick five')
+        if self.stops != 1:
+            self.error('missing or duplicate STOP')
+
+
+def _validate_motion_world_evidence(logs_by_slot, ticks, stride, rolling_slices=None, motion_watch=None, motion_window=None):
     """Validate census and optional independent motion receipts in one stream pass."""
     if motion_watch is None and motion_window is None:
         return validate_world_evidence(logs_by_slot, ticks, stride, rolling_slices)

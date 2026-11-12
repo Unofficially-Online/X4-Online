@@ -25,9 +25,10 @@
  * the three animation listeners and the message configuration listener are inlined where they are
  * made, so each row is the AssignNewID call before the vtable store. Slot 6 (CUIController, through
  * the secondary vtable's thunk) and slot 10 (GameRender) are their whole bodies, as on Windows; slot
- * 6 inlines what Windows calls. Linux has no presentation scope, UI dispatch, rid_scope caller or
- * client guidance, so the table is the whole route. */
+ * 6 inlines what Windows calls. The optional camera setter has a thread-local
+ * scope; other presentation scopes, UI dispatch and client guidance remain unported. */
 #include <execinfo.h>
+#include "gate_player_camera_id_scope.h"
 #define RID_OWN_PLATFORM
 #define RID_MAP (LX_ID_MAP_VA-LX_IMAGE_BASE)
 #define RID_REMOVE_ENTRY (LX_ID_REMOVE_VA-LX_IMAGE_BASE)
@@ -110,7 +111,14 @@ static const rid_site_t lx_rid_sites[]={
     /* AI::NavSplineCalculator's sweep test (0x10b0b30, the only maker of the sphere that sweeps it) and the player
      * entity's two query spheres (vfunc674 0x138e6a0: +0x8a510 radius +0x4ed4, +0x8a518 radius +0x4ed8; Windows
      * +0x8a520/+0x4f54 and +0x8a528/+0x4f58). */
-    LX_RID_CALL(0x10b0cd7u,LX_RID_SPHERE,RID_ROUTE_VIEW),LX_RID_CALL(0x13927d7u,LX_RID_SPHERE,RID_ROUTE_VIEW),LX_RID_CALL(0x1392be5u,LX_RID_SPHERE,RID_ROUTE_VIEW)};
+    LX_RID_CALL(0x10b0cd7u,LX_RID_SPHERE,RID_ROUTE_VIEW),LX_RID_CALL(0x13927d7u,LX_RID_SPHERE,RID_ROUTE_VIEW),LX_RID_CALL(0x1392be5u,LX_RID_SPHERE,RID_ROUTE_VIEW),
+    /* The camera-mode event creates another query sphere at receiver+0x6bc8.
+     * 0x136fea0 creates it only for camera modes 2..5; 0x136f950 passes it to
+     * the scene query at 0xedfd60. It is a view-owned XPhys::Shape wrapping a
+     * JPH::SphereShape, not a shared world entity. This event runs after the
+     * synchronous camera setter's scope, so it needs its own exact call pin.
+     * Do not classify the common sphere constructor or other callers. */
+    LX_RID_CALL(0x136ffbdu,LX_RID_SPHERE,RID_ROUTE_VIEW)};
 #define LX_RID_SITES (sizeof(lx_rid_sites)/sizeof(*lx_rid_sites))
 static created_assign_fn lxr_assign_native; /* tests only: replaces the thunk's original */
 /* Every call row checked: the table's return addresses are this build's (the bodies are start pins). */
@@ -131,6 +139,7 @@ static created_assign_fn rid_assign_original(void) {return lxr_assign_native?lxr
 /* Which list a stack belongs to: the table, ui over view; off or before the seal, the shared one. */
 static unsigned lxr_route_of(const uint32_t *frames,unsigned count) {
     if(!InterlockedCompareExchange(&rid_local_on,0,0) || !rid_sealed) return RID_ROUTE_SHARED;
+    if(player_camera_id_scope_active()) return RID_ROUTE_UI;
     const int probe=InterlockedCompareExchange(&rid_probe_frame,0,0)!=0;unsigned route=RID_ROUTE_SHARED;
     for(unsigned i=0;i<count;i++) for(unsigned s=0;s<LX_RID_SITES;s++) {
         const rid_site_t *site=&lx_rid_sites[s];
@@ -140,6 +149,23 @@ static unsigned lxr_route_of(const uint32_t *frames,unsigned count) {
     }
     return route;
 }
+/* Opt-in synchronous camera setter: the existing UI list is used only on
+ * this thread. The owned allocator hooks must remain installed throughout. */
+static int player_camera_rid_ready(void) {
+    return rid_mode == RID_SET && rid_sealed && rid_local_built && rid_installed && rid_assign_installed &&
+        created_installed && InterlockedCompareExchange(&rid_active, 0, 0) &&
+        InterlockedCompareExchange(&rid_local_on, 0, 0) &&
+        !InterlockedCompareExchange64(&rid_failures, 0, 0) && rid_owned() &&
+        !player_camera_id_scope_active();
+}
+static int player_camera_rid_begin(player_camera_id_token *token) {
+    return player_camera_rid_ready() && player_camera_id_scope_enter(token);
+}
+static int player_camera_rid_end(player_camera_id_token *token) {
+    if (!player_camera_id_scope_leave(token)) return 0;
+    return player_camera_rid_ready();
+}
+
 /* The X4 return addresses of an allocation, innermost first: the direct caller before the seal, the stack after it and for components. */
 static unsigned rid_frames_of(void *caller,uint32_t *frames) {
     const uintptr_t low=(uintptr_t)image,high=low+(LX_TEXT_END_VA-LX_IMAGE_BASE);unsigned n=0;

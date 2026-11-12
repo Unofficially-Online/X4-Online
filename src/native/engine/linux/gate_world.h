@@ -34,6 +34,11 @@
 #include "gate_world_classes.h"
 #include "gate_world_digest_cache.h"
 
+/* Optional diagnostic normalization is published before the P2 ready flag.
+ * The callback authenticates its resident owner and never changes hash fields. */
+typedef uintptr_t (*lxw_controller_normalizer)(void *, void *, uintptr_t);
+static _Atomic(lxw_controller_normalizer) lxw_controller_normalize;
+
 /* ---- Linux layouts (Windows offset in comments) ---- */
 #define LXW_OBJ_RUNTIME 0x8u       /* 0x8 */
 #define LXW_OBJ_MODE 0x68u         /* 0x68 */
@@ -419,7 +424,51 @@ static unsigned world_hash_schema=1;
 /* Rolling mode retains IDs only; native objects are looked up at each slice. */
 static unsigned world_rolling_slices;
 static unsigned world_rolling_total,world_rolling_created;
+#define WORLD_ROLLING_LEAF_MAX 8192u
+typedef struct { uint64_t saved, runtime; unsigned index; unsigned char hashes[WORLD_HASH_DOMAINS][32]; } world_rolling_leaf;
+static world_rolling_leaf world_rolling_leaves[WORLD_ROLLING_LEAF_MAX];
+static uint64_t world_rolling_leaf_first, world_rolling_leaf_second, world_rolling_leaf_tick;
+static unsigned world_rolling_leaf_count, world_rolling_leaf_capture;
+#define WORLD_ROLLING_RAW_MAX 8u
+typedef struct {
+    uint64_t saved, runtime, parent;
+    unsigned index, type, flags;
+    world_hash_data data[WORLD_HASH_DOMAINS];
+} world_rolling_raw;
+static uint64_t world_rolling_raw_ids[WORLD_ROLLING_RAW_MAX];
+static unsigned world_rolling_raw_id_count, world_rolling_raw_count, world_rolling_raw_ready;
+static world_rolling_raw world_rolling_raw_rows[WORLD_ROLLING_RAW_MAX];
+static int world_rolling_raw_add(const char *text, size_t length) {
+    if(!world_rolling_leaf_first || world_hash_scans || !text || length != 16 ||
+       world_rolling_raw_id_count == WORLD_ROLLING_RAW_MAX) return 0;
+    uint64_t saved = 0;
+    for(size_t i = 0; i < length; ++i) {
+        unsigned digit = text[i] >= '0' && text[i] <= '9' ? (unsigned)(text[i] - '0') :
+            text[i] >= 'a' && text[i] <= 'f' ? (unsigned)(text[i] - 'a' + 10) : 16;
+        if(digit > 15) return 0;
+        saved = (saved << 4) | digit;
+    }
+    if(!saved || saved >> 63) return 0;
+    for(unsigned i = 0; i < world_rolling_raw_id_count; ++i)
+        if(world_rolling_raw_ids[i] == saved) return 0;
+    world_rolling_raw_ids[world_rolling_raw_id_count++] = saved;
+    return 1;
+}
+static int world_rolling_leaf_config(uint64_t first, uint64_t second) {
+    if(world_hash_scans || world_rolling_leaf_first || !first || first >= second || second > 18000) return 0;
+    world_rolling_leaf_first = first; world_rolling_leaf_second = second; return 1;
+}
+
 static const char *world_hash_stage="not_started";
+static int world_rolling_leaf_prepare(uint64_t tick, unsigned begin, unsigned end) {
+    world_rolling_leaf_tick = 0; world_rolling_leaf_count = 0; world_rolling_raw_count = 0;
+    world_rolling_leaf_capture = tick == world_rolling_leaf_first || tick == world_rolling_leaf_second;
+    if (begin > end || (world_rolling_leaf_capture && end - begin > WORLD_ROLLING_LEAF_MAX)) {
+        world_rolling_leaf_capture = 0; world_hash_stage = "rolling_leaf_limit"; return 0;
+    }
+    return 1;
+}
+
 /* A capture reads every object even after a failure, so one run names everything that
  * does not hold: each distinct (stage, vtable) with its count and first saved ID. It still
  * fails closed: no hash is published when any object failed. */
@@ -521,6 +570,10 @@ static int world_hash_motion(void *object,unsigned char *controller,world_hash_d
     if(!WREAD(controller,&vtable,8)) return 0;
     lxw_capture_vtable=vtable;
     const lxw_class *cls=lxw_class_of(vtable);
+    if(!cls) {
+        lxw_controller_normalizer normalize=atomic_load_explicit(&lxw_controller_normalize,memory_order_acquire);
+        if(normalize) cls=lxw_class_of(normalize(object,controller,vtable));
+    }
     world_hash_stage="controller_class_unmapped";if(!cls) return 0;
     world_hash_stage="controller";
     unsigned char *complete=controller+cls->top; /* from the interface subobject */
@@ -699,6 +752,21 @@ static int world_hash_range(unsigned begin, unsigned end, unsigned total, int ro
             memcpy(aggregate[domain] + used, &item->saved, 8);
             memcpy(aggregate[domain] + used + 8, item->hash[domain], 32);
         }
+        if (rolling && world_rolling_leaf_capture) {
+            world_rolling_leaf *leaf = &world_rolling_leaves[world_rolling_leaf_count++];
+            leaf->saved = item->saved; leaf->runtime = item->runtime; leaf->index = index;
+            memcpy(leaf->hashes, item->hash, sizeof leaf->hashes);
+            /* Copy only bytes already serialized and hashed; never reread the engine. */
+            for(unsigned i = 0; i < world_rolling_raw_id_count; ++i) if(item->saved == world_rolling_raw_ids[i]) {
+                if(world_rolling_raw_count == WORLD_ROLLING_RAW_MAX) {
+                    world_hash_stage = "rolling_raw_limit"; return 0;
+                }
+                world_rolling_raw *raw = &world_rolling_raw_rows[world_rolling_raw_count++];
+                raw->saved = item->saved; raw->runtime = item->runtime; raw->index = index;
+                raw->type = item->type; raw->flags = item->flags; raw->parent = item->parent;
+                memcpy(raw->data, data, sizeof raw->data);
+            }
+        }
         used += 40;
         if (!rolling && (!world_hash_scans || memcmp(previous, item->hash, sizeof(previous)) ||
                          previous_raw_length != item->nav_raw_length ||
@@ -809,6 +877,7 @@ static int world_hash_capture(uint64_t tick, unsigned schema) {
 /* A cycle freezes sorted ID rows only. Object pointers are resolved anew for
  * every slice; newborns are appended when the next cycle begins. */
 static int world_hash_capture_rolling(uint64_t tick, unsigned slices) {
+    world_rolling_raw_ready = 0;
     world_hash_stage = "rolling_sequence";
     if (!slices || slices > 18000 || !tick || world_hash_watch_count ||
         (world_hash_scans && (!world_rolling_slices || slices != world_rolling_slices || tick != world_hash_tick + 1)) ||
@@ -829,7 +898,10 @@ static int world_hash_capture_rolling(uint64_t tick, unsigned slices) {
     const unsigned begin = (unsigned)((uint64_t)world_rolling_total * slice / slices);
     const unsigned end = (unsigned)((uint64_t)world_rolling_total * (slice + 1u) / slices);
     char hexroots[WORLD_HASH_DOMAINS][65];
-    if (!world_hash_range(begin, end, world_rolling_total, 1, hexroots)) return 0;
+    if (!world_rolling_leaf_prepare(tick, begin, end)) return 0;
+    int captured = world_hash_range(begin, end, world_rolling_total, 1, hexroots);
+    world_rolling_leaf_capture = 0;
+    if (!captured) return 0;
     char state[sizeof(world_hash_state)];
     int state_length = snprintf(state, sizeof(state), "WORLD_ROLLING_1:%llu:%llu:%u:%u:%u:%u:%u:%u:%s:%s:%s:%s",
         (unsigned long long)tick, (unsigned long long)cycle, slice, slices, begin, end,
@@ -854,6 +926,9 @@ static int world_hash_capture_rolling(uint64_t tick, unsigned slices) {
     world_rolling_slices = slices;
     world_hash_tick = tick;
     ++world_hash_scans;
+    if (tick == world_rolling_leaf_first || tick == world_rolling_leaf_second) {
+        world_rolling_leaf_tick = tick; world_rolling_raw_ready = 1;
+    }
     world_hash_failure_id = 0;
     world_hash_stage = "complete";
     return 1;
@@ -882,6 +957,65 @@ static int world_health_row(unsigned index,uint64_t tick,char *out,size_t size) 
 }
 
 /* ---- Lua (lockstep_gate.c formats) ---- */
+static int lua_world_rolling_leaves_config(lua_State *L) {
+    double first = p_lua_tonumber(L, 1), second = p_lua_tonumber(L, 2);
+    p_lua_pushnumber(L, accept_ui() && stats.active && isfinite(first) && isfinite(second) &&
+        first >= 1 && second <= 18000 && floor(first) == first && floor(second) == second &&
+        first < second && world_rolling_leaf_config((uint64_t)first, (uint64_t)second));
+    return 1;
+}
+static int lua_world_rolling_leaves_row(lua_State *L) {
+    double number = p_lua_tonumber(L, 1);
+    if(!accept_ui() || !world_rolling_leaf_tick || world_rolling_leaf_tick != world_hash_tick ||
+       world_hash_failures || !isfinite(number) || number < 0 || floor(number) != number) {
+        p_lua_pushnil(L); return 1;
+    }
+    if(number == 0) { p_lua_pushnumber(L, world_rolling_leaf_count); return 1; }
+    if(number > world_rolling_leaf_count) { p_lua_pushnil(L); return 1; }
+    const world_rolling_leaf *leaf = &world_rolling_leaves[(unsigned)number - 1];
+    char hex[WORLD_HASH_DOMAINS][65], out[512];
+    for(unsigned domain = 0; domain < WORLD_HASH_DOMAINS; ++domain) hex32(leaf->hashes[domain], hex[domain]);
+    int n = snprintf(out, sizeof out, "tick=%llu index=%u saved=%016llx runtime=%016llx topology=%s health=%s motion=%s timing=%s",
+        (unsigned long long)world_rolling_leaf_tick, leaf->index, (unsigned long long)leaf->saved,
+        (unsigned long long)leaf->runtime, hex[0], hex[1], hex[2], hex[3]);
+    if(n <= 0 || (size_t)n >= sizeof out) p_lua_pushnil(L); else p_lua_pushlstring(L, out, (size_t)n);
+    return 1;
+}
+
+static int lua_world_rolling_raw_add(lua_State *L) {
+    size_t length = 0; const char *text = p_lua_tolstring(L, 1, &length);
+    p_lua_pushnumber(L, accept_ui() && stats.active && world_rolling_raw_add(text, length));
+    return 1;
+}
+static int world_rolling_raw_row(unsigned number, char *out, size_t size) {
+    if(!world_rolling_raw_ready || !world_rolling_raw_id_count || !world_rolling_leaf_tick || world_rolling_leaf_tick != world_hash_tick ||
+       world_hash_failures || number == 0 || number > world_rolling_raw_count * WORLD_HASH_DOMAINS) return 0;
+    unsigned index = (number - 1) / WORLD_HASH_DOMAINS, domain = (number - 1) % WORLD_HASH_DOMAINS;
+    const char *names[] = {"topology", "health", "motion", "timing"};
+    const world_rolling_raw *raw = &world_rolling_raw_rows[index];
+    const world_hash_data *data = &raw->data[domain];
+    int n = snprintf(out, size, "tick=%llu index=%u saved=%016llx runtime=%016llx type=%08x flags=%08x parent=%016llx domain=%s bytes=",
+        (unsigned long long)world_rolling_leaf_tick, raw->index, (unsigned long long)raw->saved,
+        (unsigned long long)raw->runtime, raw->type, raw->flags, (unsigned long long)raw->parent, names[domain]);
+    if(n < 0 || (size_t)n + data->length * 2 >= size) return 0;
+    static const char digits[] = "0123456789abcdef";
+    for(unsigned i = 0; i < data->length; ++i) {
+        out[n++] = digits[data->data[i] >> 4]; out[n++] = digits[data->data[i] & 15];
+    }
+    return n;
+}
+static int lua_world_rolling_raw_row(lua_State *L) {
+    double number = p_lua_tonumber(L, 1); char out[2400];
+    if(!accept_ui() || !world_rolling_raw_ready || !world_rolling_raw_id_count || !world_rolling_leaf_tick ||
+       world_rolling_leaf_tick != world_hash_tick || world_hash_failures ||
+       !isfinite(number) || number < 0 || floor(number) != number ||
+       number > world_rolling_raw_count * WORLD_HASH_DOMAINS) { p_lua_pushnil(L); return 1; }
+    if(number == 0) { p_lua_pushnumber(L, world_rolling_raw_count * WORLD_HASH_DOMAINS); return 1; }
+    int n = world_rolling_raw_row((unsigned)number, out, sizeof out);
+    if(!n) p_lua_pushnil(L); else p_lua_pushlstring(L, out, (size_t)n);
+    return 1;
+}
+
 static int lua_world_watch(lua_State *L) {
     size_t size=0;const char *text=p_lua_tolstring(L,1,&size);
     p_lua_pushnumber(L,accept_ui() && world_hash_watch_add(text,size));return 1;

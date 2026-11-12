@@ -1,6 +1,7 @@
 """Runner/manifest policy on owned files, with no game launch or staging."""
 from copy import deepcopy
-import hashlib,importlib.util,json,shutil,sys,tempfile,types,unittest
+import hashlib,importlib.util,json,shutil,subprocess,sys,tempfile,types,unittest
+import os
 from pathlib import Path
 from unittest.mock import patch
 ROOT=Path(__file__).resolve().parents[1]
@@ -14,12 +15,104 @@ from test_native_gate_getup_diagnostic_evidence import fixture
 import test_native_gate_getup_diagnostic_evidence as evidence_fixture
 
 
+class ImportIsolationTests(unittest.TestCase):
+    def test_import_preserves_import_policy_and_zip_codecs(self):
+        script = r"""
+import importlib.machinery, io, sys, zipfile
+before = list(sys.meta_path)
+import run_native_getup_diagnostic
+assert sys.meta_path == before
+assert importlib.machinery.PathFinder in sys.meta_path
+archive = io.BytesIO()
+with zipfile.ZipFile(archive, 'w') as out:
+    out.writestr('fixture.txt', 'fixture')
+archive.seek(0)
+with zipfile.ZipFile(archive) as source:
+    assert source.read('fixture.txt') == b'fixture'
+"""
+        environment = {**os.environ, 'PYTHONPATH': str(ROOT / 'tools/dev')}
+        result = subprocess.run(
+            [sys.executable, '-c', script], cwd=ROOT, env=environment,
+            capture_output=True, text=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_executable_entry_installs_source_only_before_local_imports(self):
+        script = r"""
+import importlib, importlib._bootstrap_external, pathlib, runpy, sys, tempfile
+with tempfile.TemporaryDirectory() as directory:
+    path = pathlib.Path(directory) / 'owned_sourceless.pyc'
+    code = compile('VALUE = 1', str(path), 'exec')
+    path.write_bytes(importlib._bootstrap_external._code_to_timestamp_pyc(code, 0, 0))
+    sys.argv = ['run_native_getup_diagnostic.py', '--help']
+    try:
+        runpy.run_path('tools/dev/run_native_getup_diagnostic.py', run_name='__main__')
+    except SystemExit as error:
+        assert error.code == 0
+    policy = sys.modules['x4lan_getup_source_only']
+    assert any(isinstance(item, policy.SourceFinder) for item in sys.meta_path)
+    assert str(pathlib.Path('tools/dev/native_getup_diagnostic.py').resolve()) in policy.compiled
+    sys.path.insert(0, directory)
+    try:
+        importlib.import_module('owned_sourceless')
+    except ImportError as error:
+        assert 'sourceless' in str(error)
+    else:
+        raise AssertionError('runtime accepted sourceless module')
+"""
+        environment = {**os.environ, 'PYTHONPATH': str(ROOT / 'tools/dev')}
+        result = subprocess.run(
+            [sys.executable, '-c', script], cwd=ROOT, env=environment,
+            capture_output=True, text=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_full_discovery_does_not_break_zip_reading(self):
+        script = r"""
+import io, sys, unittest, zipfile
+before = list(sys.meta_path)
+unittest.defaultTestLoader.discover('tests')
+assert sys.meta_path == before
+archive = io.BytesIO()
+with zipfile.ZipFile(archive, 'w') as out:
+    out.writestr('fixture.txt', 'fixture')
+archive.seek(0)
+with zipfile.ZipFile(archive) as source:
+    assert source.read('fixture.txt') == b'fixture'
+"""
+        environment = {**os.environ, 'PYTHONPATH': str(ROOT / 'tools/dev')}
+        result = subprocess.run(
+            [sys.executable, '-c', script], cwd=ROOT, env=environment,
+            capture_output=True, text=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+
 class DiagnosticRunnerTests(unittest.TestCase):
     def setUp(self):
-        policy=sys.modules['x4lan_getup_source_only'];old_bound,old_roots,old_failure=policy.bound,policy.bound_roots,policy.failure
-        policy.bound=None;policy.bound_roots=[];policy.failure=None
-        self.addCleanup(lambda:setattr(policy,'failure',old_failure))
-        self.addCleanup(lambda:setattr(policy,'bound',old_bound));self.addCleanup(lambda:setattr(policy,'bound_roots',old_roots))
+        # Exercise the real loader only inside each test; discovery must not
+        # leave its source-only import policy installed for unrelated suites.
+        policy_path = ROOT / 'tools/dev/native_getup_source_only.py'
+        policy_spec = importlib.util.spec_from_file_location('x4lan_getup_source_only', policy_path)
+        policy = importlib.util.module_from_spec(policy_spec)
+        policy_spec.loader.exec_module(policy)
+        previous_meta_path = sys.meta_path[:]
+        previous_dont_write_bytecode = sys.dont_write_bytecode
+        policy_module_patch = patch.dict(sys.modules, {'x4lan_getup_source_only': policy})
+        policy_module_patch.start()
+        self.addCleanup(policy_module_patch.stop)
+        self.addCleanup(lambda: setattr(sys, 'dont_write_bytecode', previous_dont_write_bytecode))
+        self.addCleanup(lambda: sys.meta_path.__setitem__(slice(None), previous_meta_path))
+        policy.install()
+        previous_bound = policy.bound
+        previous_roots = policy.bound_roots
+        previous_failure = policy.failure
+        policy.bound = None
+        policy.bound_roots = []
+        policy.failure = None
+        self.addCleanup(lambda: setattr(policy, 'failure', previous_failure))
+        self.addCleanup(lambda: setattr(policy, 'bound', previous_bound))
+        self.addCleanup(lambda: setattr(policy, 'bound_roots', previous_roots))
         config=fixture()[1]
         self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup);self.path=Path(self.temp.name)
         self.snapshot=self.path/'save.xml.gz';self.snapshot.write_bytes(b'owned synthetic snapshot pin')
