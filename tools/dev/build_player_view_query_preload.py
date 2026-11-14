@@ -12,6 +12,8 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[2]
 SOURCE = ROOT / 'src/native/engine/linux/player_view_query_preload.c'
 ESCAPE_GUARD = ROOT / 'src/native/engine/linux/player_ui_escape_guard.cpp'
+VIEW_BRIDGE = ROOT / 'src/native/engine/linux/player_stock_view_fov_bridge.S'
+CURSOR_BRIDGE = ROOT / 'src/native/engine/linux/player_cursor_bridge.S'
 OUTPUT = ROOT / '.local/player-view-query/libx4mp_player_view_query.so'
 
 
@@ -29,9 +31,15 @@ def main():
     with tempfile.TemporaryDirectory(prefix='x4-view-query-build-') as directory:
         preload_object = str(Path(directory) / 'preload.o')
         guard_object = str(Path(directory) / 'escape_guard.o')
+        view_object = str(Path(directory) / 'stock_view_fov.o')
+        cursor_object = str(Path(directory) / 'cursor_bridge.o')
         subprocess.run([*cc, '-std=c11', *flags, '-c', str(SOURCE), '-o', preload_object], check=True)
         subprocess.run([*cxx, '-std=c++17', *flags, '-c', str(ESCAPE_GUARD), '-o', guard_object], check=True)
-        subprocess.run([*cc, '-shared', preload_object, guard_object,
+        subprocess.run([*cc, *flags, '-c', str(VIEW_BRIDGE), '-o', view_object], check=True)
+        subprocess.run([*cc, *flags, '-c', str(CURSOR_BRIDGE), '-o', cursor_object], check=True)
+        subprocess.run([*cc, '-shared', preload_object, guard_object, view_object, cursor_object,
+                        str(ROOT / 'src/native/engine/linux/player_stock_view_component_bridge.S'),
+                        str(ROOT / 'src/native/engine/linux/player_stock_view_ship_bridge.S'),
                         '-o', str(OUTPUT), '-ldl'], check=True)
     print(OUTPUT)
 

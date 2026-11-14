@@ -255,6 +255,62 @@ static void test_context_refusals(void) {
         expect_context("nonfinite_axes");
     }
 }
+static void test_cursor_mode(void) {
+    fixture_reset();
+    stock_keyboard_identity_ops operations = fixture_operations();
+    stock_keyboard_identity_sample sample;
+    float value = 0.75f;
+    input_owner[0x9f36] = 1;
+    memcpy(LX(0x3d8d9a0), &value, sizeof value);
+    memcpy(LX(0x3d8d9b8), &value, sizeof value);
+    assert(stock_keyboard_identity_collect_with_mode(&sample, &operations, 1) && sample.ready);
+    assert(stock_keyboard_identity_collect_with(&sample, &operations) && !sample.ready &&
+           !strcmp(sample.reason, "mouse_mode"));
+    input_owner[0x9f36] = 2;
+    assert(stock_keyboard_identity_collect_with_mode(&sample, &operations, 1) && !sample.ready &&
+           !strcmp(sample.reason, "mouse_mode"));
+    input_owner[0x9f36] = 1;
+    value = 17.0f;
+    memcpy(LX(0x3d8d9b8), &value, sizeof value);
+    assert(stock_keyboard_identity_collect_with_mode(&sample, &operations, 1) && !sample.ready &&
+           !strcmp(sample.reason, "axes_out_of_range"));
+    value = NAN;
+    memcpy(LX(0x3d8d9b8), &value, sizeof value);
+    assert(stock_keyboard_identity_collect_with_mode(&sample, &operations, 1) && !sample.ready &&
+           !strcmp(sample.reason, "nonfinite_axes"));
+    fixture_reset();
+    *LX(0x3e5b29a) = 1;
+    assert(stock_keyboard_identity_collect_with_mode(&sample, &operations, 1) && !sample.ready &&
+           !strcmp(sample.reason, "input_ignored"));
+    assert(!stock_keyboard_identity_collect_with_mode(&sample, &operations, 2));
+}
+
+static void test_delayed_space_states(void) {
+    stock_keyboard_identity_ops operations = fixture_operations();
+    stock_keyboard_identity_sample sample;
+    for (unsigned local = 0; local <= 1; ++local) {
+        for (unsigned replay = 0; replay <= 1; ++replay) {
+            fixture_reset();
+            input_owner[0xcf0] = local;
+            *LX(0x3d8daa8) = replay;
+            assert(stock_keyboard_identity_collect_states(&sample, &operations, 1, local, replay));
+            assert(sample.ready);
+            assert(stock_keyboard_identity_collect_states(&sample, &operations, 1, !local, replay));
+            assert(!sample.ready && !strcmp(sample.reason, "space_context"));
+            assert(stock_keyboard_identity_collect_states(&sample, &operations, 1, local, !replay));
+            assert(!sample.ready && !strcmp(sample.reason, "space_context"));
+            *LX(0x3d8daa9) = 0;
+            assert(stock_keyboard_identity_collect_states(&sample, &operations, 1, local, replay));
+            assert(!sample.ready && !strcmp(sample.reason, "space_context"));
+        }
+    }
+    fixture_reset();
+    unsigned reads = read_calls;
+    assert(!stock_keyboard_identity_collect_states(&sample, &operations, 1, 2, 1));
+    assert(!stock_keyboard_identity_collect_states(&sample, &operations, 1, 1, 2));
+    assert(read_calls == reads);
+}
+
 static void test_lua_boundary(void) {
     fixture_reset();
     lua_State state = {0};
@@ -277,6 +333,8 @@ int main(void) {
     test_complete_sample();
     test_identity_refusals();
     test_context_refusals();
+    test_cursor_mode();
+    test_delayed_space_states();
     test_key_bank();
     test_lua_boundary();
     free(fake_image);

@@ -1,6 +1,7 @@
 #ifndef X4_PLAYER_CAMERA_REFILL_PRELOAD_PIN_H
 #define X4_PLAYER_CAMERA_REFILL_PRELOAD_PIN_H
 #include "player_camera_refill_preload.h"
+#include "player_projection_fov_scope_preload_pin.h"
 
 typedef struct {
     int (*bind)(uint32_t, uintptr_t, player_camera_refill_callback, player_camera_refill_callback);
@@ -59,7 +60,13 @@ static int player_camera_refill_provider(const player_view_query_api *sealed, pl
     if (!hash_ok(original, sizeof original, "acb114cd09879defbadd3a2dde0901975b3bbdc6ef371335c47120b820ea3430")) return 0;
     static const lx_site loop = {"camera-refill-loop", 0xfeb940, 0x82,
         "e5b77561f311eab417410c549f180c3e0219392ae444abd39c60339dfd7e653a"};
-    if (!site_ok(&loop)) return 0;
+    const char *projection = getenv("X4_DEV_UI_PROJECTION_FOV_SCOPE");
+    if (projection) {
+        player_projection_fov_scope_api scope;
+        if (strcmp(projection, "1") || !player_projection_fov_scope_provider(sealed, &scope)) return 0;
+    } else if (!site_ok(&loop)) {
+        return 0;
+    }
     unsigned char expected_frame[48] = {16,0,0,0,0,0,0,0,1,0,1,0x78,16,0x0c,7,8,0x90,1,0,0};
     uint32_t length=20, cie=24; uint64_t start=info.stub, range=14;
     memcpy(expected_frame+20,&length,4); memcpy(expected_frame+24,&cie,4);

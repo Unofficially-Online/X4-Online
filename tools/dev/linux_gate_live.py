@@ -61,6 +61,20 @@ import time
 
 import linux_view_ancestry_bundle as ancestry_bundle
 import linux_ui_camera_refill_bundle as camera_refill_bundle
+import linux_stock_view_fov_observer as stock_view_observer
+import linux_player_cursor_bundle as cursor_bundle
+import linux_view_component_trace_bundle as component_trace_bundle
+import linux_player_space_bundle as space_bundle
+import linux_view_render_capture_bundle as guest_capture_bundle
+import linux_view_host_capture_bundle as input_observation_bundle
+import linux_view_projection_scope_bundle as projection_scope_bundle
+import linux_selection_parity_bundle as selection_parity_bundle
+import linux_player_view_wire_bundle as view_wire_bundle
+import linux_view_performance_bundle as view_performance_bundle
+import linux_semaphore_observer_bundle as semaphore_bundle
+import linux_player_fire_observation as fire_observation
+import linux_cursor_input_trace as mouse_trace
+import linux_view_precompare_bundle as precompare_trace
 import linux_shared_identity_bundle as shared_identity_bundle
 from linux_gate_evidence import is_fatal_gate_message, validate_evidence
 from linux_player_physics_evidence import collect_physics_evidence
@@ -955,6 +969,12 @@ def collect_preload_evidence(result, local, games, run_dir, manifest, *, view_qu
                     result.setdefault('ui_render_lease_evidence', {})[str(slot)] = render_evidence
                     if slot == 2:
                         render = render_evidence
+                        if projection_scope_bundle.enabled(manifest):
+                            projection = projection_scope_bundle.collect_order(stderr, manifest, slot)
+                            if projection['pass']:
+                                render['projection_fov_count'] = projection['receipt_count'] - 1
+                            else:
+                                overlay_errors.append(f'client {slot}: invalid projection FOV scope: {projection["errors"]}')
                 if not render_evidence['pass']:
                     overlay_errors.append(f'client {slot}: invalid render lease evidence: {render_evidence["errors"]}')
             evidence = collect_ui_live_pose_observer_evidence(profile, stderr, slot, live_pose_enabled,
@@ -1240,9 +1260,18 @@ def validate_view_query_bundle(root, manifest, network_physics):
     digest = manifest.get('player_view_query_sha256')
     size = manifest.get('player_view_query_size')
     if not enabled:
-        if (size is not None or digest is not None or (root / library).exists() or
-                any(name == library or 'player_view_query_preload' in name for name in files)):
+        allowed_receipts = {'source-receipts/' + source for source in VIEW_QUERY_SOURCES}
+        if size is not None or digest is not None or (root / library).exists():
             raise SystemExit('disabled view query observer has frozen observer artifacts')
+        for name, expected in files.items():
+            if 'player_view_query_preload' not in name:
+                continue
+            if name not in allowed_receipts:
+                raise SystemExit('disabled view query observer has frozen observer artifacts')
+            path = root / name
+            if (not isinstance(expected, str) or re.fullmatch('[0-9a-f]{64}', expected) is None or
+                    not path.is_file() or path.is_symlink() or sha(path) != expected):
+                raise SystemExit('disabled view query observer has invalid source receipt: ' + name)
         return False
     if not network_physics:
         raise SystemExit('view query observer requires disposable independent network physics')
@@ -1507,8 +1536,16 @@ def physics_environment_mode(frames, network=False):
     return 'network-frames-discard' if network else ('bounded-frames-discard' if frames > 1 else 'single-frame-discard')
 
 
-def collect_network_client(arguments, stderr, frames, slot, camera=False, throttle=False, throttle_start_tick=5, presentation=False, session_frames=0, startup=None):
+def collect_network_client(arguments, stderr, frames, slot, camera=False, throttle=False, throttle_start_tick=5, presentation=False, session_frames=0, startup=None, cursor=False, space=False, *, allow_view=False, allow_semaphore_checkpoint=False):
     kwargs = {'allow_camera': True} if camera else {}
+    if allow_semaphore_checkpoint is not False:
+        kwargs['allow_semaphore_checkpoint'] = allow_semaphore_checkpoint
+    if allow_view is not False:
+        kwargs['allow_view'] = allow_view
+    if cursor:
+        kwargs['allow_cursor'] = True
+    if space:
+        kwargs['allow_space'] = True
     if session_frames:
         kwargs['session_frames'] = session_frames
     if startup:
@@ -1521,8 +1558,9 @@ def collect_network_client(arguments, stderr, frames, slot, camera=False, thrott
     evidence = collect_network_physics_evidence(*arguments, frame_count=frames, stderr=stderr, slot=slot, **kwargs)
     evidence.update(mode='independent_keyboard', stderr_path=str(stderr))
     evidence.setdefault('validation_pending', False)
-    if stderr.is_file():
-        evidence['stderr_sha256'] = sha(stderr)
+    if not stderr.is_file() or evidence.get('stderr_sha256') != sha(stderr):
+        evidence['errors'].append('worker stderr changed after network evidence collection')
+        evidence['pass'] = False
     return evidence
 
 
@@ -1549,6 +1587,47 @@ def ancestry_expected_identity(client, stderr):
     return {'p2': body['ship'], 'p1_runtime': presentation['occupied_runtime'],
             'p2_runtime': body['runtime'], 'p1_saved': next(iter(saved)),
             'p2_saved': 0x175310}
+
+
+def validate_external_guest(enabled, external, local, clients, network_physics, manifest,
+                            target_snapshot, protocol, relay_host, arm_at, target_commit):
+    """Admit a single local guest only for the frozen two-slot experiment.
+
+    The supplied target values are operator declarations, not remote attestations.
+    """
+    if not enabled:
+        if target_snapshot is not None or protocol is not None or target_commit is not None:
+            raise SystemExit('external guest target pins require --external-player-guest')
+        return None
+    if not (external and local == [2] and clients == 2 and network_physics and
+            relay_host is not None and arm_at is not None and
+            manifest.get('shared_identity_t40') is True and manifest.get('source_dirty') is False):
+        raise SystemExit('external guest requires relay host and arm time, slot 2, two-player network physics, clean source and T40 identity')
+    if protocol != 3 or not isinstance(target_snapshot, str) or not re.fullmatch(r'[0-9a-f]{64}', target_snapshot):
+        raise SystemExit('external guest requires protocol 3 and a lowercase target snapshot SHA256')
+    if not isinstance(target_commit, str) or not re.fullmatch(r'[0-9a-f]{40}', target_commit) or target_commit != manifest.get('commit'):
+        raise SystemExit('external guest requires matching declared source commit')
+    if target_snapshot != manifest.get('snapshot_sha256'):
+        raise SystemExit('external guest target snapshot differs from frozen bundle')
+    return {'role': 'guest', 'local_slot': 2, 'logical_players': 2, 'protocol': 3,
+            'target_snapshot_sha256': target_snapshot, 'target_pins_are_declarations': True,
+            'local_executable_sha256': EXE_SHA, 'local_gate_sha256': manifest['gate_so_sha256'],
+            'local_bundle_commit': manifest['commit'], 'declared_target_commit': target_commit, 'remote_evidence': 'pending',
+            'cross_peer_equality': None, 'world_equality': None}
+
+
+def external_guest_local_physics(clients, frames):
+    """Check only the independently parsed guest; no remote comparison is implied."""
+    guest = clients.get('2') if set(clients) == {'2'} else None
+    if not isinstance(guest, dict) or guest.get('slot') != 2 or guest.get('pass') is not True:
+        return False
+    if guest.get('errors') or guest.get('validation_pending'):
+        return False
+    records = guest.get('slot_records')
+    return (isinstance(records, dict) and set(records) == {'1', '2'} and
+            all(isinstance(rows, list) and len(rows) == frames and
+                all(isinstance(row, str) and re.fullmatch(r'(?:[0-9a-f]{2})+', row)
+                    for row in rows) for rows in records.values()))
 
 
 def network_peer_errors(clients, frames, throttle=False):
@@ -1944,6 +2023,43 @@ def lifecycle_discard_terminal(path, *, network=False):
         raise RuntimeError(f'lifecycle discard terminal evidence unavailable: {error}') from error
 
 
+def collect_cursor_observations(result, local, games, run_dir, enabled, manifest):
+    """Bind cursor receipts to fully validated physics before compaction."""
+    try:
+        observations = {str(slot): cursor_bundle.collect(
+            run_dir / f'game{slot}-stderr.log', profile / 'controller-lifecycle.log', enabled,
+            result.get('physics_discard', {}).get('clients', {}).get(str(slot), {}), manifest)
+            for slot, (_, profile) in zip(local, games)}
+        result['player_cursor_active_flight_evidence'] = observations
+        if ((enabled and set(observations) != {'1', '2'}) or
+                any(not proof['pass'] for proof in observations.values())):
+            result['pass'] = False
+            result.get('physics_discard', {})['pass'] = False
+    except Exception as error:
+        result['player_cursor_active_flight_error'] = str(error)
+        result['pass'] = False
+        result.get('physics_discard', {})['pass'] = False
+
+
+def collect_stock_view_observations(result, local, games, run_dir, enabled, *, rewrite=False):
+    """Run after full physics validation, before successful proof compaction."""
+    try:
+        observations = {}
+        for slot, (_, profile) in zip(local, games):
+            observations[str(slot)] = stock_view_observer.collect(
+                run_dir / f'game{slot}-stderr.log', profile / 'controller-lifecycle.log', enabled,
+                result.get('physics_discard', {}).get('clients', {}).get(str(slot), {}), rewrite=rewrite)
+        result['stock_view_fov_observer_evidence'] = observations
+        if (((enabled or rewrite) and set(observations) != {'1', '2'}) or
+                any(not proof['pass'] for proof in observations.values())):
+            result['pass'] = False
+            result.get('physics_discard', {})['pass'] = False
+    except Exception as error:
+        result['stock_view_fov_observer_error'] = str(error)
+        result['pass'] = False
+        result.get('physics_discard', {})['pass'] = False
+
+
 def lifecycle_discard_wait(returncodes, traces, *, network=False):
     """A failure exits promptly; a success waits for its peer and full validation."""
     for slot, code in returncodes.items():
@@ -1962,10 +2078,62 @@ def lifecycle_discard_wait(returncodes, traces, *, network=False):
     return bool(returncodes) and all(code == 223 for code in returncodes.values())
 
 
+def collect_fire_observations(result, local, games, run_dir, active, manifest):
+    """Keep raw receipts bound to expanded, accepted per-client physics evidence."""
+    bounded = result.get('physics_discard', {})
+    try:
+        proofs = {str(slot): fire_observation.collect(
+            run_dir / f'game{slot}-stderr.log',
+            profile / 'controller-lifecycle.log', active,
+            bounded.get('clients', {}).get(str(slot), {}), manifest)
+            for slot, (_, profile) in zip(local, games)}
+        result['player_fire_observation_evidence'] = proofs
+        if ((active and set(proofs) != {'1', '2'}) or
+                any(not proof['pass'] for proof in proofs.values())):
+            result['pass'] = False
+            bounded['pass'] = False
+    except Exception as error:
+        result['player_fire_observation_error'] = str(error)
+        result['pass'] = False
+        bounded['pass'] = False
+
+
+def collect_semaphore_observations(result, local, cases_by_slot, manifest):
+    """A required observer must cover every local client before physics passes."""
+    bounded = result.get('physics_discard', {})
+    try:
+        expected = {str(slot) for slot in local}
+        if (not expected or len(expected) != len(local) or
+                {str(slot) for slot in cases_by_slot} != expected):
+            raise ValueError('semaphore observer requires exactly the expected local slots')
+        clients = bounded.get('clients', {})
+        proofs = {str(slot): semaphore_bundle.collect(
+            cases_by_slot[slot] / 'semaphore-observer.log', clients.get(str(slot)), manifest, True,
+            ancestry=bounded.get('view_ancestry', {}).get(str(slot)))
+            for slot in local}
+        result['semaphore_observer_evidence'] = proofs
+        if set(proofs) != expected or any(proof.get('pass') is not True for proof in proofs.values()):
+            result['pass'] = False
+            bounded['pass'] = False
+    except Exception as error:
+        result['semaphore_observer_error'] = str(error)
+        result['pass'] = False
+        bounded['pass'] = False
+
+
 def bundle(args):
     try:
         args = argparse.Namespace(**resolve_session_options(vars(args), cli=True))
+        view_wire_enabled = view_wire_bundle.enabled(vars(args))
+        semaphore_observer_enabled = semaphore_bundle.enabled(vars(args))
         camera_refill_enabled = camera_refill_bundle.validate_options(vars(args))
+        stock_view_enabled = stock_view_observer.enabled(vars(args))
+        render_capture_enabled = guest_capture_bundle.enabled(vars(args))
+        host_capture_enabled = input_observation_bundle.enabled(vars(args))
+        projection_scope_enabled = projection_scope_bundle.enabled(vars(args))
+        selection_parity_enabled = selection_parity_bundle.enabled(vars(args))
+        cursor_enabled = cursor_bundle.enabled(vars(args))
+        space_enabled = space_bundle.enabled(vars(args))
         shared_identity_enabled = shared_identity_bundle.validate_options(vars(args))
     except ValueError as error:
         raise SystemExit(str(error)) from error
@@ -1981,6 +2149,10 @@ def bundle(args):
     presentation_enabled = validate_presentation_probe(vars(args), independent_frames)
     view_query_enabled = validate_view_query_observer(vars(args), independent_frames)
     ancestry_enabled = ancestry_bundle.validate_options(vars(args), bool(independent_frames))
+    component_trace_enabled = component_trace_bundle.enabled(vars(args), ancestry_enabled)
+    mouse_trace_enabled = mouse_trace.enabled(vars(args))
+    precompare_enabled = precompare_trace.enabled(vars(args), component_trace_enabled, ancestry_enabled, bool(independent_frames))
+    fire_observation_enabled = fire_observation.enabled(vars(args))
     if ancestry_enabled and not presentation_enabled:
         raise SystemExit('VIEW ancestry requires presentation identity evidence')
     ui_overlay_enabled = validate_ui_overlay(vars(args), independent_frames)
@@ -2112,6 +2284,8 @@ def bundle(args):
         command += ['--status-stride', str(args.status_stride)]
     if args.probe_profile:
         command.append('--probe-profile')
+    if args.frame_timing:
+        command.append('--frame-timing')
     if args.stock_keyboard_observer:
         command.append('--stock-keyboard-observer')
     if args.player_control_bank_census:
@@ -2361,6 +2535,9 @@ def bundle(args):
                         '--zig', str(args.zig)], check=True)
         (out / 'player_lifetime').mkdir()
         shutil.copy2(repo / '.local/player-lifetime' / PLAYER_LIFETIME, out / 'player_lifetime' / PLAYER_LIFETIME)
+    if semaphore_observer_enabled:
+        subprocess.run([sys.executable, str(repo / 'tools/dev/build_linux_semaphore_observer.py'),
+                        '--zig', str(args.zig), '--out', str(out / 'semaphore_observer')], check=True)
     missing = [name for name in ('ui/native_gate_probe.lua', 'ui/sha256.lua') if not (extension / name).is_file()]
     if missing:
         raise SystemExit(f'the composed lockstep extension lacks required files: {missing}')
@@ -2490,6 +2667,18 @@ def bundle(args):
         freeze_source_receipts(repo, out, shared_identity_bundle.sources(repo))
     for helper in shared_identity_bundle.BUNDLE_HELPERS:
         shutil.copy2(repo / 'tools/dev' / helper, out / helper)
+    freeze_source_receipts(repo, out, cursor_bundle.source_paths(repo))
+    shutil.copy2(repo / 'tools/dev/linux_player_cursor_bundle.py', out / 'linux_player_cursor_bundle.py')
+    freeze_source_receipts(repo, out, semaphore_bundle.source_paths(repo))
+    for helper in semaphore_bundle.HELPERS:
+        shutil.copy2(repo / "tools/dev" / helper, out / helper)
+    for helper in space_bundle.HELPERS:
+        shutil.copy2(repo / "tools/dev" / helper, out / helper)
+    freeze_source_receipts(repo, out, component_trace_bundle.source_paths(repo))
+    for helper in component_trace_bundle.HELPERS:
+        shutil.copy2(repo / 'tools/dev' / helper, out / helper)
+    freeze_source_receipts(repo, out, stock_view_observer.source_paths(repo))
+    shutil.copy2(repo / 'tools/dev/linux_stock_view_fov_observer.py', out / 'linux_stock_view_fov_observer.py')
     freeze_source_receipts(repo, out, camera_refill_bundle.source_paths(repo))
     for helper in camera_refill_bundle.HELPERS:
         shutil.copy2(repo / 'tools/dev' / helper, out / helper)
@@ -2520,6 +2709,7 @@ def bundle(args):
         'world_rolling_leaf_ticks', 'world_rolling_raw_ids',
         'status_stride',
         'probe_profile',
+        'frame_timing',
         'player_control_bank_census',
         'player_control_bank_probe',
         'player_control_boundary_probe',
@@ -2605,10 +2795,35 @@ def bundle(args):
         'portable_math_sha256': files.get(f'portable_math/{PORTABLE_MATH}'),
         'player_lifetime_sha256': files.get(f'player_lifetime/{PLAYER_LIFETIME}'),
         'player_view_query_observer': view_query_enabled,
-        'view_query_source_version': camera_refill_bundle.SOURCE_VERSION,
+        'view_query_source_version': semaphore_bundle.SOURCE_VERSION,
+        'semaphore_observer': semaphore_observer_enabled,
+        'semaphore_observer_evidence_version': 1 if semaphore_observer_enabled else None,
+        'semaphore_observer_sha256': files.get('semaphore_observer/' + semaphore_bundle.PROVIDER),
+        'semaphore_observer_size': (out / 'semaphore_observer' / semaphore_bundle.PROVIDER).stat().st_size if semaphore_observer_enabled else None,
+        'player_view_wire': view_wire_enabled,
+        'player_view_wire_evidence_version': 1 if view_wire_enabled else None,
+        'player_selection_parity': selection_parity_enabled,
+        'player_selection_parity_evidence_version': 1 if selection_parity_enabled else None,
+        'player_fire_observation': fire_observation_enabled,
+        'player_fire_observation_evidence_version': 2 if fire_observation_enabled else None,
+        'cursor_input_trace': mouse_trace_enabled,
+        'cursor_input_trace_evidence_version': 1 if mouse_trace_enabled else None,
+        'view_precompare_trace': precompare_enabled,
+        'view_precompare_trace_evidence_version': 1 if precompare_enabled else None,
+        'player_space_context': space_enabled,
+        'player_space_context_evidence_version': 1 if space_enabled else None,
+        'player_cursor_active_flight': cursor_enabled,
+        'player_cursor_active_flight_evidence_version': 1 if cursor_enabled else None,
+        'view_render_capture_shadow': render_capture_enabled,
+        'view_host_capture_shadow': host_capture_enabled,
+        'player_ui_projection_fov_scope': projection_scope_enabled,
+        'stock_view_fov_observer': stock_view_enabled,
+        'stock_view_fov_observer_evidence_version': 1 if stock_view_enabled else None,
         'view_ancestry_observer': ancestry_enabled,
         'player_ui_camera_refill': camera_refill_enabled,
         'player_ui_camera_refill_evidence_version': 1 if camera_refill_enabled else None,
+        'view_component_trace': component_trace_enabled,
+        'view_component_trace_evidence_version': 1 if component_trace_enabled else None,
         'ui_callback_observer': ui_callback_enabled,
         'player_presentation_fork_probe': fork_enabled,
         'player_ui_plan_kick_probe': plan_kick_enabled,
@@ -3041,6 +3256,9 @@ def stage_case(root, run, slot, game, userhome, port, token, clients=2, credenti
         shutil.copyfile(root / 'player_view_query' / PLAYER_VIEW_QUERY, case / PLAYER_VIEW_QUERY)
     if (root / 'player_lifetime' / PLAYER_LIFETIME).is_file():
         shutil.copyfile(root / 'player_lifetime' / PLAYER_LIFETIME, case / PLAYER_LIFETIME)
+    if (root / 'semaphore_observer' / semaphore_bundle.PROVIDER).is_file():
+        shutil.copyfile(root / 'semaphore_observer' / semaphore_bundle.PROVIDER, case / semaphore_bundle.PROVIDER)
+        shutil.copyfile(root / 'exec_linux_semaphore_observer.py', case / 'exec_linux_semaphore_observer.py')
     if (root / 'portable_math' / PORTABLE_MATH).is_file():
         shutil.copyfile(root / 'portable_math' / PORTABLE_MATH, case / PORTABLE_MATH)
     lock = case / 'x4.lock'
@@ -3167,7 +3385,20 @@ def run(args):
         if shutil.disk_usage(root).free < session['disk_limit']+(512 << 20):
             raise SystemExit('session mode requires its disk budget plus 512 MiB free reserve')
     view_query_enabled = validate_view_query_bundle(root, manifest, network_physics)
-    ancestry_enabled = camera_refill_bundle.validate_bundle(root, manifest, network_physics)
+    ancestry_enabled = semaphore_bundle.validate_bundle(root, manifest, network_physics)
+    semaphore_observer_enabled = semaphore_bundle.enabled(manifest)
+    view_wire_enabled = view_wire_bundle.enabled(manifest)
+    fire_observation_enabled = fire_observation.enabled(manifest)
+    space_enabled = space_bundle.enabled(manifest)
+    component_trace_enabled = component_trace_bundle.enabled(manifest, ancestry_enabled)
+    mouse_trace_enabled = mouse_trace.enabled(manifest)
+    precompare_enabled = precompare_trace.enabled(manifest, component_trace_enabled, ancestry_enabled, network_physics)
+    cursor_enabled = cursor_bundle.enabled(manifest)
+    stock_view_enabled = stock_view_observer.enabled(manifest)
+    render_capture_enabled = guest_capture_bundle.enabled(manifest)
+    host_capture_enabled = input_observation_bundle.enabled(manifest)
+    projection_scope_enabled = projection_scope_bundle.enabled(manifest)
+    selection_parity_enabled = selection_parity_bundle.enabled(manifest)
     camera_refill_enabled = camera_refill_bundle.validate_options(manifest)
     camera_refill_bundle.validate_config(
         (root / 'extension/x4_lan_lab/ui/config.lua').read_text(), camera_refill_enabled)
@@ -3366,6 +3597,7 @@ def run(args):
         relay_host, arm_at = remote_session_options(args.relay_host, args.arm_at, external)
     except ValueError as error:
         raise SystemExit(f'REFUSED: {error}') from None
+    declared_relay_host = relay_host
     if external and relay_host is None:
         relay_host = '127.0.0.1'
     if external and (not 1024 <= args.relay_port <= 65535 or not re.fullmatch(r'[0-9a-f]{32}', args.relay_token)):
@@ -3373,7 +3605,16 @@ def run(args):
     local = sorted({int(part) for part in args.local_slots.split(',')}) if external else list(range(1, clients + 1))
     if not local or any(not 1 <= slot <= clients for slot in local):
         raise SystemExit(f'--local-slots must name slots of 1..{clients}')
-    if lifecycle and len(local) != 2:
+    guest = validate_external_guest(getattr(args, 'external_player_guest', False), external, local, clients,
+                                    network_physics, manifest, getattr(args, 'target_snapshot_sha256', None),
+                                    getattr(args, 'target_protocol', None), declared_relay_host, arm_at,
+                                    getattr(args, 'target_source_commit', None))
+    if guest is not None:
+        config = (root / 'extension/x4_lan_lab/ui/config.lua').read_text(encoding='utf-8')
+        assignments = re.findall(r'(?m)^\s*X4LAN_CONFIG\.native_gate_clients\s*=\s*(.*?)\s*$', config)
+        if assignments not in (['2'], ['@X4LANE_CLIENTS@']) or sha(root / 'snapshot' / SLOT_SAVE) != guest['target_snapshot_sha256']:
+            raise SystemExit('external guest requires frozen two-client protocol 3 config and exact snapshot')
+    if lifecycle and len(local) != 2 and guest is None:
         raise SystemExit('--controller-lifecycle-discard requires two local clients')
     needed = args.min_memory_gib if args.min_memory_gib is not None else 6.5 * len(local)
     if memory < needed:
@@ -3396,7 +3637,7 @@ def run(args):
                                             'steam_home': str(steam_home), 'shm': shm and str(shm), 'discard_layer': discard and str(layer),
                                             'bundle_commit': manifest['commit'],
                                             'portable_math': bool(manifest.get('portable_math_sha256')), 'seed_rng': manifest.get('seed_rng'),
-                                            'gate_so_sha256': manifest['gate_so_sha256']}))
+                                            'gate_so_sha256': manifest['gate_so_sha256'], 'external_guest': guest}))
         return
     if manifest.get('navmesh_post_observe') is not None:
         from navmesh_post_config import validate_window
@@ -3437,6 +3678,8 @@ def run(args):
             os.chown(path, user.pw_uid, user.pw_gid)
     result = {'name': name, 'ticks': ticks, 'port': port, 'memory_available_gib': round(memory, 1), 'discard_layer': discard,
               'manifest_commit': manifest['commit'], 'gate_so_sha256': manifest['gate_so_sha256'], 'steam_before': steam,
+              'player_view_wire': view_wire_enabled,
+              'player_view_wire_evidence_version': manifest.get('player_view_wire_evidence_version'),
               'player_lifetime_sha256': manifest.get('player_lifetime_sha256'),
               'player_lifetime_enabled': lifetime_preload,
               'player_presentation_fork_probe': fork_enabled,
@@ -3464,7 +3707,7 @@ def run(args):
               'player_throttle_warm_probe': bool(manifest.get('player_throttle_warm_probe', False)),
               'portable_math_sha256': manifest.get('portable_math_sha256'), 'seed_rng': manifest.get('seed_rng'), 'launch_order': order,
               'external_relay': external, 'relay_host': relay_host if external else None, 'arm_at': arm_at,
-              'local_slots': local, 'snapshot_seed': world_seed}
+              'local_slots': local, 'snapshot_seed': world_seed, 'external_guest': guest}
     if lifecycle:
         result['physics_discard' if physics else 'lifecycle_discard'] = {'pass': False, 'clients': {}, 'restored': False,
                                        'resumed': False, 'tickrunaccepted': False}
@@ -3476,6 +3719,7 @@ def run(args):
         result['recurring_readiness'] = {'pass': False, 'end': recurring_end, 'tail': recurring_tail, 'clients': {},
                                          'readiness_only': True, 'other_threads_excluded': False}
     procs, starts, logs, games = [], {}, [], []
+    cases_by_slot = {}
     cancelled = []
     # bwrap binds each private lock over this path, and cannot create it in the read-only view.
     lock_target = Path('/tmp/EGOSOFT_X4.lock')
@@ -3557,7 +3801,18 @@ def run(args):
                                              manifest['player_view_query_size'])
                 if ui_callback_enabled:
                     env['X4MP_UI_CALLBACK_OBSERVER'] = '1'
+            env = stock_view_observer.environment(env, stock_view_enabled)
+            env = guest_capture_bundle.environment(env, render_capture_enabled, slot)
+            env = input_observation_bundle.environment(env, host_capture_enabled, slot)
+            env = projection_scope_bundle.environment(env, projection_scope_enabled, slot)
+            env = selection_parity_bundle.environment(env, selection_parity_enabled, slot, manifest)
+            env = cursor_bundle.environment(env, cursor_enabled)
+            env = space_bundle.environment(env, space_enabled)
             env = ancestry_bundle.environment(env, ancestry_enabled)
+            env = component_trace_bundle.environment(env, component_trace_enabled)
+            env = mouse_trace.environment(env, mouse_trace_enabled)
+            env = precompare_trace.environment(env, precompare_enabled)
+            env = fire_observation.environment(env, fire_observation_enabled)
             env = camera_refill_bundle.environment(env, camera_refill_enabled, slot)
             env.update(presentation_fork_environment(fork_enabled))
             env.update(ui_overlay_environment(ui_overlay_enabled, slot, manifest.get('player_ui_overlay_callbacks', 1), manifest.get('player_ui_session_frames', 0),
@@ -3582,8 +3837,14 @@ def run(args):
                 env['X4LAN_PLAYER_CONTROL_RECURRING_END'] = str(recurring_end)
                 if recurring_tail:
                     env['X4LAN_PLAYER_CONTROL_RECURRING_TAIL'] = '1'
+            env = view_wire_bundle.environment(env, view_wire_enabled, manifest)
             program = [str(case / 'game/X4'), '-personalfolderid', '45841', '-skipintro', '-debug', 'scripts',
                        '-logfile', 'engine-output.log', '-nocputhrottle', '-noworkshopsync', f'-seed:{world_seed}']
+            if semaphore_observer_enabled:
+                if not Path('/usr/bin/python3').is_file():
+                    raise RuntimeError('semaphore observer requires the system Python launcher')
+                env, program = semaphore_bundle.wrap_program(case, manifest, env, program)
+            cases_by_slot[slot] = case
             games_by_slot[slot] = (launch(f'game{slot}-stdout', namespace_command(case, game, dlc_binds, lock, env, program, args.user, shm),
                 stderr_path=run_dir / f'game{slot}-stderr.log' if recurring else None), profile)
         games = [games_by_slot[slot] for slot in local]
@@ -3676,6 +3937,13 @@ def run(args):
                                  lifetime_preload=lifetime_preload, fork_enabled=fork_enabled,
                                  recurring=recurring, physics_frames=physics_frames,
                                  ui_overlay_enabled=ui_overlay_enabled)
+        if not network_physics:
+            from linux_view_component_trace_evidence import collect_component_trace
+            disabled_trace = {str(slot): collect_component_trace(
+                run_dir / f'game{slot}-stderr.log', None, None, None, False) for slot in local}
+            result['view_component_trace'] = disabled_trace
+            if any(not proof['pass'] for proof in disabled_trace.values()):
+                raise ValueError('unexpected or unreadable disabled component trace')
         if lifecycle:
             clients_evidence = {}
             for slot, (proc, profile) in zip(local, games):
@@ -3689,7 +3957,8 @@ def run(args):
                             arguments, stderr, physics_frames, slot,
                             camera=camera_enabled, throttle=bool(throttle_environment),
                             throttle_start_tick=manifest.get('player_throttle_start_tick') or 5,
-                            presentation=presentation_enabled, session_frames=manifest.get('player_ui_session_frames',0), startup=manifest.get('player_startup_phases'))
+                            presentation=presentation_enabled, session_frames=manifest.get('player_ui_session_frames',0), startup=manifest.get('player_startup_phases'), cursor=cursor_enabled, space=space_enabled, allow_view=view_wire_enabled,
+                            allow_semaphore_checkpoint=semaphore_observer_enabled)
                     else:
                         clients_evidence[str(slot)] = collect_physics_client(arguments, stderr, physics_frames)
                 else:
@@ -3708,6 +3977,10 @@ def run(args):
                 result['physics_discard']['frame_count'] = physics_frames
                 if network_physics:
                     result['physics_discard'].update(mode='independent_keyboard', validation_pending=False)
+                    if guest is not None:
+                        result['physics_discard']['local_physics_pass'] = external_guest_local_physics(
+                            clients_evidence, physics_frames)
+                        result['physics_discard']['validation_pending'] = True
                     peer_errors = network_peer_errors(clients_evidence, physics_frames,
                                                       throttle=bool(throttle_environment))
                     result['physics_discard']['peer_errors'] = peer_errors
@@ -3715,11 +3988,11 @@ def run(args):
                     if camera_enabled:
                         profiles = {str(slot): profile for slot, (_, profile) in zip(local, games)}
                         add_camera_evidence(result['physics_discard'], run_dir, profiles)
+                    from linux_player_startup_phases import startup_phases
+                    phase = startup_phases(manifest.get('player_startup_phases'))
+                    last_tick = phase['apply'] + physics_frames - 1
+                    ancestry_results = {}
                     if ancestry_enabled:
-                        from linux_player_startup_phases import startup_phases
-                        phase = startup_phases(manifest.get('player_startup_phases'))
-                        last_tick = phase['apply'] + physics_frames - 1
-                        ancestry_results = {}
                         for slot, (_, profile) in zip(local, games):
                             stderr = run_dir / f'game{slot}-stderr.log'
                             try:
@@ -3735,6 +4008,14 @@ def run(args):
                         result['physics_discard']['pass'] = (result['physics_discard']['pass'] and
                             set(ancestry_results) == {'1', '2'} and
                             all(proof['pass'] for proof in ancestry_results.values()))
+                    from linux_view_component_trace_evidence import collect_component_trace
+                    trace_results = {str(slot): collect_component_trace(
+                        run_dir / f'game{slot}-stderr.log', ancestry_results.get(str(slot)),
+                        clients_evidence.get(str(slot)), last_tick, component_trace_enabled)
+                        for slot, _ in zip(local, games)}
+                    result['physics_discard']['view_component_trace'] = trace_results
+                    result['physics_discard']['pass'] = (result['physics_discard']['pass'] and
+                        set(trace_results) == {'1', '2'} and all(proof['pass'] for proof in trace_results.values()))
         else:
             result.update(collect_run_evidence(run_dir, local, cases, ticks, manifest,
                                            writers_closed=not result.get('cleanup_errors') and not result['owned_processes_remaining']))
@@ -3771,6 +4052,129 @@ def run(args):
             result['pass'] = result['pass'] and result['recurring_readiness']['pass']
     except Exception as error:
         result['postprocessing_error'] = str(error)
+    try:
+        clients = result.get('physics_discard', {}).get('clients', {})
+        proofs = {str(slot): guest_capture_bundle.collect(
+            run_dir / f'game{slot}-stderr.log', clients.get(str(slot)), manifest, slot, render_capture_enabled)
+            for slot, _ in zip(local, games)}
+        result['view_render_capture_shadow_evidence'] = proofs
+        if ((render_capture_enabled and set(proofs) != {'1', '2'}) or
+                any(not proof['pass'] for proof in proofs.values())):
+            result['pass'] = False
+            result.get('physics_discard', {})['pass'] = False
+    except Exception as error:
+        result['view_render_capture_shadow_error'] = str(error)
+        result['pass'] = False
+    try:
+        clients = result.get('physics_discard', {}).get('clients', {})
+        proofs = {str(slot): input_observation_bundle.collect(
+            run_dir / f'game{slot}-stderr.log', clients.get(str(slot)), manifest, slot, host_capture_enabled)
+            for slot, _ in zip(local, games)}
+        result['view_host_capture_shadow_evidence'] = proofs
+        if ((host_capture_enabled and set(proofs) != {'1', '2'}) or
+                any(not proof['pass'] for proof in proofs.values())):
+            result['pass'] = False
+            result.get('physics_discard', {})['pass'] = False
+    except Exception as error:
+        result['view_host_capture_shadow_error'] = str(error)
+        result['pass'] = False
+    try:
+        clients = result.get('physics_discard', {}).get('clients', {})
+        proofs = {str(slot): projection_scope_bundle.collect(
+            run_dir / f'game{slot}-stderr.log', clients.get(str(slot)), manifest, slot, projection_scope_enabled)
+            for slot, _ in zip(local, games)}
+        result['projection_fov_scope_evidence'] = proofs
+        if ((projection_scope_enabled and set(proofs) != {'1', '2'}) or
+                any(not proof['pass'] for proof in proofs.values())):
+            result['pass'] = False
+            result.get('physics_discard', {})['pass'] = False
+    except Exception as error:
+        result['projection_fov_scope_error'] = str(error)
+        result['pass'] = False
+    try:
+        clients = result.get('physics_discard', {}).get('clients', {})
+        proofs = {str(slot): selection_parity_bundle.collect(
+            run_dir / f'game{slot}-stderr.log', clients.get(str(slot)), manifest, slot, selection_parity_enabled)
+            for slot, _ in zip(local, games)}
+        result['selection_parity_evidence'] = proofs
+        if ((selection_parity_enabled and set(proofs) != {'1', '2'}) or
+                any(not proof['pass'] for proof in proofs.values())):
+            result['pass'] = False
+            result.get('physics_discard', {})['pass'] = False
+    except Exception as error:
+        result['selection_parity_error'] = str(error)
+        result['pass'] = False
+    try:
+        wire = view_wire_bundle.collect(run_dir, result.get('physics_discard', {}).get('clients', {}),
+                                        manifest, view_wire_enabled)
+        result['player_view_wire_evidence'] = wire
+        if not wire['pass']:
+            result['pass'] = False
+            result.get('physics_discard', {})['pass'] = False
+    except Exception as error:
+        result['player_view_wire_error'] = str(error)
+        result['pass'] = False
+        result.get('physics_discard', {})['pass'] = False
+    if semaphore_observer_enabled:
+        collect_semaphore_observations(result, local, cases_by_slot, manifest)
+    if 'stock_view_fov_observer' in manifest:
+        collect_stock_view_observations(result, local, games, run_dir, stock_view_enabled,
+                                        rewrite=view_wire_enabled)
+    if 'player_cursor_active_flight' in manifest:
+        collect_cursor_observations(result, local, games, run_dir, cursor_enabled, manifest)
+    if 'player_space_context' in manifest:
+        try:
+            proofs = {str(slot): space_bundle.collect(
+                run_dir / f'game{slot}-stderr.log', space_enabled,
+                result.get('physics_discard', {}).get('clients', {}).get(str(slot), {}),
+                result.get('player_cursor_active_flight_evidence', {}).get(str(slot), {}))
+                for slot, (_, profile) in zip(local, games)}
+            result['player_space_context_evidence'] = proofs
+            if (space_enabled and set(proofs) != {'1', '2'}) or any(not proof['pass'] for proof in proofs.values()):
+                result['pass'] = False
+                result.get('physics_discard', {})['pass'] = False
+        except Exception as error:
+            result['player_space_context_error'] = str(error)
+            result['pass'] = False
+            result.get('physics_discard', {})['pass'] = False
+    # Diagnostics remain observations, with separate hash-bound acceptance.
+    # A failed required observer invalidates the bounded experiment, never its raw logs.
+    if 'cursor_input_trace' in manifest:
+        try:
+            bounded = result.get('physics_discard', {})
+            proofs = {str(slot): mouse_trace.collect(
+                run_dir / f'game{slot}-stderr.log', mouse_trace_enabled,
+                bounded.get('clients', {}).get(str(slot), {}),
+                result.get('player_cursor_active_flight_evidence', {}).get(str(slot), {}), manifest)
+                for slot, _ in zip(local, games)}
+            result['cursor_input_trace_evidence'] = proofs
+            if (mouse_trace_enabled and set(proofs) != {'1', '2'}) or any(not proof['pass'] for proof in proofs.values()):
+                result['pass'] = False
+                bounded['pass'] = False
+        except Exception as error:
+            result['cursor_input_trace_error'] = str(error)
+            result['pass'] = False
+            result.get('physics_discard', {})['pass'] = False
+    if 'view_precompare_trace' in manifest:
+        try:
+            bounded = result.get('physics_discard', {})
+            end_tick = session['recurring_end'] if session else 0
+            proofs = {str(slot): precompare_trace.collect(
+                run_dir / f'game{slot}-stderr.log',
+                bounded.get('view_ancestry', {}).get(str(slot)),
+                bounded.get('view_component_trace', {}).get(str(slot)),
+                bounded.get('clients', {}).get(str(slot)), end_tick, precompare_enabled)
+                for slot, _ in zip(local, games)}
+            result['view_precompare_trace_evidence'] = proofs
+            if (precompare_enabled and set(proofs) != {'1', '2'}) or any(not proof['pass'] for proof in proofs.values()):
+                result['pass'] = False
+                bounded['pass'] = False
+        except Exception as error:
+            result['view_precompare_trace_error'] = str(error)
+            result['pass'] = False
+            result.get('physics_discard', {})['pass'] = False
+    if 'player_fire_observation' in manifest:
+        collect_fire_observations(result, local, games, run_dir, fire_observation_enabled, manifest)
     if session:
         try:
             from linux_ui_session_evidence import compact_validated_result, rolling_world_summary
@@ -3779,11 +4183,12 @@ def run(args):
             result['session_world_roots'] = roots
             matched = (set(roots) == {'1','2'} and not any(proof['errors'] for proof in roots.values()) and
                        roots['1']['sha256'] == roots['2']['sha256'])
-            result['session_raw_world_roots_match'] = matched
+            result['session_raw_world_roots_match'] = None if guest is not None else matched
             if not matched:
                 result.get('physics_discard', {})['pass'] = False
                 result.get('physics_discard', {}).setdefault('peer_errors', []).append('session rolling-root evidence missing or different')
-            compact_validated_result(result)
+            if guest is None:
+                compact_validated_result(result)
         except Exception as error:
             result['session_evidence_error'] = str(error)
             result.get('physics_discard', {})['pass'] = False
@@ -3824,6 +4229,8 @@ def main(argv=None):
                    help='thin diagnostic status logs every N ticks (1..3600)')
     b.add_argument('--probe-profile', action='store_true',
                    help='record probe timings for scan/output performance comparisons')
+    b.add_argument('--frame-timing', action='store_true',
+                   help='record existing native frame, wait and probe timing counters')
     b.add_argument('--stock-keyboard-observer', action='store_true',
                    help='observe selected native keyboard handlers; leaves local controls unchanged')
     b.add_argument('--player-control-bank-census', action='store_true',
@@ -3841,10 +4248,20 @@ def main(argv=None):
     shared_identity_bundle.add_arguments(b)
     b.add_argument('--view-ancestry-observer', action='store_true',
                    help='bounded owner-thread VIEW ancestry sampling; requires presentation and view-query observers')
+    b.add_argument('--player-fire-observation', action='store_true',
+                   help='observe the first primary-group P2 gun once in a finite T40 physics session; no firing mutation')
+    b.add_argument('--cursor-input-trace', action='store_true',
+                   help='observe native mouse gates in the bounded cursor experiment')
+    b.add_argument('--view-precompare-trace', action='store_true',
+                   help='observe engine ownership before the native player comparison')
+    b.add_argument('--view-component-trace', action='store_true',
+                   help='bounded rotating component identity samples; requires --view-ancestry-observer')
     b.add_argument('--player-view-query-observer', action='store_true',
                    help='default-off pre-main view query observer; requires independent >=4 frames and lifetime preload')
     b.add_argument('--player-lifetime-preload', action='store_true',
                    help='bundle default-off pre-main lifetime guard for disposable physics experiments only')
+    b.add_argument('--semaphore-observer', action='store_true',
+                   help='bounded target semaphore diagnostics for a finite T40 session; no ownership proof')
     b.add_argument('--player-factory-probe', action='store_true',
                    help='isolated Linux construct/restore/dispose diagnostic; not playable controls')
     b.add_argument('--player-reference-probe', action='store_true',
@@ -3860,6 +4277,22 @@ def main(argv=None):
                    help='explicit common startup tuple; requires finite session mode')
     b.add_argument('--player-ui-session-frames', type=int, default=0, metavar='N',
                    help='explicit finite disposable session, 180..900 frames; implies UI budget and excludes legacy overlay flags')
+    b.add_argument('--player-cursor-active-flight', action='store_true',
+                   help='default-off finite T40 active-flight cursor replay only; excludes context, VIEW, AIM and FIRE')
+    b.add_argument('--player-space-context', action='store_true',
+                   help='default-off T40 SPACE context replay; requires independent cursor mode')
+    b.add_argument('--player-view-wire', action='store_true',
+                   help='default-off finite T40 VIEW wire; requires the complete capture and consumer chain')
+    b.add_argument('--player-selection-parity', action='store_true',
+                   help='default-off read-only Player/UI selection comparison at authenticated VIEW captures')
+    b.add_argument('--player-ui-projection-fov-scope', action='store_true',
+                   help='enable the bounded guest-only projection FOV presentation scope')
+    b.add_argument('--view-host-capture-shadow', action='store_true',
+                   help='default-off host-only VIEW capture shadow; never admits VIEW wire records')
+    b.add_argument('--view-render-capture-shadow', action='store_true',
+                   help='default-off guest-only VIEW capture shadow; never admits VIEW wire records')
+    b.add_argument('--stock-view-fov-observer', action='store_true',
+                   help='default-off stock coefficient topology observer; requires T40 finite independent window')
     b.add_argument('--player-ui-camera-refill', action='store_true',
                    help='default-off guest stock camera refill lease; requires full render/correction chain')
     b.add_argument('--player-ui-render-lease', action='store_true',
@@ -4068,6 +4501,10 @@ def main(argv=None):
     r.add_argument('--relay-token', help='the token of that relay (32 hex)')
     r.add_argument('--relay-host', help='external relay dotted IPv4 address (default 127.0.0.1)')
     r.add_argument('--arm-at', type=int, metavar='UTC_SECOND', help='external session: agreed future UTC second to load')
+    r.add_argument('--external-player-guest', action='store_true', help='explicit single-local slot 2 physics guest; remote evidence remains pending')
+    r.add_argument('--target-snapshot-sha256', help='declared remote session snapshot SHA256')
+    r.add_argument('--target-protocol', type=int, choices=(3,), help='declared remote session protocol')
+    r.add_argument('--target-source-commit', help='declared remote session source commit; must match this bundle')
     r.add_argument('--local-slots', metavar='2', help='mixed session: the slots this host runs (the others join from elsewhere)')
     r.add_argument('--wire-crypto-credentials', type=Path, metavar='FILE',
                    help='a bundle built with --wire-crypto: JSON {"<slot>": "x4c1:...", ...} (native_gate_crypto.py credential for '

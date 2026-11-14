@@ -22,7 +22,10 @@ static int record_call(void *context, unsigned id, unsigned char state) {
 }
 static void setup(keyboard_replay *replay, unsigned own_slot) {
     assert(keyboard_replay_init(replay));
-    keyboard_replay_config config = {own_slot, 2, 0, 3, 5, {111, 222}, 0, 0};
+    keyboard_replay_config config = {
+        .own_slot = own_slot, .delay = 2, .first_capture = 3,
+        .last_capture = 5, .saved_ship_ids = {111, 222}
+    };
     assert(keyboard_replay_configure(replay, &config) == KEYBOARD_REPLAY_OK);
 }
 static unsigned encode_row(unsigned char *out, unsigned capture, unsigned count) {
@@ -224,7 +227,10 @@ static void test_phase_and_invalid_wire(void) {
 static void test_short_capture_window(void) {
     keyboard_replay replay;
     assert(keyboard_replay_init(&replay));
-    keyboard_replay_config config = {2, 2, 0, 3, 3, {111, 222}, 0, 0};
+    keyboard_replay_config config = {
+        .own_slot = 2, .delay = 2, .first_capture = 3,
+        .last_capture = 3, .saved_ship_ids = {111, 222}
+    };
     assert(keyboard_replay_configure(&replay, &config) == KEYBOARD_REPLAY_OK);
     start_frame_three(&replay);
     unsigned char neutral[STOCK_INPUT_MAX_BYTES];
@@ -241,7 +247,10 @@ static void test_short_capture_window(void) {
 static void test_configuration_constraints(void) {
     keyboard_replay replay;
     assert(keyboard_replay_init(&replay));
-    keyboard_replay_config config = {1, 2, 0, 2, 5, {111, 222}, 0, 0};
+    keyboard_replay_config config = {
+        .own_slot = 1, .delay = 2, .first_capture = 2,
+        .last_capture = 5, .saved_ship_ids = {111, 222}
+    };
     assert(keyboard_replay_configure(&replay, &config) == KEYBOARD_REPLAY_ARGUMENT);
     config.first_capture = 3;
     config.saved_ship_ids[1] = 111;

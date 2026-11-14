@@ -41,6 +41,9 @@ typedef struct {
     uint64_t original_words[VIEW_ANCESTRY_SITES], patched_words[VIEW_ANCESTRY_SITES];
     uintptr_t ship_trampoline, original_slots[2], original_targets[2];
     uint32_t offsets[VIEW_ANCESTRY_SITES], frame_size, stub_size, page_size, ship_trampoline_size;
+    uintptr_t pre_block, pre_stub, pre_dispatch, pre_frame, pre_original_slot, pre_original_target;
+    uint64_t pre_original_word, pre_patched_word;
+    uint32_t pre_enabled;
 } view_ancestry_info;
 
 int x4mp_view_ancestry_info(view_ancestry_info *out);

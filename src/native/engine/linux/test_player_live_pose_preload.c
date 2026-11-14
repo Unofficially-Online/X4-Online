@@ -190,7 +190,8 @@ int main(void) {
     assert(scopes.state == PLAYER_LIVE_POSE_OUTSIDE);
     assert(!x4mp_live_pose_finish(&snapshot));
 
-    /* A 180-frame opt-in closes after 170 Move and 170 GameRender scopes. */
+    /* A 180-frame opt-in closes all 170 Move/Render scopes and the 169
+     * separately restored refill/projection pairs after its first frame. */
     assert(player_ui_session_parse("180", &preload_session_budget));
     memset(&live_pose_capture, 0, sizeof live_pose_capture);
     memset(&live_pose_scopes, 0, sizeof live_pose_scopes);
@@ -211,9 +212,33 @@ int main(void) {
         assert(x4mp_live_pose_scope_begin(PLAYER_LIVE_POSE_OUTSIDE));
         assert(x4mp_live_pose_scope(PLAYER_LIVE_POSE_OUTSIDE));
         game_render_depth = 0;
+        if (index) {
+            camera_refill_depth = 1;
+            assert(x4mp_live_pose_scope_begin(PLAYER_LIVE_POSE_OPEN));
+            assert(x4mp_live_pose_scope(PLAYER_LIVE_POSE_OPEN));
+            assert(x4mp_live_pose_scope_begin(PLAYER_LIVE_POSE_OUTSIDE));
+            assert(x4mp_live_pose_scope(PLAYER_LIVE_POSE_OUTSIDE));
+            camera_refill_depth = 0;
+            ++camera_refill_completed;
+            projection_fov_depth = 2;
+            assert(!x4mp_live_pose_scope_begin(PLAYER_LIVE_POSE_OPEN));
+            projection_fov_depth = 1;
+            camera_refill_depth = 1;
+            assert(!x4mp_live_pose_scope_begin(PLAYER_LIVE_POSE_OPEN));
+            camera_refill_depth = 0;
+            assert(x4mp_live_pose_scope_begin(PLAYER_LIVE_POSE_OPEN));
+            assert(x4mp_live_pose_scope(PLAYER_LIVE_POSE_OPEN));
+            assert(x4mp_live_pose_scope_begin(PLAYER_LIVE_POSE_OUTSIDE));
+            assert(x4mp_live_pose_scope(PLAYER_LIVE_POSE_OUTSIDE));
+            projection_fov_depth = 0;
+            ++projection_fov_completed;
+        }
         if (index < 169) assert(!x4mp_live_pose_finish(&snapshot));
     }
-    assert(live_pose_last_move == 178 && live_pose_scopes.closes == 340);
+    assert(live_pose_last_move == 178 && live_pose_scopes.closes == 678);
+    --projection_fov_completed;
+    assert(!x4mp_live_pose_finish(&snapshot));
+    ++projection_fov_completed;
     assert(x4mp_live_pose_finish(&snapshot));
     assert(player_ui_session_parse("18000", &preload_session_budget));
     atomic_store(&live_pose_active, 1);

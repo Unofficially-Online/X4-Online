@@ -81,6 +81,35 @@ class ViewQueryBundleTests(unittest.TestCase):
             lib.unlink()
             self.assertRaises(SystemExit, live.validate_view_query_bundle, root, m, True)
 
+    def test_disabled_allows_only_authentic_inert_source_receipts(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            name = 'source-receipts/' + live.VIEW_QUERY_SOURCES[2]
+            receipt = root / name
+            receipt.parent.mkdir(parents=True)
+            receipt.write_bytes(b'inert source')
+            manifest = {'files': {name: live.sha(receipt)}}
+            self.assertFalse(live.validate_view_query_bundle(root, manifest, True))
+            for spoof in ('source-receipts/../player_view_query_preload.so',
+                          'source-receipts/other/player_view_query_preload.c',
+                          'player_view_query/player_view_query_preload.so'):
+                with self.subTest(spoof=spoof), self.assertRaises(SystemExit):
+                    live.validate_view_query_bundle(root, {'files': {spoof: 'a' * 64}}, True)
+            receipt.write_bytes(b'tampered')
+            with self.assertRaises(SystemExit):
+                live.validate_view_query_bundle(root, manifest, True)
+            receipt.unlink()
+            receipt.symlink_to('/etc/passwd')
+            with self.assertRaises(SystemExit):
+                live.validate_view_query_bundle(root, manifest, True)
+            lib = root / 'player_view_query' / live.PLAYER_VIEW_QUERY
+            lib.parent.mkdir()
+            lib.write_bytes(b'unexpected binary')
+            with self.assertRaises(SystemExit):
+                live.validate_view_query_bundle(root, {'files': {}}, True)
+            with self.assertRaises(SystemExit):
+                live.validate_view_query_bundle(root, {'player_view_query_observer': True}, True)
+
     def test_source_receipts_require_every_dependency(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -158,6 +187,19 @@ class ViewQueryBundleTests(unittest.TestCase):
                 manifest = json.loads((output / 'manifest.json').read_text())
                 self.assertIs(manifest['player_view_query_observer'], enabled)
                 self.assertEqual(live.validate_view_query_bundle(output, manifest, True), enabled)
+                if not enabled:
+                    # Exercise the run preflight up to the next bundle validator;
+                    # no subprocess or native game may be started by this test.
+                    user = mock.Mock(pw_dir=str(root), pw_uid=live.os.geteuid())
+                    with mock.patch('pwd.getpwnam', return_value=user), \
+                            mock.patch.object(live.subprocess, 'Popen') as launch, \
+                            mock.patch.object(live.input_observation_bundle, 'validate_bundle',
+                                              side_effect=RuntimeError('next validator reached')) as next_validator, \
+                            self.assertRaisesRegex(RuntimeError, 'next validator reached'):
+                        live.main(['run', '--root', str(output), '--user', 'fixture',
+                                   '--controller-physics-discard', '--controller-physics-frames', '4'])
+                    next_validator.assert_called_once()
+                    launch.assert_not_called()
                 overlay_command = next(c for c in commands if 'build_native_gate_overlay.py' in str(c[1]))
                 self.assertEqual('--player-view-query-observer' in overlay_command, enabled)
                 self.assertEqual(any('build_player_view_query_preload.py' in str(c[1]) for c in commands), enabled)

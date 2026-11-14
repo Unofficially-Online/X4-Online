@@ -6,12 +6,43 @@ It does not provide the Windows launcher's player input, UI replay or hot-join
 feature set. A passing run is not evidence of Windows/Linux interoperability or
 of a session between different PCs.
 
-## Native player-control progress, 12 November 2026
+## Native player-control progress, 14 November 2026
+
+The latest development work adds Linux consumers for the shared VIEW records,
+including scoped camera projection and selection handling. A new two-instance
+run completed 360 controller updates at ticks 40–399; its 399 recorded world
+digests agreed. A late guest-window capture showed a bright cockpit with a
+readable HUD and radar. This run did not include deliberate player input, so it
+does not add evidence of independent flight or firing.
+
+A default-off semaphore observer now records paired native calls from startup
+through an explicit final worker checkpoint. The first run stopped during pin
+validation because mass-traffic validation did not recognize the observer's
+owned function patch. That composition was corrected without weakening checks
+for foreign patches. The subsequent run completed, but its original result
+remains failed: the parser did not yet recognize the new checkpoint marker.
+Separate reanalysis with the corrected, explicitly enabled parser accepted both
+clients' bounded physics records, worker ancestry, semaphore ledgers and VIEW
+records. The original logs and verdict were preserved.
+
+The observer does **not** prove which native wake belongs to each simulation
+tick. A pending startup wake can otherwise be mistaken for the next controlled
+step. Establishing that handoff and keeping the controls active for a sustained
+session remain open. No playable Linux package or Windows/Linux human-session
+acceptance is claimed by this update.
+
+The 14 November Python/Lua check ran 2,899 tests: 2,872 passed and 27 were
+skipped because Windows-only facilities or external reference files were
+unavailable. There were no failing tests, but the check correctly returned
+failure for incomplete coverage. Focused tests also passed for the subsequent
+portable reference-path cleanup. This is not a complete platform validation.
+
+### Retained earlier control evidence
 
 The development branch now contains a disposable native Linux player-control
 path. It is still being developed for participation in a Windows-hosted session.
 
-- The latest two-instance test used the common Windows/Linux startup schedule
+- The 12 November two-instance test used the common Windows/Linux startup schedule
   and explicit shared ship identities. Both Linux instances completed 900 real
   controller updates, ticks 40–939. Their input streams, 3,600 body-state rows
   and 939 rolling world-digest rows matched. Earlier Take and preparation steps
@@ -32,8 +63,8 @@ path. It is still being developed for participation in a Windows-hosted session.
 
 These tests intentionally terminate their isolated processes. They do not prove
 normal return to gameplay, a sustained human session, or Windows/Linux control
-compatibility. Windows view, mouse-aim and firing metadata still need complete
-native Linux consumers. Unsupported records remain rejected. The finite-session
+compatibility. VIEW records now have bounded Linux coverage; complete mouse-aim
+and firing behavior still need native validation. Unsupported records remain rejected. The finite-session
 and shared-identity options are developer tools, not a playable client release.
 
 ## Requirements

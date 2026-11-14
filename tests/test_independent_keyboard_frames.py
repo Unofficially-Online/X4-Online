@@ -79,6 +79,9 @@ class IndependentKeyboardFramesTests(unittest.TestCase):
             root = Path(directory) / 'bundle'
             root.mkdir()
             (root / live.MARKER).touch()
+            config = root / 'extension/x4_lan_lab/ui/config.lua'
+            config.parent.mkdir(parents=True)
+            config.write_text('X4LAN_CONFIG = {}\n')
             manifest = dict(self.options(2), ticks=180, files={},
                             player_lifetime_sha256='fixture',
                             independent_keyboard_mode='independent_keyboard',
@@ -99,7 +102,7 @@ class IndependentKeyboardFramesTests(unittest.TestCase):
             stderr.write_text('worker receipt\n')
             arguments = ('trace', 'retained', 'engine', 'stdout', 223)
             with mock.patch.object(live, 'collect_network_physics_evidence',
-                                   return_value=self.peers()['2']) as network, \
+                                   return_value=dict(self.peers()['2'], stderr_sha256=live.sha(stderr))) as network, \
                     mock.patch.object(live, 'collect_physics_evidence') as single, \
                     mock.patch.object(live, 'collect_recurring_physics_evidence') as scripted:
                 result = live.collect_network_client(arguments, stderr, 2, 2)
@@ -109,6 +112,30 @@ class IndependentKeyboardFramesTests(unittest.TestCase):
             self.assertTrue(result['pass'])
             self.assertFalse(result['validation_pending'])
             self.assertEqual(result['stderr_sha256'], live.sha(stderr))
+
+    def test_network_dispatch_refuses_unbound_or_changed_stderr(self):
+        with tempfile.TemporaryDirectory() as directory:
+            stderr = Path(directory) / 'stderr'
+            stderr.write_text('accepted worker receipt\n')
+            accepted_hash = live.sha(stderr)
+            arguments = ('trace', 'retained', 'engine', 'stdout', 223)
+            for recorded_hash in (None, '0' * 64):
+                proof = dict(self.peers()['2'], stderr_sha256=recorded_hash)
+                with self.subTest(recorded_hash=recorded_hash), mock.patch.object(
+                        live, 'collect_network_physics_evidence', return_value=proof):
+                    result = live.collect_network_client(arguments, stderr, 2, 2)
+                self.assertFalse(result['pass'])
+                self.assertIn('worker stderr changed after network evidence collection', result['errors'])
+
+            def change_after_parse(*args, **kwargs):
+                stderr.write_text('replaced after parsing\n')
+                return dict(self.peers()['2'], stderr_sha256=accepted_hash)
+
+            with mock.patch.object(live, 'collect_network_physics_evidence', side_effect=change_after_parse):
+                result = live.collect_network_client(arguments, stderr, 2, 2)
+            self.assertFalse(result['pass'])
+            self.assertEqual(result['stderr_sha256'], accepted_hash)
+            self.assertNotEqual(live.sha(stderr), accepted_hash)
 
     def test_peer_records_require_both_clients_both_slots_and_exact_order(self):
         peers = self.peers()

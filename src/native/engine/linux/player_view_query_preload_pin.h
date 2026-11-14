@@ -9,6 +9,13 @@
 #include <stdint.h>
 #include <string.h>
 #include "player_view_query_preload.h"
+#include "player_view_pin_map_batch.h"
+
+static int player_view_pin_find_mapping(uintptr_t address, char permissions[5], char *path, size_t capacity) {
+    if (player_view_active_map_batch)
+        return player_view_map_find(player_view_active_map_batch, address, permissions, path, capacity);
+    return gate_maps_find(address, permissions, path, capacity);
+}
 
 #define PLAYER_VIEW_PIN_ENTRY UINT64_C(0xa44e40)
 #define PLAYER_VIEW_PIN_ORIGINAL UINT64_C(0x4803371b01158b48)
@@ -41,8 +48,8 @@ static int player_view_pin_digest_string(const char *sha) {
 static int player_view_pin_permissions(uintptr_t address, size_t size, const char *wanted, int anonymous) {
     if (!address || !size || size - 1 > UINTPTR_MAX - address) return 0;
     char first[5], last[5], first_path[PATH_MAX], last_path[PATH_MAX];
-    if (!gate_maps_find(address, first, first_path, sizeof first_path) ||
-        !gate_maps_find(address + size - 1, last, last_path, sizeof last_path) ||
+    if (!player_view_pin_find_mapping(address, first, first_path, sizeof first_path) ||
+        !player_view_pin_find_mapping(address + size - 1, last, last_path, sizeof last_path) ||
         strcmp(first, wanted) || strcmp(last, wanted) || strcmp(first_path, last_path)) return 0;
     return !anonymous || !first_path[0];
 }

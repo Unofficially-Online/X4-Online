@@ -1,5 +1,6 @@
 #define _GNU_SOURCE
 #include <assert.h>
+#include <dlfcn.h>
 #include <pthread.h>
 #include <stdatomic.h>
 #include <stdint.h>
@@ -7,6 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/wait.h>
+#include <sys/syscall.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -65,6 +67,12 @@ static _Noreturn void player_physics_discard_finish(void);
 static void player_physics_frames_begin(uint64_t generation);
 static void player_physics_frames_finish(uint64_t generation, unsigned final);
 static void player_ui_camera_refill_tail(uint64_t generation) { (void)generation; }
+static void player_stock_view_observer_close(uint64_t generation) { (void)generation; }
+/* This boundary-only fixture loads no authenticated observer provider.
+ * Refuse any provider admission; provider authentication has its own fixture. */
+static int player_semaphore_pinned_provider(void *symbol, Dl_info *owner) {
+    (void)symbol; (void)owner; return 0;
+}
 #include "gate_player_control_boundary.h"
 
 static unsigned ancestry_stage;
@@ -163,6 +171,7 @@ static void frame(uint64_t tick) {
 }
 static void run_case(int which) {
     fake_case = which; stats.active = 1; stats.issued = 4;
+    unsetenv("X4MP_SEMAPHORE_OBSERVER");
     unsetenv("X4LAN_PLAYER_CONTROL_RECURRING");
     unsetenv("X4LAN_PLAYER_CONTROL_RECURRING_END");
     unsetenv("X4_DEV_PLAYER_LIFECYCLE");

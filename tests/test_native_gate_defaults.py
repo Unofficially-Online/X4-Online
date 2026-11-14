@@ -281,11 +281,12 @@ class TableTests(unittest.TestCase):
         files = ('native_gate_crypto', 'native_gate_inputs_core', 'native_gate_relay', 'native_gate_tour', 'native_gate_ui_build_core',
                  'native_gate_ui_replay_core', 'native_gate_join_core', 'native_gate_ffi_relay_core',
                  'native_gate_ui_inventory_core', 'native_gate_linux', 'native_gate_linux_keyboard',
-                 'native_gate_overlay', 'native_gate_probe')  # module names, not configuration keys
+                 'native_gate_overlay', 'native_gate_probe', 'native_gate_player_identity_core')  # module names, not configuration keys
         # Include Linux launcher options translated to preload settings.
         consumers = '\n'.join((
             PROBE,
             (DEV / 'native_gate_linux_keyboard.lua').read_text(encoding='utf-8'),
+            (DEV / 'native_gate_player_identity.lua').read_text(encoding='utf-8'),
             (DEV / 'linux_gate_live.py').read_text(encoding='utf-8'),
         ))
         keys = set(re.findall(r'native_gate_[a-z0-9_]+', consumers)) - set(files)

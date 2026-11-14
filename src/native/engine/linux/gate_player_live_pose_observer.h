@@ -93,7 +93,7 @@ static void ui_live_pose_close(void) {
             (unsigned long long)ui_live_pose_result.phase_other, (unsigned long long)ui_live_pose_result.mode_zero,
             (unsigned long long)ui_live_pose_result.mode_one, (unsigned long long)ui_live_pose_result.mode_other);
     if (!ui_live_pose_api.scope_result(&ui_live_pose_scope_result) ||
-        ui_live_pose_scope_result.state != PLAYER_LIVE_POSE_OUTSIDE || ui_live_pose_scope_result.closes != ui_overlay_multi_count * (ui_game_render_enabled ? 2u : 1u) + ui_camera_refill_closed ||
+        ui_live_pose_scope_result.state != PLAYER_LIVE_POSE_OUTSIDE || ui_live_pose_scope_result.closes != ui_overlay_multi_count * (ui_game_render_enabled ? 2u : 1u) + ui_camera_refill_closed + ui_projection_scope_closed ||
         ui_live_pose_scope_result.opens != ui_live_pose_scope_result.closes + ui_live_pose_scope_result.pauses ||
         ui_live_pose_scope_result.counts[PLAYER_LIVE_POSE_OUTSIDE] +
             ui_live_pose_scope_result.counts[PLAYER_LIVE_POSE_OPEN] +

@@ -65,6 +65,13 @@ static void test_mass_traffic_elf(void) {
     unsigned char before[LMT_SITES][16];
     for(unsigned i=0;i<LMT_SITES;i++) {assert(lmt_site_state(i)==0);memcpy(before[i],LX(lmt_sites[i].block_va),16);}
     assert(lmt_pins());
+    /* Opting into a provider without authenticating one must refuse even if
+     * the mapped native wait function still contains its original bytes. */
+    assert(!getenv("X4MP_SEMAPHORE_OBSERVER"));
+    assert(!setenv("X4MP_SEMAPHORE_OBSERVER", "1", 1));
+    assert(!lmt_pins());
+    assert(!unsetenv("X4MP_SEMAPHORE_OBSERVER"));
+    assert(lmt_pins());
     reset_session();stats.active=1;boot_mode=1;boot_phase=0;stats.issued=0;ui_thread=GetCurrentThreadId();lmt_page=NULL;
     lmt_pass_reset(&lmt_traffic);lmt_pass_reset(&lmt_region);
     assert(lmt_arm_pass(&lmt_traffic,LMT_SYNC) && lmt_installed && lmt_arm_pass(&lmt_region,LMT_SYNC));

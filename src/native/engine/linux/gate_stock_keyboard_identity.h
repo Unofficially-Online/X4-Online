@@ -137,9 +137,16 @@ static int stock_keyboard_identity_reject(stock_keyboard_identity_sample *sample
     return 0;
 }
 
-static int stock_keyboard_identity_collect_with(stock_keyboard_identity_sample *sample,
-                                                const stock_keyboard_identity_ops *operations) {
-    if (!sample) {
+/* Cursor mode is only for the authenticated convergence consumer; 16 is a
+ * conservative admission bound, not a claim about native device calibration. */
+/* Explicit local UI and delayed simulation states. The caller supplies the
+ * authenticated states for this boundary; differing states are expected during
+ * network delay. This is not permission to accept arbitrary native bytes. */
+static int stock_keyboard_identity_collect_states(stock_keyboard_identity_sample *sample,
+                                                   const stock_keyboard_identity_ops *operations,
+                                                   unsigned cursor_mode, unsigned local_active,
+                                                   unsigned replay_active) {
+    if (!sample || !operations || cursor_mode > 1 || local_active > 1 || replay_active > 1) {
         return 0;
     }
     memset(sample, 0, sizeof(*sample));
@@ -193,7 +200,8 @@ static int stock_keyboard_identity_collect_with(stock_keyboard_identity_sample *
 #undef SKI_GLOBAL
 #undef SKI_READ
     sample->reason = "ready";
-    if (sample->context_cf0 != 1 || sample->requested_space != 1 || sample->flight != 1) {
+    if (sample->context_cf0 != local_active || sample->requested_space != 1 ||
+        sample->flight != replay_active) {
         sample->reason = "space_context";
     } else if (sample->enabled != 1 || sample->count != 0) {
         sample->reason = "controls_disabled";
@@ -203,7 +211,8 @@ static int stock_keyboard_identity_collect_with(stock_keyboard_identity_sample *
         sample->reason = "input_ignored";
     } else if (sample->ship_d1 != 1 || sample->controller_d9 != 1) {
         sample->reason = "controller_inactive";
-    } else if (sample->mouse[0] || sample->mouse[1] || sample->mouse[2]) {
+    } else if ((!cursor_mode && (sample->mouse[0] || sample->mouse[1] || sample->mouse[2])) ||
+               (cursor_mode && (sample->mouse[0] > 1 || sample->mouse[1] > 1 || sample->mouse[2] > 1))) {
         sample->reason = "mouse_mode";
     } else {
         for (unsigned axis_index = 0; axis_index < 3; ++axis_index) {
@@ -211,8 +220,10 @@ static int stock_keyboard_identity_collect_with(stock_keyboard_identity_sample *
                 sample->reason = "nonfinite_axes";
                 break;
             }
-            if (sample->axes[axis_index] != 0 || sample->cursor[axis_index] != 0) {
-                sample->reason = "nonzero_axes";
+            if ((!cursor_mode && (sample->axes[axis_index] != 0 || sample->cursor[axis_index] != 0)) ||
+                (cursor_mode && (fabsf(sample->axes[axis_index]) > 16.0f ||
+                                 fabsf(sample->cursor[axis_index]) > 16.0f))) {
+                sample->reason = cursor_mode ? "axes_out_of_range" : "nonzero_axes";
                 break;
             }
         }
@@ -221,12 +232,34 @@ static int stock_keyboard_identity_collect_with(stock_keyboard_identity_sample *
     return 1;
 }
 
+/* Keep all older callers active-flight-only. SPACE callers must explicitly
+ * supply both expected states through collect_states. */
+static int stock_keyboard_identity_collect_with_mode(stock_keyboard_identity_sample *sample,
+                                                     const stock_keyboard_identity_ops *operations,
+                                                     unsigned cursor_mode) {
+    return stock_keyboard_identity_collect_states(sample, operations, cursor_mode, 1, 1);
+}
+
+static int stock_keyboard_identity_collect_with(stock_keyboard_identity_sample *sample,
+                                                const stock_keyboard_identity_ops *operations) {
+    return stock_keyboard_identity_collect_with_mode(sample, operations, 0);
+}
+
 static int stock_keyboard_identity_collect(stock_keyboard_identity_sample *sample) {
     const stock_keyboard_identity_ops operations = {
         stock_keyboard_identity_pins,   stock_keyboard_identity_read, stock_keyboard_identity_address,
         stock_keyboard_identity_getter, world_identity_lookup,        sko_session.owner,
     };
     return stock_keyboard_identity_collect_with(sample, &operations);
+}
+
+/* Caller must first authenticate and bind the cursor consumer. */
+static __attribute__((unused)) int stock_keyboard_identity_collect_cursor(stock_keyboard_identity_sample *sample) {
+    const stock_keyboard_identity_ops operations = {
+        stock_keyboard_identity_pins, stock_keyboard_identity_read, stock_keyboard_identity_address,
+        stock_keyboard_identity_getter, world_identity_lookup, sko_session.owner,
+    };
+    return stock_keyboard_identity_collect_with_mode(sample, &operations, 1);
 }
 
 static int lua_stock_keyboard_identity(lua_State *L) {

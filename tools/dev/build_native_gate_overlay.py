@@ -259,6 +259,8 @@ def main():
                    help='thin diagnostic status logs every N ticks (1..3600)')
     p.add_argument('--probe-profile', action='store_true',
                    help='measure probe sections, including world scan and detailed log output')
+    p.add_argument('--frame-timing', action='store_true',
+                   help='record existing native frame, wait and probe timing counters')
     p.add_argument('--stock-keyboard-observer', action='store_true',
                    help='Linux-only selected keyboard diagnostic; local controls still run normally')
     p.add_argument('--player-control-bank-census', action='store_true',
@@ -789,7 +791,7 @@ def main():
         allowed.update(('player_control_boundary_probe', 'player_control_bank_probe', 'player_seat_preflight', 'player_control_bank_census', 'stock_keyboard_observer', 'player_reference_probe', 'player_factory_probe', 'player_factory_retain_until', 'stock_keyboard_replay_probe',
                         'stock_keyboard_replay_last_capture', 'independent_keyboard_frames', 'player_external_camera_probe', 'player_presentation_probe', 'player_view_query_observer', 'ui_callback_observer', 'player_presentation_fork_probe', 'player_ui_overlay_probe', 'player_ui_overlay_callbacks', 'player_ui_plan_kick_probe', 'player_ui_seat_query_probe', 'player_ui_live_pose_observer', 'player_ui_seat_correction', 'player_ui_render_lease', 'player_ui_camera_refill', 'player_ui_session_frames', 'player_startup_phases'))
         allowed.update(('world_motion_watch', 'world_motion_window', 'economy_watch', 'economy_watch_window', 'navmesh_post_observe'))
-        allowed.update(('world_log_mode', 'world_rolling_slices', 'world_rolling_leaf_ticks', 'world_rolling_raw_ids', 'probe_profile', 'status_stride'))
+        allowed.update(('world_log_mode', 'world_rolling_slices', 'world_rolling_leaf_ticks', 'world_rolling_raw_ids', 'probe_profile', 'frame_timing', 'status_stride'))
         unported = sorted(k for k, v in vars(args).items() if k not in allowed and v != p.get_default(k))
         if unported:
             p.error('not ported to the Linux gate: ' + ', '.join('--' + k.replace('_', '-') for k in unported))
@@ -975,6 +977,8 @@ X4LAN_CONFIG.slot = "@X4LANE_SLOT@"
             config.write(f'X4LAN_CONFIG.native_gate_status_stride = {args.status_stride}\n')
         if args.probe_profile:
             config.write('X4LAN_CONFIG.native_gate_probe_profile = true\n')
+        if args.frame_timing:
+            config.write('X4LAN_CONFIG.native_gate_frame_timing = true\n')
     if args.session_clients:
         with (args.out/'ui/config.lua.append').open('a') as config:
             clients = '2' if args.stock_keyboard_replay_probe else '@X4LANE_CLIENTS@'

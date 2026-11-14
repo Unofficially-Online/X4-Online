@@ -104,6 +104,10 @@ static int stock_keyboard_identity_collect(stock_keyboard_identity_sample *outpu
     return identity_valid;
 }
 
+static int stock_keyboard_identity_collect_cursor(stock_keyboard_identity_sample *output) {
+    return stock_keyboard_identity_collect(output);
+}
+
 #define SEAT_PREFLIGHT_TARGET_SAVED UINT64_C(2)
 static struct {
     unsigned target_owned;
@@ -140,7 +144,42 @@ static int read_local(const void *address, void *out, size_t length) {
 }
 static void mock_handler(int id, unsigned char state);
 #define LX(value) ((value) == SKO_STATE_VA ? (uintptr_t)&mock_handler : (uintptr_t)(value))
+static int player_view_host_capture_start(void) { return 1; }
+static int player_view_host_capture_seal(uint64_t generation) { (void)generation; return 1; }
+static int player_view_render_capture_start(void) { return 1; }
+static int player_view_render_capture_seal(uint64_t generation) { (void)generation; return 1; }
 #include "gate_stock_keyboard_replay.h"
+static int player_stock_view_wire_request(void) { return 1; }
+static int player_stock_view_wire_read_sealed(uint64_t generation, unsigned slot,
+                                             player_stock_view_wire_sealed *out) {
+    (void)generation; (void)slot; (void)out; return 0;
+}
+static int player_space_mode(void) { return 0; }
+static int player_space_collect_identity(stock_keyboard_identity_sample *s, unsigned local, unsigned delayed) {
+    (void)local; (void)delayed; return stock_keyboard_identity_collect_cursor(s);
+}
+static int player_space_request(unsigned independent) { (void)independent; return 1; }
+static int player_space_admit(uint64_t generation) { (void)generation; return 1; }
+static int player_space_local_state(unsigned *active) { *active = 1; return 1; }
+static unsigned player_space_slot_state(unsigned slot) { (void)slot; return 1; }
+static int player_space_apply(unsigned slot, uint64_t generation, unsigned active) {
+    (void)slot; (void)generation; (void)active; return 0;
+}
+
+static __attribute__((unused)) int player_cursor_tail(uint64_t generation, unsigned final) { (void)generation; (void)final; return 1; }
+static int player_cursor_mode(void) { return 0; }
+static int player_cursor_request(unsigned independent) { (void)independent; return 1; }
+static int player_cursor_capture_only(uint64_t generation) { (void)generation; return 1; }
+static unsigned fixture_prepare_calls;
+static int player_input_prepare_slots(void *context, uint64_t generation, const uint64_t saved[2],
+                                       const stock_input_record records[2]) {
+    (void)context; (void)generation; (void)saved; (void)records;
+    ++fixture_prepare_calls;
+    return 1;
+}
+static int player_cursor_capture_sample(uint64_t generation, float output[3]) {
+    (void)generation; (void)output; return 0;
+}
 
 static int inside_stop;
 static int stop_result;
@@ -151,7 +190,9 @@ static uint64_t p2_tick;
 static stock_input_record p2_record;
 static int p2_break_return, p2_stop, omit_foreign, omit_p1_events, omit_p1_release;
 
-static void player_physics_network_apply_p2(uint64_t generation, const stock_input_record *record) {
+static void player_physics_network_apply_p2(uint64_t generation, const stock_input_record *record,
+                                            const keyboard_replay *queue, unsigned view_admitted) {
+    (void)queue; (void)view_admitted;
     ++p2_calls;
     p2_tick = generation;
     p2_record = *record;
@@ -483,6 +524,38 @@ static void prepare_independent_frame(unsigned own_slot, int empty_p2) {
     assert(!handler_calls && !p2_calls); /* Due work waits for the recurring owner. */
 }
 
+static unsigned fixture_view_ready_calls;
+static int fixture_view_ready_result;
+static uint64_t fixture_expected_generation = 5;
+static unsigned fixture_expected_prepares = 1, fixture_expected_handlers, fixture_expected_p2;
+static int fixture_view_ready(void *context, const keyboard_replay_config *config, uint64_t generation) {
+    (void)context;
+    assert(fixture_prepare_calls == fixture_expected_prepares && generation == fixture_expected_generation);
+    assert(config->view_capture == 1 && handler_calls == (int)fixture_expected_handlers &&
+           p2_calls == fixture_expected_p2);
+    ++fixture_view_ready_calls;
+    return fixture_view_ready_result;
+}
+static void test_independent_view_readiness_refusal(void) {
+    prepare_independent_frame(1, 0);
+    keyboard_probe_queue.config.view_capture = 1;
+    keyboard_view_wire.admitted = 1;
+    keyboard_view_wire.ready = fixture_view_ready;
+    fixture_view_ready_result = 0;
+    assert(!keyboard_probe_independent_after_path_join(5));
+    assert(fixture_prepare_calls == 1 && fixture_view_ready_calls == 1);
+    assert(!handler_calls && !p2_calls && keyboard_probe_queue.failure);
+}
+static void test_independent_view_readiness_success(void) {
+    prepare_independent_frame(1, 0);
+    keyboard_probe_queue.config.view_capture = 1;
+    keyboard_view_wire.admitted = 1;
+    keyboard_view_wire.ready = fixture_view_ready;
+    fixture_view_ready_result = 1;
+    assert(keyboard_probe_independent_after_path_join(5));
+    assert(fixture_prepare_calls == 1 && fixture_view_ready_calls == 1);
+    assert(handler_calls == 2 && p2_calls == 1);
+}
 static void test_independent_dispatch_slot1(void) {
     prepare_independent_frame(1, 0);
     assert(keyboard_probe_independent_after_path_join(5));
@@ -523,6 +596,21 @@ static void prepare_second_independent_frame(void) {
     assert(keyboard_probe_after_path_join());
 }
 
+static void test_independent_view_readiness_drain(void) {
+    prepare_second_independent_frame();
+    keyboard_probe_queue.config.last_capture = 4;
+    keyboard_probe_queue.config.view_capture = 1;
+    keyboard_view_wire.admitted = 1;
+    keyboard_view_wire.ready = fixture_view_ready;
+    fixture_expected_generation = 6;
+    fixture_expected_prepares = 2;
+    fixture_expected_handlers = 2;
+    fixture_expected_p2 = 1;
+    fixture_view_ready_result = 0;
+    assert(!keyboard_probe_independent_after_path_join(6));
+    assert(fixture_view_ready_calls == 1 && handler_calls == 2 && p2_calls == 1);
+    assert(keyboard_probe_queue.failure);
+}
 static void test_independent_second_frame(void) {
     prepare_second_independent_frame();
     assert(keyboard_probe_independent_after_path_join(6));
@@ -734,11 +822,14 @@ int main(int argc, char **argv) {
         {"request_independent", test_request_independent_mode},
         {"request_session", test_request_session_budget},
         {"request_common_phases", test_request_common_phases},
+        {"independent_view_ready_fail", test_independent_view_readiness_refusal},
+        {"independent_view_ready_ok", test_independent_view_readiness_success},
         {"independent_slot1", test_independent_dispatch_slot1},
         {"independent_slot2", test_independent_dispatch_slot2},
         {"independent_empty", test_independent_empty_p2},
         {"independent_empty_p1", test_independent_empty_p1},
         {"independent_p1_held", test_independent_p1_held},
+        {"independent_view_ready_drain", test_independent_view_readiness_drain},
         {"independent_frame6", test_independent_second_frame},
         {"independent_frame6_lost_hold", test_independent_second_frame_lost_hold},
         {"independent_bad_target", test_independent_bad_target},

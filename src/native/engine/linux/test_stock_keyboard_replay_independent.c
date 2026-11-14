@@ -7,6 +7,10 @@
 typedef struct {
     keyboard_replay *replay;
     unsigned calls;
+    unsigned prepared;
+    unsigned prepare_fail;
+    unsigned prepare_reenter;
+    unsigned expect_prepared;
     unsigned fail_slot;
     unsigned reenter;
     unsigned stop;
@@ -20,6 +24,7 @@ static int apply_slot(void *context, uint64_t tick, unsigned slot, uint64_t ship
                       const stock_input_record *record) {
     fixture_calls *calls = context;
     assert(calls->calls < 2);
+    assert(!calls->expect_prepared || calls->prepared == 1);
     unsigned index = calls->calls++;
     calls->tick[index] = tick;
     calls->slot[index] = slot;
@@ -33,6 +38,18 @@ static int apply_slot(void *context, uint64_t tick, unsigned slot, uint64_t ship
         assert(!keyboard_replay_destroy(calls->replay));
     }
     return slot != calls->fail_slot;
+}
+
+static int prepare_slots(void *context, uint64_t tick, const uint64_t saved[2],
+                         const stock_input_record records[2]) {
+    fixture_calls *calls = context;
+    assert(!calls->calls && !calls->prepared && tick == 5);
+    assert(saved[0] == 111 && saved[1] == 222);
+    assert(records[0].capture16 == 3 && records[1].capture16 == 3);
+    ++calls->prepared;
+    if (calls->prepare_reenter)
+        assert(keyboard_replay_publish_slots(calls->replay, tick, apply_slot, calls) == KEYBOARD_REPLAY_PHASE);
+    return !calls->prepare_fail;
 }
 
 static int apply_event(void *context, unsigned id, unsigned char state) {
@@ -356,7 +373,30 @@ static void test_strafe_capture_order(void) {
     }
 }
 
+static void test_prepared_slots(void) {
+    for (unsigned failure = 0; failure < 3; ++failure) {
+        keyboard_replay replay;
+        setup(&replay, 1, 3);
+        unsigned char foreign[STOCK_INPUT_MAX_BYTES];
+        unsigned length = make_record(foreign, 3, 2, 0);
+        close_tick(&replay, 3, 1, foreign, length);
+        fixture_calls calls = {.replay = &replay, .expect_prepared = 1,
+                               .prepare_fail = failure == 1, .prepare_reenter = failure == 2};
+        keyboard_replay_result result = keyboard_replay_publish_slots_prepared(
+            &replay, 5, prepare_slots, apply_slot, &calls);
+        assert(calls.prepared == 1);
+        if (!failure) assert(result == KEYBOARD_REPLAY_OK && calls.calls == 2);
+        else {
+            assert(result == KEYBOARD_REPLAY_CALLBACK_FAILURE && calls.calls == 0);
+            assert(keyboard_replay_publish_slots_prepared(&replay, 5, prepare_slots, apply_slot, &calls) ==
+                   KEYBOARD_REPLAY_CALLBACK_FAILURE);
+        }
+        finish(&replay);
+    }
+}
+
 int main(void) {
+    test_prepared_slots();
     test_throttle_policy();
     test_strafe_capture_order();
     test_slot_two_capture_and_full_width_tick();

@@ -12,9 +12,22 @@ NATIVE = ROOT / 'src/native/engine/linux'
 
 
 class ViewAncestryPreloadTests(unittest.TestCase):
+    def test_shared_installer(self):
+        with tempfile.TemporaryDirectory() as directory:
+            executable = Path(directory) / 'shared-installer'
+            subprocess.run([os.environ.get('CC', 'cc'), '-std=gnu11', '-Wall', '-Wextra', '-Werror',
+                            '-Wno-unused-function', '-DVIEW_SHARED_INSTALL_TEST', '-no-pie',
+                            str(NATIVE / 'test_player_view_ancestry_install.c'),
+                            str(NATIVE / 'player_stock_view_component_bridge.S'),
+                            str(NATIVE / 'player_stock_view_ship_bridge.S'), '-ldl', '-o', str(executable)],
+                           check=True)
+            subprocess.run([str(executable)], check=True)
+            subprocess.run([str(executable)], check=True, env={**os.environ, 'X4_TEST_SHIP_COLLISION': '1'})
+
     def test_preload_fixtures(self):
         for source in ('test_player_view_ancestry_preload.c', 'test_player_view_ancestry_install.c',
-                       'test_player_view_ancestry_preload_pin.c', 'test_gate_player_view_ancestry.c'):
+                       'test_player_view_ancestry_preload_pin.c', 'test_gate_player_view_ancestry.c',
+                       'test_player_stock_view_precompare_preload.c'):
             with self.subTest(source=source), tempfile.TemporaryDirectory() as directory:
                 executable = Path(directory) / 'ancestry-fixture'
                 subprocess.run([os.environ.get('CC', 'cc'), '-std=gnu11', '-Wall', '-Wextra',
@@ -40,6 +53,7 @@ class ViewAncestryPreloadTests(unittest.TestCase):
             (0x1113360, 76, '5798f27c36fee251792a259c2e5b74ba1e647907ea96fb177bcccb73b8535fdc'),
             (0x1d6b1c0, 99, '28662e2439a706b8794ec0c9dbe9b2b31aef33695461446cfbba6466a58967f6'),
             (0x177f900, 224, 'd46a2e354ebd8f76037356afe53a778117f45401b2dfd3c64727ae42e8dfd0ef'),
+            (0x1dd81c0, 85, 'a0437b5716ca6a2143d11a0d25f75fb3ca04342de8588818d339ca512e75c4a6'),
             (0x1e07020, 51, '7fbd4e7bdb604524025c4a46cc791ae7137b7c1f19270213781e35e5b7890f51'),
             (0x129bad0, 456, 'cff3c5caae429ad58f93402f0d0b754c82d467823d8298c3641b1459a1605e50'),
         )

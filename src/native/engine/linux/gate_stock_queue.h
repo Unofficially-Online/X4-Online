@@ -54,15 +54,23 @@ typedef enum {
 } linux_stock_result;
 
 /* Explicit whitelist, never a promise that X4 implements these controls.
- * This first adapter contract supports state events and optional stop/SPACE8;
- * ACTIVE is the only supported flag. Extending the wire codec is not enough
- * to extend this policy: ranges, mouse, aim, UI/view and fire are refused. */
+ * ACTIVE, CURSOR and VIEW each require admission by the caller. A queue that
+ * transports VIEW does not establish the safety of the native consumers.
+ * Ranges, aim and fire remain outside this adapter's policy. */
 typedef struct {
     uint64_t state_ids[8];
     unsigned allowed_flags;
     unsigned allow_stop_action;
     unsigned allow_space8;
 } linux_stock_policy;
+
+/* Already authenticated local sample, copied into the record under the queue
+ * lock. The adapter owns source/epoch checks; this layer owns wire validity. */
+typedef struct {
+    unsigned char bits;
+    float fov;
+    uint64_t target;
+} linux_stock_view_sample;
 
 typedef struct {
     unsigned slots;
@@ -168,7 +176,7 @@ static inline int linux_stock_config_valid(const linux_stock_config *config) {
         || config->own_slot > config->slots || config->delay < 2 || config->delay > LINUX_STOCK_DELAY_MAX
         || config->lookahead > LINUX_STOCK_DELAY_MAX - 2 || config->delay < config->lookahead + 2
         || !config->first_capture || config->last_capture < config->first_capture || config->last_capture > LINUX_STOCK_TICK_MAX - config->delay
-        || (config->policy.allowed_flags & ~STOCK_INPUT_ACTIVE) || config->policy.allow_stop_action > 1
+        || (config->policy.allowed_flags & ~(STOCK_INPUT_ACTIVE | STOCK_INPUT_CURSOR | STOCK_INPUT_VIEW)) || config->policy.allow_stop_action > 1
         || config->policy.allow_space8 > 1) {
         return 0;
     }
@@ -317,9 +325,11 @@ done:
 }
 
 /* Length/output are untouched on refusal, including short capacity. */
-static inline linux_stock_result linux_stock_capture(
+static inline linux_stock_result linux_stock_capture_with_presentation(
     linux_stock_queue *queue,
     unsigned flags,
+    const float cursor[3],
+    const linux_stock_view_sample *view,
     unsigned char *output,
     size_t capacity,
     unsigned *length
@@ -337,13 +347,34 @@ static inline linux_stock_result linux_stock_capture(
         result = linux_stock_fail(queue, LINUX_STOCK_UNSUPPORTED_INPUT);
         goto done;
     }
+    if (!!(flags & STOCK_INPUT_CURSOR) != (cursor != NULL)) {
+        result = linux_stock_fail(queue, LINUX_STOCK_INVALID_RECORD);
+        goto done;
+    }
+    if (!!(flags & STOCK_INPUT_VIEW) != (view != NULL) ||
+        (view && (view->bits > 3 || !isfinite(view->fov)))) {
+        result = linux_stock_fail(queue, LINUX_STOCK_INVALID_RECORD);
+        goto done;
+    }
+    if (cursor) {
+        for (unsigned index = 0; index < 3; ++index) {
+            if (!isfinite(cursor[index]) || fabsf(cursor[index]) > 16.0f) {
+                result = linux_stock_fail(queue, LINUX_STOCK_INVALID_RECORD);
+                goto done;
+            }
+        }
+    }
     if (!output || !length || capacity < STOCK_INPUT_HEADER_BYTES + STOCK_INPUT_EVENT_BYTES * queue->capture_record.count) {
         result = LINUX_STOCK_BUFFER_SMALL;
         goto done;
     }
     linux_stock_local *local = &queue->local[queue->tick % LINUX_STOCK_RING];
     if (queue->capture_sealed) {
-        if (queue->capture_record.flags != flags) {
+        if (queue->capture_record.flags != flags ||
+            (cursor && memcmp(queue->capture_record.cursor, cursor, sizeof queue->capture_record.cursor)) ||
+            (view && (queue->capture_record.view != view->bits ||
+                stock_input_float_bits(queue->capture_record.fov) != stock_input_float_bits(view->fov) ||
+                queue->capture_record.target != view->target))) {
             result = linux_stock_fail(queue, LINUX_STOCK_CONFLICT);
             goto done;
         }
@@ -358,8 +389,18 @@ static inline linux_stock_result linux_stock_capture(
     }
     stock_input_record record = queue->capture_record;
     record.flags = (unsigned char) flags;
+    if (cursor) memcpy(record.cursor, cursor, sizeof record.cursor);
+    if (view) {
+        record.view = view->bits;
+        record.fov = view->fov;
+        record.target = view->target;
+    }
     unsigned char encoded[STOCK_INPUT_MAX_BYTES];
     unsigned encoded_length = stock_input_encode(&record, encoded, sizeof(encoded));
+    if (!encoded_length) {
+        result = linux_stock_fail(queue, LINUX_STOCK_INVALID_RECORD);
+        goto done;
+    }
     const linux_stock_pending *pending = &queue->pending[(queue->tick + queue->config.delay) % LINUX_STOCK_RING];
     unsigned own = queue->config.own_slot - 1;
     if (pending->apply == queue->tick + queue->config.delay && (pending->present & (1u << own))
@@ -372,7 +413,7 @@ static inline linux_stock_result linux_stock_capture(
     local->length = encoded_length;
     local->present = 1;
     memcpy(local->bytes, encoded, encoded_length);
-    queue->capture_record.flags = (unsigned char) flags;
+    queue->capture_record = record;
     queue->capture_sealed = 1;
     memcpy(output, encoded, encoded_length);
     * length = encoded_length;
@@ -380,6 +421,21 @@ static inline linux_stock_result linux_stock_capture(
 done:
     pthread_mutex_unlock(&queue->mutex);
     return result;
+}
+
+/* Existing callers cannot accidentally supply VIEW without its sample. */
+static inline linux_stock_result linux_stock_capture_with_cursor(
+    linux_stock_queue *queue, unsigned flags, const float cursor[3],
+    unsigned char *output, size_t capacity, unsigned *length
+) {
+    return linux_stock_capture_with_presentation(queue, flags, cursor, NULL, output, capacity, length);
+}
+
+/* Preserve the legacy flags-only API. */
+static inline linux_stock_result linux_stock_capture(
+    linux_stock_queue *queue, unsigned flags, unsigned char *output, size_t capacity, unsigned *length
+) {
+    return linux_stock_capture_with_cursor(queue, flags, NULL, output, capacity, length);
 }
 
 /* now is always queue->tick, established by begin_tick. Low16 is unwrapped

@@ -37,6 +37,7 @@ static unsigned player_recurring_physics;
 static player_ui_session_budget player_session_budget;
 static void player_physics_network_begin(uint64_t generation);
 static void player_physics_network_finish(uint64_t generation, unsigned final);
+extern int x4mp_semaphore_observer_checkpoint(uint64_t) __attribute__((weak, visibility("default")));
 static _Thread_local fwrr_token player_recurring_tail_token;
 static frame_worker_recurring player_recurring_rendezvous = FRAME_WORKER_RECURRING_INIT;
 static _Atomic unsigned player_recurring_worker_busy;
@@ -189,6 +190,7 @@ static void player_recurring_wait(uint64_t generation, unsigned long long starte
 }
 /* Return 2 only for this call's arm; 0 means no recurring park this frame. */
 static void player_ui_camera_refill_tail(uint64_t generation);
+static void player_stock_view_observer_close(uint64_t generation);
 static void player_recurring_tail_callback(void *semaphore, unsigned count);
 static int player_recurring_before_frame(void) {
     unsigned mode = player_recurring_configure();
@@ -291,7 +293,27 @@ static void player_recurring_tail_callback(void *semaphore, unsigned count) {
             player_physics_discard_finish();
         }
         if (player_recurring_physics == 3) {
-            if (generation == player_recurring_end) player_view_ancestry_close(generation);
+            if (generation == player_recurring_end) {
+                player_view_ancestry_close(generation);
+                player_stock_view_observer_close(generation);
+                const char *observer = getenv("X4MP_SEMAPHORE_OBSERVER");
+                if (observer) {
+                    Dl_info checkpoint_owner = {0}, information_owner = {0};
+                    void *information = dlsym(RTLD_DEFAULT, "x4mp_semaphore_observer_info");
+                    if (strcmp(observer, "1") || !x4mp_semaphore_observer_checkpoint ||
+                        !player_semaphore_pinned_provider((void *)x4mp_semaphore_observer_checkpoint, &checkpoint_owner) ||
+                        !information || !dladdr(information, &information_owner) ||
+                        checkpoint_owner.dli_fbase != information_owner.dli_fbase ||
+                        !player_recurring_physics_entered()) player_recurring_fatal("semaphore_checkpoint_admission");
+                    int complete = x4mp_semaphore_observer_checkpoint(generation);
+                    char checkpoint[192];
+                    int length = snprintf(checkpoint, sizeof checkpoint,
+                        "X4LAN SEMAPHORE OBSERVER CHECKPOINT tick=%llu owner=%ld main_parked=1 complete=%d\n",
+                        (unsigned long long)generation, (long)syscall(SYS_gettid), complete == 1);
+                    if (length <= 0 || (size_t)length >= sizeof checkpoint) player_recurring_fatal("semaphore_checkpoint_format");
+                    lifecycle_discard_write(checkpoint);
+                }
+            }
             player_physics_network_finish(generation, generation == player_recurring_end);
         } else {
             player_physics_frames_finish(generation, generation == player_recurring_end);

@@ -5,9 +5,12 @@
 #define PVQ_PAGE 4096u
 #include <assert.h>
 #include <errno.h>
+#include <dlfcn.h>
+#include <limits.h>
 #include <pthread.h>
 #include <stdatomic.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
 #include <sys/syscall.h>
@@ -22,8 +25,10 @@ static int ui_code_matches(uintptr_t address, size_t length, const char *hash) {
     return address && length && hash && strlen(hash) == 64;
 }
 static unsigned char *allocate_near(void) {
-    void *page = mmap((void *)0x100000u, PVQ_PAGE, PROT_READ | PROT_WRITE,
+    static uintptr_t next = 0x100000u;
+    void *page = mmap((void *)next, PVQ_PAGE, PROT_READ | PROT_WRITE,
                       MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
+    next += PVQ_PAGE;
     return page == MAP_FAILED ? 0 : page;
 }
 static void emit_entry_stub(unsigned char *page, uintptr_t destination) {
@@ -37,7 +42,26 @@ static int register_frame_for_entry(uintptr_t start, unsigned char *frame) {
     memcpy(frame + 28, &address, 8); memcpy(frame + 36, &range, 8);
     __register_frame(frame); return 1;
 }
+#ifdef VIEW_SHARED_INSTALL_TEST
+#define STOCK_VIEW_SHIP_TEST
+static void stock_view_ship_test_before_cas(void) {
+    if (getenv("X4_TEST_SHIP_COLLISION")) {
+        const uint64_t foreign = UINT64_C(0x1122334455667788);
+        memcpy((void *)0x129bb21u, &foreign, 8);
+    }
+}
+static void lockstep_sha256(void *data, size_t size, unsigned char hash[32]) {
+    (void)data; (void)size; memset(hash, 0, 32);
+}
+static int digest_matches(unsigned char *hash, const char *expected) { return hash && expected; }
+#include "player_stock_view_component_preload_impl.h"
+#define VIEW_ANCESTRY_SHARED_COMPONENT
+#endif
 #include "player_view_ancestry_preload_impl.h"
+#ifdef VIEW_SHARED_INSTALL_TEST
+#include "player_stock_view_ship_preload_impl.h"
+#include "player_stock_view_shared_install.h"
+#endif
 static void map_page(uintptr_t address) {
     void *result = mmap((void *)address, PVQ_PAGE, PROT_READ | PROT_WRITE,
                         MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
@@ -50,7 +74,13 @@ int main(void) {
     const uint64_t ship = UINT64_C(0xfd89485554415541);
     memcpy((void *)0x1113338u, &weapon, 8);
     memcpy((void *)0x177f9c0u, &engine, 8);
+    const uint64_t pre = UINT64_C(0x4800658819e80c24);
+    memcpy((void *)0x177f9a0u, &pre, 8);
     memcpy((void *)0x129bad0u, &ship, 8);
+#ifdef VIEW_SHARED_INSTALL_TEST
+    const uint64_t ship_mode = UINT64_C(0xc985000008808a8b);
+    memcpy((void *)0x129bb21u, &ship_mode, 8);
+#endif
     /* Continuation starts at +5 with mov rbp,rdi, then returns the sentinel. */
     const unsigned char tail[] = {0x48,0xb8,0x78,0x56,0x34,0x12,0xef,0xcd,0xab,0x90,
                                   0x5d,0x41,0x5c,0x41,0x5d,0xc3};
@@ -58,6 +88,16 @@ int main(void) {
     assert(!mprotect((void *)0x1113000u, PVQ_PAGE, PROT_READ | PROT_EXEC));
     assert(!mprotect((void *)0x177f000u, PVQ_PAGE, PROT_READ | PROT_EXEC));
     assert(!mprotect((void *)0x129b000u, PVQ_PAGE, PROT_READ | PROT_EXEC));
+    if (getenv("X4_DEV_VIEW_PRECOMPARE_TRACE")) {
+        assert(!mprotect((void *)0x177f000u, PVQ_PAGE, PROT_READ | PROT_WRITE));
+        ((unsigned char *)0x177f9a0u)[2] ^= 1;
+        assert(!mprotect((void *)0x177f000u, PVQ_PAGE, PROT_READ | PROT_EXEC));
+        assert(!view_ancestry_install());
+        assert(*(const uint64_t *)0x1113338u == weapon && *(const uint64_t *)0x177f9c0u == engine);
+        assert(!mprotect((void *)0x177f000u, PVQ_PAGE, PROT_READ | PROT_WRITE));
+        memcpy((void *)0x177f9a0u, &pre, 8);
+        assert(!mprotect((void *)0x177f000u, PVQ_PAGE, PROT_READ | PROT_EXEC));
+    }
     /* A collision must be rejected before any site is changed. */
     assert(!mprotect((void *)0x177f000u, PVQ_PAGE, PROT_READ | PROT_WRITE));
     ((unsigned char *)0x177f9c0u)[0] ^= 1;
@@ -67,9 +107,27 @@ int main(void) {
     assert(!mprotect((void *)0x177f000u, PVQ_PAGE, PROT_READ | PROT_WRITE));
     memcpy((void *)0x177f9c0u, &engine, 8);
     assert(!mprotect((void *)0x177f000u, PVQ_PAGE, PROT_READ | PROT_EXEC));
+#ifdef VIEW_SHARED_INSTALL_TEST
+    int installed = install_stock_view_shared();
+    if (getenv("X4_TEST_SHIP_COLLISION")) {
+        assert(!installed && view_ancestry_installed && !atomic_load(&stock_view_component_ready));
+        assert(*(const uint64_t *)0x129bb21u == UINT64_C(0x1122334455667788));
+        return 0; /* Production constructor refuses and terminates here. */
+    }
+    assert(installed);
+    assert(stock_view_component_information.version == 2 && atomic_load(&stock_view_component_ready));
+    assert(*(const uint64_t *)0x129bb21u == stock_view_ship_information.patched);
+#else
     assert(view_ancestry_install());
+#endif
     view_ancestry_info info;
     assert(x4mp_view_ancestry_info(&info));
+    if (getenv("X4_DEV_VIEW_PRECOMPARE_TRACE")) {
+        assert(info.pre_enabled && info.pre_block == 0x177f9a0u && info.pre_original_word == pre);
+        assert(*(const uint64_t *)info.pre_block == info.pre_patched_word);
+        struct dwarf_eh_bases pre_bases;
+        assert(_Unwind_Find_FDE((void *)info.pre_stub, &pre_bases));
+    } else assert(!info.pre_enabled && *(const uint64_t *)0x177f9a0u == pre);
     assert(info.blocks[2] == 0x129bad0u && info.original_words[2] == ship);
     struct dwarf_eh_bases bases;
     for (unsigned index = 0; index < VIEW_ANCESTRY_SITES; ++index)

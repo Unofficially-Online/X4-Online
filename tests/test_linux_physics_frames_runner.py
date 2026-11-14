@@ -78,6 +78,9 @@ class PhysicsFramesRunnerTests(unittest.TestCase):
             root = Path(directory) / 'bundle'
             root.mkdir()
             (root / live.MARKER).touch()
+            config = root / 'extension/x4_lan_lab/ui/config.lua'
+            config.parent.mkdir(parents=True)
+            config.write_text('X4LAN_CONFIG = {}\n')
             manifest = {'ticks': 180, 'files': {}, 'player_lifetime_sha256': 'recorded'}
             (root / 'manifest.json').write_text(json.dumps(manifest))
             args = SimpleNamespace(user='fixture', root=root, ticks=None, controller_physics_discard=True,

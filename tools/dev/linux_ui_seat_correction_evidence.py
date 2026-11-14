@@ -142,11 +142,12 @@ def parse_ui_seat_correction_evidence(lines, slot, enabled, overlay, fork, query
             errors.append('correction render mode requires accepted GameRender leases')
         render_count = render.get('lease_count', 0)
     refill_count = render.get('camera_refill_count', 0) if render else 0
+    projection_count = render.get('projection_fov_count', 0) if render else 0
     if (counts['applies'] > 0xffffffff or counts['restores'] > 0xffffffff or
             not 1 <= counts['calls'] <= 0xffffffffffffffff or
             counts['calls'] != scope.get('counts', {}).get('open') or
-            counts['applies'] != sum(frame.get('applies', -1) for frame in frames) + render_count + refill_count or
-            counts['restores'] != sum(frame.get('restores', -1) for frame in frames) + render_count + refill_count or
+            counts['applies'] != sum(frame.get('applies', -1) for frame in frames) + render_count + refill_count + projection_count or
+            counts['restores'] != sum(frame.get('restores', -1) for frame in frames) + render_count + refill_count + projection_count or
             counts['applies'] != counts['restores'] or
             counts['rows'] != min(counts['calls'], 2) or len(rows)-4 != counts['rows']):
         errors.append('correction counters disagree with first-two samples, open calls or overlay transitions')

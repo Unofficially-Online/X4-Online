@@ -7,6 +7,19 @@
 #include <unistd.h>
 #include <sys/wait.h>
 
+#include "player_startup_phases.h"
+
+/* Match the real default startup schedule, rather than a fixture-only epoch. */
+static const player_startup_phases *player_startup(void) {
+    static player_startup_phases phase;
+    static int initialized;
+    if (!initialized) {
+        assert(player_startup_phases_parse(NULL, &phase));
+        initialized = 1;
+    }
+    return &phase;
+}
+
 #include "gate_player_camera_id_scope.h"
 static int camera_scope_ready = 1, camera_scope_begin_ok = 1, camera_scope_end_ok = 1;
 static int player_camera_rid_ready(void) { return camera_scope_ready && !player_camera_id_scope_active(); }
@@ -22,7 +35,7 @@ typedef struct { int ignored; } lua_State;
 typedef struct { const char *name; uintptr_t address; size_t size; const char *hash; } lx_site;
 #include "input_context_census.h"
 static struct { const char *exe; } gate_env;
-static struct { int active, issued, slot; } stats = {1, 6, 2};
+static struct { int active; uint64_t issued; int slot; } stats = {1, 6, 2};
 static struct { int independent_players; } config = {1};
 static struct { struct { int independent_players; } config; } keyboard_probe_queue = {{1}};
 static struct { uintptr_t owner; _Atomic int wrapper_depth; } sko_session = {0x1000, 0};

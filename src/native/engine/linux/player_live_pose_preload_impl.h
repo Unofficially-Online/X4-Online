@@ -24,6 +24,16 @@ static uint64_t live_pose_last_move;
 static _Thread_local unsigned live_pose_depth;
 static uintptr_t (*live_pose_original)(void *, void *, unsigned, double);
 
+/* Exactly one authenticated presentation callback may own the temporary pose.
+ * Projection follows refill in the same frame, with a distinct restored lease. */
+static int live_pose_presentation_phase(void) {
+    return !ui_depth[1] && (
+        (ui_depth[0] == 1 && !game_render_depth && !camera_refill_depth && !projection_fov_depth) ||
+        (game_render_depth == 1 && !ui_depth[0] && !camera_refill_depth && !projection_fov_depth) ||
+        (camera_refill_depth == 1 && !ui_depth[0] && !game_render_depth && !projection_fov_depth) ||
+        (projection_fov_depth == 1 && !ui_depth[0] && !game_render_depth && !camera_refill_depth));
+}
+
 /* The live observer is already opt-in. Keep one bounded native stack for
  * each known caller/scope/callback combination so camera updates outside the
  * presentation lease can be located without changing their return values. */
@@ -140,9 +150,7 @@ __attribute__((noinline)) static uintptr_t live_pose_dispatch(void *self, void *
     sample.after_valid = live_pose_copy(sample.after, output);
     if (live_correction_enabled && scope == PLAYER_LIVE_POSE_OPEN) {
         unsigned char corrected[64], checked[64];
-        if (!((ui_depth[0] == 1 && !ui_depth[1] && !game_render_depth) ||
-              (game_render_depth == 1 && !ui_depth[0]) ||
-              (camera_refill_depth == 1 && !ui_depth[0] && !ui_depth[1] && !game_render_depth)) || !sample.after_valid ||
+        if (!live_pose_presentation_phase() || !sample.after_valid ||
             !player_ui_live_correction(caller, (uintptr_t)output, live_correction_stack_low,
                                        live_correction_stack_high, mode & 255u, time,
                                        live_correction_delta, sample.after, corrected)) {
@@ -220,7 +228,7 @@ EXPORT int x4mp_live_pose_finish(player_live_pose_snapshot *out) {
         live_pose_last_move != (preload_session_budget.frames ? preload_session_budget.presentation_last : 168u) ||
         live_pose_depth ||
         live_pose_scopes.state != PLAYER_LIVE_POSE_OUTSIDE ||
-        live_pose_scopes.closes != (preload_session_budget.frames ? 2u * preload_session_budget.presentation_count + camera_refill_completed :
+        live_pose_scopes.closes != (preload_session_budget.frames ? 2u * preload_session_budget.presentation_count + camera_refill_completed + projection_fov_completed :
                                     atomic_load(&game_render_installed) ? 320u + camera_refill_completed : 160u) ||
         live_pose_scopes.opens != live_pose_scopes.closes + live_pose_scopes.pauses ||
         live_pose_capture.started != live_pose_capture.returned ||
@@ -236,9 +244,7 @@ EXPORT int x4mp_live_pose_finish(player_live_pose_snapshot *out) {
 static int live_pose_scope_owner(void) {
     return atomic_load_explicit(&live_pose_active, memory_order_acquire) &&
         current_thread() == live_pose_owner && !live_pose_depth &&
-        ((ui_depth[0] == 1 && !ui_depth[1] && !game_render_depth) ||
-         (game_render_depth == 1 && !ui_depth[0] && !ui_depth[1] && !camera_refill_depth) ||
-         (camera_refill_depth == 1 && !ui_depth[0] && !ui_depth[1] && !game_render_depth));
+        live_pose_presentation_phase();
 }
 EXPORT int x4mp_live_pose_scope_begin(unsigned next) {
     if (!live_pose_scope_owner()) return 0;

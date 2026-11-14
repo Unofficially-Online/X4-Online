@@ -4,6 +4,8 @@
 /* Diagnostic only. P2 target ownership is retained by the existing lifecycle;
  * this adapter holds P1's ship until owner-thread sampling has closed. */
 #include "player_view_ancestry_preload_pin.h"
+static void view_component_trace_gate_begin(uint64_t generation);
+static void view_component_trace_gate_finish(uint64_t generation);
 
 static player_view_ancestry_api ancestry_api;
 static player_view_query_api ancestry_sealed_provider;
@@ -49,7 +51,10 @@ static int ancestry_identity(ancestry_p1_identity *out) {
 static void ancestry_configure(void) {
     if (ancestry_mode) return;
     const char *setting = getenv("X4_DEV_VIEW_ANCESTRY");
-    if (!setting) { ancestry_mode = 1; return; }
+    if (!setting) {
+        if (getenv("X4_DEV_VIEW_COMPONENT_TRACE")) ancestry_fail("component_trace_needs_ancestry");
+        ancestry_mode = 1; return;
+    }
     if (strcmp(setting, "1") || player_recurring_physics != 3 || !player_recurring_tail ||
         (stats.slot != 1 && stats.slot != 2)) ancestry_fail("configuration");
     ancestry_mode = 2;
@@ -97,6 +102,7 @@ static void player_view_ancestry_after(uint64_t generation) {
         ancestry_fail("bind");
     ancestry_first_tick = generation;
     ancestry_mode = 3;
+    view_component_trace_gate_begin(generation);
     dprintf(2, "X4 VIEW_ANCESTRY v=1 stage=bind tick=%llu slot=%u tid=%u p1=%llx p2=%llx p1_runtime=%llu p2_runtime=%llu p1_saved=%llu p2_saved=%llu ref_before=%u ref_after=%u\n",
             (unsigned long long)generation, stats.slot, ancestry_tid, (unsigned long long)ancestry_p1_ship,
             (unsigned long long)ancestry_p2_ship, (unsigned long long)ancestry_runtime,
@@ -106,6 +112,7 @@ static void player_view_ancestry_after(uint64_t generation) {
 }
 static void player_view_ancestry_close(uint64_t generation) {
     if (ancestry_mode == 1) return;
+    view_component_trace_gate_finish(generation);
     ancestry_p1_identity before, after;
     view_ancestry_snapshot snapshot;
     player_view_ancestry_api checked;

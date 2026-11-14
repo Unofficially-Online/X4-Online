@@ -86,6 +86,7 @@ class ThrottleProbeBundleTests(unittest.TestCase):
             root = Path(directory) / 'bundle'
             root.mkdir()
             (root / live.MARKER).touch()
+            config = root / 'extension/x4_lan_lab/ui/config.lua'; config.parent.mkdir(parents=True); config.write_text('')
             manifest = dict(self.options(), ticks=180, files={})
             (root / 'manifest.json').write_text(json.dumps(manifest))
             args = SimpleNamespace(user='fixture', root=root, ticks=None,

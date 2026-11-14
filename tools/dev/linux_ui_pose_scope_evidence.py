@@ -68,10 +68,11 @@ def parse_ui_pose_scope_evidence(stderr_lines, slot, enabled, legacy, overlay, r
             errors.append('pose-scope render mode requires accepted GameRender leases')
         render_count = render.get('lease_count', 0)
     refill_count = render.get('camera_refill_count', 0) if render else 0
-    if (counts['closes'] != callback_count + render_count + refill_count or counts['opens'] != counts['closes'] + counts['pauses'] or
+    projection_count = render.get('projection_fov_count', 0) if render else 0
+    if (counts['closes'] != callback_count + render_count + refill_count + projection_count or counts['opens'] != counts['closes'] + counts['pauses'] or
             counts['pauses'] != sum(frame.get('updates', -1) for frame in frames) or
-            counts['opens'] != sum(frame.get('applies', -1) for frame in frames) + render_count + refill_count or
-            counts['pauses'] + counts['closes'] != sum(frame.get('restores', -1) for frame in frames) + render_count + refill_count):
+            counts['opens'] != sum(frame.get('applies', -1) for frame in frames) + render_count + refill_count + projection_count or
+            counts['pauses'] + counts['closes'] != sum(frame.get('restores', -1) for frame in frames) + render_count + refill_count + projection_count):
         errors.append('pose-scope transitions do not match balanced overlay apply/pause/return receipts')
     representatives = []
     for _, line in rows[:-1]:

@@ -129,7 +129,22 @@ static lxw_insert *lxw_inserts;
 static uint64_t lxw_insert_count;
 static pthread_mutex_t lxw_insert_lock=PTHREAD_MUTEX_INITIALIZER;
 static volatile int64_t world_identity_calls,world_identity_count,world_identity_failures,world_identity_late;
-static int world_identity_installed,world_identity_restored,world_identity_sealed;
+static int world_identity_installed,world_identity_restored;
+static _Atomic int world_identity_sealed;
+/* Protected by lxw_insert_lock. Never reused, including failed restoration. */
+static uint64_t world_identity_seal_generation;
+static int world_identity_seal_generation_exhausted;
+static int world_identity_seal_admitted;
+static int world_identity_advance_locked(void) {
+    world_identity_seal_admitted = 0;
+    if (world_identity_seal_generation_exhausted || world_identity_seal_generation == UINT64_MAX) {
+        world_identity_seal_generation_exhausted = 1;
+        world_identity_seal_generation = 0;
+        return 0;
+    }
+    ++world_identity_seal_generation;
+    return 1;
+}
 static int lxw_insert_hooked,lxw_clear_hooked;
 static uint64_t lxw_entry_patched,lxw_clear_patched;
 #define LXW_THUNK_HOOK 0x40u              /* jmp [rip] -> lxw_import_insert */
@@ -190,8 +205,7 @@ static lxw_insert_result lxw_import_insert(void *map,const uint64_t *key) {
 }
 /* Each recorded node holds the runtime ID its inline import stored (Windows reads it from
  * object+8 after the call). Valid only while the map is alive: see the clear below. */
-static void lxw_resolve(int loading) {
-    pthread_mutex_lock(&lxw_insert_lock);
+static void lxw_resolve_locked(int loading) {
     uint64_t kept=0;
     for(uint64_t i=0;i<lxw_insert_count;i++) {
         uint64_t runtime=0;
@@ -201,6 +215,10 @@ static void lxw_resolve(int loading) {
             __atomic_add_fetch(&world_identity_failures,1,__ATOMIC_SEQ_CST);
     }
     lxw_insert_count=kept;
+}
+static void lxw_resolve(int loading) {
+    pthread_mutex_lock(&lxw_insert_lock);
+    lxw_resolve_locked(loading);
     pthread_mutex_unlock(&lxw_insert_lock);
 }
 static void lxw_resolve_inserts(void) {lxw_resolve(0);}
@@ -242,6 +260,10 @@ static int lxw_patch(unsigned char *entry,uint64_t original,unsigned hook,uint64
 static int world_identity_install(void) {
     unsigned char *entry=LX(LX_IMPORT_INSERT_VA),*clear=LX(LX_IMPORT_CLEAR_VA);
     if(world_identity_installed || !thunk || rd64(entry)!=LX_IMPORT_ENTRY_ORIGINAL || rd64(clear)!=LX_IMPORT_CLEAR_ORIGINAL) return 0;
+    pthread_mutex_lock(&lxw_insert_lock);
+    int generation_valid = world_identity_advance_locked();
+    pthread_mutex_unlock(&lxw_insert_lock);
+    if (!generation_valid) return 0;
     if(!world_identities) world_identities=calloc(WORLD_IDENTITY_CAPACITY,sizeof(*world_identities));
     if(!lxw_inserts) lxw_inserts=calloc(LXW_INSERTS_MAX,sizeof(*lxw_inserts));
     if(!world_identities || !lxw_inserts) return 0;
@@ -254,6 +276,9 @@ static int world_identity_install(void) {
 }
 static void world_identity_restore(void) {
     if(!world_identity_installed) return;
+    pthread_mutex_lock(&lxw_insert_lock);
+    (void)world_identity_advance_locked();
+    pthread_mutex_unlock(&lxw_insert_lock);
     if(lxw_insert_hooked && gate_code_swap64(LX(LX_IMPORT_INSERT_VA),lxw_entry_patched,LX_IMPORT_ENTRY_ORIGINAL)) lxw_insert_hooked=0;
     if(lxw_clear_hooked && gate_code_swap64(LX(LX_IMPORT_CLEAR_VA),lxw_clear_patched,LX_IMPORT_CLEAR_ORIGINAL)) lxw_clear_hooked=0;
     world_identity_restored=!lxw_insert_hooked && !lxw_clear_hooked;
@@ -268,9 +293,18 @@ static int world_identity_owned(void) {
 /* First live frame (boot phase 3): the import is over. Whatever the clear did not read
  * (a load that did not clear yet) is read now; the table is final from here on. */
 static void world_identity_seal(void) {
-    if(!world_identity_installed || world_identity_sealed) return;
-    lxw_resolve_inserts();
-    world_identity_sealed=1;
+    pthread_mutex_lock(&lxw_insert_lock);
+    if (world_identity_installed && !world_identity_sealed) {
+        lxw_resolve_locked(0);
+        if (world_identity_advance_locked()) {
+            /* Publish only while insertion/resolve is excluded by this lock. */
+            world_identity_sealed = 1;
+            world_identity_seal_admitted = 1;
+        } else {
+            __atomic_add_fetch(&world_identity_failures, 1, __ATOMIC_SEQ_CST);
+        }
+    }
+    pthread_mutex_unlock(&lxw_insert_lock);
 }
 
 /* ---- dock and shield state (lockstep_dock.h, lockstep_state.h formats) ---- */

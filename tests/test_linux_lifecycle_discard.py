@@ -384,6 +384,9 @@ class LifecycleDiscardTests(unittest.TestCase):
             root = Path(directory) / 'bundle'
             root.mkdir()
             (root / live.MARKER).touch()
+            config = root / 'extension/x4_lan_lab/ui/config.lua'
+            config.parent.mkdir(parents=True)
+            config.write_text('X4LAN_CONFIG = {}\n')
             (root / 'manifest.json').write_text(json.dumps(self.manifest()))
             args = SimpleNamespace(user='fixture', root=root, ticks=6,
                                    controller_lifecycle_discard=True)

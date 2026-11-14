@@ -163,7 +163,7 @@ static int lxt_inline_arm(void) {
     if (!hash_ok(LX(0x13c45c0), 0x36, "8a95d70d88b3e3fcda8d82e34592726184e102a6c5113f865650ecf67baa849b") ||
         !hash_ok(LX(0x13e91d8), 0xa9, "a3634bde30e731d984d0e138d90f2357c9210961c4b5a0ed9b5c3fa845be961f") ||
         !hash_ok(LX(0x1a23520), 0x40, "45527f113535fa1e3702f38c5d5d96b8be073d0f7d814468702b9b0336221e09") ||
-        !hash_ok(LX(0x1a23be0), 0x6a, "2f7e3764d17dc9ff4269fd115a22ed3ec472a7612846d55b6b33a0e771c7f7bd"))
+        !player_semaphore_original_pin(0x1a23be0, 0x6a, "2f7e3764d17dc9ff4269fd115a22ed3ec472a7612846d55b6b33a0e771c7f7bd"))
         return 0;
     memcpy(&lxt_inline_original_first, LX(LXT_INLINE_SITE_A), 8);
     memcpy(&lxt_inline_original_second, LX(LXT_INLINE_SITE_B), 16);

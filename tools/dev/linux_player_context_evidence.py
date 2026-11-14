@@ -14,10 +14,19 @@ RECEIPT = re.compile(
     r'base_nodes=(13|15) nodes=(' + U + r') digest=([0-9a-f]{64}) payloads=([0-9a-f]+)\n')
 POLICY_SUFFIX = re.compile(r' context_policy_v=1 manager=([0-9a-f]{1,16}) epoch=(' + U + r') full_hash=([0-9a-f]{64})$')
 KNOWN_ADDITION = bytes.fromhex('3b000000080000000000000001000000')
+# Exact group observed at the target-selection boundary; semantic names unknown.
+SELECTION_ADDITIONS = {
+    (4, 8): bytes.fromhex('04000000080000000000000001000000'),
+    (44, 13): bytes.fromhex('2c0000000d0000000000000001000000'),
+    (65, 13): bytes.fromhex('410000000d0000000000000001000000'),
+    (66, 13): bytes.fromhex('420000000d0000000000000001000000'),
+    (67, 13): bytes.fromhex('430000000d0000000000000001000000'),
+}
+OPTIONAL_GROUPS = ({(59, 8): KNOWN_ADDITION}, SELECTION_ADDITIONS)
 
 
 def payload_set(text, count):
-    if count not in (13, 14, 15, 16) or len(text) != count * 32:
+    if count not in (13, 14, 15, 16, 18, 19, 20, 21) or len(text) != count * 32:
         raise ValueError('payload count or byte length mismatch')
     payloads = [bytes.fromhex(text[offset:offset + 32]) for offset in range(0, len(text), 32)]
     keys = [struct.unpack_from('<ii', row) for row in payloads]
@@ -84,7 +93,7 @@ def verify_context_policy(lines, *, allow_camera=False, first_tick=5):
                 following = lines[index + 1] if index + 1 < len(lines) else ''
                 if event == 'init':
                     if (init_seen or state is not None or tick != first_tick or boundary != 'ready' or next_epoch != 1 or
-                        base_nodes != 13 or nodes != 13 or (59, 8) in values or
+                        base_nodes != 13 or nodes != 13 or any(key in values for group in OPTIONAL_GROUPS for key in group) or
                         not following.startswith(PREFIX + 'snapshot=physics_canonical ')):
                         raise ValueError('invalid initial policy boundary or baseline')
                     base, identity, init_seen = values, ids, True
@@ -122,16 +131,18 @@ def verify_context_policy(lines, *, allow_camera=False, first_tick=5):
                     elif (not previous.startswith(PREFIX + 'physics=upkeep stage=leave ') or
                           not following.startswith(PREFIX + 'snapshot=physics_end ')):
                         raise ValueError('transition outside end boundary')
-                    expected = dict(state['values'])
-                    if event == 'add':
-                        if (59, 8) in expected:
-                            raise ValueError('repeated context addition')
-                        expected[(59, 8)] = KNOWN_ADDITION
-                    else:
-                        if expected.get((59, 8)) != KNOWN_ADDITION:
-                            raise ValueError('removal without known addition')
-                        del expected[(59, 8)]
-                    if values != expected or any(values.get(key) != payload for key, payload in base.items()):
+                    previous_values = state['values']
+                    allowed = []
+                    for group in OPTIONAL_GROUPS:
+                        expected = dict(previous_values)
+                        if event == 'add' and not any(key in expected for key in group):
+                            expected.update(group)
+                            allowed.append(expected)
+                        elif event == 'remove' and all(expected.get(key) == value for key, value in group.items()):
+                            for key in group:
+                                del expected[key]
+                            allowed.append(expected)
+                    if values not in allowed or any(values.get(key) != payload for key, payload in base.items()):
                         raise ValueError('unexpected base or added payload mutation')
                 epoch = next_epoch
                 state = {'values': values, 'nodes': nodes, 'manager': ids[1], 'epoch': epoch,

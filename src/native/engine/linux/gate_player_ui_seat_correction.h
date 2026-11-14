@@ -12,7 +12,9 @@ static _Alignas(16) float ui_correction_scratch[UI_CORRECTION_CAPACITY][16];
 static _Alignas(16) float ui_render_correction_scratch[160][16];
 static _Alignas(16) float ui_refill_correction_scratch[160][16];
 static unsigned ui_move_correction_applies, ui_render_correction_applies, ui_refill_correction_applies;
+static unsigned ui_projection_correction_applies;
 static float (*ui_session_move_scratch)[16], (*ui_session_render_scratch)[16], (*ui_session_refill_scratch)[16];
+static float (*ui_session_projection_scratch)[16];
 static int ui_correction_allocate_session(void) {
     size_t count = player_session_budget.presentation_count;
     if (!count || count > 17990 || ui_session_move_scratch || ui_session_render_scratch) return 0;
@@ -34,7 +36,18 @@ static int ui_correction_allocate_session(void) {
         }
         ui_session_refill_scratch = refill;
     }
-    /* Both mappings remain resident until this disposable process exits. */
+    if (ui_projection_scope_enabled) {
+        void *projection = mmap(NULL, render_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        if (projection == MAP_FAILED) {
+            if (ui_session_refill_scratch) (void)munmap(ui_session_refill_scratch, render_size);
+            ui_session_refill_scratch = NULL;
+            (void)munmap(move, move_size);
+            (void)munmap(render, render_size);
+            return 0;
+        }
+        ui_session_projection_scratch = projection;
+    }
+    /* Scratch mappings remain resident until this disposable process exits. */
     ui_session_move_scratch = move;
     ui_session_render_scratch = render;
     return 1;
@@ -212,14 +225,18 @@ static void ui_correction_move_begin(void) {
 static int ui_correction_apply(native_ui_overlay_probe *probe) {
     unsigned moves = player_session_budget.frames ? player_session_budget.presentation_count : 160u;
     unsigned move_capacity = moves * (PLAYER_UI_OVERLAY_MAX_UPDATES + 1u);
-    if ((!ui_game_render_active && !ui_camera_refill_active && ui_move_correction_applies >= move_capacity) ||
+    if ((!ui_game_render_active && !ui_camera_refill_active && !ui_projection_scope_active &&
+         ui_move_correction_applies >= move_capacity) ||
         (ui_game_render_active && ui_render_correction_applies >= moves) ||
-        (ui_camera_refill_active && ui_refill_correction_applies >= moves)) return 0;
+        (ui_camera_refill_active && ui_refill_correction_applies >= moves) ||
+        (ui_projection_scope_active && ui_projection_correction_applies >= moves)) return 0;
     float (*move_scratch)[16] = player_session_budget.frames ? ui_session_move_scratch : ui_correction_scratch;
     float (*render_scratch)[16] = player_session_budget.frames ? ui_session_render_scratch : ui_render_correction_scratch;
     float (*refill_scratch)[16] = player_session_budget.frames ? ui_session_refill_scratch : ui_refill_correction_scratch;
-    if (!move_scratch || !render_scratch || (ui_camera_refill_active && !refill_scratch)) return 0;
-    float *scratch = ui_camera_refill_active ? refill_scratch[ui_refill_correction_applies] :
+    if (!move_scratch || !render_scratch || (ui_camera_refill_active && !refill_scratch) ||
+        (ui_projection_scope_active && !ui_session_projection_scratch)) return 0;
+    float *scratch = ui_projection_scope_active ? ui_session_projection_scratch[ui_projection_correction_applies] :
+                     ui_camera_refill_active ? refill_scratch[ui_refill_correction_applies] :
                      ui_game_render_active ? render_scratch[ui_render_correction_applies] :
                                              move_scratch[ui_move_correction_applies];
     memset(&ui_correction_lease, 0, sizeof ui_correction_lease);
@@ -257,7 +274,8 @@ static int ui_correction_apply(native_ui_overlay_probe *probe) {
                 (unsigned long long)(uintptr_t)scratch, source, corrected);
     }
     ++ui_correction_applies;
-    if (ui_camera_refill_active) ++ui_refill_correction_applies;
+    if (ui_projection_scope_active) ++ui_projection_correction_applies;
+    else if (ui_camera_refill_active) ++ui_refill_correction_applies;
     else if (ui_game_render_active) ++ui_render_correction_applies;
     else ++ui_move_correction_applies;
     return 1;

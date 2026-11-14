@@ -9,10 +9,29 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include "stock_keyboard_replay.h"
+#include "player_stock_view_wire_handoff.h"
 #include "player_ui_session_budget.h"
 #include "gate_player_startup_phases.h"
 
+static int player_cursor_mode(void);
+static int player_space_mode(void);
+static int player_space_collect_identity(stock_keyboard_identity_sample *sample, unsigned local, unsigned delayed);
+static int player_space_request(unsigned independent);
+static int player_space_admit(uint64_t generation);
+static int player_space_local_state(unsigned *active);
+static unsigned player_space_slot_state(unsigned slot);
+static int player_space_apply(unsigned slot, uint64_t generation, unsigned active);
+static int player_cursor_request(unsigned independent);
+static int player_cursor_capture_only(uint64_t generation);
+static int player_input_prepare_slots(void *context, uint64_t generation, const uint64_t saved[2],
+                                      const stock_input_record records[2]);
+static int player_cursor_capture_sample(uint64_t generation, float output[3]);
+static int player_cursor_tail(uint64_t generation, unsigned final);
 static keyboard_replay keyboard_probe_queue;
+static player_stock_view_wire_handoff keyboard_view_wire;
+static int player_stock_view_wire_request(void);
+static int player_stock_view_wire_read_sealed(uint64_t generation, unsigned slot,
+                                             player_stock_view_wire_sealed *out);
 static unsigned keyboard_probe_requested;
 static unsigned keyboard_probe_closed;
 static unsigned keyboard_probe_held;
@@ -42,7 +61,11 @@ static int keyboard_probe_worker(void) {
  * comparison values; they are never used as read or call destinations. */
 static int keyboard_probe_identity(void) {
     stock_keyboard_identity_sample current = {0};
-    if (!stock_keyboard_identity_collect(&current) || !current.ready) {
+    unsigned local = 1, delayed = player_space_slot_state(1);
+    if (player_space_mode() && !player_space_local_state(&local)) return keyboard_probe_fail("space_local_state");
+    int readable = player_space_mode() ? player_space_collect_identity(&current, local, delayed) :
+        (player_cursor_mode() ? stock_keyboard_identity_collect_cursor(&current) : stock_keyboard_identity_collect(&current));
+    if (!readable || !current.ready) {
         return keyboard_probe_fail(current.reason ? current.reason : "identity_unreadable");
     }
     if (current.saved != keyboard_probe_queue.config.saved_ship_ids[0]) {
@@ -128,8 +151,9 @@ static int keyboard_probe_admit(void) {
     if (stats.issued < keyboard_probe_queue.config.first_capture) {
         return 1;
     }
-    return keyboard_replay_begin(&keyboard_probe_queue, stats.issued) == KEYBOARD_REPLAY_OK ||
-        keyboard_probe_fail("open_capture_tick");
+    if (keyboard_replay_begin(&keyboard_probe_queue, stats.issued) != KEYBOARD_REPLAY_OK)
+        return keyboard_probe_fail("open_capture_tick");
+    return player_space_admit(stats.issued) || keyboard_probe_fail("space_admission");
 }
 
 static int keyboard_probe_apply_event(void *context, unsigned id, unsigned char state) {
@@ -170,7 +194,8 @@ static int keyboard_probe_apply_event(void *context, unsigned id, unsigned char 
  * declared. It must terminate on any P2 scope or update failure and return only
  * after canonical state has been restored. The immutable record is valid for
  * this call only, including when it contains no events. */
-static void player_physics_network_apply_p2(uint64_t generation, const stock_input_record *record);
+static void player_physics_network_apply_p2(uint64_t generation, const stock_input_record *record,
+                                          const keyboard_replay *replay, unsigned view_admitted);
 
 typedef struct {
     uintptr_t target;
@@ -230,6 +255,10 @@ static int keyboard_probe_apply_slot(void *context, uint64_t generation, unsigne
         unsigned held_before = keyboard_probe_held;
         for (unsigned index = 0; index < record->count; ++index) {
             const stock_input_event *event = &record->events[index];
+            if (keyboard_replay_is_space_event(&keyboard_probe_queue.config, event)) {
+                if (!player_space_apply(1, generation, event->value)) return keyboard_probe_fail("space_p1_effect");
+                continue;
+            }
             if (!keyboard_probe_apply_event(NULL, event->id, (unsigned char)event->value)) {
                 return 0;
             }
@@ -248,7 +277,7 @@ static int keyboard_probe_apply_slot(void *context, uint64_t generation, unsigne
             player_target_hold_resident.identity.target_runtime != runtime))) {
         return keyboard_probe_fail("independent_target_identity");
     }
-    player_physics_network_apply_p2(generation, record);
+    player_physics_network_apply_p2(generation, record, &keyboard_probe_queue, keyboard_view_wire.admitted);
     if (!keyboard_probe_worker() || strcmp(keyboard_probe_problem, "active") ||
         atomic_load(&stock_observer_input_depth) || atomic_load(&sko_session.wrapper_depth) ||
         !player_physics_identity() || !player_target_hold_resident.target_owned ||
@@ -257,6 +286,19 @@ static int keyboard_probe_apply_slot(void *context, uint64_t generation, unsigne
         return keyboard_probe_fail("independent_scope_return");
     }
     return 1;
+}
+
+/* Check the admitted VIEW route after its transaction has committed and
+ * before either player's first native effect. The first check therefore sees
+ * the initial bind; later checks also cover the delayed drain frames. */
+static int keyboard_probe_prepare_independent_slots(void *context, uint64_t generation,
+                                                    const uint64_t saved[2],
+                                                    const stock_input_record records[2]) {
+    if (!player_input_prepare_slots(context, generation, saved, records)) return 0;
+    if (!keyboard_view_wire.admitted) return !keyboard_probe_queue.config.view_capture;
+    return keyboard_probe_queue.config.view_capture == 1 && keyboard_view_wire.ready &&
+        keyboard_view_wire.ready(keyboard_view_wire.context, &keyboard_probe_queue.config,
+                                 generation) == 1;
 }
 
 /* Called by the recurring physics owner only, after its worker/main boundary is
@@ -281,8 +323,15 @@ static int keyboard_probe_independent_after_path_join(uint64_t generation) {
             player_target_hold_resident.identity.target_runtime != target.runtime))) {
         return keyboard_probe_fail("independent_target_admission");
     }
-    keyboard_replay_result result = keyboard_replay_publish_slots(
-        &keyboard_probe_queue, generation, keyboard_probe_apply_slot, &target);
+    if (player_space_mode()) {
+        for (unsigned slot = 1; slot <= 2; ++slot) {
+            unsigned queued = 2;
+            if (!keyboard_replay_space_slot_state(&keyboard_probe_queue, slot, &queued) ||
+                queued != player_space_slot_state(slot)) return keyboard_probe_fail("space_slot_prestate");
+        }
+    }
+    keyboard_replay_result result = keyboard_replay_publish_slots_prepared(
+        &keyboard_probe_queue, generation, keyboard_probe_prepare_independent_slots, keyboard_probe_apply_slot, &target);
     if (result != KEYBOARD_REPLAY_OK) {
         keyboard_replay_latch(&keyboard_probe_queue,
                               result < 0 ? result : KEYBOARD_REPLAY_QUEUE_FAILURE);
@@ -320,7 +369,8 @@ static int keyboard_probe_after_path_join(void) {
         }
         keyboard_replay_result result = keyboard_replay_publish_slots(
             &keyboard_probe_queue, stats.issued, NULL, NULL);
-        return result == KEYBOARD_REPLAY_NOT_DUE || keyboard_probe_fail("independent_open_capture");
+        if (result != KEYBOARD_REPLAY_NOT_DUE) return keyboard_probe_fail("independent_open_capture");
+        return player_cursor_capture_only(stats.issued) || keyboard_probe_fail("cursor_preapply_stage");
     }
     keyboard_replay_result result = keyboard_replay_publish(
         &keyboard_probe_queue, stats.issued, keyboard_probe_apply_event, NULL);
@@ -387,17 +437,25 @@ static int lua_stock_keyboard_replay_request(lua_State *L) {
         keyboard_probe_hex_id(first, first_length, &config.saved_ship_ids[0]) &&
         keyboard_probe_hex_id(second, second_length, &config.saved_ship_ids[1]) &&
         (!independent || config.saved_ship_ids[1] == SEAT_PREFLIGHT_TARGET_SAVED);
+    if (valid) valid = player_cursor_request((unsigned)independent);
+    if (valid) valid = player_space_request((unsigned)independent);
+    if (valid) valid = player_stock_view_wire_request();
     if (valid) {
         config.own_slot = (unsigned)slot;
         config.independent_players = (unsigned)independent;
+        config.cursor_active_only = (unsigned)player_cursor_mode();
+        config.space_context8 = (unsigned)player_space_mode();
         config.scripted_throttle = independent && player_throttle_enabled();
         config.first_capture = independent ? player_startup()->capture : 3;
         config.last_capture = (uint64_t)last;
         config.delay = (unsigned)delay;
         config.lookahead = (unsigned)ahead;
-        valid = keyboard_replay_init(&keyboard_probe_queue) &&
+        valid = player_stock_view_wire_configure(&keyboard_view_wire, &config,
+            requested_session.frames ? player_startup()->presentation_first + 6u : 0,
+            requested_session.presentation_last) && keyboard_replay_init(&keyboard_probe_queue) &&
             keyboard_replay_configure(&keyboard_probe_queue, &config) == KEYBOARD_REPLAY_OK;
     }
+    if (valid) valid = player_view_host_capture_start() && player_view_render_capture_start();
     if (valid) {
         keyboard_probe_requested = 1;
         keyboard_probe_problem = "active";
@@ -415,8 +473,42 @@ static int lua_stock_keyboard_replay_capture(lua_State *L) {
     unsigned char bytes[STOCK_INPUT_MAX_BYTES];
     unsigned length = 0;
     if (!keyboard_probe_worker() || !stock_observer_worker_boundary() ||
-        strcmp(keyboard_probe_problem, "active") || !keyboard_probe_identity() ||
-        keyboard_replay_seal(&keyboard_probe_queue, bytes, sizeof(bytes), &length) != KEYBOARD_REPLAY_OK) {
+        strcmp(keyboard_probe_problem, "active") || !keyboard_probe_identity()) {
+        keyboard_probe_fail("capture_boundary");
+        p_lua_pushnil(L);
+        return 1;
+    }
+    float cursor[3];
+    const float *sample = NULL;
+    if (player_cursor_mode()) {
+        if (!player_cursor_capture_sample(stats.issued, cursor)) {
+            keyboard_probe_fail("cursor_sample_missing");
+            p_lua_pushnil(L);
+            return 1;
+        }
+        unsigned active = 1;
+        if (player_space_mode() && !player_space_local_state(&active)) {
+            keyboard_probe_fail("space_capture_state"); p_lua_pushnil(L); return 1;
+        }
+        if (active) sample = cursor;
+    }
+    if (!player_view_host_capture_seal(stats.issued) || !player_view_render_capture_seal(stats.issued)) {
+        keyboard_probe_fail("view_capture_seal"); p_lua_pushnil(L); return 1;
+    }
+    linux_stock_view_sample view;
+    const linux_stock_view_sample *presentation = NULL;
+    if (keyboard_probe_queue.config.view_capture) {
+        player_stock_view_wire_sealed sealed;
+        unsigned present = 0;
+        if (!player_stock_view_wire_read_sealed(stats.issued, stats.slot, &sealed) ||
+            !player_stock_view_wire_sample(&keyboard_view_wire, &keyboard_probe_queue,
+                stats.issued, &sealed, &view, &present)) {
+            keyboard_probe_fail("view_wire_sample"); p_lua_pushnil(L); return 1;
+        }
+        if (present) presentation = &view;
+    }
+    if (keyboard_replay_seal_presentation(&keyboard_probe_queue, sample, presentation,
+            bytes, sizeof(bytes), &length) != KEYBOARD_REPLAY_OK) {
         keyboard_probe_fail("capture_seal");
         p_lua_pushnil(L);
         return 1;

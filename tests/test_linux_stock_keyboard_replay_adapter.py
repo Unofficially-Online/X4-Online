@@ -28,6 +28,7 @@ class StockKeyboardReplayAdapterTests(unittest.TestCase):
                          "binding_player_saved", "binding_controller",
                          "binding_ship", "binding_runtime", "binding_saved",
                          "request_default", "request_independent", "request_session", "request_common_phases", "independent_slot1",
+                         "independent_view_ready_fail", "independent_view_ready_ok", "independent_view_ready_drain",
                          "independent_slot2", "independent_empty", "independent_empty_p1", "independent_p1_held",
                          "independent_frame6",
                          "independent_frame6_lost_hold", "independent_bad_target", "independent_missing",

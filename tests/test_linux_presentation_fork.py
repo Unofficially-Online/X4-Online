@@ -117,6 +117,7 @@ class PresentationForkTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             home=Path(directory);bundle=home/'bundle';bundle.mkdir()
             (bundle/live.MARKER).touch()
+            config=bundle/'extension/x4_lan_lab/ui/config.lua';config.parent.mkdir(parents=True);config.write_text('')
             (bundle/'manifest.json').write_text(json.dumps(dict(self.options(),ticks=220,files={})))
             user=mock.Mock(pw_dir=str(home),pw_uid=live.os.geteuid())
             with mock.patch('pwd.getpwnam',return_value=user), mock.patch.object(live.subprocess,'Popen') as launch, mock.patch.object(live.subprocess,'run') as run, self.assertRaisesRegex(SystemExit,'frozen source receipts'):

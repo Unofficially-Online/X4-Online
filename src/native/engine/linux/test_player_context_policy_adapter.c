@@ -19,7 +19,7 @@ static int (*lifecycle_context_policy_owner)(void);
 static int (*lifecycle_context_policy_suffix)(char *, size_t);
 static input_context_census_sample fake_sample;
 static input_context_census_entries fake_entries;
-static char last_line[1200], failure[80];
+static char last_line[1400], failure[80];
 static unsigned writes;
 static jmp_buf escape;
 static uint64_t GetCurrentThreadId(void) { return worker ? 77 : 78; }

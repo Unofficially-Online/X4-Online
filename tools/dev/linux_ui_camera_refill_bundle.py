@@ -64,7 +64,7 @@ def validate_bundle(root, manifest, network_physics):
                 hashlib.sha256(path.read_bytes()).hexdigest() != digest):
             raise ValueError('missing or changed camera source receipt: ' + name)
     # Version 3 extends the version-2 closure, without changing its checks.
-    legacy_view = dict(manifest, view_query_source_version=ancestry.SOURCE_VERSION)
+    legacy_view = dict(manifest, view_query_source_version=2)
     ancestry_enabled = ancestry.validate_bundle(root, legacy_view, network_physics)
     if enabled and network_physics is not True:
         raise ValueError('camera refill requires disposable independent network physics')

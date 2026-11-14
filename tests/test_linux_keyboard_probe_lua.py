@@ -161,8 +161,9 @@ class LinuxKeyboardProbeLuaTests(unittest.TestCase):
             lua = self.runtime(slot)
             lua.globals().cfg.native_gate_stock_keyboard_replay_probe.independent_players = True
             self.start(lua)
-            self.assertEqual(lua.eval('#requests[1]'), 7)
+            self.assertEqual(lua.eval('#requests[1]'), 8)
             self.assertEqual(lua.globals().requests[1][7], 1)
+            self.assertEqual(lua.globals().requests[1][8], 0)  # explicit legacy startup version
             self.assertEqual(lua.globals().sections[1].owner, 'linux_independent_keyboard')
             self.assertTrue(any('mode=independent' in row and 'p2=' + NEUTRAL in row
                                 for row in lua.globals().logs.values()))

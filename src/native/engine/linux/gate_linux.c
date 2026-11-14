@@ -445,11 +445,18 @@ static int dt_state(void) {
 /* A site's bytes against its pin; the dt site is compared in its original form
  * when the fixed60 patch (ours or another owner's) is present. */
 #include "player_lifetime_preload_pin.h"
+#include "gate_player_semaphore_original_view.h"
+static int player_cursor_update_original_pin(void);
 static int site_ok(const lx_site *s) {
     unsigned char copy[0x200];
     if(!s) return 0;
     if(s->va == PLP_REPLACE || s->va == PLP_DESTRUCT)
         return player_lifetime_original_pin(s->va, s->length, s->sha256);
+    if (s->va == LX_SEM_RELEASE_VA || s->va == LX_SEM_WAIT_VA || s->va == LX_SEM_TIMED_WAIT_VA)
+        return player_semaphore_original_pin(s->va, s->length, s->sha256);
+    if (s->va == 0x166d020 && s->length == 15106 &&
+        !strcmp(s->sha256, "f5fb3e3afe84b9c4f1ecd7c27088d49e6cf6e84971c2d8af3c05bdba15e4143f") &&
+        !hash_ok(LX(s->va), s->length, s->sha256)) return player_cursor_update_original_pin();
     if(strcmp(s->name,LX_SITE_DT)) return hash_ok(LX(s->va),s->length,s->sha256);
     if(s->length>sizeof(copy)) return 0;
     memcpy(copy,LX(s->va),s->length);
@@ -1021,10 +1028,23 @@ static int lua_start(lua_State *L) {
 #include "gate_player_control_boundary.h"
 #include "gate_player_physics_replay.h"
 #include "gate_player_physics_network.h"
+static int player_view_host_capture_start(void);
+static int player_view_host_capture_seal(uint64_t generation);
+static int player_view_render_capture_start(void);
+static int player_view_render_capture_ui(void);
+static int player_view_render_capture_seal(uint64_t generation);
 #include "gate_stock_keyboard_replay.h"
 #include "gate_player_camera_probe.h"
 #include "gate_player_view_query.h"
+#include "gate_player_cursor_replay.h"
+#include "gate_player_cursor_input_trace.h"
+#include "gate_player_stock_view_fov.h"
+#include "gate_player_input_transaction.h"
+#include "gate_player_space_native.h"
+#include "gate_player_fire_observation.h"
+#include "gate_player_space_backend.h"
 #include "gate_player_view_ancestry.h"
+#include "gate_player_view_component_trace.h"
 #include "gate_player_presentation_probe.h"
 #include "gate_world_created.h"
 #include "gate_world_motion_watch.h"
@@ -1056,6 +1076,11 @@ static int lua_start(lua_State *L) {
 #include "gate_fork_save.h"
 #include "gate_player_presentation_fork.h"
 #include "gate_player_ui_overlay_probe.h"
+#include "gate_player_view_render_capture.h"
+#include "gate_player_view_host_capture_runtime.h"
+#include "gate_player_stock_view_wire_handoff.h"
+#include "gate_player_stock_view_wire_runtime.h"
+#include "gate_player_selection_parity.h"
 #include "gate_weapon_fire.h"
 #include "gate_engine_rng.h"
 #include "gate_build_rng.h"
@@ -1071,6 +1096,8 @@ static int lua_start(lua_State *L) {
 #include "../lockstep_body_mass.h" /* the read-only census, shared with Windows */
 #include "gate_body_mass.h"
 #include "gate_mining_camera.h"
+#include "gate_player_view_xs_adapter.h"
+#include "gate_player_view_xs_readiness.h"
 #include "gate_flight.h"
 #include "gate_battle.h"
 #include "gate_body_step.h"

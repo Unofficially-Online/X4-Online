@@ -1,0 +1,81 @@
+Linux selection-source parity diagnostic (source-only, default off)
+
+Historical implementation contract from 13 November. The bounded integration
+has since advanced; see docs/LINUX-VALIDATION.md for current evidence and limits.
+
+Activation: X4_DEV_SELECTION_PARITY=1, independently enabled on the desired
+local Host/Guest shadow. No CLI or frozen source-version wrapper is modified
+by this change. A future bundle must inventory the two new compiled headers,
+both C fixtures, the Python test, this contract and changed capture sources.
+The existing Shadow flags, finite T40 session and identity admission remain
+required. Malformed activation or missing identity is failure, not absence.
+
+The hook runs after a complete successful observed capture and before its
+output is committed: Guest while the local UI lease is ACTIVE, Host at the
+canonical capture boundary. It changes no chosen target, VIEW flag, FOV,
+wire record or engine field. Only private diagnostic generation state and
+stderr are written. It does not run a native getter or resolver. Resulting
+errno is preserved. Exact writes are required; partial receipts fail capture.
+
+The compared sources are intentionally different:
+  p1_player: authenticated canonical P1 Player+0x6db8.
+  p2_player: authenticated held P2 Player+0x6db8.
+  local_ui: active process-local manager *(0x3dbafd0), entry+0x40,
+            reference at entry+0x50. No name/text is read or printed.
+
+Player reference object starts at +0x6db0; +8 is the runtime handle.
+Known pinned Linux ELF SHA-256:
+113f73d74570084f6ce18a659b365009eccf579fb66dbabb5dad2b1718045f20
+GetPlayerTarget canonical getter 0x1dd0040 length51 SHA-256
+09ccbc4ae147249804838115a870ec1052d7d2f586dab4fc79e30bdf32f004d0
+Reference resolver 0x14bcf00 length179 SHA-256
+6263c530e31d9f895e0b2e036f2131cc42269b2400a58498df4aaabbad1beb7a
+UI GetSofttarget2 0xa45060 length281 SHA-256
+e9732073f43bd1ca97f5316e64fb3eae300143026dd74cf5456d1230d384a06a
+These bytes authenticate the layouts; none of these functions is invoked.
+The resolver can WRITE ZERO on an invalid handle and must not be used here.
+
+Each epoch writes one identity row and exactly three source rows, ordered
+p1_player, p2_player, local_ui. Each source includes an explicit status:
+  absent: verified raw zero (or active UI manager with no entry).
+  valid: nonzero reference, generation/live flags and object runtime agree.
+  invalid: nonzero malformed, nonlive, wrong generation or runtime mismatch.
+  unreadable: a required checked read failed.
+  unavailable: missing registry/UI manager or inactive UI manager.
+  drift: repeated source/registry/identity value changed during observation.
+Mapping is separately none/unavailable/saved/created/unmapped. A valid but
+unmapped nonzero target remains explicit, never converted to absent. The
+saved field uses the sealed saved-ID map; portable additionally uses the
+existing created-object map. An unavailable map produces zero IDs plus its
+explicit mapping status, not a claimed empty selection.
+
+Reads validate and re-read registry group, block, object/runtime and source;
+all three sources are revisited before final authority validation. This is
+bounded drift detection, NOT a lock, atomic three-source snapshot or ABA/
+lifetime exclusion. The existing worker, retained P2, controller/ship and
+local presentation leases remain necessary. Foreign state is never repaired.
+
+Windows pview_sample reads its per-player selected field (+0x6dd0 there) or
+the separately supplied local-slot target. Linux's known Player+0x6db8 and
+UI soft target are not assumed equivalent. Repeated matching observations
+alone do not prove that the UI writes the held P2 field or establish parity
+for every target action/mode. Native reachability and selection changes have
+not been tested by this change. No game or input was launched.
+
+Runner integration (source version 13)
+--------------------------------------
+The bundle flag --player-selection-parity defaults off. It requires at least
+one explicitly enabled Host/Guest VIEW capture shadow, common v1-t40 startup
+and a matched finite independent session of 180..900 frames. Frozen version 13
+contains the diagnostic, fixtures, metadata-pin regression test and Python
+helper even when disabled; versions through 12 delegate without reinterpretation.
+Run validation requires network physics and evidence version 1. The runner
+clears ambient X4_DEV_SELECTION_PARITY, then enables it only for the local role
+whose capture shadow was explicitly enabled.
+
+Postprocessing runs after actual accepted physics and before compaction. It
+binds all identity/source rows to the exact raw stderr SHA256, requires one
+identity plus P1 Player/P2 Player/UI rows per capture generation, checks local
+identity and worker enter/release ordering, and retains explicit source status.
+An accepted diagnostic does not prove source equivalence, rendered output,
+selection policy, VIEW wire replay, or safe long-lived lifecycle operation.

@@ -6,8 +6,31 @@
  * all controller, ship, zone and private-table storage alive until _exit.
  * Each call restores the P1 bank seen at this scope's own entry. This does not
  * exclude other native readers or make shared-state exchange safe for play. */
+static unsigned player_space_slot_state(unsigned slot);
 static uint64_t player_physics_replay_last = FWRR_FIRST_GENERATION;
 static unsigned player_physics_replay_busy;
+
+/* These bytes belong to the local UI, even while the private P2 simulation
+ * bank is temporarily installed. Offsets are relative to PCB main region. */
+#define PLAYER_PHYSICS_LOCAL_CONTROL_OFFSET 0xc0u
+#define PLAYER_PHYSICS_LOCAL_CONTROL_SIZE 8u
+#define PLAYER_PHYSICS_LOCAL_REQUEST_OFFSET 0x109u
+_Static_assert(PCB_VALUE_BYTES > PLAYER_PHYSICS_LOCAL_REQUEST_OFFSET,
+               "physics bank must contain native local control fields");
+
+static void player_physics_copy_local_controls(unsigned char *destination,
+                                               const unsigned char *source) {
+    memcpy(destination + PLAYER_PHYSICS_LOCAL_CONTROL_OFFSET,
+           source + PLAYER_PHYSICS_LOCAL_CONTROL_OFFSET, PLAYER_PHYSICS_LOCAL_CONTROL_SIZE);
+    destination[PLAYER_PHYSICS_LOCAL_REQUEST_OFFSET] = source[PLAYER_PHYSICS_LOCAL_REQUEST_OFFSET];
+}
+
+static int player_physics_local_controls_equal(const unsigned char *first, const unsigned char *second) {
+    return !memcmp(first + PLAYER_PHYSICS_LOCAL_CONTROL_OFFSET,
+                   second + PLAYER_PHYSICS_LOCAL_CONTROL_OFFSET, PLAYER_PHYSICS_LOCAL_CONTROL_SIZE) &&
+        first[PLAYER_PHYSICS_LOCAL_REQUEST_OFFSET] == second[PLAYER_PHYSICS_LOCAL_REQUEST_OFFSET];
+}
+static void player_fire_observation_scope(uint64_t generation);
 
 static unsigned player_physics_replay_input(uint64_t generation) {
     if (generation >= 5 && generation <= 14) return 2;
@@ -28,7 +51,7 @@ static float player_physics_replay_read_input(unsigned char keys[4]) {
     lifecycle_discard_read((uintptr_t)LX(0x3d8da58), &autopilot, sizeof autopilot);
     lifecycle_discard_read((uintptr_t)LX(0x3d8da68), keys, 4);
     lifecycle_discard_read((uintptr_t)LX(0x3d8d9ac), &digital, sizeof digital);
-    lifecycle_discard_require(flight == 1 && enabled == 1 && !ignored && !autopilot && isfinite(digital),
+    lifecycle_discard_require(flight == player_space_slot_state(2) && enabled == 1 && !ignored && !autopilot && isfinite(digital),
                               "physics_replay_input_suppressed");
     return digital;
 }
@@ -82,7 +105,8 @@ static void player_physics_replay_begin_with_input(uint64_t generation,
         player_physics_identity() && !player_physics_replay_busy && !player_physics_upkeep_busy &&
         player_physics_upkeep_calls == 1 && lifecycle_input_pins(), "physics_replay_admission");
     player_physics_replay_busy = 1;
-    unsigned char canonical_bank[PCB_VALUE_BYTES];
+    unsigned char canonical_bank[PCB_VALUE_BYTES], scoped_bank[PCB_VALUE_BYTES];
+    unsigned char local_readback[PCB_VALUE_BYTES];
     input_context_census_sample before = {0}, after = {0};
     const input_context_census_operations operations = {NULL, player_seat_preflight_read};
     player_context_adapter_outside(generation, PLAYER_CONTEXT_FRAME_BEGIN);
@@ -93,13 +117,21 @@ static void player_physics_replay_begin_with_input(uint64_t generation,
     (void)lifecycle_discard_context_collect(&operations, &before);
     lifecycle_discard_require(before.tree_valid, "physics_replay_contexts_before");
 
+    /* A previous P2 epoch may hold stale local UI state. Never publish those
+     * bytes: use this boundary's canonical values in the temporary P2 bank. */
+    memcpy(scoped_bank, player_physics_bank, sizeof scoped_bank);
+    player_physics_copy_local_controls(scoped_bank, canonical_bank);
     lifecycle_routes_assign_player(factory_probe_state.player2);
-    lifecycle_routes_write_bank(player_physics_bank);
+    lifecycle_routes_write_bank(scoped_bank);
+    lifecycle_routes_read_bank(local_readback);
+    lifecycle_discard_require(player_physics_local_controls_equal(local_readback, canonical_bank),
+                              "physics_replay_local_entry_drift");
     lifecycle_discard_require(player_routes_enter(&player_physics_routes.routes) &&
         player_physics_identity_for(1) &&
         (uintptr_t)((void *(*)(void))LX(0x1dd0270))() == player_physics_zone,
         "physics_replay_scope_enter");
 
+    player_fire_observation_scope(generation);
     update_input(context);
     lifecycle_discard_require(player_recurring_physics_entered() && player_physics_identity_for(1) &&
         (uintptr_t)((void *(*)(void))LX(0x1dd0270))() == player_physics_zone,
@@ -108,9 +140,14 @@ static void player_physics_replay_begin_with_input(uint64_t generation,
     lifecycle_discard_require(route_compare_snapshot(&player_physics_routes, &snapshot),
                               "physics_replay_route_snapshot");
     lifecycle_routes_read_bank(player_physics_bank);
+    lifecycle_discard_require(player_physics_local_controls_equal(player_physics_bank, canonical_bank),
+                              "physics_replay_local_scope_drift");
     lifecycle_discard_require(player_routes_leave(&player_physics_routes.routes, snapshot),
                               "physics_replay_routes_leave");
     lifecycle_routes_write_bank(canonical_bank);
+    lifecycle_routes_read_bank(local_readback);
+    lifecycle_discard_require(player_physics_local_controls_equal(local_readback, canonical_bank),
+                              "physics_replay_local_restore_drift");
     lifecycle_routes_assign_player(factory_probe_player1);
     (void)lifecycle_discard_context_collect(&operations, &after);
     lifecycle_discard_require(player_physics_identity() && after.tree_valid &&

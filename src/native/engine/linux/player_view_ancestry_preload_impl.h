@@ -3,12 +3,18 @@
 #include <sys/uio.h>
 #include "player_view_ancestry_preload.h"
 #include "gate_world_classes.h"
+#include "player_stock_view_policy_guard.h"
+#include "player_stock_view_precompare_preload.h"
 
 /* These exact calls have no source arguments. Their enclosing methods retain
  * the component in RBX (weapon) and R12 (engine), respectively. */
 static uint64_t (*view_ancestry_originals[2])(void) = {
     (uint64_t (*)(void))0x1d6b1c0u, (uint64_t (*)(void))0x1e07020u
 };
+static _Atomic unsigned view_precompare_active, view_precompare_inflight;
+static _Thread_local unsigned view_precompare_depth;
+static player_stock_view_precompare_policy view_precompare_policy;
+static uintptr_t (*view_precompare_original)(void) = (uintptr_t (*)(void))0x1dd81c0u;
 static _Atomic unsigned view_ancestry_active;
 static _Atomic uint64_t view_ancestry_foreign[VIEW_ANCESTRY_SITES];
 static uint32_t view_ancestry_owner;
@@ -18,6 +24,10 @@ static unsigned view_ancestry_candidate_ordinal[VIEW_ANCESTRY_SITES];
 static view_ancestry_snapshot view_ancestry_capture;
 static unsigned view_ancestry_installed;
 static view_ancestry_info view_ancestry_information;
+static int view_precompare_owned(void);
+static void view_component_precompare_observe(uintptr_t object, uintptr_t ancestor, uintptr_t result);
+static void view_component_trace_observe(unsigned site, uintptr_t object, uintptr_t engine_ancestor);
+static int view_component_trace_advance(uint64_t generation);
 
 /* Preserves the exact native ship prologue and supplies unwind state for it. */
 #if !defined(VIEW_ANCESTRY_TEST) || defined(VIEW_ANCESTRY_SYNTHETIC)
@@ -34,6 +44,11 @@ __asm__(".text\n"
         ".hidden view_ancestry_ship_original_end\nview_ancestry_ship_original_end:\n");
 #endif
 __asm__(".text\n"
+        ".hidden view_precompare_bridge\n"
+        ".type view_precompare_bridge,@function\n"
+        "view_precompare_bridge:\n.cfi_startproc\nmov %r12,%rdi\nmov %rbx,%rsi\n"
+        "jmp view_precompare_dispatch\n.cfi_endproc\n"
+        ".size view_precompare_bridge,.-view_precompare_bridge\n"
         ".hidden view_ancestry_weapon_bridge\n"
         ".type view_ancestry_weapon_bridge,@function\n"
         "view_ancestry_weapon_bridge:\n.cfi_startproc\nmov %rbx,%rdi\n"
@@ -41,13 +56,14 @@ __asm__(".text\n"
         ".size view_ancestry_weapon_bridge,.-view_ancestry_weapon_bridge\n"
         ".hidden view_ancestry_engine_bridge\n"
         ".type view_ancestry_engine_bridge,@function\n"
-        "view_ancestry_engine_bridge:\n.cfi_startproc\nmov %r12,%rdi\n"
+        "view_ancestry_engine_bridge:\n.cfi_startproc\nmov %r12,%rdi\nmov %rbx,%rsi\n"
         "jmp view_ancestry_engine_dispatch\n.cfi_endproc\n"
         ".size view_ancestry_engine_bridge,.-view_ancestry_engine_bridge\n");
 extern uint64_t view_ancestry_ship_original(void *, void *) __attribute__((visibility("hidden")));
 #if !defined(VIEW_ANCESTRY_TEST) || defined(VIEW_ANCESTRY_SYNTHETIC)
 extern const unsigned char view_ancestry_ship_original_end[] __attribute__((visibility("hidden")));
 #endif
+extern void view_precompare_bridge(void) __attribute__((visibility("hidden")));
 extern void view_ancestry_weapon_bridge(void) __attribute__((visibility("hidden")));
 extern void view_ancestry_engine_bridge(void) __attribute__((visibility("hidden")));
 
@@ -131,25 +147,57 @@ static int view_ancestry_admit(unsigned site) {
     ++view_ancestry_capture.sites[site].started;
     return 1;
 }
+__attribute__((visibility("hidden"), noinline)) uintptr_t view_precompare_dispatch(uintptr_t object, uintptr_t ancestor) {
+    int before = errno;
+    unsigned active = stock_view_policy_enter(&view_precompare_active, &view_precompare_inflight);
+    if (active && (view_precompare_depth++ || !view_precompare_owned())) _exit(223);
+    errno = before;
+    uintptr_t result = view_precompare_original();
+    int saved = errno;
+    view_component_precompare_observe(object, ancestor, result);
+    if (active) {
+        uintptr_t routed = result;
+        if (!view_precompare_policy(object, ancestor, result, &routed)) _exit(223);
+        result = routed;
+        --view_precompare_depth;
+    }
+    stock_view_policy_leave(&view_precompare_inflight);
+    errno = saved;
+    return result;
+}
 __attribute__((visibility("hidden"), noinline)) uint64_t view_ancestry_weapon_dispatch(void *object) {
     int before = errno;
+#ifdef VIEW_ANCESTRY_SHARED_COMPONENT
+    unsigned component_active = stock_view_component_enter();
+#endif
     int admitted = view_ancestry_admit(0);
     if (admitted) view_ancestry_record(0, (uintptr_t)object, 0);
+    view_component_trace_observe(0, (uintptr_t)object, 0);
     errno = before;
     uint64_t result = view_ancestry_originals[0]();
     int after = errno;
     if (admitted) ++view_ancestry_capture.sites[0].returned;
+#ifdef VIEW_ANCESTRY_SHARED_COMPONENT
+    result = stock_view_component_finish(component_active, 0, (uintptr_t)object, result);
+#endif
     errno = after;
     return result;
 }
-__attribute__((visibility("hidden"), noinline)) uint64_t view_ancestry_engine_dispatch(void *object) {
+__attribute__((visibility("hidden"), noinline)) uint64_t view_ancestry_engine_dispatch(void *object, uintptr_t engine_ancestor) {
     int before = errno;
+#ifdef VIEW_ANCESTRY_SHARED_COMPONENT
+    unsigned component_active = stock_view_component_enter();
+#endif
     int admitted = view_ancestry_admit(1);
     if (admitted) view_ancestry_record(1, (uintptr_t)object, 0);
+    view_component_trace_observe(1, (uintptr_t)object, engine_ancestor);
     errno = before;
     uint64_t result = view_ancestry_originals[1]();
     int after = errno;
     if (admitted) ++view_ancestry_capture.sites[1].returned;
+#ifdef VIEW_ANCESTRY_SHARED_COMPONENT
+    result = stock_view_component_finish(component_active, 1, (uintptr_t)object, result);
+#endif
     errno = after;
     return result;
 }
@@ -163,6 +211,30 @@ __attribute__((noinline)) static uint64_t view_ancestry_ship_dispatch(void *obje
     if (admitted) ++view_ancestry_capture.sites[2].returned;
     errno = after;
     return result;
+}
+/* The pin provider performs full composite image authentication; this
+ * resident bind additionally checks both owned callwords and original slot at
+ * the binding boundary. No patch is installed or removed here. */
+static int view_precompare_owned(void) {
+    const view_ancestry_info *info = &view_ancestry_information;
+    return view_ancestry_installed && info->version == VIEW_ANCESTRY_VERSION && info->installed == 1 &&
+        info->pre_enabled == 1 && info->pre_block == 0x177f9a0u &&
+        info->blocks[1] == 0x177f9c0u && info->pre_original_target == 0x1dd81c0u &&
+        info->pre_original_slot == (uintptr_t)&view_precompare_original &&
+        (uintptr_t)view_precompare_original == info->pre_original_target &&
+        __atomic_load_n((uint64_t *)info->pre_block, __ATOMIC_SEQ_CST) == info->pre_patched_word &&
+        __atomic_load_n((uint64_t *)info->blocks[1], __ATOMIC_SEQ_CST) == info->patched_words[1];
+}
+EXPORT int x4mp_stock_view_precompare_bind(player_stock_view_precompare_policy policy) {
+    if (!policy || !view_precompare_owned() ||
+        !stock_view_policy_begin_bind(&view_precompare_active, &view_precompare_inflight)) return 0;
+    if (!view_precompare_owned()) {
+        atomic_store_explicit(&view_precompare_active, 0, memory_order_seq_cst);
+        return 0;
+    }
+    view_precompare_policy = policy;
+    atomic_store_explicit(&view_precompare_active, 1, memory_order_seq_cst);
+    return 1;
 }
 EXPORT int x4mp_view_ancestry_info(view_ancestry_info *out) {
     if (!out || !view_ancestry_installed) return 0;
@@ -186,6 +258,7 @@ EXPORT int x4mp_view_ancestry_tick(uint64_t generation) {
     for (unsigned site = 0; site < VIEW_ANCESTRY_SITES; ++site) {
         if (view_ancestry_capture.sites[site].started != view_ancestry_capture.sites[site].returned) return 0;
     }
+    if (!view_component_trace_advance(generation)) return 0;
     view_ancestry_generation = generation;
     return 1;
 }
@@ -204,7 +277,7 @@ EXPORT int x4mp_view_ancestry_finish(view_ancestry_snapshot *out) {
 }
 /* All executable edits are pre-main and terminal on any partial failure. */
 #if !defined(VIEW_ANCESTRY_TEST) || defined(VIEW_ANCESTRY_SYNTHETIC)
-static unsigned char view_ancestry_frames[VIEW_ANCESTRY_SITES][48] __attribute__((aligned(8)));
+static unsigned char view_ancestry_frames[VIEW_ANCESTRY_SITES + 1][48] __attribute__((aligned(8)));
 static int view_ancestry_install(void) {
     static const uintptr_t blocks[] = {0x1113338u, 0x177f9c0u, 0x129bad0u};
     static const unsigned offsets[] = {1, 0, 0};
@@ -212,6 +285,13 @@ static int view_ancestry_install(void) {
         UINT64_C(0x835b00c57e82e818), UINT64_C(0x75c0840068765be8),
         UINT64_C(0xfd89485554415541)
     };
+    const char *pre = getenv("X4_DEV_VIEW_PRECOMPARE_TRACE");
+    if (pre && (strcmp(pre, "1") || !getenv("X4_DEV_VIEW_COMPONENT_TRACE") ||
+                strcmp(getenv("X4_DEV_VIEW_COMPONENT_TRACE"), "1"))) return 0;
+    const uintptr_t pre_block = 0x177f9a0u;
+    const uint64_t pre_word = UINT64_C(0x4800658819e80c24);
+    if (pre && (!is_rx(pre_block) || __atomic_load_n((uint64_t *)pre_block, __ATOMIC_SEQ_CST) != pre_word ||
+        !ui_code_matches(0x1dd81c0u, 85, "a0437b5716ca6a2143d11a0d25f75fb3ca04342de8588818d339ca512e75c4a6"))) return 0;
     if (!single_thread() ||
         !ui_code_matches(0x11132d0u, 133, "48dd904179d64a8b5f75a87b5b989a3f7c215342c71ac5132f07b7b86b8d3b58") ||
         !ui_code_matches(0x1113360u, 76, "5798f27c36fee251792a259c2e5b74ba1e647907ea96fb177bcccb73b8535fdc") ||
@@ -241,6 +321,17 @@ static int view_ancestry_install(void) {
         memcpy(&replacements[site], bytes, sizeof bytes);
         if (!register_frame_for_entry(at, view_ancestry_frames[site])) return 0;
     }
+    uint64_t pre_replacement = 0;
+    if (pre) {
+        uintptr_t at = (uintptr_t)(page + VIEW_ANCESTRY_SITES * 16u);
+        emit_entry_stub((unsigned char *)at, (uintptr_t)view_precompare_bridge);
+        int64_t displacement = (int64_t)at - (int64_t)(pre_block + 7);
+        if (displacement < INT32_MIN || displacement > INT32_MAX) return 0;
+        unsigned char bytes[8]; memcpy(bytes, &pre_word, 8);
+        bytes[2] = 0xe8; int32_t relative = (int32_t)displacement;
+        memcpy(bytes + 3, &relative, 4); memcpy(&pre_replacement, bytes, 8);
+        if (!register_frame_for_entry(at, view_ancestry_frames[VIEW_ANCESTRY_SITES])) return 0;
+    }
     if (mprotect(page, PVQ_PAGE, PROT_READ | PROT_EXEC) || !is_rx((uintptr_t)page) || !single_thread()) return 0;
     for (unsigned site = 0; site < VIEW_ANCESTRY_SITES; ++site) {
         uintptr_t base = blocks[site] & ~(uintptr_t)(PVQ_PAGE - 1);
@@ -250,6 +341,24 @@ static int view_ancestry_install(void) {
                                          __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST)) return 0;
         __builtin___clear_cache((char *)blocks[site], (char *)blocks[site] + 8);
         if (mprotect((void *)base, PVQ_PAGE, PROT_READ | PROT_EXEC) || !is_rx(blocks[site])) return 0;
+    }
+    if (pre) {
+        uintptr_t base = pre_block & ~(uintptr_t)(PVQ_PAGE - 1);
+        uint64_t expected = pre_word;
+        if (mprotect((void *)base, PVQ_PAGE, PROT_READ | PROT_WRITE | PROT_EXEC) ||
+            !__atomic_compare_exchange_n((uint64_t *)pre_block, &expected, pre_replacement, 0,
+                                         __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST)) return 0;
+        __builtin___clear_cache((char *)pre_block, (char *)pre_block + 8);
+        if (mprotect((void *)base, PVQ_PAGE, PROT_READ | PROT_EXEC) || !is_rx(pre_block)) return 0;
+        view_ancestry_information.pre_enabled = 1;
+        view_ancestry_information.pre_block = pre_block;
+        view_ancestry_information.pre_stub = (uintptr_t)(page + VIEW_ANCESTRY_SITES * 16u);
+        view_ancestry_information.pre_dispatch = (uintptr_t)view_precompare_bridge;
+        view_ancestry_information.pre_frame = (uintptr_t)view_ancestry_frames[VIEW_ANCESTRY_SITES];
+        view_ancestry_information.pre_original_slot = (uintptr_t)&view_precompare_original;
+        view_ancestry_information.pre_original_target = (uintptr_t)view_precompare_original;
+        view_ancestry_information.pre_original_word = pre_word;
+        view_ancestry_information.pre_patched_word = pre_replacement;
     }
     view_ancestry_information.version = VIEW_ANCESTRY_VERSION;
     view_ancestry_information.installed = 1;
@@ -276,4 +385,5 @@ static int view_ancestry_install(void) {
     return 1;
 }
 #endif /* VIEW_ANCESTRY_TEST */
+#include "player_view_component_trace_preload_impl.h"
 #endif

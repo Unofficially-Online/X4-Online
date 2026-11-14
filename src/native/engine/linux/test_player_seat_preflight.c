@@ -1,10 +1,24 @@
 /* Fake owned Player objects and registry only; never launches/calls X4. */
 #include <assert.h>
 #include <limits.h>
+#include <pthread.h>
 #include <stdatomic.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+#include "player_startup_phases.h"
+
+/* Match the real default startup schedule, rather than a fixture-only epoch. */
+static const player_startup_phases *player_startup(void) {
+    static player_startup_phases phase;
+    static int initialized;
+    if (!initialized) {
+        assert(player_startup_phases_parse(NULL, &phase));
+        initialized = 1;
+    }
+    return &phase;
+}
+
 #define WORLD_IDENTITY_CAPACITY 8u
 #define LX_COMPONENT_MAP_VA 0x3daa860u
 #define LX_FIND_VA 0xa68df0u
@@ -38,6 +52,11 @@ typedef void *(*lxw_find_fn)(void *, uint64_t, unsigned, unsigned);
 static world_identity_entry import_entries[WORLD_IDENTITY_CAPACITY];
 static world_identity_entry *world_identities = import_entries;
 static unsigned world_identity_sealed;
+static int world_identity_installed = 1, world_identity_seal_generation_exhausted;
+static int world_identity_seal_admitted = 1;
+static int64_t world_identity_count = 1, world_identity_failures;
+static uint64_t world_identity_seal_generation = 2;
+static pthread_mutex_t lxw_insert_lock = PTHREAD_MUTEX_INITIALIZER;
 static void **world_component_map;
 static lxw_find_fn world_find;
 static struct {
@@ -60,6 +79,7 @@ static unsigned factory_probe_thunk_permission_pending;
 static atomic_uint factory_probe_scope, factory_probe_wrapper_depth;
 static unsigned joined_boundary, worker_boundary, accepted_ui, valid_pins, valid_identity;
 static unsigned canonical_calls, resolve_calls, change_target, change_canonical, change_position;
+static unsigned change_seal_during_find;
 static unsigned reads, forbidden_reads, pin_calls;
 static uintptr_t unreadable;
 static unsigned char player1[0x6ac0], player2[0x6ac0];
@@ -114,8 +134,8 @@ static int factory_probe_object(uintptr_t player, uintptr_t macro, uint64_t *run
 }
 static uint64_t world_identity_lookup(uint64_t runtime) {
     for (unsigned index = 0; index < WORLD_IDENTITY_CAPACITY; ++index) {
-        if (import_entries[index].runtime == runtime) {
-            return import_entries[index].saved;
+        if (world_identities[index].runtime == runtime) {
+            return world_identities[index].saved;
         }
     }
     return 0;
@@ -123,6 +143,7 @@ static uint64_t world_identity_lookup(uint64_t runtime) {
 static void *fake_find(void *map, uint64_t runtime, unsigned mode, unsigned flags) {
     assert(map == &registry && runtime == 9001 && mode == 4 && flags == 0);
     ++resolve_calls;
+    if (change_seal_during_find) ++world_identity_seal_generation;
     return change_target && resolve_calls == 2 ? target_replaced : target;
 }
 static void p_lua_pushnil(lua_State *state) {
@@ -317,6 +338,46 @@ int main(int argc, char **argv) {
     assert(argc == 2);
     setup();
     const char *scenario = argv[1];
+    if (!strncmp(scenario, "cache_", 6)) {
+        uintptr_t object = 0;
+        uint64_t runtime = 0;
+        assert(player_seat_preflight_resolve(NULL, SEAT_PREFLIGHT_TARGET_SAVED, &object, &runtime));
+        assert(object == (uintptr_t)target && runtime == 9001 && resolve_calls == 1);
+        assert(player_seat_target_cache.initialized && player_seat_target_cache.runtime == 9001);
+        world_identity_entry replacement[WORLD_IDENTITY_CAPACITY];
+        memcpy(replacement, import_entries, sizeof(replacement));
+        if (!strcmp(scenario, "cache_fresh_object")) {
+            change_target = 1;
+            assert(player_seat_preflight_resolve(NULL, SEAT_PREFLIGHT_TARGET_SAVED, &object, &runtime));
+            assert(object == (uintptr_t)target_replaced && runtime == 9001 && resolve_calls == 2);
+            return 0;
+        } else if (!strcmp(scenario, "cache_generation")) {
+            ++world_identity_seal_generation;
+        } else if (!strcmp(scenario, "cache_unsealed")) {
+            world_identity_sealed = 0;
+        } else if (!strcmp(scenario, "cache_replaced_table")) {
+            world_identities = replacement;
+        } else if (!strcmp(scenario, "cache_count")) {
+            ++world_identity_count;
+        } else if (!strcmp(scenario, "cache_failures")) {
+            world_identity_failures = 1;
+        } else if (!strcmp(scenario, "cache_restored")) {
+            world_identity_installed = 0;
+        } else if (!strcmp(scenario, "cache_restore_started")) {
+            world_identity_seal_admitted = 0;
+        } else if (!strcmp(scenario, "cache_entry_drift")) {
+            import_entries[3].runtime = 9002;
+        } else if (!strcmp(scenario, "cache_saved_drift")) {
+            import_entries[3].saved = 0x123;
+        } else if (!strcmp(scenario, "cache_exhausted")) {
+            world_identity_seal_generation_exhausted = 1;
+        } else {
+            assert(!"unknown cache scenario");
+        }
+        assert(!player_seat_preflight_resolve(NULL, SEAT_PREFLIGHT_TARGET_SAVED, &object, &runtime));
+        assert(!object && !runtime && resolve_calls == 1);
+        return 0;
+    }
     if (!strcmp(scenario, "off")) {
         player_seat_preflight_requested = 0;
         assert(player_seat_preflight_after_join());
@@ -457,6 +518,24 @@ int main(int argc, char **argv) {
         import_entries[3].saved = 0;
     } else if (!strcmp(scenario, "target_duplicate")) {
         import_entries[4] = import_entries[3];
+        world_identity_count = 2;
+    } else if (!strcmp(scenario, "target_duplicate_different_runtime")) {
+        import_entries[4] = (world_identity_entry){9002, SEAT_PREFLIGHT_TARGET_SAVED};
+        world_identity_count = 2;
+    } else if (!strcmp(scenario, "target_count_invalid")) {
+        world_identity_count = WORLD_IDENTITY_CAPACITY;
+    } else if (!strcmp(scenario, "target_count_zero")) {
+        world_identity_count = 0;
+    } else if (!strcmp(scenario, "target_count_negative")) {
+        world_identity_count = -1;
+    } else if (!strcmp(scenario, "target_restore_started")) {
+        world_identity_seal_admitted = 0;
+    } else if (!strcmp(scenario, "target_generation_during_find")) {
+        change_seal_during_find = 1;
+    } else if (!strcmp(scenario, "target_population_mismatch")) {
+        world_identity_count = 2;
+    } else if (!strcmp(scenario, "target_zero_runtime")) {
+        import_entries[3].runtime = 0;
     } else if (!strcmp(scenario, "target_wrong_vtable")) {
         set_pointer(target, 0, 0x111111);
     } else if (!strcmp(scenario, "target_wrong_runtime")) {

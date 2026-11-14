@@ -17,6 +17,7 @@
 #include "../lockstep_sha256.h"
 #include "player_view_query_preload.h"
 #include "player_ui_session_budget.h"
+#include "player_view_rewrite_config.h"
 #include "player_live_pose_preload.h"
 #define EXPORT __attribute__((visibility("default")))
 #define PVQ_PAGE 4096u
@@ -77,6 +78,8 @@ static void (*game_render_original)(void *);
 static _Thread_local unsigned game_render_depth;
 static _Thread_local unsigned camera_refill_depth;
 static unsigned camera_refill_completed;
+static _Thread_local unsigned projection_fov_depth;
+static unsigned projection_fov_completed;
 static void game_render_dispatch(void *object) {
     int before = errno;
     unsigned state = atomic_load_explicit(&game_render_binding, memory_order_acquire);
@@ -547,6 +550,13 @@ static int register_entry_frame(uintptr_t start) {
 
 #include "player_live_pose_preload_impl.h"
 #include "player_camera_refill_preload_impl.h"
+#include "player_projection_fov_scope_preload_impl.h"
+#ifndef PLAYER_VIEW_QUERY_TEST
+#include "player_stock_view_fov_preload_impl.h"
+#include "player_view_render_fov_observer_impl.h"
+#include "player_view_xs_preload_impl.h"
+#endif
+#include "player_cursor_preload_impl.h"
 
 /* The two slots share a RELRO page. All pins are checked before changing
  * protection; a failure is terminal in the pre-main disposable process. */
@@ -557,7 +567,15 @@ static int ui_code_matches(uintptr_t address, size_t length, const char *sha) {
     return digest_matches(digest, sha);
 }
 
+#ifndef PLAYER_VIEW_QUERY_TEST
+#include "player_stock_view_component_preload_impl.h"
+#define VIEW_ANCESTRY_SHARED_COMPONENT
+#endif
 #include "player_view_ancestry_preload_impl.h"
+#ifndef PLAYER_VIEW_QUERY_TEST
+#include "player_stock_view_ship_preload_impl.h"
+#include "player_stock_view_shared_install.h"
+#endif
 
 static int install_ui_slot_pair(uintptr_t first, uintptr_t second,
                                 const uintptr_t expected_slots[2],
@@ -634,8 +652,23 @@ __attribute__((constructor)) static void player_view_query_install(void) {
             getenv("X4_DEV_UI_SEAT_QUERY"), getenv("X4_DEV_UI_SEAT_CORRECTION"),
             getenv("X4_DEV_UI_OVERLAY"), getenv("X4_DEV_UI_OVERLAY_EIGHT"),
             getenv("X4_DEV_UI_OVERLAY_160"))) refuse();
+    const char *xs_view = getenv("X4_DEV_VIEW_XS");
+    const char *projection = getenv("X4_DEV_UI_PROJECTION_FOV_SCOPE");
+    const char *view_observe = getenv("X4_DEV_STOCK_VIEW_FOV_OBSERVE");
+    const char *view_rewrite = getenv("X4_DEV_STOCK_VIEW_FOV");
+    const char *render_fov = getenv("X4_DEV_RENDER_FOV_OBSERVE");
+    const player_view_rewrite_config rewrite_config = {
+        .rewrite = view_rewrite, .observe = view_observe,
+        .shared = getenv("X4_DEV_STOCK_VIEW_SHARED"), .component = getenv("X4_DEV_STOCK_VIEW_COMPONENT_POLICY"),
+        .xs = xs_view, .ancestry = getenv("X4_DEV_VIEW_ANCESTRY"),
+        .component_trace = getenv("X4_DEV_VIEW_COMPONENT_TRACE"), .precompare_trace = getenv("X4_DEV_VIEW_PRECOMPARE_TRACE"),
+        .cursor = getenv("X4_DEV_PLAYER_CURSOR"), .focus = getenv("X4_DEV_PLAYER_FOCUS"),
+        .startup_version = preload_startup.version, .session_frames = preload_session_budget.frames,
+    };
+    if (!player_view_rewrite_config_valid(&rewrite_config)) refuse();
     if (!enabled) {
-        if (getenv("X4_DEV_VIEW_ANCESTRY") || getenv("X4MP_UI_CALLBACK_OBSERVER") || getenv("X4_DEV_UI_LIVE_POSE_OBSERVER") ||
+        if (view_observe || view_rewrite || render_fov || projection || xs_view) refuse();
+        if (getenv("X4_DEV_VIEW_PRECOMPARE_TRACE") || getenv("X4_DEV_STOCK_VIEW_SHARED") || getenv("X4_DEV_PLAYER_CURSOR") || getenv("X4_DEV_VIEW_ANCESTRY") || getenv("X4MP_UI_CALLBACK_OBSERVER") || getenv("X4_DEV_UI_LIVE_POSE_OBSERVER") ||
             getenv("X4_DEV_UI_RENDER_LEASE")) refuse();
         return;
     }
@@ -645,6 +678,8 @@ __attribute__((constructor)) static void player_view_query_install(void) {
     unsigned char digest[32];
     lockstep_sha256((const void *)PVQ_ENTRY, 0x53, digest);
     if (!digest_matches(digest, function_sha)) refuse();
+    if (render_fov && (strcmp(render_fov, "1") || !preload_session_budget.frames ||
+                       !install_render_fov_observer())) refuse();
     const char *ui_enabled = getenv("X4MP_UI_CALLBACK_OBSERVER");
     if (ui_enabled && (strcmp(ui_enabled, "1") || !install_ui_callbacks())) refuse();
     const char *render_lease = getenv("X4_DEV_UI_RENDER_LEASE");
@@ -658,10 +693,27 @@ __attribute__((constructor)) static void player_view_query_install(void) {
          (!getenv("X4_DEV_UI_OVERLAY_160") || strcmp(getenv("X4_DEV_UI_OVERLAY_160"), "1"))) ||
         (preload_session_budget.frames && !render_lease) || !install_live_pose())) refuse();
     const char *ancestry = getenv("X4_DEV_VIEW_ANCESTRY");
-    if (ancestry && (strcmp(ancestry, "1") || !view_ancestry_install())) refuse();
+    const char *precompare = getenv("X4_DEV_VIEW_PRECOMPARE_TRACE");
+    if (precompare && (strcmp(precompare, "1") || !ancestry || strcmp(ancestry, "1") ||
+        !getenv("X4_DEV_VIEW_COMPONENT_TRACE") || strcmp(getenv("X4_DEV_VIEW_COMPONENT_TRACE"), "1"))) refuse();
+    const char *shared = getenv("X4_DEV_STOCK_VIEW_SHARED");
+    if (shared && (strcmp(shared, "1") || !ancestry || strcmp(ancestry, "1"))) refuse();
+    if (ancestry && (strcmp(ancestry, "1") ||
+        !(shared ? install_stock_view_shared() : view_ancestry_install()))) refuse();
     const char *camera_refill = getenv("X4_DEV_UI_CAMERA_REFILL");
     if (camera_refill && (strcmp(camera_refill, "1") || !render_lease || !live_pose ||
         !getenv("X4_DEV_UI_SEAT_CORRECTION") || !install_camera_refill())) refuse();
+    if (xs_view && (strcmp(xs_view, "1") || !shared || strcmp(shared, "1") ||
+                    !preload_session_budget.frames || !install_view_xs())) refuse();
+    if (projection && (strcmp(projection, "1") || !camera_refill || strcmp(camera_refill, "1") ||
+        !render_fov || strcmp(render_fov, "1") || !preload_session_budget.frames ||
+        !install_projection_fov_scope())) refuse();
+    if ((view_observe || view_rewrite) && ((view_observe && strcmp(view_observe, "1")) ||
+        preload_startup.version != 1 || !preload_session_budget.frames || !install_stock_view_fov())) refuse();
+    const char *cursor = getenv("X4_DEV_PLAYER_CURSOR");
+    if (cursor && (strcmp(cursor, "1") || !preload_startup.version ||
+                   !getenv("X4_DEV_PLAYER_FOCUS") || strcmp(getenv("X4_DEV_PLAYER_FOCUS"), "1") ||
+                   !cursor_install_before_main())) refuse();
     unsigned char *page = allocate_near();
     if (!page) refuse();
     memset(page, 0xcc, PVQ_PAGE);
@@ -687,7 +739,19 @@ __attribute__((constructor)) static void player_view_query_install(void) {
         .entry_stub_size = 14, .original_trampoline_size = 26,
         .entry_frame_size = sizeof entry_frame, .page_size = PVQ_PAGE,
     };
+    if (view_rewrite) {
+        static const char rewrite_active[] = "X4 STOCK VIEW FOV PRELOAD ACTIVE version=1 mode=rewrite\n";
+        (void)write(2, rewrite_active, sizeof rewrite_active - 1);
+    }
+    if (view_observe) {
+        static const char observed[] = "X4 STOCK VIEW FOV PRELOAD ACTIVE version=1 mode=observe\n";
+        (void)write(2, observed, sizeof observed - 1);
+    }
     static const char active[] = "X4 VIEW QUERY PRELOAD ACTIVE version=1\n";
     (void)write(2, active, sizeof active - 1);
+    if (cursor) {
+        static const char cursor_active[] = "X4 CURSOR PRELOAD ACTIVE version=1\n";
+        if (write(2, cursor_active, sizeof cursor_active - 1) != sizeof cursor_active - 1) refuse();
+    }
 }
 #endif

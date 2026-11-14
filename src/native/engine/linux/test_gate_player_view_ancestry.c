@@ -37,6 +37,8 @@ static void *fake_lx(uintptr_t value) {
 }
 #define LX(value) fake_lx(value)
 static int player_recurring_physics_entered(void) { return 1; }
+static void view_component_trace_gate_begin(uint64_t generation) { (void)generation; }
+static void view_component_trace_gate_finish(uint64_t generation) { (void)generation; }
 static int player_physics_identity(void) { return fake_identity; }
 static int factory_probe_singleton(uintptr_t value) { return value == (uintptr_t)player; }
 static int gate_tls_worker(void *value) { return value != NULL; }

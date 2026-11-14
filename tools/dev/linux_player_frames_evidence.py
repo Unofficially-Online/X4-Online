@@ -62,6 +62,8 @@ THROTTLE_MEMBER = re.compile(r'throttle_member=(before|applied|updated) tick=(\d
 STAGE = re.compile(r'stage=(entered|before_singleton|after_singleton|before_take|after_take) '
                    r'tick=(\d+) thread=(\d+)')
 FIRST_INPUT = re.compile(r'input=(press|release) id=2 state=([01]) keys=([01]{4}) digital=(' + NUMBER + ')')
+SEMAPHORE_CHECKPOINT = re.compile(r'X4LAN SEMAPHORE OBSERVER CHECKPOINT tick=([1-9][0-9]{0,19}) '
+                                   r'owner=([1-9][0-9]{0,9}) main_parked=1 complete=1\n')
 READY = re.compile(r'physics=ready generation=(\d+) main_parked=1')
 
 FIRST_EVENTS = [
@@ -416,7 +418,7 @@ def validate_frame_state(frame, initial, canonical, taken, baseline_bodies, anch
     return errors
 
 
-def parse_recurring_physics_evidence(lines, stderr_lines, returncode, *, frame_count, input_mode="scripted", allow_camera=False, allow_throttle=False, throttle_start_tick=5, presentation_slot=None, session_frames=0, startup=None):
+def parse_recurring_physics_evidence(lines, stderr_lines, returncode, *, frame_count, input_mode="scripted", allow_camera=False, allow_throttle=False, throttle_start_tick=5, presentation_slot=None, session_frames=0, startup=None, allow_semaphore_checkpoint=False):
     errors, frames, blocks = [], [], []
     from linux_player_startup_phases import startup_phases
     try:
@@ -431,6 +433,9 @@ def parse_recurring_physics_evidence(lines, stderr_lines, returncode, *, frame_c
             (not allow_throttle and throttle_start_tick != 5)):
         return {'pass': False, 'errors': ['invalid input_mode'], 'frames': [], 'movement_proven': False,
                 'restored': False, 'resumed': False, 'other_threads_excluded': False}
+    if (type(allow_semaphore_checkpoint) is not bool or
+            (allow_semaphore_checkpoint and (input_mode != 'network' or startup != 'v1-t40' or not session_frames))):
+        return {'pass': False, 'errors': ['invalid semaphore checkpoint admission'], 'frames': []}
     maximum = 600 if input_mode == 'network' else 180
     if session_frames:
         from linux_ui_session_budget import session_budget
@@ -467,7 +472,24 @@ def parse_recurring_physics_evidence(lines, stderr_lines, returncode, *, frame_c
     current_tick, current_lines, saw_final = None, [], False
     camera_rows, receipt, receipt_count = [], None, 0
     active_anchor = None
+    semaphore_checkpoint = None
+    checkpoint_count = 0
     for line_number, line in enumerate(lines, 1):
+        if 'X4LAN SEMAPHORE OBSERVER CHECKPOINT' in line and allow_semaphore_checkpoint:
+            checkpoint_count += 1
+            match = SEMAPHORE_CHECKPOINT.fullmatch(line)
+            final_tick = phase['apply'] + frame_count - 1
+            if (not match or checkpoint_count != 1 or current_tick != final_tick or saw_final or
+                    int(match[1]) != final_tick or int(match[2]) > 0xffffffff or
+                    not current_lines or not UPKEEP.fullmatch(current_lines[-1][len(PREFIX):-1]) or
+                    'stage=leave ' not in current_lines[-1] or
+                    line_number == len(lines) or
+                    not lines[line_number].startswith(PREFIX + 'snapshot=physics_end ')):
+                errors.append('malformed, duplicate or misplaced semaphore checkpoint')
+            else:
+                semaphore_checkpoint = {'tick': int(match[1]), 'owner_os_tid': int(match[2]),
+                                        'main_parked': True, 'complete': True}
+            continue
         if line.startswith('X4LAN CAMERA'):
             if not camera_rows and (not current_lines or not current_lines[-1].startswith(PREFIX + 'physics=upkeep stage=leave ')):
                 errors.append('camera transition outside tick 6 upkeep/end boundary')
@@ -541,6 +563,8 @@ def parse_recurring_physics_evidence(lines, stderr_lines, returncode, *, frame_c
             errors.append('record outside a framed block')
         else:
             current_lines.append(line)
+    if allow_semaphore_checkpoint and (checkpoint_count != 1 or semaphore_checkpoint is None):
+        errors.append('missing valid final semaphore checkpoint')
     if allow_camera and (receipt_count != 1 or active_anchor is None):
         errors.append('missing valid camera context anchor')
     if current_tick is not None:
@@ -591,13 +615,13 @@ def parse_recurring_physics_evidence(lines, stderr_lines, returncode, *, frame_c
                                    final_tick=phase['apply'] + frame_count - 1)
     errors.extend(worker['errors'])
     return {'pass': not errors, 'returncode': returncode, 'frame_count': frame_count,
-            'frames': frames, 'worker': worker, 'errors': errors, 'presentation': presentation, 'context_policy': {
+            'semaphore_checkpoint': semaphore_checkpoint, 'frames': frames, 'worker': worker, 'errors': errors, 'presentation': presentation, 'context_policy': {
                 'enabled': policy['enabled'], 'receipts': policy['receipts']}, 'movement_proven': False,
             'restored': False, 'resumed': False, 'other_threads_excluded': False}
 
 
 def collect_recurring_physics_evidence(trace, retained, engine, output, returncode, *, frame_count, stderr,
-                                       input_mode="scripted", allow_camera=False, allow_throttle=False, throttle_start_tick=5, presentation_slot=None, session_frames=0, startup=None):
+                                       input_mode="scripted", allow_camera=False, allow_throttle=False, throttle_start_tick=5, presentation_slot=None, session_frames=0, startup=None, allow_semaphore_checkpoint=False):
     """Retain all trace bytes before parsing; failures never produce a pass."""
     errors = []
     trace_limit = NETWORK_MAX_TRACE_BYTES if input_mode == 'network' else MAX_TRACE_BYTES
@@ -621,13 +645,14 @@ def collect_recurring_physics_evidence(trace, retained, engine, output, returnco
                         chunks.append(chunk)
             if total > trace_limit:
                 raise OSError(f'native trace exceeds {trace_limit // (1024 * 1024)} MiB; full trace retained')
-        with Path(stderr).open(encoding='utf-8', errors='strict') as worker_file:
-            worker_lines = worker_file.readlines()
+        worker_raw = Path(stderr).read_bytes()
+        worker_lines = worker_raw.decode('utf-8', errors='strict').splitlines(keepends=True)
         evidence = parse_recurring_physics_evidence(b''.join(chunks).decode('utf-8').splitlines(keepends=True),
-                                                    worker_lines, returncode, frame_count=frame_count, input_mode=input_mode, allow_camera=allow_camera, allow_throttle=allow_throttle, throttle_start_tick=throttle_start_tick, presentation_slot=presentation_slot, session_frames=session_frames, startup=startup)
+                                                    worker_lines, returncode, frame_count=frame_count, input_mode=input_mode, allow_camera=allow_camera, allow_throttle=allow_throttle, throttle_start_tick=throttle_start_tick, presentation_slot=presentation_slot, session_frames=session_frames, startup=startup, allow_semaphore_checkpoint=allow_semaphore_checkpoint)
         evidence['log_sha256'] = digest.hexdigest()
+        evidence['stderr_sha256'] = hashlib.sha256(worker_raw).hexdigest()
     except (OSError, UnicodeError) as error:
-        evidence = parse_recurring_physics_evidence([], [], returncode, frame_count=frame_count, input_mode=input_mode, allow_camera=allow_camera, allow_throttle=allow_throttle, throttle_start_tick=throttle_start_tick, presentation_slot=presentation_slot, session_frames=session_frames, startup=startup)
+        evidence = parse_recurring_physics_evidence([], [], returncode, frame_count=frame_count, input_mode=input_mode, allow_camera=allow_camera, allow_throttle=allow_throttle, throttle_start_tick=throttle_start_tick, presentation_slot=presentation_slot, session_frames=session_frames, startup=startup, allow_semaphore_checkpoint=allow_semaphore_checkpoint)
         errors.append('native trace or worker evidence unavailable/invalid: ' + str(error))
     for source in (engine, output, stderr):
         try:
@@ -636,6 +661,11 @@ def collect_recurring_physics_evidence(trace, retained, engine, output, returnco
                               if is_fatal_gate_message(line) or 'PLAYER_CONTROL_RECURRING_FATAL' in line)
         except OSError as error:
             errors.append(f'fatal log unavailable: {error}')
+    try:
+        if evidence.get('stderr_sha256') != hashlib.sha256(Path(stderr).read_bytes()).hexdigest():
+            errors.append('worker stderr changed during physics evidence collection')
+    except OSError as error:
+        errors.append(f'worker stderr unavailable for hash check: {error}')
     evidence.update(native_fd_path=str(trace), retained_log=str(retained))
     evidence['errors'].extend(errors)
     evidence['pass'] = not evidence['errors']

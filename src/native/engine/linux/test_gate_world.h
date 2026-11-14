@@ -167,7 +167,10 @@ static void test_world_hook(void) {
     thunk=make_thunk();assert(thunk);
     /* Refused without the original entry or a thunk; nothing patched. */
     unsigned char *saved_thunk=thunk;thunk=NULL;assert(!world_identity_install() && rd64(entry)==LX_IMPORT_ENTRY_ORIGINAL);thunk=saved_thunk;
+    uint64_t generation_before_install = world_identity_seal_generation;
     assert(world_identity_install() && world_identity_installed);
+    assert(world_identity_seal_generation == generation_before_install + 1);
+    assert(!world_identity_seal_admitted);
     uint64_t word=rd64(entry);int32_t rel;memcpy(&rel,entry+1,4);
     assert(entry[0]==0xe9 && entry+5+rel==thunk+LXW_THUNK_HOOK && !memcmp(entry+5,"\x54\x49\x89",3));
     memcpy(&rel,clear+1,4);
@@ -190,7 +193,14 @@ static void test_world_hook(void) {
     boot_phase=2;r=wt_insert(LX(LX_IMPORT_MAP_VA),keys[0]); /* a repeated import of the same ID */
     assert(world_identity_calls==4 && lxw_insert_count==4 && !world_identity_failures);
     assert(!world_identity_lookup(7001)); /* nothing before the seal */
+    uint64_t generation_before_seal = world_identity_seal_generation;
     boot_phase=3;world_identity_seal();
+    assert(world_identity_seal_generation == generation_before_seal + 1);
+    assert(world_identity_seal_admitted);
+    world_identity_seal();
+    assert(world_identity_seal_generation == generation_before_seal + 1); /* idempotent */
+    assert(!pthread_mutex_trylock(&lxw_insert_lock));
+    pthread_mutex_unlock(&lxw_insert_lock);
     assert(world_identity_sealed && world_identity_count==3 && !world_identity_failures);
     for(unsigned i=0;i<3;i++) assert(world_identity_lookup(runtimes[i])==keys[i]);
     assert(!world_identity_record(7004,0x104)); /* sealed */
@@ -223,7 +233,10 @@ static void test_world_hook(void) {
     boot_phase=3;world_identity_seal();assert(world_identity_failures==1 && world_identity_count==1);
     /* A foreign owner of the entry is never overwritten; the own patch is restored exactly. */
     wt_flip(entry);
+    uint64_t generation_before_restore = world_identity_seal_generation;
     assert(!world_identity_owned());world_identity_restore();assert(!world_identity_restored && world_identity_installed);
+    assert(world_identity_seal_generation == generation_before_restore + 1); /* uncertain restore invalidates too */
+    assert(!world_identity_seal_admitted);
     assert(rd64(clear)==LX_IMPORT_CLEAR_ORIGINAL); /* the other one is back already */
     wt_flip(entry);
     world_identity_restore();assert(world_identity_restored && !world_identity_installed && rd64(entry)==LX_IMPORT_ENTRY_ORIGINAL && word!=rd64(entry));

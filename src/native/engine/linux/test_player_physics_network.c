@@ -35,7 +35,11 @@ static float read_keys(unsigned char *out) {
 static float lifecycle_input_read(unsigned char *out) { return read_keys(out); }
 static float player_physics_replay_read_input(unsigned char *out) { return read_keys(out); }
 static void lifecycle_discard_update_once(int which) { assert(which == 3); ++update_calls; }
-static void lifecycle_discard_write(const char *message) { assert(message); }
+static char last_record[768];
+static void lifecycle_discard_write(const char *message) {
+    assert(message);
+    if (strstr(message, "physics=network")) snprintf(last_record, sizeof last_record, "%s", message);
+}
 static void fake_state(int id, unsigned char value) {
     assert(((id >= 2 && id <= 9) || id == 13 || id == 14) && value <= 1);
     events[event_count++] = (unsigned)id * 10 + value;
@@ -97,10 +101,44 @@ static void player_throttle_after_update(uint64_t tick) {
            update_calls == player_throttle_phase + throttle_start - 5);
     ++throttle_updated;
 }
+static unsigned space_mode, space_applied = 1, space_calls;
+static int player_space_mode(void) { return space_mode; }
+static unsigned player_space_slot_state(unsigned slot) { assert(slot == 2); return space_applied; }
+static int player_space_apply(unsigned slot, uint64_t generation, unsigned active) {
+    assert(slot == 2 && generation == stats.issued && active != space_applied);
+    space_applied = active; ++space_calls; return 1;
+}
+static unsigned cursor_mode, view_mode, view_admitted, replay_fault;
+static int player_cursor_mode(void) { return cursor_mode || space_mode; }
+static int player_cursor_tail(uint64_t generation, unsigned final) { (void)generation; (void)final; return 1; }
 #include "gate_player_physics_network.h"
 static stock_input_record coordinated;
 static int keyboard_probe_independent_after_path_join(uint64_t generation) {
-    player_physics_network_apply_p2(generation, &coordinated);
+    keyboard_replay replay = {0};
+    replay.initialized = replay.configured = 1;
+    replay.phase = KEYBOARD_REPLAY_APPLYING; replay.tick = generation;
+    replay.config.independent_players = 1; replay.config.delay = 2;
+    replay.config.cursor_active_only = player_cursor_mode();
+    replay.config.space_context8 = space_mode;
+    replay.config.view_capture = view_mode;
+    replay.config.scripted_throttle = throttle_enabled;
+    replay.space_active[1] = space_applied;
+    replay.queue.config.policy.allowed_flags =
+        (player_cursor_mode() ? STOCK_INPUT_ACTIVE | STOCK_INPUT_CURSOR : 0) |
+        (view_mode ? STOCK_INPUT_VIEW : 0);
+    replay.queue.config.policy.allow_space8 = space_mode;
+    for (unsigned id = 2; id <= 9; ++id) linux_stock_allow_state(&replay.queue.config.policy, id);
+    if (!throttle_enabled) {
+        linux_stock_allow_state(&replay.queue.config.policy, 13);
+        linux_stock_allow_state(&replay.queue.config.policy, 14);
+    }
+    if (replay_fault == 1) replay.phase = KEYBOARD_REPLAY_CAPTURE;
+    if (replay_fault == 2) replay.tick++;
+    if (replay_fault == 3) replay.config.cursor_active_only ^= 1;
+    if (replay_fault == 4) replay.config.space_context8 ^= 1;
+    if (replay_fault == 5) replay.space_active[1] ^= 1;
+    if (replay_fault == 6) coordinated.capture16++;
+    player_physics_network_apply_p2(generation, &coordinated, &replay, view_admitted);
     return 1;
 }
 static void reset(void) {
@@ -108,13 +146,59 @@ static void reset(void) {
     memset(keys,0,sizeof keys); memset(throttle_keys,0,sizeof throttle_keys); strafe_ignored=throttle_ignored=0; first_calls=replay_calls=update_calls=native_calls=finish_calls=event_count=0;
     entered=identity=pins=neutral=1; bad_read=reads=omit_strafe_write=0; failure=NULL;
     throttle_enabled=player_throttle_phase=throttle_applied=throttle_updated=0;
-    throttle_start = 5; memset(&coordinated,0,sizeof coordinated);
+    throttle_start = 5; last_record[0] = 0; cursor_mode = view_mode = view_admitted = replay_fault = 0; space_mode = space_calls = 0; space_applied = 1; memset(&coordinated,0,sizeof coordinated);
 }
 static void tick(uint64_t n) { stats.issued=n; coordinated.capture16=(uint16_t)(n-2); player_physics_network_begin(n); }
 static void event(unsigned i, unsigned id, unsigned value) {
     coordinated.events[i]=(stock_input_event){.kind=STOCK_INPUT_STATE,.id=id,.value=value};
 }
 int main(void) {
+    /* VIEW remains default off, including an admitted/configured mismatch. */
+    reset(); coordinated.flags = STOCK_INPUT_VIEW; coordinated.view = 1; coordinated.fov = 1.0f;
+    if (!setjmp(escape)) { tick(5); assert(0); }
+    assert(!strcmp(failure, "network_record_policy") && !update_calls && !native_calls);
+    reset(); cursor_mode = view_mode = 1; coordinated.flags = STOCK_INPUT_ACTIVE | STOCK_INPUT_VIEW;
+    if (!setjmp(escape)) { tick(5); assert(0); }
+    assert(!strcmp(failure, "network_record_admission") && !update_calls);
+    reset(); cursor_mode = view_mode = view_admitted = 1;
+    coordinated.flags = STOCK_INPUT_ACTIVE | STOCK_INPUT_CURSOR | STOCK_INPUT_VIEW;
+    coordinated.cursor[0] = 0.75f; coordinated.view = 3; coordinated.fov = 1.25f;
+    coordinated.target = UINT64_C(0xfedcba9876543210); event(0,2,1); coordinated.count = 1;
+    tick(5); assert(update_calls == 1 && native_calls == 1 && player_network_held == 1);
+    assert(coordinated.target == UINT64_C(0xfedcba9876543210));
+    assert(strstr(last_record, "1032547698badcfe"));
+    /* SPACE may deactivate while VIEW is present; no cursor sample is allowed then. */
+    reset(); space_mode = view_mode = view_admitted = 1;
+    coordinated.flags = STOCK_INPUT_VIEW; coordinated.view = 2; coordinated.fov = 1.0f;
+    coordinated.count = 1; coordinated.events[0] = (stock_input_event){STOCK_INPUT_CONTEXT, 8, 0};
+    tick(5); assert(space_calls == 1 && update_calls == 1 && !space_applied);
+    for (unsigned bad = 0; bad < 5; ++bad) {
+        reset(); cursor_mode = view_mode = view_admitted = 1;
+        coordinated.flags = STOCK_INPUT_ACTIVE | STOCK_INPUT_VIEW; coordinated.fov = 1.0f;
+        if (bad == 0) coordinated.view = 4;
+        if (bad == 1) coordinated.fov = NAN;
+        if (bad == 2) coordinated.flags |= STOCK_INPUT_FIRE;
+        if (bad == 3) { coordinated.flags &= ~STOCK_INPUT_VIEW; coordinated.target = 1; }
+        if (bad == 4) coordinated.aim[0] = 0.5f;
+        if (!setjmp(escape)) { tick(5); assert(0); }
+        assert(!strcmp(failure, "network_record_policy") && !update_calls && !native_calls);
+    }
+    for (unsigned fault = 1; fault <= 6; ++fault) {
+        reset(); cursor_mode = view_mode = view_admitted = 1; space_mode = fault == 5;
+        replay_fault = fault; coordinated.flags = STOCK_INPUT_ACTIVE | STOCK_INPUT_VIEW;
+        if (!setjmp(escape)) { tick(5); assert(0); }
+        assert((!strcmp(failure, "network_record_admission") || !strcmp(failure, "network_space_policy")) &&
+               !update_calls && !native_calls);
+    }
+    reset(); space_mode=1; coordinated.count=2;
+    coordinated.events[0]=(stock_input_event){.kind=STOCK_INPUT_CONTEXT,.id=8,.value=0};
+    event(1,8,1); tick(5);
+    assert(space_calls==1 && space_applied==0 && native_calls==1 && keys[6]==1);
+    reset(); space_mode=1; coordinated.count=1;
+    coordinated.events[0]=(stock_input_event){.kind=STOCK_INPUT_CONTEXT,.id=8,.value=0};
+    coordinated.flags=STOCK_INPUT_ACTIVE;
+    if (!setjmp(escape)) { tick(5); assert(0); }
+    assert(!strcmp(failure,"network_space_policy") && !space_calls && !native_calls && !update_calls);
     reset();
     coordinated.count=1; event(0,2,1); tick(5);
     assert(first_calls==1 && replay_calls==0 && update_calls==1 && player_network_held==1);

@@ -20,6 +20,12 @@ SCENARIOS = (
     'post_unreadable', 'post_header_unreadable', 'post_record_change', 'post_vector_change',
     'uncertain_hold', 'release_pending', 'wrong_phase', 'missed_tick',
     'target_missing', 'target_duplicate', 'target_wrong_vtable', 'target_wrong_runtime',
+    'target_duplicate_different_runtime', 'target_count_invalid', 'target_population_mismatch',
+    'target_count_zero', 'target_count_negative', 'target_restore_started', 'cache_restore_started',
+    'target_generation_during_find',
+    'target_zero_runtime', 'cache_fresh_object', 'cache_generation', 'cache_unsealed',
+    'cache_replaced_table', 'cache_count', 'cache_failures', 'cache_restored',
+    'cache_entry_drift', 'cache_saved_drift', 'cache_exhausted',
     'target_change', 'canonical_change', 'p2_field_change', 'p2_unreadable', 'vector_invalid',
 )
 
@@ -29,9 +35,40 @@ class PlayerSeatPreflightTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             executable = Path(directory) / 'seat-preflight'
             subprocess.run(['cc', '-std=c11', '-O1', '-g', '-Wall', '-Wextra', '-Werror',
-                            str(SOURCE), '-o', str(executable)], cwd=ROOT, check=True)
+                            str(SOURCE), '-pthread', '-o', str(executable)], cwd=ROOT, check=True)
             for scenario in SCENARIOS:
                 with self.subTest(scenario=scenario):
                     result = subprocess.run([str(executable), scenario], cwd=ROOT,
                                             capture_output=True, text=True)
                     self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_real_import_sealing_and_generation(self):
+        """Exercise the production import hooks/seal, independently of fake registry state."""
+        engine = ROOT / 'src/native/engine'
+        third = ROOT / 'third_party/monocypher-4.0.2/src'
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / 'world-seal.c'
+            source.write_text(
+                '#define main original_gate_fixture_main\n'
+                '#include "test_gate_linux.c"\n'
+                '#undef main\n'
+                'int main(void) {\n'
+                '  synth_image(); test_world_hook();\n'
+                '  pthread_mutex_lock(&lxw_insert_lock);\n'
+                '  world_identity_seal_generation = UINT64_MAX;\n'
+                '  assert(!world_identity_advance_locked());\n'
+                '  assert(world_identity_seal_generation_exhausted);\n'
+                '  assert(!world_identity_seal_generation && !world_identity_seal_admitted);\n'
+                '  assert(!world_identity_advance_locked());\n'
+                '  pthread_mutex_unlock(&lxw_insert_lock);\n'
+                '  return 0;\n'
+                '}\n')
+            executable = Path(directory) / 'world-seal'
+            subprocess.run([
+                'cc', '-std=gnu11', '-O1', '-Wall', '-Wextra', '-Werror',
+                '-Wno-misleading-indentation', '-mcx16', '-ffp-contract=off',
+                '-fasynchronous-unwind-tables', '-I', str(engine), '-I', str(engine / 'linux'),
+                '-I', str(third), '-I', str(third / 'optional'), str(source),
+                str(third / 'monocypher.c'), str(third / 'optional/monocypher-ed25519.c'),
+                '-ldl', '-pthread', '-lm', '-o', str(executable)], check=True, cwd=ROOT)
+            subprocess.run([str(executable)], check=True, cwd=ROOT)

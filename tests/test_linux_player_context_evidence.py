@@ -6,7 +6,7 @@ import sys
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'tools/dev'))
-from linux_player_context_evidence import KNOWN_ADDITION, verify_context_policy
+from linux_player_context_evidence import KNOWN_ADDITION, SELECTION_ADDITIONS, verify_context_policy
 from linux_player_network_evidence import parse_network_physics_evidence
 import test_linux_player_camera_evidence as camera_fixture
 from test_linux_player_network_evidence import network_fixture
@@ -155,6 +155,36 @@ class ContextPolicyEvidenceTests(unittest.TestCase):
         bad=[row.replace(old_digest,new_digest) for row in bad]
         result=self.parse(bad,stderr,engine,True)
         self.assertFalse(result['pass']);self.assertTrue(any('full before/after proof' in e for e in result['errors']))
+
+    def test_exact_observed_selection_group_and_mutations(self):
+        rows, stderr, engine = fixture()
+        init = next(row for row in rows if 'event=init ' in row)
+        raw = bytes.fromhex(init.split('payloads=')[1].strip())
+        original = [raw[index:index + 16] for index in range(0, len(raw), 16)]
+        selected = sorted(original + list(SELECTION_ADDITIONS.values()),
+                          key=lambda value: (int.from_bytes(value[:4], 'little', signed=True),
+                                             int.from_bytes(value[4:8], 'little', signed=True)))
+        old = next(row for row in rows if 'event=add ' in row)
+        digest_old = re.search(r'digest=([0-9a-f]{64})', old)[1]
+        digest_new = hashlib.sha256(b''.join(selected)).hexdigest()
+        replacement = receipt('add', 6, 'end', 2, 13, selected)
+        updated = [replacement if row == old else row.replace(digest_old, digest_new).replace('contexts_nodes=14', 'contexts_nodes=18')
+                   for row in rows]
+        result = self.parse(updated, stderr, engine)
+        self.assertTrue(result['pass'], result['errors'])
+        for index in (2, 10, 13, 14, 15):
+            bad = selected.copy(); bad[index] = bad[index][:-1] + bytes([bad[index][-1] ^ 1])
+            changed = receipt('add', 6, 'end', 2, 13, bad)
+            self.assertFalse(self.parse([changed if row == replacement else row for row in updated], stderr, engine)['pass'])
+        for index in (2, 10, 13, 14, 15):
+            incomplete = selected[:index] + selected[index + 1:]
+            changed = receipt('add', 6, 'end', 2, 13, incomplete)
+            self.assertFalse(self.parse([changed if row == replacement else row for row in updated], stderr, engine)['pass'])
+        reordered = selected.copy(); reordered[1], reordered[2] = reordered[2], reordered[1]
+        changed = receipt('add', 6, 'end', 2, 13, reordered)
+        self.assertFalse(self.parse([changed if row == replacement else row for row in updated], stderr, engine)['pass'])
+        changed = replacement.replace('target=aaa', 'target=aab')
+        self.assertFalse(self.parse([changed if row == replacement else row for row in updated], stderr, engine)['pass'])
 
     def test_legacy_context_change_still_fails_without_policy(self):
         rows,stderr,engine,_,_=network_fixture()

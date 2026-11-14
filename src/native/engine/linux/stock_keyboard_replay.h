@@ -9,7 +9,8 @@
  * events rejected here, and must never forward a rejected event to the engine.
  * Canonical mode records STATE 2..5 for slot 1 and drops them for slot 2.
  * Independent mode additionally admits STATE6..9 and captures the local slot.
- * It validates both complete records before either callback. Both modes emit flags=0. This is not general stock
+ * It validates both complete records before either callback. Default modes emit flags=0;
+ * separate opt-ins support active cursor and ordered SPACE context8 transitions. This is not general stock
  * input, native motion authority, or a multi-player controller implementation.
  * Treat the embedded queue and coordinator fields as private; use the functions
  * below, and never reinitialize while any caller or callback is still active. */
@@ -47,6 +48,9 @@ typedef struct {
     uint64_t saved_ship_ids[2];
     unsigned independent_players; /* 0 = canonical (default), 1 = two slots */
     unsigned scripted_throttle; /* Reserve STATE13/14 for the diagnostic. */
+    unsigned cursor_active_only; /* Strict ACTIVE-only unless separate SPACE opt-in is set. */
+    unsigned space_context8; /* Requires independent + cursor; authenticated startup ACTIVE=1. */
+    unsigned view_capture; /* Separate opt-in for authenticated local VIEW samples. */
 } keyboard_replay_config;
 
 typedef struct {
@@ -60,6 +64,8 @@ typedef struct {
     unsigned initialized;
     unsigned configured;
     unsigned stopped;
+    unsigned space_active[2]; /* Delayed simulation states, separate from local window. */
+    unsigned space_local_active;
 } keyboard_replay;
 
 typedef struct {
@@ -80,6 +86,11 @@ typedef int (*keyboard_replay_apply_fn)(void *context, unsigned id, unsigned cha
  * that player exactly once. A failed callback may already have effects. */
 typedef int (*keyboard_replay_apply_slot_fn)(void *context, uint64_t apply_tick, unsigned slot,
                                              uint64_t saved_ship_id, const stock_input_record *record);
+/* Optional pre-application stage: both immutable records have passed all queue,
+ * echo and tick checks. Any failure poisons this frame before either slot runs. */
+typedef int (*keyboard_replay_prepare_slots_fn)(void *context, uint64_t apply_tick,
+                                                const uint64_t saved_ship_ids[2],
+                                                const stock_input_record records[2]);
 
 static inline int keyboard_replay_init(keyboard_replay *replay) {
     if (!replay) {
@@ -136,6 +147,92 @@ static inline int keyboard_replay_allowed_state(const keyboard_replay_config *co
         (config->independent_players && !config->scripted_throttle && (id == 13 || id == 14));
 }
 
+/* CONTEXT8 is never a STATE8 key. Only an explicit SPACE configuration
+ * admits it, and only the whole-record native owner may apply its effects. */
+static inline int keyboard_replay_is_space_event(const keyboard_replay_config *config,
+                                                  const stock_input_event *event) {
+    return config && config->space_context8 && event && event->kind == STOCK_INPUT_CONTEXT &&
+        event->id == 8 && event->value <= 1;
+}
+
+static inline int keyboard_replay_space_local_state(const keyboard_replay *replay, unsigned *active) {
+    if (!active || keyboard_replay_ready(replay) != KEYBOARD_REPLAY_OK || !replay->config.space_context8) return 0;
+    *active = replay->space_local_active;
+    return 1;
+}
+static inline int keyboard_replay_space_slot_state(const keyboard_replay *replay, unsigned slot, unsigned *active) {
+    if (!active || slot < 1 || slot > 2 || keyboard_replay_ready(replay) != KEYBOARD_REPLAY_OK ||
+        !replay->config.space_context8) return 0;
+    *active = replay->space_active[slot - 1];
+    return 1;
+}
+
+/* Pure semantic validation after wire decode. A record describes the final
+ * active state; its ordered CONTEXT8 edges must reach that state from before.
+ * STATE events keep their own namespace and never alter active state. */
+static inline int keyboard_replay_space_record_active(const keyboard_replay_config *config,
+        const stock_input_record *record, unsigned before, unsigned *after) {
+    if (!config || !config->space_context8 || !record || !after || before > 1 ||
+        record->count > STOCK_INPUT_MAX_EVENTS ||
+        (record->flags & ~(STOCK_INPUT_ACTIVE | STOCK_INPUT_CURSOR |
+            (config->view_capture ? STOCK_INPUT_VIEW : 0)))) return 0;
+    if (record->steer) return 0;
+    if (record->flags & STOCK_INPUT_VIEW) {
+        if (record->view > 3 || !isfinite(record->fov)) return 0;
+    } else if (record->view || record->target || stock_input_float_bits(record->fov)) return 0;
+    for (unsigned axis = 0; axis < 3; ++axis)
+        if (stock_input_float_bits(record->aim[axis])) return 0;
+    unsigned active = before;
+    for (unsigned index = 0; index < record->count; ++index) {
+        const stock_input_event *event = &record->events[index];
+        if (keyboard_replay_is_space_event(config, event)) {
+            if (event->value == active) return 0;
+            active = event->value;
+        } else if (event->kind != STOCK_INPUT_STATE ||
+                   !keyboard_replay_allowed_state(config, event->id) || event->value > 1) return 0;
+    }
+    if (!!(record->flags & STOCK_INPUT_ACTIVE) != active || (!active && (record->flags & STOCK_INPUT_CURSOR))) return 0;
+    for (unsigned axis = 0; axis < 3; ++axis) {
+        if (!isfinite(record->cursor[axis]) || fabsf(record->cursor[axis]) > 16.0f ||
+            ((!active || !(record->flags & STOCK_INPUT_CURSOR)) && stock_input_float_bits(record->cursor[axis]))) return 0;
+    }
+    *after = active;
+    return 1;
+}
+
+/* Shared whole-record admission for both coordinator and native P2 adapter.
+ * Re-decode the wire representation so absent fields, float bits and all
+ * event values receive the same canonical checks in both paths. */
+static inline int keyboard_replay_record_valid(const keyboard_replay *replay,
+        const stock_input_record *record, unsigned slot) {
+    if (!replay || !record || slot < 1 || slot > 2 || record->count > STOCK_INPUT_MAX_EVENTS)
+        return 0;
+    for (unsigned index = 0; index < record->count; ++index)
+        if (record->events[index].kind > STOCK_INPUT_CONTEXT || record->events[index].id >= 512)
+            return 0;
+    unsigned char encoded[STOCK_INPUT_MAX_BYTES];
+    stock_input_record decoded;
+    unsigned length = stock_input_encode(record, encoded, sizeof encoded);
+    if (!length || !stock_input_decode(encoded, length, &decoded) ||
+        !linux_stock_record_supported(&replay->queue.config.policy, &decoded)) return 0;
+    const keyboard_replay_config *config = &replay->config;
+    if (config->space_context8) {
+        unsigned after;
+        return keyboard_replay_space_record_active(config, &decoded, replay->space_active[slot - 1], &after);
+    }
+    unsigned view_flags = config->view_capture ? STOCK_INPUT_VIEW : 0;
+    if (config->cursor_active_only ?
+            (!(decoded.flags & STOCK_INPUT_ACTIVE) ||
+             (decoded.flags & ~(STOCK_INPUT_ACTIVE | STOCK_INPUT_CURSOR | view_flags))) :
+            (decoded.flags & ~view_flags) != 0) return 0;
+    for (unsigned index = 0; index < decoded.count; ++index) {
+        const stock_input_event *event = &decoded.events[index];
+        if (event->kind != STOCK_INPUT_STATE ||
+            !keyboard_replay_allowed_state(config, event->id) || event->value > 1) return 0;
+    }
+    return 1;
+}
+
 /* A callback cannot invoke a second mutation while its effects are in flight.
  * The independent mode latches the failure so the outer publish cannot proceed
  * to the next slot even when the callback ignores the returned phase error. */
@@ -164,7 +261,10 @@ static inline keyboard_replay_result keyboard_replay_configure(
         return KEYBOARD_REPLAY_PHASE;
     }
     if (replay->configured || config->first_capture < 3 || config->independent_players > 1 ||
-        config->scripted_throttle > 1 || (config->scripted_throttle && !config->independent_players)) {
+        config->scripted_throttle > 1 || (config->scripted_throttle && !config->independent_players) ||
+        config->cursor_active_only > 1 || (config->cursor_active_only && !config->independent_players) ||
+        config->view_capture > 1 || (config->view_capture && !config->independent_players) ||
+        config->space_context8 > 1 || (config->space_context8 && (!config->independent_players || !config->cursor_active_only))) {
         return KEYBOARD_REPLAY_ARGUMENT;
     }
     linux_stock_config queue_config = {0};
@@ -177,7 +277,9 @@ static inline keyboard_replay_result keyboard_replay_configure(
     queue_config.saved_ships[0] = config->saved_ship_ids[0];
     queue_config.saved_ships[1] = config->saved_ship_ids[1];
     queue_config.policy = linux_stock_keyboard_policy();
-    queue_config.policy.allowed_flags = 0;
+    queue_config.policy.allowed_flags = config->cursor_active_only ? STOCK_INPUT_ACTIVE | STOCK_INPUT_CURSOR : 0;
+    if (config->view_capture) queue_config.policy.allowed_flags |= STOCK_INPUT_VIEW;
+    queue_config.policy.allow_space8 = config->space_context8;
     for (unsigned id = 2; id <= (config->independent_players ? 9u : 5u); ++id) {
         (void)linux_stock_allow_state(&queue_config.policy, id);
     }
@@ -190,6 +292,7 @@ static inline keyboard_replay_result keyboard_replay_configure(
         return KEYBOARD_REPLAY_ARGUMENT;
     }
     replay->config = *config;
+    replay->space_local_active = replay->space_active[0] = replay->space_active[1] = 1;
     replay->configured = 1;
     return KEYBOARD_REPLAY_OK;
 }
@@ -230,7 +333,9 @@ static inline keyboard_replay_result keyboard_replay_consume(
     if (replay->config.independent_players && keyboard_replay_reentrant(replay) != KEYBOARD_REPLAY_OK) {
         return KEYBOARD_REPLAY_PHASE;
     }
-    if (kind != STOCK_INPUT_STATE || !keyboard_replay_allowed_state(&replay->config, id) || state > 1) {
+    int space = replay->config.space_context8 && kind == STOCK_INPUT_CONTEXT && id == 8;
+    if (state > 1 || (space ? state == replay->space_local_active :
+            kind != STOCK_INPUT_STATE || !keyboard_replay_allowed_state(&replay->config, id))) {
         return keyboard_replay_latch(replay, KEYBOARD_REPLAY_UNSUPPORTED);
     }
     if (replay->phase != KEYBOARD_REPLAY_CAPTURE) {
@@ -244,11 +349,16 @@ static inline keyboard_replay_result keyboard_replay_consume(
     if (replay->queue_result != LINUX_STOCK_OK) {
         return keyboard_replay_latch(replay, KEYBOARD_REPLAY_QUEUE_FAILURE);
     }
+    if (space) replay->space_local_active = state;
     return KEYBOARD_REPLAY_OK;
 }
 
-static inline keyboard_replay_result keyboard_replay_seal(
-        keyboard_replay *replay, unsigned char *output, size_t capacity, unsigned *length) {
+/* Seal events, cursor and VIEW together. NULL VIEW explicitly means absent
+ * for this capture, never reuse of the previous generation's selection/FOV.
+ * Native admission must decide where absence is expected or a fatal error. */
+static inline keyboard_replay_result keyboard_replay_seal_presentation(
+        keyboard_replay *replay, const float cursor[3], const linux_stock_view_sample *view,
+        unsigned char *output, size_t capacity, unsigned *length) {
     keyboard_replay_result ready = keyboard_replay_ready(replay);
     if (ready != KEYBOARD_REPLAY_OK) {
         return ready;
@@ -259,7 +369,14 @@ static inline keyboard_replay_result keyboard_replay_seal(
     if (replay->phase != KEYBOARD_REPLAY_CAPTURE && replay->phase != KEYBOARD_REPLAY_SEALED) {
         return KEYBOARD_REPLAY_PHASE;
     }
-    replay->queue_result = linux_stock_capture(&replay->queue, 0, output, capacity, length);
+    unsigned cursor_required = replay->config.cursor_active_only &&
+        (!replay->config.space_context8 || replay->space_local_active);
+    if (!!cursor != !!cursor_required) return KEYBOARD_REPLAY_ARGUMENT;
+    if (view && !replay->config.view_capture) return KEYBOARD_REPLAY_ARGUMENT;
+    unsigned flags = cursor_required ? STOCK_INPUT_ACTIVE | STOCK_INPUT_CURSOR : 0;
+    if (view) flags |= STOCK_INPUT_VIEW;
+    replay->queue_result = linux_stock_capture_with_presentation(
+        &replay->queue, flags, cursor, view, output, capacity, length);
     if (replay->queue_result == LINUX_STOCK_BUFFER_SMALL) {
         return KEYBOARD_REPLAY_ARGUMENT;
     }
@@ -271,6 +388,16 @@ static inline keyboard_replay_result keyboard_replay_seal(
     }
     replay->phase = KEYBOARD_REPLAY_SEALED;
     return KEYBOARD_REPLAY_OK;
+}
+
+static inline keyboard_replay_result keyboard_replay_seal_cursor(
+        keyboard_replay *replay, const float cursor[3], unsigned char *output, size_t capacity, unsigned *length) {
+    return keyboard_replay_seal_presentation(replay, cursor, NULL, output, capacity, length);
+}
+
+static inline keyboard_replay_result keyboard_replay_seal(
+        keyboard_replay *replay, unsigned char *output, size_t capacity, unsigned *length) {
+    return keyboard_replay_seal_cursor(replay, NULL, output, capacity, length);
 }
 
 static inline keyboard_replay_result keyboard_replay_stage(
@@ -328,16 +455,11 @@ static inline keyboard_replay_result keyboard_replay_prepare_frame(
     }
     for (unsigned slot = 0; slot < 2; ++slot) {
         if (!stock_input_decode(frame.bytes[slot], frame.lengths[slot], &records[slot]) ||
-            records[slot].flags != 0 || records[slot].capture16 != (uint16_t)frame.capture) {
+            records[slot].capture16 != (uint16_t)frame.capture) {
             return keyboard_replay_latch(replay, KEYBOARD_REPLAY_INVALID_FRAME);
         }
-        for (unsigned index = 0; index < records[slot].count; ++index) {
-            const stock_input_event *event = &records[slot].events[index];
-            if (event->kind != STOCK_INPUT_STATE ||
-                !keyboard_replay_allowed_state(&replay->config, event->id) || event->value > 1) {
-                return keyboard_replay_latch(replay, KEYBOARD_REPLAY_INVALID_FRAME);
-            }
-        }
+        if (!keyboard_replay_record_valid(replay, &records[slot], slot + 1))
+            return keyboard_replay_latch(replay, KEYBOARD_REPLAY_INVALID_FRAME);
     }
     if (!replay->config.independent_players && records[1].count != 0) {
         return keyboard_replay_latch(replay, KEYBOARD_REPLAY_INVALID_FRAME);
@@ -377,8 +499,9 @@ static inline keyboard_replay_result keyboard_replay_publish(
 
 /* Independent mode always calls slot 1 then slot 2, including empty records.
  * No callback is retried after failure, reentry, or STOP during application. */
-static inline keyboard_replay_result keyboard_replay_publish_slots(
-        keyboard_replay *replay, uint64_t tick, keyboard_replay_apply_slot_fn apply, void *context) {
+static inline keyboard_replay_result keyboard_replay_publish_slots_prepared(
+        keyboard_replay *replay, uint64_t tick, keyboard_replay_prepare_slots_fn prepare,
+        keyboard_replay_apply_slot_fn apply, void *context) {
     keyboard_replay_result ready = keyboard_replay_ready(replay);
     if (ready != KEYBOARD_REPLAY_OK) {
         return ready;
@@ -392,6 +515,12 @@ static inline keyboard_replay_result keyboard_replay_publish_slots(
         return prepared;
     }
     replay->phase = KEYBOARD_REPLAY_APPLYING;
+    if (prepare && (!prepare(context, tick, replay->config.saved_ship_ids, records) ||
+                    replay->stopped || replay->failure)) {
+        keyboard_replay_latch(replay, KEYBOARD_REPLAY_CALLBACK_FAILURE);
+        replay->phase = KEYBOARD_REPLAY_DRAIN;
+        return replay->stopped ? KEYBOARD_REPLAY_STOPPED : replay->failure;
+    }
     for (unsigned index = 0; index < 2; ++index) {
         int applied = apply(context, tick, index + 1, replay->config.saved_ship_ids[index], &records[index]);
         if (!applied || replay->stopped || replay->failure) {
@@ -400,9 +529,21 @@ static inline keyboard_replay_result keyboard_replay_publish_slots(
             return replay->stopped ? KEYBOARD_REPLAY_STOPPED : replay->failure;
         }
     }
+    if (replay->config.space_context8) {
+        /* Commit only after both callbacks succeeded. Failures already latch
+         * permanent failure; this is not a rollback of native side effects. */
+        replay->space_active[0] = !!(records[0].flags & STOCK_INPUT_ACTIVE);
+        replay->space_active[1] = !!(records[1].flags & STOCK_INPUT_ACTIVE);
+    }
     replay->last_applied_tick = tick;
     replay->phase = tick <= replay->config.last_capture ? KEYBOARD_REPLAY_CAPTURE : KEYBOARD_REPLAY_DRAIN;
     return KEYBOARD_REPLAY_OK;
+}
+
+/* Existing callers retain their original two-callback behavior. */
+static inline keyboard_replay_result keyboard_replay_publish_slots(
+        keyboard_replay *replay, uint64_t tick, keyboard_replay_apply_slot_fn apply, void *context) {
+    return keyboard_replay_publish_slots_prepared(replay, tick, NULL, apply, context);
 }
 
 /* STOP closes the data coordinator; held-key release and hook cleanup belong to

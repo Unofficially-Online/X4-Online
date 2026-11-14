@@ -588,11 +588,13 @@ class Overlay(unittest.TestCase):
 
     def test_linux_hash_logging_changes_output_without_disabling_the_census(self):
         out = self.build(*self.snapshot, '--mode', 'clock', '--world-identities',
-                         '--world-hash-stride', '120', '--world-log-mode', 'hashes', '--probe-profile')
+                         '--world-hash-stride', '120', '--world-log-mode', 'hashes',
+                         '--probe-profile', '--frame-timing')
         config = (out / 'ui/config.lua.append').read_text()
         self.assertIn('native_gate_world_detail_rows = false', config)
         self.assertIn('native_gate_world_hash_stride = 120', config)
         self.assertIn('native_gate_probe_profile = true', config)
+        self.assertIn('native_gate_frame_timing = true', config)
         self.assertNotIn('native_gate_play_mode', config)
 
     def test_linux_rolling_census_is_explicit_and_keeps_its_distinct_config(self):

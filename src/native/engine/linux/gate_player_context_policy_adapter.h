@@ -50,7 +50,7 @@ static int player_context_adapter_check(const input_context_census_sample *sampl
     player_context_policy *policy = &player_context_adapter_policy;
     if (!player_context_policy_identity(policy, (uint64_t)GetCurrentThreadId(), sko_session.owner,
             lifecycle_discard_ship, lifecycle_discard_controller, sample) ||
-        !player_context_policy_classify(policy, sample, entries, &help) || help != policy->help_present ||
+        !player_context_policy_classify(policy, sample, entries, &help) || help != policy->optional_mask ||
         (policy->scope_open && (entries->count != policy->scope_count ||
          memcmp(entries->payloads, policy->scoped, entries->count * 16u)))) {
         player_context_adapter_report(sample, entries, sample->complete == 1);
@@ -71,8 +71,8 @@ static int player_context_adapter_suffix(char *output, size_t size) {
 static void player_context_adapter_receipt(const char *event, const char *boundary,
                                            uint64_t generation, const input_context_census_entries *entries) {
     static const char digits[] = "0123456789abcdef";
-    char payloads[16 * 16 * 2 + 1], message[1200];
-    lifecycle_discard_require(entries && entries->count <= 16, "context_policy_receipt_bounds");
+    char payloads[21 * 16 * 2 + 1], message[1400];
+    lifecycle_discard_require(entries && entries->count <= 21, "context_policy_receipt_bounds");
     const unsigned char *bytes = (const unsigned char *)entries->payloads;
     size_t length = entries->count * 16u;
     for (size_t index = 0; index < length; ++index) {
@@ -201,7 +201,7 @@ static void player_context_adapter_camera_rebase(const input_context_census_samp
         player_context_adapter_policy.initialized && !player_context_adapter_policy.failed,
         "context_policy_camera_owner");
     int accepted = before && old && after && current && !player_context_adapter_policy.scope_open &&
-        !player_context_adapter_policy.help_present && player_context_adapter_policy.base_count == 13 &&
+        !player_context_adapter_policy.optional_mask && player_context_adapter_policy.base_count == 13 &&
         player_context_policy_identity(&player_context_adapter_policy, (uint64_t)GetCurrentThreadId(),
             sko_session.owner, lifecycle_discard_ship, lifecycle_discard_controller, before) &&
         camera_context_complete(before, old, 13) &&

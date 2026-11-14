@@ -631,25 +631,78 @@ static int player_seat_preflight_owned_player2(void *context, uintptr_t *player,
     return 1;
 }
 
-/* Scan the sealed import map afresh, reject duplicate saved matches, then use
- * the existing pinned world registry find ABI. No cached object handle or
- * alternate fallback pointer. The second collection repeats this resolution. */
+/* One fixed saved target, one immutable seal. This caches identity metadata,
+ * never a native object. A stale admission is refused rather than rebuilt. */
+static struct {
+    unsigned initialized;
+    world_identity_entry *table;
+    int64_t count;
+    uint64_t generation, runtime;
+    unsigned bucket;
+} player_seat_target_cache;
+
+static int player_seat_preflight_target_runtime(uint64_t *runtime) {
+    int accepted = 0;
+    *runtime = 0;
+    pthread_mutex_lock(&lxw_insert_lock);
+    if (!world_identity_seal_admitted || !world_identity_installed ||
+        !world_identity_sealed || !world_identities || !world_identity_seal_generation ||
+        world_identity_seal_generation_exhausted ||
+        __atomic_load_n(&world_identity_failures, __ATOMIC_SEQ_CST) || world_identity_count <= 0 ||
+        world_identity_count > WORLD_IDENTITY_CAPACITY / 2) {
+        goto done;
+    }
+    if (!player_seat_target_cache.initialized) {
+        uint64_t unique_runtime = 0;
+        unsigned unique_bucket = 0, matches = 0;
+        int64_t population = 0;
+        for (unsigned bucket = 0; bucket < WORLD_IDENTITY_CAPACITY; ++bucket) {
+            const world_identity_entry *entry = &world_identities[bucket];
+            if (entry->runtime) ++population;
+            if (entry->saved == SEAT_PREFLIGHT_TARGET_SAVED) {
+                ++matches;
+                unique_runtime = entry->runtime;
+                unique_bucket = bucket;
+            }
+        }
+        player_seat_target_cache.initialized = 1;
+        player_seat_target_cache.table = world_identities;
+        player_seat_target_cache.count = world_identity_count;
+        player_seat_target_cache.generation = world_identity_seal_generation;
+        if (matches == 1 && unique_runtime && population == world_identity_count) {
+            player_seat_target_cache.runtime = unique_runtime;
+            player_seat_target_cache.bucket = unique_bucket;
+        }
+    }
+    if (player_seat_target_cache.table != world_identities ||
+        player_seat_target_cache.count != world_identity_count ||
+        player_seat_target_cache.generation != world_identity_seal_generation ||
+        !player_seat_target_cache.runtime ||
+        player_seat_target_cache.bucket >= WORLD_IDENTITY_CAPACITY) {
+        goto done;
+    }
+    const world_identity_entry *entry = &world_identities[player_seat_target_cache.bucket];
+    if (entry->runtime != player_seat_target_cache.runtime ||
+        entry->saved != SEAT_PREFLIGHT_TARGET_SAVED ||
+        world_identity_lookup(entry->runtime) != SEAT_PREFLIGHT_TARGET_SAVED) {
+        goto done;
+    }
+    *runtime = entry->runtime;
+    accepted = 1;
+done:
+    pthread_mutex_unlock(&lxw_insert_lock);
+    return accepted;
+}
+
+/* Every collection still resolves a fresh native object through the existing
+ * pinned registry ABI. Immutable imported IDs do not hold engine objects alive. */
 static int player_seat_preflight_resolve(void *context, uint64_t saved, uintptr_t *object,
                                          uint64_t *runtime) {
     (void)context;
-    if (!world_identity_sealed || !world_identities || saved != SEAT_PREFLIGHT_TARGET_SAVED) {
-        return 0;
-    }
     *object = 0;
     *runtime = 0;
-    for (unsigned bucket = 0; bucket < WORLD_IDENTITY_CAPACITY; ++bucket) {
-        const world_identity_entry *entry = &world_identities[bucket];
-        if (entry->saved == saved) {
-            if (!entry->runtime || *runtime) {
-                return 0;
-            }
-            *runtime = entry->runtime;
-        }
+    if (saved != SEAT_PREFLIGHT_TARGET_SAVED || !player_seat_preflight_target_runtime(runtime)) {
+        return 0;
     }
     void *map = NULL;
     if (!*runtime || world_identity_lookup(*runtime) != saved ||
@@ -660,7 +713,14 @@ static int player_seat_preflight_resolve(void *context, uint64_t saved, uintptr_
     }
     lxw_find_fn find = world_find ? world_find : (lxw_find_fn)(void *)LX(LX_FIND_VA);
     *object = (uintptr_t)find(map, *runtime, 4, 0);
-    return *object != 0;
+    uint64_t confirmed_runtime = 0;
+    if (!*object || !player_seat_preflight_target_runtime(&confirmed_runtime) ||
+        confirmed_runtime != *runtime) {
+        *object = 0;
+        *runtime = 0;
+        return 0;
+    }
+    return 1;
 }
 
 static int player_seat_preflight_after_join(void) {

@@ -36,6 +36,9 @@ static int ui_overlay_full_window_selected(void) {
 }
 static int ui_correction_enabled, ui_game_render_enabled, ui_game_render_active;
 static int ui_camera_refill_enabled, ui_camera_refill_active;
+static int ui_projection_scope_enabled, ui_projection_scope_active;
+static unsigned ui_projection_scope_closed;
+static uint64_t ui_projection_scope_last_tick;
 static unsigned ui_camera_refill_closed;
 static player_game_render_bind_fn ui_game_render_bind;
 static int (*ui_game_render_activate)(void);
@@ -304,6 +307,7 @@ static int ui_overlay_viewstate_pinned;
 #include "player_camera_refill_preload_pin.h"
 #include "gate_player_ui_seat_correction.h"
 static player_camera_refill_api ui_camera_refill_api;
+static player_projection_fov_scope_api ui_projection_scope_api;
 static uintptr_t ui_camera_refill_target;
 static uint64_t ui_camera_refill_last_tick;
 static uint32_t ui_camera_refill_bank;
@@ -337,9 +341,12 @@ static int ui_overlay_enter_callback(uintptr_t object) {
         ui_overlay_die("game_render_activate");
     if (ui_camera_refill_enabled && !completed && !ui_camera_refill_api.activate())
         ui_overlay_die("camera_refill_activate");
+    if (ui_projection_scope_enabled && !completed && !ui_projection_scope_api.activate())
+        ui_overlay_die("projection_scope_activate");
     if (!ui_live_pose_advance(completed, stats.issued)) ui_overlay_die("live_pose_tick");
     if ((ui_seat_query_enabled && presentation_fork.occupied() != presentation_fork.request.expected_p1_ship) ||
         !player_ui_overlay_enter(&probe->lifecycle, object)) ui_overlay_die("entry");
+    if (!player_view_render_capture_ui()) ui_overlay_die("view_capture");
     if (!completed) {
         ui_overlay_viewstate("during", probe, ui_overlay_viewstate_pinned);
         if (ui_plan_kick_enabled) ui_plan_kick_once(probe);
@@ -528,6 +535,64 @@ static int ui_camera_refill_leave(uintptr_t camera, uintptr_t output) {
             (unsigned long long)ui_correction_move_original, (unsigned long long)observed);
     return 1;
 }
+/* The projection call follows the same frame's successfully restored refill.
+ * Nonmatching calls retain their original behaviour without entering a lease. */
+static int ui_projection_scope_sequence(uint64_t generation, uint64_t first,
+                                        unsigned count, unsigned completed,
+                                        uint64_t refill_tick, unsigned refill_closed,
+                                        uint64_t previous_projection_tick) {
+    return count > 1 && generation > first && generation - first < count &&
+        refill_tick == generation && previous_projection_tick != generation &&
+        generation - first == completed && refill_closed == completed;
+}
+static int ui_projection_scope_enter(uintptr_t camera) {
+    uint64_t generation = stats.issued;
+    unsigned completed = atomic_load_explicit(&ui_overlay_completed, memory_order_acquire);
+    if (!ui_projection_scope_sequence(generation, player_startup()->presentation_first,
+                                      ui_overlay_multi_count, completed, ui_camera_refill_last_tick,
+                                      ui_camera_refill_closed, ui_projection_scope_last_tick)) return 2;
+    if (!ui_projection_scope_enabled || ui_projection_scope_active || ui_camera_refill_active ||
+        ui_game_render_active || stats.issued != player_recurring_tail_token.generation ||
+        !player_recurring_physics_entered() || !player_physics_identity() ||
+        camera != ui_camera_refill_target || ui_camera_refill_bank > 1 ||
+        camera > UINTPTR_MAX - 0x5a0) ui_overlay_die("projection_scope_admission");
+    uint32_t camera_bank = 2;
+    uintptr_t output = camera + 0x20 + ui_camera_refill_bank * 0x2c0;
+    if (!ui_camera_refill_identity(camera, output, &camera_bank) || camera_bank != ui_camera_refill_bank ||
+        !ui_live_pose_advance(1, generation)) ui_overlay_die("projection_scope_identity");
+    native_ui_overlay_probe *probe = &ui_overlay_probe;
+    ui_overlay_rearm_for_entry(probe, 1);
+    if (!ui_overlay_bind_move_bank(probe)) ui_overlay_die("projection_scope_bank");
+    ui_correction_move_begin();
+    ui_projection_scope_active = 1;
+    if (presentation_fork.occupied() != presentation_fork.request.expected_p1_ship ||
+        !player_ui_overlay_enter(&probe->lifecycle, probe->object)) ui_overlay_die("projection_scope_apply");
+    return 1;
+}
+static int ui_projection_scope_leave(uintptr_t camera) {
+    if (!ui_projection_scope_active) return 1;
+    native_ui_overlay_probe *probe = &ui_overlay_probe;
+    uint32_t bank = 2;
+    uintptr_t output = camera + 0x20 + ui_camera_refill_bank * 0x2c0;
+    if (!ui_camera_refill_identity(camera, output, &bank) || bank != ui_camera_refill_bank ||
+        probe->applies != 1 || probe->restores) ui_overlay_die("projection_scope_return");
+    probe->final_restore = 1;
+    if (!player_ui_overlay_return(&probe->lifecycle, probe->object) || probe->restores != 1 ||
+        !ui_overlay_canonical_matches(probe)) ui_overlay_die("projection_scope_restore");
+    probe->final_restore = 0;
+    uintptr_t observed = 0;
+    if (!presentation_fork_read(NULL, ui_correction_move_slot, &observed, sizeof observed) ||
+        observed != ui_correction_move_original || !ui_overlay_bank_matches(probe, probe->move_bank))
+        ui_overlay_die("projection_scope_readback");
+    ui_projection_scope_active = 0;
+    ui_projection_scope_last_tick = stats.issued;
+    ++ui_projection_scope_closed;
+    dprintf(2, "X4 UI PROJECTION_FOV v=1 stage=frame tick=%llu ordinal=%u camera=%llx bank=%u restored=1\n",
+            (unsigned long long)stats.issued, ui_projection_scope_closed,
+            (unsigned long long)camera, bank);
+    return 1;
+}
+
 static void player_ui_camera_refill_tail(uint64_t generation) {
     if (!ui_camera_refill_enabled) return;
     uint64_t first = player_startup()->presentation_first + 1;
@@ -538,6 +603,12 @@ static void player_ui_camera_refill_tail(uint64_t generation) {
     if (generation == last) {
         if (ui_camera_refill_closed != ui_overlay_multi_count - 1 || !ui_camera_refill_api.disarm())
             ui_overlay_die("camera_refill_close");
+        if (ui_projection_scope_enabled &&
+            (ui_projection_scope_active || ui_projection_scope_closed != ui_overlay_multi_count - 1 ||
+             !ui_projection_scope_api.disarm())) ui_overlay_die("projection_scope_close");
+        if (ui_projection_scope_enabled)
+            dprintf(2, "X4 UI PROJECTION_FOV v=1 stage=close tick=%llu count=%u restored=1\n",
+                    (unsigned long long)generation, ui_projection_scope_closed);
         ui_live_pose_close();
         ui_correction_close();
         dprintf(2, "X4 UI CAMERA_REFILL v=1 stage=close tick=%llu count=%u restored=1\n",
@@ -682,6 +753,13 @@ static int lua_player_ui_overlay_arm(lua_State *state) {
         p_lua_pushnumber(state, 0);
         return 1;
     }
+    const char *projection_scope = getenv("X4_DEV_UI_PROJECTION_FOV_SCOPE");
+    if (projection_scope && (strcmp(projection_scope, "1") || !camera_refill || !render_lease || !session_mode ||
+        !player_projection_fov_scope_provider(&provider, &ui_projection_scope_api))) {
+        p_lua_pushnumber(state, 0);
+        return 1;
+    }
+    ui_projection_scope_enabled = projection_scope != NULL;
     ui_camera_refill_enabled = camera_refill != NULL;
     ui_game_render_enabled = render_lease != NULL;
     ui_correction_enabled = seat_correction != NULL;
@@ -713,6 +791,10 @@ static int lua_player_ui_overlay_arm(lua_State *state) {
                                        ui_camera_refill_enter, ui_camera_refill_leave))
             ui_overlay_die("camera_refill_bind");
     }
+    if (ui_projection_scope_enabled &&
+        !ui_projection_scope_api.bind((uint32_t)tid, ui_camera_refill_target,
+                                      ui_projection_scope_enter, ui_projection_scope_leave))
+        ui_overlay_die("projection_scope_bind");
     atomic_store_explicit(&ui_overlay_armed, 1, memory_order_release);
     int bound = long_mode ?
         bind_count((uint32_t)tid, probe->object, ui_overlay_enter_callback, ui_overlay_leave_callback, ui_overlay_multi_count) :

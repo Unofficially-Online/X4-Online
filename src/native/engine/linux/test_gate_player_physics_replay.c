@@ -11,7 +11,7 @@
 
 #include "gate_player_startup_phases.h"
 #define FWRR_FIRST_GENERATION UINT64_C(5)
-#define PCB_VALUE_BYTES 16
+#define PCB_VALUE_BYTES 0x3e4
 static _Atomic unsigned player_physics_ready = 1, stock_observer_input_depth;
 static struct { _Atomic unsigned wrapper_depth; uintptr_t owner; } sko_session;
 static struct { uint64_t issued; } stats;
@@ -25,6 +25,8 @@ static uint64_t autopilot;
 static float digital;
 static int scoped, singleton=1, update_count, last_update, motion_count, body_count, snapshots;
 static int context_changes, bad_zone, in_progress;
+static int corrupt_write_number, bank_writes, corrupt_during_update;
+static const char *expected_failure;
 typedef struct { unsigned tree_valid, node_count, target_present; unsigned char payloads[3][16]; } input_context_census_sample;
 typedef struct { void *context; int (*read)(void *, uintptr_t, void *, size_t); } input_context_census_operations;
 typedef struct { int value; } player_route_snapshot;
@@ -34,7 +36,16 @@ static int player_seat_preflight_read(void *c, uintptr_t a, void *p, size_t n) {
 static int lifecycle_discard_context_collect(const input_context_census_operations *o, input_context_census_sample *out) {
     (void)o; memset(out, 0, sizeof *out); out->tree_valid=1;out->node_count=13+context_changes;out->target_present=7; return 1;
 }
-static void lifecycle_discard_require(int condition, const char *reason) { if (!condition) { dprintf(2, "%s\n",reason); _exit(222); } }
+static void lifecycle_discard_require(int condition, const char *reason) {
+    if (!condition) {
+        if (expected_failure) assert(!strcmp(reason, expected_failure));
+        if (!strcmp(reason,"physics_replay_local_entry_drift")) assert(update_count == 0);
+        if (!strcmp(reason,"physics_replay_local_scope_drift") || !strcmp(reason,"physics_replay_local_restore_drift"))
+            assert(update_count == 1);
+        dprintf(2, "%s\n",reason);
+        _exit(222);
+    }
+}
 static int player_recurring_physics_entered(void) { return 1; }
 static int player_physics_identity(void) { return singleton==1 && !scoped; }
 static int player_physics_identity_for(unsigned s) { return s && singleton==2 && scoped; }
@@ -54,14 +65,17 @@ static void *fake_lx(uintptr_t address) {
 #define LX(a) fake_lx(a)
 static void lifecycle_discard_read(uintptr_t address, void *out, size_t size) { memcpy(out,(void*)address,size); }
 static void lifecycle_routes_read_bank(unsigned char *p) { memcpy(p,live_bank,sizeof live_bank); }
-static void lifecycle_routes_write_bank(const unsigned char *p) { memcpy(live_bank,p,sizeof live_bank); }
+static void lifecycle_routes_write_bank(const unsigned char *p) {
+    memcpy(live_bank, p, sizeof live_bank);
+    if (++bank_writes == corrupt_write_number) live_bank[0xc4] ^= 1;
+}
 static void lifecycle_routes_assign_player(uintptr_t player) { singleton=(int)player; }
 static void lifecycle_discard_snapshot(const char *name,int initial) { (void)name;(void)initial;assert(singleton==1&&!scoped); ++snapshots; }
 static void player_physics_require_bank(const unsigned char *p) { assert(singleton==1&&!scoped&&!memcmp(p,live_bank,sizeof live_bank)); }
 static int player_routes_enter(void *r) { (void)r; assert(singleton==2&&!scoped); scoped=1;return 1; }
 static int player_routes_leave(void *r, player_route_snapshot s) { (void)r;(void)s;assert(scoped);scoped=0;return 1; }
 static int route_compare_snapshot(void *r, player_route_snapshot *s) { (void)r;(void)s;return scoped; }
-static void lifecycle_discard_update_once(int input) { assert(scoped&&singleton==2&&!in_progress); ++update_count;last_update=input; digital=keys[0]?-1:keys[1]?1:0;live_bank[0]++;if(context_changes==2) context_changes=1; }
+static void lifecycle_discard_update_once(int input) { assert(scoped&&singleton==2&&!in_progress); ++update_count; if(corrupt_during_update) live_bank[0x109] ^= 1; last_update=input; digital=keys[0]?-1:keys[1]?1:0;live_bank[0]++;if(context_changes==2) context_changes=1; }
 static void lifecycle_discard_write(const char *text) { (void)text; }
 static void player_physics_motion(const char *stage) { assert(!strcmp(stage,"before")&&player_physics_identity());++motion_count; }
 static void player_physics_observe_body(const char *stage) { assert(!strcmp(stage,"before")&&player_physics_identity());++body_count; }
@@ -78,6 +92,8 @@ static void player_context_adapter_scope_end(uint64_t generation) {
     assert(generation == stats.issued && player_physics_identity() && context_scope_open);
     context_scope_open = 0;
 }
+static unsigned player_space_slot_state(unsigned slot) { assert(slot == 2); return 1; }
+static void player_fire_observation_scope(uint64_t generation) { (void)generation; }
 #include "gate_player_physics_replay.h"
 
 static void run_success(void) {
@@ -105,7 +121,14 @@ static void run_common_first_update(void) {
     player_physics_replay_last = 39;
     stats.issued = 40;
     player_recurring_tail_token.generation = 40;
+    /* The P2 bank retains stale local UI bytes from an earlier frame. */
+    live_bank[0xc0] = 1;
+    live_bank[0xc4] = 3;
+    live_bank[0x109] = 0;
     player_physics_replay_begin(40);
+    assert(player_physics_bank[0xc0] == 1 && player_physics_bank[0xc4] == 3 &&
+           player_physics_bank[0x109] == 0);
+    assert(live_bank[0xc0] == 1 && live_bank[0xc4] == 3 && live_bank[0x109] == 0);
     assert(update_count == 1 && singleton == 1 && !scoped);
     assert(live_bank[0] == 0x5a && player_physics_bank[0] == 0x22);
     assert(!context_scope_open && player_physics_replay_last == 40);
@@ -119,6 +142,9 @@ static void refuse_case(int which) {
     if(which==4) bad_zone=1;
     if(which==5) context_changes=2;
     if(which==6) stats.issued=7;
+    if(which==7) { corrupt_write_number=1; expected_failure="physics_replay_local_entry_drift"; }
+    if(which==8) { corrupt_during_update=1; expected_failure="physics_replay_local_scope_drift"; }
+    if(which==9) { corrupt_write_number=2; expected_failure="physics_replay_local_restore_drift"; }
     player_physics_replay_begin(stats.issued); _exit(1);
 }
 int main(void) {
@@ -127,6 +153,6 @@ int main(void) {
     if (!mixed) { run_common_first_update(); _exit(0); }
     int mixed_status;
     assert(waitpid(mixed, &mixed_status, 0) == mixed && WIFEXITED(mixed_status) && WEXITSTATUS(mixed_status) == 0);
-    for(int i=1;i<=6;i++){pid_t p=fork();assert(p>=0);if(!p)refuse_case(i);int status;assert(waitpid(p,&status,0)==p&&WIFEXITED(status)&&WEXITSTATUS(status)==222);}
+    for(int i=1;i<=9;i++){pid_t p=fork();assert(p>=0);if(!p)refuse_case(i);int status;assert(waitpid(p,&status,0)==p&&WIFEXITED(status)&&WEXITSTATUS(status)==222);}
     run_success();puts("player physics replay scripted scopes and refusal: ok");
 }

@@ -3,6 +3,8 @@
 
 /* Requires an already sealed player_view_query provider. No byte mutation. */
 #include "player_view_ancestry_preload.h"
+#include <stdlib.h>
+#include "player_stock_view_ship_preload_pin_core.h"
 
 typedef struct {
     int (*bind)(uint32_t, uintptr_t, uintptr_t);
@@ -50,6 +52,39 @@ static int player_view_ancestry_provider(const player_view_query_api *provider,
         memcmp(got_trampoline, trampoline, sizeof trampoline)) return 0;
     unsigned char expected_page[4096], page[4096];
     memset(expected_page, 0xcc, sizeof expected_page);
+    const char *pre = getenv("X4_DEV_VIEW_PRECOMPARE_TRACE");
+    if ((pre && strcmp(pre, "1")) || info.pre_enabled != (pre != NULL)) return 0;
+    if (pre) {
+        const uint64_t original_word = UINT64_C(0x4800658819e80c24);
+        uintptr_t original_target = 0;
+        if (info.pre_block != (uintptr_t)LX(0x177f9a0u) || info.pre_original_word != original_word ||
+            info.pre_original_target != (uintptr_t)LX(0x1dd81c0u) ||
+            info.pre_stub != info.stubs[0] + VIEW_ANCESTRY_SITES * 16u ||
+            !player_view_pin_same_module(info.pre_dispatch, module.dli_fbase, "r-xp") ||
+            !player_view_pin_same_module(info.pre_frame, module.dli_fbase, "rw-p") ||
+            !player_view_pin_permissions(info.pre_frame, 48, "rw-p", 0) ||
+            !player_view_pin_same_module(info.pre_original_slot, module.dli_fbase, "rw-p") ||
+            !gate_read_local((void *)info.pre_original_slot, &original_target, sizeof original_target) ||
+            original_target != info.pre_original_target) return 0;
+        int64_t delta = (int64_t)info.pre_stub - (int64_t)(info.pre_block + 7);
+        if (delta < INT32_MIN || delta > INT32_MAX) return 0;
+        unsigned char patch[8]; memcpy(patch, &original_word, 8); patch[2] = 0xe8;
+        int32_t relative = (int32_t)delta; memcpy(patch + 3, &relative, 4);
+        uint64_t expected; memcpy(&expected, patch, 8);
+        if (info.pre_patched_word != expected) return 0;
+        unsigned char *stub = expected_page + VIEW_ANCESTRY_SITES * 16u;
+        stub[0] = 0xff; stub[1] = 0x25; memset(stub + 2, 0, 4);
+        memcpy(stub + 6, &info.pre_dispatch, 8);
+        unsigned char frame[48], expected_frame[48] = {16,0,0,0,0,0,0,0,1,0,1,0x78,16,0x0c,7,8,0x90,1,0,0};
+        uint32_t len = 20, cie = 24; uint64_t start = info.pre_stub, range = 14;
+        memcpy(expected_frame + 20, &len, 4); memcpy(expected_frame + 24, &cie, 4);
+        memcpy(expected_frame + 28, &start, 8); memcpy(expected_frame + 36, &range, 8);
+        if (!gate_read_local((void *)info.pre_frame, frame, 48) || memcmp(frame, expected_frame, 48)) return 0;
+        unsigned char getter[85];
+        if (!player_view_pin_permissions((uintptr_t)LX(0x1dd81c0u), sizeof getter, "r-xp", 0) ||
+            !gate_read_local(LX(0x1dd81c0u), getter, sizeof getter) ||
+            !hash_ok(getter, sizeof getter, "a0437b5716ca6a2143d11a0d25f75fb3ca04342de8588818d339ca512e75c4a6")) return 0;
+    }
     for (unsigned i = 0; i < VIEW_ANCESTRY_SITES; ++i) {
         if (info.blocks[i] != (uintptr_t)LX(blocks[i]) || info.offsets[i] != offsets[i] ||
             info.original_words[i] != words[i] || info.stubs[i] != info.stubs[0] + i * 16 ||
@@ -73,6 +108,21 @@ static int player_view_ancestry_provider(const player_view_query_api *provider,
         if (info.patched_words[i] != word ||
             !gate_read_local((void *)(uintptr_t)LX(entries[i]), original, sizes[i]) ||
             memcmp(original + blocks[i] - entries[i], patch, sizeof patch)) return 0;
+        if (i == 1 && pre) {
+            size_t offset = 0x177f9a0u - 0x177f900u;
+            if (memcmp(original + offset, &info.pre_patched_word, 8)) return 0;
+            memcpy(original + offset, &info.pre_original_word, 8);
+        }
+        if (i == 2) {
+            const size_t ship_offset = 0x129bb21u - 0x129bad0u;
+            const uint64_t ship_original = UINT64_C(0xc985000008808a8b);
+            if (memcmp(original + ship_offset, &ship_original, 8)) {
+                player_stock_view_ship_api ship;
+                if (!player_stock_view_ship_provider_core(provider, &ship, &info) ||
+                    memcmp(original + ship_offset, &ship.info.patched, 8)) return 0;
+                memcpy(original + ship_offset, &ship_original, 8);
+            }
+        }
         memcpy(original + blocks[i] - entries[i], &words[i], sizeof words[i]);
         if (!hash_ok(original, sizes[i], hashes[i])) return 0;
         unsigned char expected_frame[48] = {16,0,0,0,0,0,0,0,1,0,1,0x78,16,0x0c,7,8,0x90,1,0,0};
@@ -110,6 +160,17 @@ static int player_view_ancestry_provider(const player_view_query_api *provider,
         player_view_pin_unwind_bases bases = {0};
         ok = find((void *)info.stubs[i], &bases) == (void *)(info.frames[i] + 20) &&
              bases.function == (void *)info.stubs[i];
+    }
+    if (ok && pre) {
+        player_view_pin_unwind_bases pre_bases = {0};
+        ok = find((void *)info.pre_stub, &pre_bases) == (void *)(info.pre_frame + 20) &&
+             pre_bases.function == (void *)info.pre_stub;
+        memset(&pre_bases, 0, sizeof pre_bases);
+        void *bridge_fde = ok ? find((void *)info.pre_dispatch, &pre_bases) : NULL;
+        Dl_info bridge_module;
+        ok = bridge_fde && pre_bases.function == (void *)info.pre_dispatch &&
+             dladdr(bridge_fde, &bridge_module) && bridge_module.dli_fbase == module.dli_fbase &&
+             player_view_pin_permissions((uintptr_t)bridge_fde, 4, "r--p", 0);
     }
     player_view_pin_unwind_bases bases = {0};
     void *fde = ok ? find((void *)info.ship_trampoline, &bases) : NULL;

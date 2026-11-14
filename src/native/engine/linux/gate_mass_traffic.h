@@ -23,6 +23,7 @@
  * clears the parked bytes while the threads wait (the kick then has no thread to wake) and sets them back at the next
  * join, as Windows holds its ready bytes. A timeout (the worker 5 s, traffic 5 s, region 120 s) stops the gate (reason
  * 100, as on Windows). Not ported: Zone::Move's TryEnter count of g_MassTrafficLock (Windows' 'skipped' check). */
+#include <errno.h>
 #define LMT_DOMAIN 0x58344c4d41535354ULL        /* "X4LMASST", MT_DOMAIN */
 #define LMT_REGION_DOMAIN 0x58344c5245475053ULL /* "X4LREGPS", MT_REGION_DOMAIN */
 #define LMT_STOP_REASON 100u
@@ -43,7 +44,7 @@ typedef struct {
 } lmt_pass;
 static lmt_pass lmt_traffic={.name="traffic",.global=LX_FS_MASS_VA,.lock=LX_MT_TRAFFIC_LOCK,.parked=LX_MT_TRAFFIC_PARKED,.timeout_ms=5000u,.domain=LMT_DOMAIN};
 static lmt_pass lmt_region={.name="region",.global=LX_FS_REGION_VA,.lock=LX_MT_REGION_LOCK,.parked=LX_MT_REGION_PARKED,.timeout_ms=120000u,.domain=LMT_REGION_DOMAIN};
-static int lmt_installed,lmt_restored,lmt_patched;
+static int lmt_installed,lmt_restored,lmt_patched,lmt_trace_enabled;
 static volatile int lmt_active;
 static unsigned char *lmt_page;
 static unsigned char lmt_site_done[LMT_SITES];
@@ -67,11 +68,28 @@ static int lmt_worker_parked(void) {return InterlockedCompareExchange64(&lmt_wor
 /* ---- the three redirected calls ---- */
 typedef uint64_t (*lmt_sem_wait_fn)(void *);
 typedef uint64_t (*lmt_cond_wait_fn)(void *,void *);
+/* Optional private diagnostic uses the existing owned hook; absent by default. */
+extern unsigned long x4_worker_wait_trace_enter(void *) __attribute__((weak, visibility("default")));
+extern void x4_worker_wait_trace_return(void *, unsigned long, uint64_t) __attribute__((weak, visibility("default")));
+extern int x4mp_semaphore_observer_movement_scope(unsigned) __attribute__((weak, visibility("default")));
+extern int x4mp_semaphore_observer_checkpoint(uint64_t) __attribute__((weak, visibility("default")));
+static unsigned lmt_semaphore_observer_enabled;
 static uint64_t lmt_worker_wait(void *sem) {
+    int incoming_errno = errno;
+    unsigned long observation = 0;
+    if (lmt_trace_enabled)
+        observation = x4_worker_wait_trace_enter(sem);
+    errno = incoming_errno;
     int counted=sem==(void*)LX(LX_FS_SIM_START_VA);
     if(counted) InterlockedIncrement64(&lmt_worker_waits);
+    if (counted && lmt_semaphore_observer_enabled) (void)x4mp_semaphore_observer_movement_scope(1);
+    errno = incoming_errno;
     uint64_t r=((lmt_sem_wait_fn)(void*)LX(LX_SEM_WAIT_VA))(sem);
+    int outgoing_errno = errno;
+    if (counted && lmt_semaphore_observer_enabled) (void)x4mp_semaphore_observer_movement_scope(0);
     if(counted) InterlockedIncrement64(&lmt_worker_wakes);
+    if (observation) x4_worker_wait_trace_return(sem, observation, r);
+    errno = outgoing_errno;
     return r;
 }
 /* On the pass thread, its wait just returned (a kick): the seed the gate set for this pass, into its own word. */
@@ -128,6 +146,13 @@ static int lmt_pins(void) {
     static const char *const names[]={"fs_move_worker_frame_end","fs_mass_park","fs_region_park","mt_region_kick","fs_sem_wait","fs_condvar_wait"};
     for(unsigned k=0;k<sizeof(names)/sizeof(*names);k++) {
         const lx_site *s=lmt_site_named(names[k]);unsigned char copy[0x200];
+        /* The optional observer owns this provider's entry. Authenticate its
+         * full original view through the shared verifier, including all four
+         * provider hooks; the local callsite reconstruction below is unrelated. */
+        if (s && s->va == LX_SEM_WAIT_VA) {
+            if (!site_ok(s)) return 0;
+            continue;
+        }
         if(!s || s->length>sizeof(copy) || !gate_read_local(LX(s->va),copy,s->length)) return 0;
         for(unsigned i=0;i<LMT_SITES;i++) {
             uint32_t c=lmt_sites[i].call_va;if(c+5<=s->va || c>=s->va+s->length) continue;
@@ -140,6 +165,29 @@ static int lmt_pins(void) {
 }
 static int lmt_install(void) {
     if(lmt_installed) return 1;
+    const char *semaphore_observer = getenv("X4MP_SEMAPHORE_OBSERVER");
+    lmt_semaphore_observer_enabled = semaphore_observer && !strcmp(semaphore_observer, "1");
+    if (semaphore_observer) {
+        Dl_info observer_owner = {0}, checkpoint_owner = {0}, information_owner = {0};
+        void *information = dlsym(RTLD_DEFAULT, "x4mp_semaphore_observer_info");
+        if (!lmt_semaphore_observer_enabled || !x4mp_semaphore_observer_movement_scope ||
+            !x4mp_semaphore_observer_checkpoint ||
+            !player_semaphore_pinned_provider((void *)x4mp_semaphore_observer_movement_scope, &observer_owner) ||
+            !dladdr((void *)x4mp_semaphore_observer_checkpoint, &checkpoint_owner) ||
+            !information || !dladdr(information, &information_owner) ||
+            observer_owner.dli_fbase != checkpoint_owner.dli_fbase ||
+            observer_owner.dli_fbase != information_owner.dli_fbase) {
+            lmt_stage="semaphore_observer";return 0;
+        }
+    }
+    const char *trace = getenv("X4_DEV_WORKER_WAIT_OBSERVE");
+    lmt_trace_enabled = 0;
+    if (trace) {
+        if (strcmp(trace, "1") || !x4_worker_wait_trace_enter || !x4_worker_wait_trace_return) {
+            lmt_stage="trace";return 0;
+        }
+        lmt_trace_enabled = 1;
+    }
     if(!lmt_pins()) {lmt_stage="pins";return 0;}
     for(unsigned i=0;i<LMT_SITES;i++) if(lmt_site_state(i)!=0) {lmt_stage="site";return 0;}
     if(!lmt_page) lmt_page=gate_near_page(LX(LX_MT_TRAFFIC_WAIT_CALL_VA));

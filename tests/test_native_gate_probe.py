@@ -2419,11 +2419,58 @@ class SnapshotProbeTests(unittest.TestCase):
         self.assertIn(",runtime_ids=0} -- one upvalue",text)
 
     def test_runtime_ids_probe_mark_is_around_the_frame_and_caller_rows_reach_the_table(self):
-        start=SOURCE.index(" local paused=gate and gate.pilot_present_pause")
-        block=SOURCE[start:SOURCE.index(" if paused==1 then gate.pilot_present_resume() end",start)]
+        start=SOURCE.index("SetScript('onUpdate',function()")
+        block=SOURCE[start:SOURCE.index(" if probe_started then probe_last_us=",start)]
         self.assertLess(block.index('probe_mark(1)'),block.index('pcall(frame)'))
         self.assertLess(block.index('pcall(frame)'),block.index('probe_mark(0)'))
         self.assertIn('for i=0,2047 do\n    local row=gate.runtime_ids_caller_row(i)',SOURCE.replace(chr(13),''))
+
+    def test_runtime_probe_mark_closes_on_frame_and_view_query_failures(self):
+        handler = SOURCE.index("SetScript('onUpdate',function()")
+        start = SOURCE.index(' local probe_mark=', handler)
+        finish = SOURCE.index(' if hud_scope then hud_scope(1) end', start)
+        block = SOURCE[start:finish]
+        for queries in (False, True):
+            for failure in ('none', 'frame', 'entry', 'exit'):
+                if not queries and failure in ('entry', 'exit'):
+                    continue
+                with self.subTest(queries=queries, failure=failure):
+                    lua = LuaRuntime(unpack_returned_tuples=True)
+                    lua.execute("""
+                        events={}
+                        cfg={native_gate_runtime_ids_local=true}
+                        gate={runtime_ids_probe=function(value)
+                            events[#events+1]='mark'..value
+                        end}
+                        function frame()
+                            events[#events+1]='frame'
+                            if failure=='frame' then error('fixture frame failure') end
+                        end
+                        gate.player_view_query_phase=function(value)
+                            events[#events+1]='phase'..value
+                            if failure=='entry' and value==1 then return 0 end
+                            if failure=='exit' and value==0 then return 0 end
+                            return 1
+                        end
+                        function run_block(text)
+                            return assert(loadstring(text..string.char(10)..'return ok,error'))()
+                        end
+                    """)
+                    lua.globals().cfg.native_gate_linux_view_query_observer = queries
+                    lua.globals().failure = failure
+                    ok, error = lua.globals().run_block(block)
+                    expected = ['mark1']
+                    if queries:
+                        expected.append('phase1')
+                    if failure != 'entry':
+                        expected.append('frame')
+                    if queries:
+                        expected.append('phase0')
+                    expected.append('mark0')
+                    self.assertEqual(list(lua.globals().events.values()), expected)
+                    self.assertEqual(ok, failure == 'none')
+                    if failure != 'none':
+                        self.assertIsNotNone(error)
 
     def _runtime_ids_probe(self,config):
         # The arming block of frame(), extracted: the snapshot boot's start-menu path it sits in needs the whole game.

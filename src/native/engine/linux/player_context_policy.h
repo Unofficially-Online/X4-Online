@@ -10,7 +10,7 @@ typedef struct {
     unsigned initialized;
     unsigned failed;
     unsigned scope_open;
-    unsigned help_present;
+    unsigned optional_mask;
     unsigned scope_count;
     unsigned base_count;
     uint64_t thread;
@@ -21,7 +21,7 @@ typedef struct {
     uintptr_t ship;
     uintptr_t controller;
     unsigned char adopted[15][16];
-    unsigned char scoped[16][16];
+    unsigned char scoped[21][16];
 } player_context_policy;
 
 static inline int player_context_policy_fail(player_context_policy *policy) {
@@ -45,9 +45,10 @@ static inline int player_context_policy_init(player_context_policy *policy,
         return player_context_policy_fail(policy);
     }
     for (unsigned index = 0; index < expected_base_count; ++index) {
-        if (camera_context_key(entries->payloads[index], 59, 8)) {
-            return player_context_policy_fail(policy);
-        }
+        static const uint32_t optional_keys[][2] = {{59,8},{4,8},{44,13},{65,13},{66,13},{67,13}};
+        for (unsigned key = 0; key < sizeof optional_keys / sizeof optional_keys[0]; ++key)
+            if (camera_context_key(entries->payloads[index], optional_keys[key][0], optional_keys[key][1]))
+                return player_context_policy_fail(policy);
     }
     policy->thread = thread;
     policy->owner = owner;
@@ -68,36 +69,39 @@ static inline int player_context_policy_identity(const player_context_policy *po
         controller == policy->controller && sample->manager == policy->manager;
 }
 
-/* Compare the full ordered payloads, including the three opaque tail bytes.
- * Help text is the only admitted additional entry; no requester-wide wildcard. */
+/* The five entries occurred together in the retained target-selection run.
+ * Their meaning is not inferred; every byte and the complete group are pinned. */
 static inline int player_context_policy_classify(const player_context_policy *policy,
         const input_context_census_sample *sample, const input_context_census_entries *entries,
-        unsigned *help_present) {
-    static const unsigned char help[16] = {0x3b, 0, 0, 0, 8, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0};
-    if (!policy || !sample || !entries || !help_present ||
-        (entries->count != policy->base_count && entries->count != policy->base_count + 1) ||
-        !camera_context_complete(sample, entries, entries->count)) {
-        return 0;
-    }
-    unsigned old_index = 0;
-    unsigned found = 0;
+        unsigned *optional_mask) {
+    static const unsigned char optional[6][16] = {
+        {0x3b,0,0,0,8,0,0,0,0,0,0,0,1,0,0,0},
+        {4,0,0,0,8,0,0,0,0,0,0,0,1,0,0,0},
+        {44,0,0,0,13,0,0,0,0,0,0,0,1,0,0,0},
+        {65,0,0,0,13,0,0,0,0,0,0,0,1,0,0,0},
+        {66,0,0,0,13,0,0,0,0,0,0,0,1,0,0,0},
+        {67,0,0,0,13,0,0,0,0,0,0,0,1,0,0,0}
+    };
+    if (!policy || !sample || !entries || !optional_mask ||
+        entries->count < policy->base_count || entries->count > policy->base_count + 6 ||
+        !camera_context_complete(sample, entries, entries->count)) return 0;
+    unsigned old_index = 0, found = 0;
     for (unsigned index = 0; index < entries->count; ++index) {
         const unsigned char *payload = entries->payloads[index];
-        if (!memcmp(payload, help, sizeof help)) {
-            if (found++) {
-                return 0;
+        unsigned key;
+        for (key = 0; key < 6; ++key) {
+            if (!memcmp(payload, optional[key], 16)) {
+                if (found & (1u << key)) return 0;
+                found |= 1u << key;
+                break;
             }
-            continue;
         }
-        if (old_index == policy->base_count || memcmp(payload, policy->adopted[old_index], 16)) {
-            return 0;
-        }
+        if (key < 6) continue;
+        if (old_index == policy->base_count || memcmp(payload, policy->adopted[old_index], 16)) return 0;
         ++old_index;
     }
-    if (old_index != policy->base_count || found != entries->count - policy->base_count) {
-        return 0;
-    }
-    *help_present = found;
+    if (old_index != policy->base_count || ((found & 0x3eu) && (found & 0x3eu) != 0x3eu)) return 0;
+    *optional_mask = ((found & 1u) ? 1u : 0u) | ((found & 0x3eu) ? 2u : 0u);
     return 1;
 }
 
@@ -127,13 +131,18 @@ static inline player_context_result player_context_policy_observe_outside(player
         return PLAYER_CONTEXT_REFUSED;
     }
     player_context_result result = PLAYER_CONTEXT_UNCHANGED;
-    if (observed != policy->help_present) {
+    if (observed != policy->optional_mask) {
         if (policy->transitions == UINT64_MAX) {
             player_context_policy_fail(policy);
             return PLAYER_CONTEXT_REFUSED;
         }
-        result = observed ? PLAYER_CONTEXT_ADDED : PLAYER_CONTEXT_REMOVED;
-        policy->help_present = observed;
+        unsigned changed = observed ^ policy->optional_mask;
+        if (changed != 1u && changed != 2u) {
+            player_context_policy_fail(policy);
+            return PLAYER_CONTEXT_REFUSED;
+        }
+        result = (observed & changed) ? PLAYER_CONTEXT_ADDED : PLAYER_CONTEXT_REMOVED;
+        policy->optional_mask = observed;
         ++policy->transitions;
     }
     policy->last_generation = generation;
@@ -141,7 +150,7 @@ static inline player_context_result player_context_policy_observe_outside(player
 }
 
 /* Scope endpoints must equal each other byte-for-byte and the last admitted
- * outside state. A help-text change during a scope is always refused. */
+ * outside state. An optional-context change during a scope is always refused. */
 static inline int player_context_policy_scope_begin(player_context_policy *policy,
         uint64_t generation, uint64_t thread, uintptr_t owner, uintptr_t ship, uintptr_t controller,
         int scope_authenticated, const input_context_census_sample *sample,
@@ -150,7 +159,7 @@ static inline int player_context_policy_scope_begin(player_context_policy *polic
     if (!policy || scope_authenticated != 1 || !generation || policy->scope_open ||
         generation < policy->last_generation ||
         !player_context_policy_identity(policy, thread, owner, ship, controller, sample) ||
-        !player_context_policy_classify(policy, sample, entries, &observed) || observed != policy->help_present) {
+        !player_context_policy_classify(policy, sample, entries, &observed) || observed != policy->optional_mask) {
         return player_context_policy_fail(policy);
     }
     policy->scope_count = entries->count;
@@ -168,7 +177,7 @@ static inline int player_context_policy_scope_end(player_context_policy *policy,
     if (!policy || scope_authenticated != 1 || !policy->scope_open ||
         generation != policy->last_generation ||
         !player_context_policy_identity(policy, thread, owner, ship, controller, sample) ||
-        !player_context_policy_classify(policy, sample, entries, &observed) || observed != policy->help_present ||
+        !player_context_policy_classify(policy, sample, entries, &observed) || observed != policy->optional_mask ||
         entries->count != policy->scope_count || memcmp(entries->payloads, policy->scoped, entries->count * 16u)) {
         return player_context_policy_fail(policy);
     }

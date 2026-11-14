@@ -41,6 +41,7 @@ class UiOverlayTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             home=Path(directory);bundle=home/'bundle';bundle.mkdir();(bundle/live.MARKER).touch()
             live.freeze_source_receipts(ROOT,bundle,live.view_query_sources(ROOT))
+            config=bundle/'extension/x4_lan_lab/ui/config.lua';config.parent.mkdir(parents=True);config.write_text('')
             library=bundle/'player_view_query'/live.PLAYER_VIEW_QUERY;library.parent.mkdir();library.write_bytes(b'fixture preload')
             files={path.relative_to(bundle).as_posix():live.sha(path) for path in bundle.rglob('*') if path.is_file() and path.name!=live.MARKER}
             (bundle/'manifest.json').write_text(json.dumps(dict(self.options(),ticks=220,files=files,

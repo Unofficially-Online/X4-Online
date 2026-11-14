@@ -465,6 +465,7 @@ D.DIAGNOSTIC={
 }
 -- Neither a feature default nor a diagnostic: fixtures, experiments, alternatives and cross-platform keys. {'key','why'}.
 D.EXCLUDED={
+ {'native_gate_player_identity_block_orders','explicit identity UI order block; never enabled by session defaults'},
  {'native_gate_linux_ui_camera_refill','explicit disposable guest camera refill lease; never a session default'},
  {'native_gate_shared_identity_t40','opt-in disposable common identity setup, never a session default'},
  {'native_gate_linux_ui_session_frames','explicit finite disposable session budget; never a session default'},

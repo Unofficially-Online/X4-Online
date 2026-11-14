@@ -4,6 +4,7 @@
 Checks recorded state and wire agreement, not input causation or safe resumption.
 """
 import math
+import hashlib
 import re
 import struct
 from pathlib import Path
@@ -18,23 +19,47 @@ SUPPORTED_STATES = frozenset((2, 3, 4, 5, 6, 7, 8, 9, 13, 14))
 SUPPORTED_HELD_MASK = sum(1 << (event_id - 2) for event_id in SUPPORTED_STATES)
 
 
-def decode_record(text, tick, held, *, scripted_throttle=False):
+def decode_record(text, tick, held, *, scripted_throttle=False, allow_cursor=False, allow_space=False, allow_view=False):
     """Return the held mask after a canonical, supported version-3 record."""
+    if type(allow_space) is not bool or (allow_space and allow_cursor is not True):
+        raise ValueError('SPACE requires explicit cursor admission')
+    if type(allow_view) is not bool or (allow_view and allow_cursor is not True):
+        raise ValueError('VIEW requires explicit cursor admission')
     if type(held) is not int or held < 0 or held & ~SUPPORTED_HELD_MASK:
         raise ValueError('unsupported held-state mask')
     if not re.fullmatch(r'[0-9a-f]+', text) or len(text) % 2:
         raise ValueError('noncanonical record hex')
     data = bytes.fromhex(text)
-    if len(data) < 43 or len(data) > 229 or data[0] != 3 or data[1] != 0:
+    if len(data) < 43 or len(data) > 229 or data[0] != 3:
+        raise ValueError('unsupported record header')
+    # Strip VIEW only after explicit admission. The original ACTIVE/CURSOR/
+    # SPACE policy remains unchanged for every combination of presence flags.
+    flags = data[1] & ~8 if allow_view else data[1]
+    allowed = (0, 1, 3) if allow_space else (1, 3)
+    if (flags not in allowed if allow_cursor else flags != 0):
         raise ValueError('unsupported record header')
     if int.from_bytes(data[2:4], 'little') != ((tick - 2) & 0xffff):
         raise ValueError('capture tick mismatch')
-    if any(data[4:42]) or data[42] > 31 or len(data) != 43 + 6 * data[42]:
+    if any(data[16:29]) or (not allow_cursor and any(data[4:16])) or data[42] > 31 or len(data) != 43 + 6 * data[42]:
         raise ValueError('noncanonical empty fields or event length')
+    if data[1] & 8:
+        fov = struct.unpack('<f', data[30:34])[0]
+        if data[29] > 3 or not math.isfinite(fov):
+            raise ValueError('invalid VIEW bits or FOV')
+        # bytes34..41 are the unchanged little-endian portable target uint64.
+        # No native object lookup or truncating float conversion is performed.
+    elif any(data[29:42]):
+        raise ValueError('noncanonical absent VIEW fields')
+    if allow_cursor:
+        vector = struct.unpack('<3f', data[4:16])
+        if any(not math.isfinite(value) or abs(value) > 16 for value in vector) or (not data[1] & 2 and any(data[4:16])):
+            raise ValueError('unsupported cursor vector')
     for offset in range(43, len(data), 6):
         word = int.from_bytes(data[offset:offset + 2], 'little')
         kind, event_id = word >> 14, word & 0x3fff
         value = int.from_bytes(data[offset + 2:offset + 6], 'little')
+        if allow_space and kind == 3 and event_id == 8 and value in (0, 1):
+            continue
         if kind != 1 or event_id not in SUPPORTED_STATES or value not in (0, 1):
             raise ValueError('unsupported STATE event')
         if scripted_throttle and event_id in (13, 14):
@@ -44,11 +69,19 @@ def decode_record(text, tick, held, *, scripted_throttle=False):
     return held
 
 
-def parse_network_physics_evidence(lines, stderr_lines, engine_lines, returncode, *, frame_count, slot, allow_camera=False, allow_throttle=False, throttle_start_tick=5, allow_presentation=False, session_frames=0, startup=None):
+def parse_network_physics_evidence(lines, stderr_lines, engine_lines, returncode, *, frame_count, slot, allow_camera=False, allow_throttle=False, throttle_start_tick=5, allow_presentation=False, session_frames=0, startup=None, allow_cursor=False, allow_space=False, allow_view=False, allow_semaphore_checkpoint=False):
     result = parse_recurring_physics_evidence(lines, stderr_lines, returncode,
                                                frame_count=frame_count, input_mode='network', allow_camera=allow_camera and str(slot) == '2', allow_throttle=allow_throttle,
-                                               throttle_start_tick=throttle_start_tick, presentation_slot=slot if allow_presentation else None, session_frames=session_frames, startup=startup)
+                                               throttle_start_tick=throttle_start_tick, presentation_slot=slot if allow_presentation else None, session_frames=session_frames, startup=startup, allow_semaphore_checkpoint=allow_semaphore_checkpoint)
     errors = result['errors']
+    if type(allow_space) is not bool or (allow_space and not allow_cursor):
+        errors.append('SPACE requires explicit cursor admission')
+    if type(allow_cursor) is not bool or (allow_cursor and (startup != 'v1-t40' or not session_frames)):
+        errors.append('cursor requires explicit finite T40 admission')
+    if (type(allow_view) is not bool or (allow_view and
+            (allow_cursor is not True or startup != 'v1-t40' or
+             type(session_frames) is not int or not session_frames))):
+        errors.append('VIEW requires explicit finite T40 cursor admission')
     from linux_player_startup_phases import startup_phases
     try:
         phase = startup_phases(startup)
@@ -87,7 +120,7 @@ def parse_network_physics_evidence(lines, stderr_lines, engine_lines, returncode
             errors.append(f'frame {tick}: missing or reordered P2 network rows')
             continue
         try:
-            after = decode_record(rows[0]['record'], tick, held, scripted_throttle=allow_throttle)
+            after = decode_record(rows[0]['record'], tick, held, scripted_throttle=allow_throttle, allow_cursor=allow_cursor, allow_space=allow_space, allow_view=allow_view)
             if allow_throttle and tick in (throttle_start_tick, throttle_start_tick + 1) and bytes.fromhex(rows[0]['record'])[42] != 0:
                 raise ValueError('scripted throttle requires empty P2 record')
             if any(row['tick'] != tick or row['record'] != rows[0]['record'] or
@@ -118,7 +151,7 @@ def parse_network_physics_evidence(lines, stderr_lines, engine_lines, returncode
                 raise ValueError('P1 identity, capture or held-before mismatch')
             if saved is not None and identity != saved:
                 raise ValueError('P1 saved identity changed')
-            expected = decode_record(record, tick, held, scripted_throttle=allow_throttle)
+            expected = decode_record(record, tick, held, scripted_throttle=allow_throttle, allow_cursor=allow_cursor, allow_space=allow_space, allow_view=allow_view)
             if after != expected:
                 raise ValueError('P1 held-after mismatch')
             saved, held = identity, expected
@@ -188,23 +221,27 @@ def parse_network_physics_evidence(lines, stderr_lines, engine_lines, returncode
     return result
 
 
-def collect_network_physics_evidence(trace, retained, engine, output, returncode, *, frame_count, stderr, slot, allow_camera=False, allow_throttle=False, throttle_start_tick=5, allow_presentation=False, session_frames=0, startup=None):
+def collect_network_physics_evidence(trace, retained, engine, output, returncode, *, frame_count, stderr, slot, allow_camera=False, allow_throttle=False, throttle_start_tick=5, allow_presentation=False, session_frames=0, startup=None, allow_cursor=False, allow_space=False, allow_view=False, allow_semaphore_checkpoint=False):
     """Retain raw trace before parsing; include the complete generic failure checks."""
     base = collect_recurring_physics_evidence(trace, retained, engine, output, returncode,
                                              frame_count=frame_count, stderr=stderr, input_mode='network', allow_camera=allow_camera and str(slot) == '2', allow_throttle=allow_throttle,
-                                               throttle_start_tick=throttle_start_tick, presentation_slot=slot if allow_presentation else None, session_frames=session_frames, startup=startup)
+                                               throttle_start_tick=throttle_start_tick, presentation_slot=slot if allow_presentation else None, session_frames=session_frames, startup=startup, allow_semaphore_checkpoint=allow_semaphore_checkpoint)
     try:
         if 'log_sha256' not in base:
             raise OSError('trace retention or parsing failed')
         lines = Path(retained).read_text(encoding='utf-8').splitlines(keepends=True)
-        worker = Path(stderr).read_text(encoding='utf-8').splitlines(keepends=True)
+        worker_raw = Path(stderr).read_bytes()
+        worker = worker_raw.decode('utf-8').splitlines(keepends=True)
         engine_lines = Path(engine).read_text(encoding='utf-8').splitlines(keepends=True)
         result = parse_network_physics_evidence(lines, worker, engine_lines, returncode,
-                                                frame_count=frame_count, slot=slot, allow_camera=allow_camera, allow_throttle=allow_throttle, throttle_start_tick=throttle_start_tick, allow_presentation=allow_presentation, session_frames=session_frames, startup=startup)
+                                                frame_count=frame_count, slot=slot, allow_camera=allow_camera, allow_throttle=allow_throttle, throttle_start_tick=throttle_start_tick, allow_presentation=allow_presentation, session_frames=session_frames, startup=startup, allow_cursor=allow_cursor, allow_space=allow_space, allow_view=allow_view, allow_semaphore_checkpoint=allow_semaphore_checkpoint)
         for error in base['errors']:
             if error not in result['errors']:
                 result['errors'].append(error)
         result.update(native_fd_path=base['native_fd_path'], retained_log=base['retained_log'])
+        result['stderr_sha256'] = hashlib.sha256(worker_raw).hexdigest()
+        if result['stderr_sha256'] != base.get('stderr_sha256'):
+            result['errors'].append('worker stderr changed between physics evidence passes')
         if 'log_sha256' in base:
             result['log_sha256'] = base['log_sha256']
     except (OSError, UnicodeError) as error:

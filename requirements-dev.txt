@@ -2,3 +2,9 @@
 lupa==2.8
 # Test only: the independent reference of the wire crypto tests (tests/test_native_gate_crypto.py).
 cryptography==44.0.0
+# Linux/Windows instruction and binary-layout checks.
+capstone==5.0.6
+pyelftools==0.32
+pefile==2024.8.26
+# Schema validation uses the local, read-only game schemas when configured.
+lxml==6.1.3

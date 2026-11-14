@@ -544,6 +544,14 @@ int main(void) {
     assert(player_ui_overlay_return(&probe->lifecycle, probe->object));
     assert(synthetic_occupied() == 11 && probe->restored == 11);
     assert(player_ui_overlay_frame_interlock(&probe->lifecycle));
+    /* Projection admission is exactly the completed refill before the next Move. */
+    assert(ui_projection_scope_sequence(41, 40, 170, 1, 41, 1, 0));
+    assert(!ui_projection_scope_sequence(40, 40, 170, 0, 40, 0, 0));
+    assert(!ui_projection_scope_sequence(41, 40, 170, 1, 40, 1, 0));
+    assert(!ui_projection_scope_sequence(41, 40, 170, 1, 41, 1, 41));
+    assert(!ui_projection_scope_sequence(41, 40, 170, 2, 41, 1, 0));
+    assert(!ui_projection_scope_sequence(41, 40, 170, 1, 41, 0, 0));
+    assert(!ui_projection_scope_sequence(210, 40, 170, 170, 210, 170, 0));
     /* Missing refill at an eligible worker tail must terminate this disposable run. */
     ui_camera_refill_enabled = 0;
     player_ui_camera_refill_tail(player_startup()->presentation_first + 1);

@@ -14,6 +14,6 @@ class PlayerUiCallbackObserverTest(unittest.TestCase):
             observer_object = pathlib.Path(directory) / 'observer.o'
             subprocess.run(['cc', '-std=c11', '-pthread', '-c', str(source),
                             '-o', str(observer_object)], check=True)
-            subprocess.run(['c++', '-std=c++17', '-pthread', str(observer_object), str(guard),
+            subprocess.run(['c++', '-std=c++17', '-pthread', str(observer_object), str(guard), str(root / "src/native/engine/linux/player_cursor_bridge.S"),
                             '-ldl', '-o', str(executable)], check=True)
             subprocess.run([str(executable)], check=True)

@@ -1,4 +1,5 @@
 """Default-off camera mode and v2/v3 frozen-source dispatch; no native launch."""
+import linux_semaphore_observer_bundle as latest_bundle
 import copy
 import hashlib
 import json
@@ -10,6 +11,9 @@ from unittest import mock
 
 import linux_gate_live as live
 import linux_ui_camera_refill_bundle as bundle
+import linux_stock_view_fov_observer as stock_view
+import linux_player_cursor_bundle as cursor
+import linux_input_observation_bundle as trace_bundle
 import linux_view_ancestry_bundle as ancestry
 from test_linux_ui_render_lease_evidence import RenderLeaseAdmissionTests
 
@@ -83,10 +87,10 @@ class CameraRefillBundleTests(unittest.TestCase):
             output = Path(arguments[arguments.index('--out') + 1])
             manifest = json.loads((output / 'manifest.json').read_text())
             self.assertIs(manifest['player_ui_camera_refill'], enabled)
-            self.assertEqual(manifest['view_query_source_version'], 3)
+            self.assertEqual(manifest['view_query_source_version'], latest_bundle.SOURCE_VERSION)
             config = (output / 'extension/x4_lan_lab/ui/config.lua').read_text()
             bundle.validate_config(config, enabled)
-            self.assertFalse(bundle.validate_bundle(output, manifest, True))
+            self.assertFalse(latest_bundle.validate_bundle(output, manifest, True))
             for source in bundle.SOURCES:
                 receipt = 'source-receipts/' + source
                 self.assertEqual(manifest['files'][receipt], live.sha(output / receipt))
@@ -95,7 +99,7 @@ class CameraRefillBundleTests(unittest.TestCase):
             if enabled:
                 invalid = dict(manifest, player_ui_camera_refill_evidence_version=True)
                 with self.assertRaises(ValueError):
-                    bundle.validate_bundle(output, invalid, True)
+                    latest_bundle.validate_bundle(output, invalid, True)
             return result
 
         with mock.patch.object(live, 'main', side_effect=build):

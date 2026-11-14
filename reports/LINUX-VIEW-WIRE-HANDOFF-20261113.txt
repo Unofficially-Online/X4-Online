@@ -1,0 +1,107 @@
+Dormant native VIEW wire handoff
+===============================
+Historical implementation handoff from 13 November. The bounded integration
+has since advanced; see docs/LINUX-VALIDATION.md for current evidence and limits.
+
+Base: 695e633. No environment or CLI activation is introduced. The readiness
+predicate is NULL by default; old keyboard/cursor/SPACE behavior stays strict.
+
+Integration point
+-----------------
+Root must add exactly this include after gate_player_view_host_capture_runtime.h
+(and therefore after gate_player_view_render_capture.h) in gate_linux.c:
+    #include "gate_player_stock_view_wire_handoff.h"
+The production build was validated using an otherwise identical temporary copy
+of gate_linux.c with that include. The tracked gate_linux.c was not edited.
+Freeze the new headers, both C fixtures and tests/test_linux_view_wire_handoff.py
+in the next additive source inventory before enabling anything.
+
+There is one internal future hook:
+    player_stock_view_wire_enable(ready, context)
+It may bind once at startup tick 1, before the queue is initialized/requested,
+on the authenticated UI/worker. No current caller invokes it. The predicate
+receives the actual keyboard_replay_config and generation 0 at admission, then
+the current capture generation at every seal. It must authenticate the complete
+agreed consumer set, not just report that coefficient hooks exist. Its context
+must remain valid for the bounded worker lifetime. Failed admission/refresh
+refuses the queue/sample, with no fallback or fabricated selection/FOV.
+
+Native flow
+-----------
+Request sets config.view_capture only after explicit readiness, independent
+cursor mode, delay 2/lookahead 0 and a bounded sample interval are accepted.
+Both existing capture seal functions still run before input sealing. The new
+accessor then selects exactly the local Host slot 1 or Guest slot 2 mailbox,
+checks worker/TID, generation, slot and interval, and copies only its already
+sealed sample. A single process does not own both peers' local UI samples.
+Both peers use this same local handoff; the existing delayed coordinator decodes
+and prepares the two received records together before either slot's effects.
+
+Inside the agreed capture interval, a fresh present sample is mandatory.
+Outside it, an absent sample must have genuinely empty fields and passes NULL
+to keyboard_replay_seal_presentation. No initial/final/drain VIEW record is
+invented. Events, cursor and optional VIEW are sealed together under the queue
+mutex, including own echo/duplicate checks. Inactive SPACE retains neutral
+cursor bytes; CONTEXT id 8 remains a context event, never STATE8.
+
+Required coordinated enabling work (not performed here)
+-------------------------------------------------------
+1. Authenticate mode/FOV, ship, component and early-engine policies, floating
+   and portable selected-target/XS semantics for both slots. The ready predicate
+   must also certify canonical/local/remote apply scopes and neutral/drain state.
+2. Keep player_input_prepare_slots as the common two-record transaction: prepare
+   cursor and VIEW temporaries, commit VIEW, then publish cursor before effects.
+   A partial resident provider bind remains fail-stop, not recoverable rollback.
+3. Change player_physics_network_apply_p2's second local flag whitelist ONLY
+   under this same admitted capability. Its temporary SPACE policy currently
+   has view_capture=0, and must receive that capability too. Until then VIEW is
+   still refused there. Do not admit AIM/FIRE/ranges or bypass SPACE edge checks.
+4. Extend linux_player_network_evidence.decode_record under explicit frozen VIEW
+   admission while preserving canonical bytes, both-slot/echo validation and
+   actual raw-hash-bound physics evidence. Current strict decoder refuses VIEW.
+5. Resolve original Host sample vs rewrite admission explicitly. Host capture
+   currently requires X4_DEV_STOCK_VIEW_FOV_OBSERVE=1. Gate prepare rejects
+   simultaneous observe/rewrite and mode 3 passes original results through;
+   the preload constructor outright refuses X4_DEV_STOCK_VIEW_FOV. The additive
+   observer ABI itself already supports observing the original before policy
+   rewriting via separate active/inflight state; this is an admission/mode
+   conflict, not a reason to substitute rewritten FOV for the original sample.
+6. Prove the actual capture target semantics, not merely stock-v3 wire layout.
+   Linux Player+0x6db8 and process UI softtarget are distinct sources; the bounded
+   parity diagnostic is the decision evidence. Do not silently retain UI target
+   semantics if Windows Player selection/XS differs.
+
+Validation
+----------
+Three focused unittest cases passed: new pure/adaptor C fixtures, existing native
+keyboard adapter boundaries, and existing atomic VIEW/cursor/echo/two-slot fixture.
+New fixtures include wrong/stale/foreign samples, current identity loss, missing
+samples inside the interval, positive initial/final absence with stale refusal,
+readiness loss, immutable enable, and SPACE+VIEW inactive cursor serialization.
+Zig production gate compilation with the single include succeeded. No game,
+input, process control or network launch was performed. These tests do not prove
+provider completion, native wire execution, rendering or ordinary playability.
+
+Root follow-up and exact dispatch/decoder touchpoints
+---------------------------------------------------
+Root 88a43ed (not duplicated here) changes Host capture admission to exactly one
+OBSERVE or REWRITE mode. This resolves the Host start restriction above, while
+constructor admission, full consumer readiness and shared wire acceptance remain
+separate prerequisites.
+
+At base 695e633, tools/dev/linux_player_network_evidence.py:22 declares
+decode_record; line 31 limits flags to 0/1/3 and line 35 requires bytes16..41
+empty. Explicit VIEW parsing must validate its finite FOV/view bits/target and
+keep unused AIM/steer fields zero. The allow_view setting must propagate through
+parse_network_physics_evidence and collect_network_client from a frozen mode,
+with exact canonical records and accepted physics proof retained.
+
+At the same base, gate_player_physics_network.h:133-136 rejects VIEW in the
+non-SPACE P2 dispatch mask; lines139-143 build a second SPACE policy with default
+view_capture=0. Both paths must derive VIEW admission from the same ready route
+as the coordinator, never a standalone env check. Do not change the STATE/context
+loop at lines145 onward into a permissive dispatcher.
+
+The existing gate_player_input_transaction.h:11-14 prepares cursor plus VIEW,
+commits VIEW, and only then publishes cursor. Preserve this ordering and the
+full two-slot pre-effect validation in keyboard_replay_prepare_frame.

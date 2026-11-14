@@ -12,6 +12,11 @@
 static int keyboard_probe_independent_after_path_join(uint64_t generation);
 static int keyboard_probe_independent_neutral(void);
 static int keyboard_probe_after_path_join(void);
+static int player_cursor_mode(void);
+static int player_space_mode(void);
+static unsigned player_space_slot_state(unsigned slot);
+static int player_space_apply(unsigned slot, uint64_t generation, unsigned active);
+static int player_cursor_tail(uint64_t generation, unsigned final);
 static uint64_t player_network_last = 4;
 static unsigned player_network_held;
 static unsigned player_network_busy;
@@ -93,6 +98,10 @@ static void player_network_update_input(void *context) {
     player_network_record(input, before, before, digital, "before");
     for (unsigned index = 0; index < input->record->count; ++index) {
         const stock_input_event *event = &input->record->events[index];
+        if (keyboard_replay_is_space_event(&(keyboard_replay_config){.space_context8 = (unsigned)player_space_mode()}, event)) {
+            lifecycle_discard_require(player_space_apply(2, input->generation, event->value), "network_space_effect");
+            continue;
+        }
         if (event->id == 13 || event->id == 14) {
             player_throttle_require_pins();
         }
@@ -116,23 +125,26 @@ static void player_network_update_input(void *context) {
     player_network_record(input, before, player_network_held, digital, "updated");
 }
 
-static void player_physics_network_apply_p2(uint64_t generation, const stock_input_record *record) {
+static void player_physics_network_apply_p2(uint64_t generation, const stock_input_record *record,
+        const keyboard_replay *replay, unsigned view_admitted) {
     /* The coordinator already validates both rows. Keep a second local check
      * before shifting key bits or entering the native P2 scope. */
     if (player_recurring_physics != 3 || !player_recurring_physics_entered() ||
         player_network_busy || generation != player_network_last + 1 || generation != stats.issued ||
-        !record || record->flags || record->count > STOCK_INPUT_MAX_EVENTS ||
-        record->capture16 != (uint16_t)(generation - 2)) {
+        !replay || !replay->initialized || !replay->configured || replay->stopped || replay->failure ||
+        replay->phase != KEYBOARD_REPLAY_APPLYING || replay->tick != generation ||
+        replay->config.independent_players != 1 || replay->config.delay != 2 ||
+        replay->config.cursor_active_only != (unsigned)player_cursor_mode() ||
+        replay->config.space_context8 != (unsigned)player_space_mode() ||
+        replay->config.scripted_throttle != (unsigned)player_throttle_enabled() ||
+        view_admitted > 1 || replay->config.view_capture != view_admitted ||
+        !record || record->capture16 != (uint16_t)(generation - 2)) {
         player_recurring_fatal("network_record_admission");
     }
-    keyboard_replay_config policy = {.independent_players = 1,
-                                     .scripted_throttle = (unsigned)player_throttle_enabled()};
-    for (unsigned index = 0; index < record->count; ++index) {
-        const stock_input_event *event = &record->events[index];
-        if (event->kind != STOCK_INPUT_STATE ||
-            !keyboard_replay_allowed_state(&policy, event->id) || event->value > 1)
-            player_recurring_fatal("network_record_policy");
-    }
+    if (replay->config.space_context8 && replay->space_active[1] != player_space_slot_state(2))
+        player_recurring_fatal("network_space_policy");
+    if (!keyboard_replay_record_valid(replay, record, 2))
+        player_recurring_fatal(replay->config.space_context8 ? "network_space_policy" : "network_record_policy");
     player_network_busy = 1;
     player_network_input input = {generation, record};
     if (!player_startup()->version && generation == player_startup()->take) {
@@ -186,6 +198,7 @@ static void player_physics_network_finish(uint64_t generation, unsigned final) {
     if (phase->version && generation < phase->apply) {
         lifecycle_discard_require(!final && !player_network_busy && player_physics_identity(),
                                   "network_preapply_tail");
+        lifecycle_discard_require(player_cursor_tail(generation, 0), "cursor_preapply_tail");
         player_physics_frames_finish(generation, 0);
         return;
     }
@@ -197,6 +210,7 @@ static void player_physics_network_finish(uint64_t generation, unsigned final) {
         lifecycle_discard_require(!player_network_held && keyboard_probe_independent_neutral(),
                                   "network_final_keys_held");
     }
+    lifecycle_discard_require(player_cursor_tail(generation, final), "cursor_tail");
     player_physics_frames_finish(generation, final);
 }
 #endif
