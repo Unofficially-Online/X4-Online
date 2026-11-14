@@ -69,10 +69,10 @@ def decode_record(text, tick, held, *, scripted_throttle=False, allow_cursor=Fal
     return held
 
 
-def parse_network_physics_evidence(lines, stderr_lines, engine_lines, returncode, *, frame_count, slot, allow_camera=False, allow_throttle=False, throttle_start_tick=5, allow_presentation=False, session_frames=0, startup=None, allow_cursor=False, allow_space=False, allow_view=False, allow_semaphore_checkpoint=False):
+def parse_network_physics_evidence(lines, stderr_lines, engine_lines, returncode, *, frame_count, slot, allow_camera=False, allow_throttle=False, throttle_start_tick=5, allow_presentation=False, session_frames=0, startup=None, allow_cursor=False, allow_space=False, allow_view=False, allow_semaphore_checkpoint=False, allow_worker_dispatch=False):
     result = parse_recurring_physics_evidence(lines, stderr_lines, returncode,
                                                frame_count=frame_count, input_mode='network', allow_camera=allow_camera and str(slot) == '2', allow_throttle=allow_throttle,
-                                               throttle_start_tick=throttle_start_tick, presentation_slot=slot if allow_presentation else None, session_frames=session_frames, startup=startup, allow_semaphore_checkpoint=allow_semaphore_checkpoint)
+                                               throttle_start_tick=throttle_start_tick, presentation_slot=slot if allow_presentation else None, session_frames=session_frames, startup=startup, allow_semaphore_checkpoint=allow_semaphore_checkpoint, allow_worker_dispatch=allow_worker_dispatch)
     errors = result['errors']
     if type(allow_space) is not bool or (allow_space and not allow_cursor):
         errors.append('SPACE requires explicit cursor admission')
@@ -221,11 +221,11 @@ def parse_network_physics_evidence(lines, stderr_lines, engine_lines, returncode
     return result
 
 
-def collect_network_physics_evidence(trace, retained, engine, output, returncode, *, frame_count, stderr, slot, allow_camera=False, allow_throttle=False, throttle_start_tick=5, allow_presentation=False, session_frames=0, startup=None, allow_cursor=False, allow_space=False, allow_view=False, allow_semaphore_checkpoint=False):
+def collect_network_physics_evidence(trace, retained, engine, output, returncode, *, frame_count, stderr, slot, allow_camera=False, allow_throttle=False, throttle_start_tick=5, allow_presentation=False, session_frames=0, startup=None, allow_cursor=False, allow_space=False, allow_view=False, allow_semaphore_checkpoint=False, allow_worker_dispatch=False):
     """Retain raw trace before parsing; include the complete generic failure checks."""
     base = collect_recurring_physics_evidence(trace, retained, engine, output, returncode,
                                              frame_count=frame_count, stderr=stderr, input_mode='network', allow_camera=allow_camera and str(slot) == '2', allow_throttle=allow_throttle,
-                                               throttle_start_tick=throttle_start_tick, presentation_slot=slot if allow_presentation else None, session_frames=session_frames, startup=startup, allow_semaphore_checkpoint=allow_semaphore_checkpoint)
+                                               throttle_start_tick=throttle_start_tick, presentation_slot=slot if allow_presentation else None, session_frames=session_frames, startup=startup, allow_semaphore_checkpoint=allow_semaphore_checkpoint, allow_worker_dispatch=allow_worker_dispatch)
     try:
         if 'log_sha256' not in base:
             raise OSError('trace retention or parsing failed')
@@ -234,7 +234,7 @@ def collect_network_physics_evidence(trace, retained, engine, output, returncode
         worker = worker_raw.decode('utf-8').splitlines(keepends=True)
         engine_lines = Path(engine).read_text(encoding='utf-8').splitlines(keepends=True)
         result = parse_network_physics_evidence(lines, worker, engine_lines, returncode,
-                                                frame_count=frame_count, slot=slot, allow_camera=allow_camera, allow_throttle=allow_throttle, throttle_start_tick=throttle_start_tick, allow_presentation=allow_presentation, session_frames=session_frames, startup=startup, allow_cursor=allow_cursor, allow_space=allow_space, allow_view=allow_view, allow_semaphore_checkpoint=allow_semaphore_checkpoint)
+                                                frame_count=frame_count, slot=slot, allow_camera=allow_camera, allow_throttle=allow_throttle, throttle_start_tick=throttle_start_tick, allow_presentation=allow_presentation, session_frames=session_frames, startup=startup, allow_cursor=allow_cursor, allow_space=allow_space, allow_view=allow_view, allow_semaphore_checkpoint=allow_semaphore_checkpoint, allow_worker_dispatch=allow_worker_dispatch)
         for error in base['errors']:
             if error not in result['errors']:
                 result['errors'].append(error)

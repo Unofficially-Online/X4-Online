@@ -235,38 +235,7 @@ static int presentation_fork_private_graph(void *context, const presentation_for
         presentation_fork_chain(probe, maps, request->player2, request->room, probe->p2_ship, request->expected_p2_ship, 0);
 }
 
-static int presentation_fork_quiet_enter(void *context) {
-    native_presentation_fork *probe = context;
-    if (fs.state != FS_OFF || atomic_load_explicit(&presentation_fork_reservation, memory_order_acquire) != 1) return 0;
-    probe->saved_fs = fs;
-    memcpy(probe->saved_locks, fs_locks, sizeof fs_locks);
-    fs.worker_tid = probe->worker_tid;
-    fs.worker_tls = (unsigned char *)probe->worker_tls;
-    if (!fs_quiet(&probe->held_since)) {
-        memcpy(probe->quiet_reason, fs.reason, sizeof probe->quiet_reason);
-        memcpy(probe->quiet_blocker, fs.blocker, sizeof probe->quiet_blocker);
-        probe->other_running = fs.other_running;
-        fs = probe->saved_fs;
-        memcpy(fs_locks, probe->saved_locks, sizeof fs_locks);
-        return 0;
-    }
-    if (fs.other_running) {
-        memcpy(probe->quiet_reason, "other_running", sizeof "other_running");
-        probe->other_running = fs.other_running;
-        fs_release(FS_RP_WORDS);
-        fs = probe->saved_fs;
-        memcpy(fs_locks, probe->saved_locks, sizeof fs_locks);
-        return 0;
-    }
-    return 1;
-}
-
-static void presentation_fork_quiet_leave(void *context) {
-    native_presentation_fork *probe = context;
-    fs_release(FS_RP_WORDS);
-    fs = probe->saved_fs;
-    memcpy(fs_locks, probe->saved_locks, sizeof fs_locks);
-}
+#include "gate_player_presentation_quiet.h"
 
 static int presentation_fork_child_setup(void *context) {
     native_presentation_fork *probe = context;

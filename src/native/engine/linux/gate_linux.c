@@ -579,7 +579,9 @@ static int gate_sites_owned(void) {
     return window==call_patched && dt_state()==DT_FIXED && !*(volatile unsigned char*)LX(LX_MOVIE_FLAG_VA) && speed==1.0 &&
            world_identity_owned() && path_owned() && pbud_owned() && region_rng_owned() && ai_wait_owned() && md_resume_owned() && boot_hold_owned() && event_order_owned() && gravidar_owned() && gdl_owned() && tsnap_owned() && lxt_inline_owned() && path_transform_observer_owned() && rid_owned() && md_timed_owned() && lxs_owned() && find_order_owned() && ll_owned() && attention_owned() && spawn_rng_owned() && nav_cadence_owned() && lxn_owned();
 }
+#include "gate_player_dispatch_stop.h"
 static void finish(unsigned reason) {
+    player_dispatch_stop_before_cleanup(reason);
     int keyboard_neutral = keyboard_probe_stop();
     int control_bank_restored = player_control_bank_probe_restore();
     if (!control_bank_restored || !player_control_bank_probe_clean()) {

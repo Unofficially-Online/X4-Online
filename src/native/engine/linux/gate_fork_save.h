@@ -11,7 +11,8 @@
  * thread, and no lock it takes may be held by a thread that is gone. The parent forks only at a quiet
  * point, fail closed, within a budget of milliseconds:
  *  1. Thread census (/proc/self/task/<tid>/comm and /syscall): the MoveWorker (the thread that armed
- *     this, by kernel TID) is blocked in the futex of the semaphore it waits on between frames; every
+ *     this, by kernel TID) is blocked in its native semaphore futex, or retained in the explicitly
+ *     authenticated resident dispatch park (same main owns its release); every
  *     'JobThread #nn' in the job semaphore's; the Pathing Manager in its kick semaphore's; MassTraffic and
  *     RegionManager in their wake conditions; every other engine-named thread is blocked, not running.
  *  2. Engine predicates: no engine save pending, no ConstructionSequence job pending, no queued job, no
@@ -37,6 +38,7 @@
  * stops the session: a refused or failed fork only fails this request (the relay can ask again).
  * Records the parent's step intervals before the fork and while the child runs, and the parent's minor
  * page faults while the child runs (the copy-on-write cost). */
+#include "gate_player_fork_worker_park.h"
 #include <ctype.h>
 #include <dirent.h>
 #include <signal.h>
@@ -196,6 +198,7 @@ static int fs_census(void) {
         if(!rule) {if(running) ++fs.other_running;continue;}
         ++fs.engine_threads;++rule->seen;
         if(rule==&rules[0] && tid!=fs.worker_tid) {why="census";snprintf(blocker,sizeof(blocker),"%.15s:%d:not_the_armed_worker",comm,(int)tid);break;}
+        if(rule==&rules[0] && player_fork_owned_worker_park && player_fork_owned_worker_park((long)tid)) continue;
         if(!have) {why="census_unavailable";snprintf(blocker,sizeof(blocker),"%.15s:%d",comm,(int)tid);break;}
         if(running) {why="census";snprintf(blocker,sizeof(blocker),"%.15s:%d:running",comm,(int)tid);break;}
         if(rule->lo!=rule->hi || rule==&rules[0]) {

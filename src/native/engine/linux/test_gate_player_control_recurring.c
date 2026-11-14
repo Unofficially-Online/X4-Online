@@ -8,6 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/wait.h>
+#include <sys/mman.h>
 #include <sys/syscall.h>
 #include <time.h>
 #include <unistd.h>
@@ -15,8 +16,12 @@
 static _Thread_local uint64_t fake_thread = 1;
 static uint64_t main_thread = 1, ui_thread = 2, stock_observer_worker_thread = 2;
 static int boot_phase = 3, path_installed = 1;
-static struct { int active; uint64_t issued; } stats;
-static uint64_t GetCurrentThreadId(void) { return fake_thread; }
+static struct { int active; uint64_t issued, completed; } stats;
+static void (*fake_identity_barrier)(void);
+static uint64_t GetCurrentThreadId(void) {
+    if (fake_identity_barrier) fake_identity_barrier();
+    return fake_thread;
+}
 static unsigned long long GetTickCount64(void) {
     struct timespec time;
     assert(!clock_gettime(CLOCK_MONOTONIC, &time));
@@ -57,8 +62,13 @@ static int player_tail_restore(player_tail_installation *state) {
 }
 static unsigned receipt_rows;
 static char receipt_last[384];
+static char receipt_stream[2048];
 static void lifecycle_discard_write(const char *message) {
     ++receipt_rows;
+    if (fake_case == 46) {
+        assert(strlen(receipt_stream) + strlen(message) < sizeof receipt_stream);
+        strcat(receipt_stream, message);
+    }
     snprintf(receipt_last, sizeof receipt_last, "%s", message);
 }
 static _Atomic unsigned player_physics_ready;
@@ -169,8 +179,137 @@ static void frame(uint64_t tick) {
     player_control_boundary_after_frame(armed);
     assert(!pthread_join(worker, NULL));
 }
+/* Private scheduling barriers exercise the actual recurring integration.
+ * Fake native memory is data only; no copied instructions are executed. */
+static _Atomic unsigned dispatch_main_waiting, dispatch_tail_released, dispatch_startup_joined;
+static void dispatch_test_pause(void *unused) {
+    (void)unused;
+    if (fake_thread == 1) atomic_store(&dispatch_main_waiting, 1);
+    sched_yield();
+}
+static int dispatch_test_snapshot(void *unused, unsigned *count, unsigned *maximum) {
+    (void)unused; *count = 0; *maximum = 1; return 1;
+}
+static void dispatch_tail_barrier(void) {
+    if (fake_thread != 2 || pwda_phase(&player_dispatch) != PWDA_JOINED ||
+        !(atomic_load(&player_recurring_rendezvous.state) & FWRR_RELEASED)) return;
+    atomic_store(&dispatch_tail_released, 1);
+    while (!atomic_load(&dispatch_main_waiting)) sched_yield();
+}
+static void *dispatch_integration_worker(void *unused) {
+    (void)unused; fake_thread = 2;
+    if (fake_case == 40) {
+        while (!atomic_load(&dispatch_main_waiting)) sched_yield();
+        assert(atomic_load(&player_recurring_main_tick) == 5);
+        assert(!atomic_load(&player_recurring_rendezvous.state));
+        assert(player_recurring_after_join() == 1);
+        atomic_store(&dispatch_startup_joined, 1);
+    }
+    assert(pwda_pre_wait(&player_dispatch, 2, &player_dispatch_ticket));
+    if (fake_case == 40) return NULL;
+    assert(pwda_wait_return(&player_dispatch, 2, player_dispatch_ticket));
+    assert(player_recurring_after_join() == 1);
+    player_recurring_tail_callback(LX(0x3daab20), 1);
+    assert(pwda_pre_wait(&player_dispatch, 2, &player_dispatch_ticket));
+    assert(player_dispatch_ticket == 6);
+    return NULL;
+}
+static void dispatch_receipt_case(int which) {
+    stats.active = 1;
+    player_recurring_tail = 1; player_recurring_physics = 3; player_recurring_end = 7;
+    player_dispatch_enabled = 1;
+    player_physics_frame_prefix = player_dispatch_frame_prefix;
+    fake_thread = 2;
+    player_recurring_tail_token = (fwrr_token){.owner=&player_recurring_rendezvous, .worker_thread=2};
+    atomic_store(&player_recurring_worker_busy, 1);
+    atomic_store(&player_dispatch.phase, PWDA_JOINED);
+    for (uint64_t generation = 5; generation <= 6; ++generation) {
+        player_dispatch_ticket = generation;
+        player_recurring_tail_token.generation = generation;
+        atomic_store(&player_dispatch.generation, generation);
+        atomic_store(&player_recurring_rendezvous.state, fwrr_pack(generation,
+            FWRR_ARMED | FWRR_MAIN_PARKED | FWRR_WORKER_ARRIVED | FWRR_ENTERED));
+        if (which == 48) player_dispatch_ticket = generation + 1;
+        if (which == 49) atomic_store(&player_dispatch.phase, PWDA_CONSUMED);
+        player_physics_frame_begin_record(generation);
+    }
+    if (which == 47) player_physics_frame_begin_record(6);
+    const char *expected =
+        "X4LAN WORKER_DISPATCH bootstrap=1 parked=1 count=0 maximum=1\n"
+        "X4LAN WORKER_DISPATCH tick=5 ticket=5 consumed=1 post_returned=1\n"
+        "X4LAN LIFECYCLE_DISCARD physics=frame tick=5 event=begin\n"
+        "X4LAN WORKER_DISPATCH tick=6 ticket=6 consumed=1 post_returned=1\n"
+        "X4LAN LIFECYCLE_DISCARD physics=frame tick=6 event=begin\n";
+    assert(receipt_rows == 5 && !strcmp(receipt_stream, expected));
+    _exit(0);
+}
+static void dispatch_integration_case(int which) {
+    stats.active = 1; stats.issued = 5;
+    atomic_store(&player_recurring_mode, 2);
+    atomic_store(&player_recurring_main_tick, 4);
+    player_recurring_end = 7; player_recurring_tail = 1; player_dispatch_enabled = 1;
+    player_dispatch.snapshot = dispatch_test_snapshot;
+    player_dispatch.clock_ms = player_dispatch_clock;
+    player_dispatch.pause = dispatch_test_pause;
+    player_dispatch.timeout_ms = 2000;
+    assert(pwda_request(&player_dispatch, 1, 2, 5, &player_recurring_rendezvous));
+    assert(pwda_post_begin(&player_dispatch, 1));
+    assert(pwda_post_return(&player_dispatch, 1));
+    if (which >= 42) {
+        fake_thread = which == 42 ? 1 : 2;
+        if (which == 43) atomic_store(&player_dispatch.phase, PWDA_PARKED);
+        if (which == 44) atomic_store(&player_dispatch.generation, 5);
+        if (which == 45) player_dispatch_ticket = 5;
+        atomic_store(&player_recurring_main_tick, 5);
+        (void)player_recurring_after_join(); _exit(97);
+    }
+    /* Pin-fixture bytes for the exact branch/call window authenticated by the
+     * production adapter. Anonymous page remains non-executable. */
+    static const unsigned char post_window[] = {
+        0x48,0x89,0xdf,0xe8,0xd3,0xee,0xff,0xff,0x84,0xc0,0x74,0x1f,
+        0xbe,0x01,0x00,0x00,0x00,0x48,0x8d,0x3d,0x73,0x4c,0xe3,0x01,
+        0xe8,0x2e,0xea,0x9f,0xff,0xe9,0x3c,0xff,0xff,0xff,0x66,0x0f,
+        0x1f,0x84,0x00,0x00,0x00,0x00,0x00,0x48,0x8b,0x05,0x71,0x37,
+        0xd9,0x01,0x48,0x8b,0xb8,0x48,0x01,0x00,0x00,0x48,0x85,0xff,
+        0x74,0x17,0x48,0x8b,0x07,0x48,0x8d,0x15,0x53,0x4a,0x00,0x00,
+        0x48,0x8b,0x40,0x20,0x48,0x39,0xd0,0x0f,0x85,0x66,0x02,0x00,
+        0x00,0xbe,0x01,0x00,0x00,0x00,0x48,0x8d,0x3d,0x2a,0x4c,0xe3,
+        0x01,0xe8,0xe5,0xe9,0x9f,0xff
+    };
+    void *page = mmap(LX(0x2025000), 4096, PROT_READ | PROT_WRITE,
+                      MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
+    assert(page == LX(0x2025000));
+    memcpy(LX(0x2025195), post_window, sizeof post_window);
+    assert(!mprotect(page, 4096, PROT_READ));
+    if (which == 41) fake_identity_barrier = dispatch_tail_barrier;
+    pthread_t worker;
+    assert(!pthread_create(&worker, NULL, dispatch_integration_worker, NULL));
+    assert(player_recurring_before_frame() == 2);
+    atomic_store(&dispatch_main_waiting, 0);
+    assert(pwda_post_begin(&player_dispatch, 1));
+    assert(pwda_post_return(&player_dispatch, 1));
+    if (which == 41) {
+        player_recurring_after_frame();
+        while (!atomic_load(&dispatch_tail_released)) sched_yield();
+        assert(atomic_load(&player_recurring_worker_busy) == 1);
+        assert(pwda_phase(&player_dispatch) == PWDA_JOINED);
+        assert(!atomic_load(&dispatch_main_waiting));
+        stats.issued = 6;
+        assert(player_recurring_before_frame() == 2);
+        assert(!atomic_load(&player_recurring_worker_busy));
+        assert(atomic_load(&dispatch_main_waiting));
+        assert(pwda_post_begin(&player_dispatch, 1));
+        assert(pwda_post_return(&player_dispatch, 1));
+    }
+    assert(!pthread_join(worker, NULL));
+    assert(which == 41 || atomic_load(&dispatch_startup_joined));
+    _exit(0);
+}
 static void run_case(int which) {
-    fake_case = which; stats.active = 1; stats.issued = 4;
+    fake_case = which;
+    if (which >= 46 && which <= 49) dispatch_receipt_case(which);
+    if (which >= 40) dispatch_integration_case(which);
+    stats.active = 1; stats.issued = 4;
     unsetenv("X4MP_SEMAPHORE_OBSERVER");
     unsetenv("X4LAN_PLAYER_CONTROL_RECURRING");
     unsetenv("X4LAN_PLAYER_CONTROL_RECURRING_END");
@@ -348,5 +487,13 @@ int main(void) {
     scenario(37, 222, "reason=invalid_session_budget");
     scenario(38, 222, "reason=session_config_mismatch");
     scenario(39, 222, "reason=session_config_mismatch");
-    puts("recurring boundary adapter: ok");
+    scenario(40, 0, NULL);
+    scenario(41, 0, NULL);
+    scenario(46, 0, NULL);
+    for (int which = 47; which <= 49; ++which)
+        scenario(which, 222, "reason=dispatch_frame_receipt");
+    for (int which = 42; which <= 45; ++which)
+        scenario(which, 222, "reason=dispatch_startup_join");
+    puts("recurring boundary adapter: ok (startup drain and tail retirement barriers included)");
+    return 0;
 }

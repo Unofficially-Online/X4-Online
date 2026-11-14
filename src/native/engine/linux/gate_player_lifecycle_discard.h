@@ -59,6 +59,7 @@ static void lifecycle_discard_write(const char *text) {
     }
 }
 
+#include "gate_player_physics_frame_prefix.h"
 #include "gate_player_context_diagnostic.h"
 
 static _Noreturn void lifecycle_discard_exit(int passed, const char *reason) {
@@ -251,10 +252,7 @@ static void player_physics_complete_take(uintptr_t controller);
 static void lifecycle_discard_begin(unsigned boundary_state, int isolate, int physics) {
     lifecycle_discard_open_log();
     if (physics == 2) {
-        char frame[128];
-        snprintf(frame, sizeof frame, "X4LAN LIFECYCLE_DISCARD physics=frame tick=%llu event=begin\n",
-                 (unsigned long long)stats.issued);
-        lifecycle_discard_write(frame);
+        player_physics_frame_begin_record(stats.issued);
     }
     lifecycle_discard_stage("entered");
     /* FWR_MAIN_PARKED (4) and FWR_ENTERED (16), no RELEASED (32) or POISONED (128). */

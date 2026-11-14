@@ -10,13 +10,21 @@ SOURCE_VERSION = 18
 PROVIDER = 'libx4mp_semaphore_observer.so'
 EXTRA_SOURCES = tuple('src/native/engine/linux/' + x for x in (
     'player_semaphore_original_view.h', 'gate_player_semaphore_original_view.h',
+    'player_semaphore_maps_transaction.h',
     'player_semaphore_observer_preload.c', 'player_semaphore_observer.md',
+    'player_semaphore_dispatch_callback.h', 'player_worker_dispatch_adapter.h',
+    'gate_player_presentation_quiet.h', 'test_gate_player_presentation_quiet.c',
+    'gate_player_presentation_fork.h', 'gate_player_dispatch_stop.h', 'test_gate_player_dispatch_stop.c', 'gate_player_fork_worker_park.h', 'gate_fork_save.h', 'gate_player_physics_frame_prefix.h', 'gate_player_lifecycle_discard.h', 'gate_player_physics_discard.h',
+    'player_worker_dispatch_contract.h', 'player_worker_dispatch_contract.md', 'gate_player_worker_dispatch.h',
+    'test_player_worker_dispatch_adapter.c', 'test_player_worker_dispatch_contract.c',
+    'test_player_semaphore_dispatch_midwait.c',
     'gate_mass_traffic.h', 'gate_player_control_recurring.h', 'gate_linux.c',
     'gate_player_control_worker_tail.h', 'frame_worker_recurring.h', 'test_gate_mass_traffic.h',
     'test_gate_player_control_recurring.c', 'test_gate_player_control_recurring.sh',
     'gate_travel_determinism.h', 'test_player_semaphore_original_view.c',
     'test_gate_player_semaphore_original_view.c', 'test_player_semaphore_observer_preload.c',
     'test_semaphore_pin_provider.c')) + (
+    'tests/test_linux_player_presentation_quiet.py', 'src/native/engine/lockstep_gate_exports.h', 'tests/test_linux_player_dispatch_stop.py', 'tests/test_linux_player_dispatch_fork_park.py', 'tests/test_linux_player_dispatch_log_prefix.py', 'tests/test_linux_player_worker_dispatch_adapter.py', 'tests/test_linux_player_worker_dispatch_contract.py',
     'tools/dev/build_linux_semaphore_observer.py', 'tools/dev/linux_semaphore_observer_bundle.py',
     'tools/dev/exec_linux_semaphore_observer.py', 'tests/test_linux_semaphore_original_view.py',
     'tests/test_linux_semaphore_observer_preload.py', 'tests/test_linux_semaphore_observer_bundle.py',
@@ -33,6 +41,9 @@ HELPERS = tuple(dict.fromkeys(previous.HELPERS + ('linux_semaphore_observer_bund
 
 def enabled(options):
     active = options.get('semaphore_observer', False)
+    dispatch = options.get('worker_dispatch', False)
+    if type(dispatch) is not bool or (dispatch and active is not True):
+        raise ValueError('worker dispatch requires an explicit semaphore observer')
     if type(active) is not bool:
         raise ValueError('semaphore observer option must be boolean')
     budget = budget_from_options(options) if active else None
@@ -64,6 +75,9 @@ def wrap_program(case, manifest, env, program):
     if not isinstance(sha, str) or not re.fullmatch('[0-9a-f]{64}', sha) or type(size) is not int or size <= 0:
         raise ValueError('semaphore observer launch has no frozen provider pin')
     wrapped_env = dict(env)
+    wrapped_env.pop('X4_DEV_WORKER_DISPATCH', None)
+    if manifest.get('worker_dispatch') is True:
+        wrapped_env['X4_DEV_WORKER_DISPATCH'] = '1'
     for name in ('X4MP_SEMAPHORE_OBSERVER', 'X4MP_SEMAPHORE_OBSERVER_FD',
                  'X4MP_SEMAPHORE_OBSERVER_SHA256', 'X4MP_SEMAPHORE_OBSERVER_SIZE'):
         wrapped_env.pop(name, None)
@@ -75,6 +89,8 @@ def wrap_program(case, manifest, env, program):
 
 def validate_bundle(root, manifest, network):
     active = enabled(manifest)
+    if manifest.get('worker_dispatch_evidence_version') != (1 if manifest.get('worker_dispatch') is True else None):
+        raise ValueError('worker dispatch evidence version mismatch')
     if manifest.get('view_query_source_version') != SOURCE_VERSION:
         if active:
             raise ValueError('semaphore observer requires source version 18')
@@ -136,6 +152,16 @@ def collect(receipt_path, physics, options, active, *, ancestry=None):
         if hashlib.sha256(lifecycle).hexdigest() != physics.get('log_sha256'):
             raise ValueError('lifecycle receipt hash mismatch')
         lines = lifecycle.decode('utf-8').splitlines()
+        if options.get('worker_dispatch') is True:
+            bootstrap = 'X4LAN WORKER_DISPATCH bootstrap=1 parked=1 count=0 maximum=1'
+            if lines.count(bootstrap) != 1:
+                raise ValueError('missing unique dispatch bootstrap receipt')
+            dispatch_rows = [line for line in lines if line.startswith('X4LAN WORKER_DISPATCH tick=')]
+            expected = [f"X4LAN WORKER_DISPATCH tick={tick} ticket={tick} consumed=1 post_returned=1"
+                        for tick in range(budget['take'], budget['recurring_end'] + 1)]
+            if dispatch_rows != expected:
+                raise ValueError('missing, duplicate or mismatched native dispatch tickets')
+            result['worker_dispatch'] = {'pass': True, 'evidence_version': 1, 'dispatches': len(expected)}
         checkpoints = [CHECKPOINT.fullmatch(line) for line in lines if 'X4LAN SEMAPHORE OBSERVER CHECKPOINT' in line]
         if len(checkpoints) != 1 or not checkpoints[0] or int(checkpoints[0][1]) != budget['recurring_end']:
             raise ValueError('missing authenticated final worker checkpoint')

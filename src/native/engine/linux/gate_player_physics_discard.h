@@ -400,6 +400,10 @@ static _Noreturn void player_physics_discard_finish(void) {
 static void player_physics_replay_begin(uint64_t generation);
 
 static void player_physics_frame_record(uint64_t generation, const char *event) {
+    if (!strcmp(event, "begin")) {
+        player_physics_frame_begin_record(generation);
+        return;
+    }
     char message[160];
     snprintf(message, sizeof(message),
         "X4LAN LIFECYCLE_DISCARD physics=frame tick=%llu event=%s\n",

@@ -418,7 +418,7 @@ def validate_frame_state(frame, initial, canonical, taken, baseline_bodies, anch
     return errors
 
 
-def parse_recurring_physics_evidence(lines, stderr_lines, returncode, *, frame_count, input_mode="scripted", allow_camera=False, allow_throttle=False, throttle_start_tick=5, presentation_slot=None, session_frames=0, startup=None, allow_semaphore_checkpoint=False):
+def parse_recurring_physics_evidence(lines, stderr_lines, returncode, *, frame_count, input_mode="scripted", allow_camera=False, allow_throttle=False, throttle_start_tick=5, presentation_slot=None, session_frames=0, startup=None, allow_semaphore_checkpoint=False, allow_worker_dispatch=False):
     errors, frames, blocks = [], [], []
     from linux_player_startup_phases import startup_phases
     try:
@@ -436,6 +436,8 @@ def parse_recurring_physics_evidence(lines, stderr_lines, returncode, *, frame_c
     if (type(allow_semaphore_checkpoint) is not bool or
             (allow_semaphore_checkpoint and (input_mode != 'network' or startup != 'v1-t40' or not session_frames))):
         return {'pass': False, 'errors': ['invalid semaphore checkpoint admission'], 'frames': []}
+    if type(allow_worker_dispatch) is not bool or (allow_worker_dispatch and not allow_semaphore_checkpoint):
+        return {'pass': False, 'errors': ['invalid worker dispatch admission'], 'frames': []}
     maximum = 600 if input_mode == 'network' else 180
     if session_frames:
         from linux_ui_session_budget import session_budget
@@ -474,7 +476,26 @@ def parse_recurring_physics_evidence(lines, stderr_lines, returncode, *, frame_c
     active_anchor = None
     semaphore_checkpoint = None
     checkpoint_count = 0
+    dispatch_bootstrap, dispatch_ticks = 0, []
     for line_number, line in enumerate(lines, 1):
+        if line.startswith('X4LAN WORKER_DISPATCH') and allow_worker_dispatch:
+            bootstrap = 'X4LAN WORKER_DISPATCH bootstrap=1 parked=1 count=0 maximum=1\n'
+            match = re.fullmatch(r'X4LAN WORKER_DISPATCH tick=([1-9][0-9]*) ticket=([1-9][0-9]*) consumed=1 post_returned=1\n', line)
+            if line == bootstrap:
+                dispatch_bootstrap += 1
+                if dispatch_bootstrap != 1 or blocks or current_tick is not None or dispatch_ticks or saw_final:
+                    errors.append('duplicate or misplaced worker dispatch bootstrap')
+            elif match:
+                tick, ticket = map(int, match.groups())
+                next_begin = PREFIX + f'physics=frame tick={tick} event=begin\n'
+                if (dispatch_bootstrap != 1 or current_tick is not None or saw_final or ticket != tick or
+                        tick != phase['take'] + len(dispatch_ticks) or line_number == len(lines) or
+                        lines[line_number] != next_begin):
+                    errors.append('malformed, duplicated or misplaced worker dispatch ticket')
+                dispatch_ticks.append(tick)
+            else:
+                errors.append('malformed worker dispatch receipt')
+            continue
         if 'X4LAN SEMAPHORE OBSERVER CHECKPOINT' in line and allow_semaphore_checkpoint:
             checkpoint_count += 1
             match = SEMAPHORE_CHECKPOINT.fullmatch(line)
@@ -563,6 +584,9 @@ def parse_recurring_physics_evidence(lines, stderr_lines, returncode, *, frame_c
             errors.append('record outside a framed block')
         else:
             current_lines.append(line)
+    if allow_worker_dispatch and (dispatch_bootstrap != 1 or
+            dispatch_ticks != list(range(phase['take'], phase['apply'] + frame_count))):
+        errors.append('missing native worker dispatch bootstrap or generations')
     if allow_semaphore_checkpoint and (checkpoint_count != 1 or semaphore_checkpoint is None):
         errors.append('missing valid final semaphore checkpoint')
     if allow_camera and (receipt_count != 1 or active_anchor is None):
@@ -621,7 +645,7 @@ def parse_recurring_physics_evidence(lines, stderr_lines, returncode, *, frame_c
 
 
 def collect_recurring_physics_evidence(trace, retained, engine, output, returncode, *, frame_count, stderr,
-                                       input_mode="scripted", allow_camera=False, allow_throttle=False, throttle_start_tick=5, presentation_slot=None, session_frames=0, startup=None, allow_semaphore_checkpoint=False):
+                                       input_mode="scripted", allow_camera=False, allow_throttle=False, throttle_start_tick=5, presentation_slot=None, session_frames=0, startup=None, allow_semaphore_checkpoint=False, allow_worker_dispatch=False):
     """Retain all trace bytes before parsing; failures never produce a pass."""
     errors = []
     trace_limit = NETWORK_MAX_TRACE_BYTES if input_mode == 'network' else MAX_TRACE_BYTES
@@ -648,11 +672,11 @@ def collect_recurring_physics_evidence(trace, retained, engine, output, returnco
         worker_raw = Path(stderr).read_bytes()
         worker_lines = worker_raw.decode('utf-8', errors='strict').splitlines(keepends=True)
         evidence = parse_recurring_physics_evidence(b''.join(chunks).decode('utf-8').splitlines(keepends=True),
-                                                    worker_lines, returncode, frame_count=frame_count, input_mode=input_mode, allow_camera=allow_camera, allow_throttle=allow_throttle, throttle_start_tick=throttle_start_tick, presentation_slot=presentation_slot, session_frames=session_frames, startup=startup, allow_semaphore_checkpoint=allow_semaphore_checkpoint)
+                                                    worker_lines, returncode, frame_count=frame_count, input_mode=input_mode, allow_camera=allow_camera, allow_throttle=allow_throttle, throttle_start_tick=throttle_start_tick, presentation_slot=presentation_slot, session_frames=session_frames, startup=startup, allow_semaphore_checkpoint=allow_semaphore_checkpoint, allow_worker_dispatch=allow_worker_dispatch)
         evidence['log_sha256'] = digest.hexdigest()
         evidence['stderr_sha256'] = hashlib.sha256(worker_raw).hexdigest()
     except (OSError, UnicodeError) as error:
-        evidence = parse_recurring_physics_evidence([], [], returncode, frame_count=frame_count, input_mode=input_mode, allow_camera=allow_camera, allow_throttle=allow_throttle, throttle_start_tick=throttle_start_tick, presentation_slot=presentation_slot, session_frames=session_frames, startup=startup, allow_semaphore_checkpoint=allow_semaphore_checkpoint)
+        evidence = parse_recurring_physics_evidence([], [], returncode, frame_count=frame_count, input_mode=input_mode, allow_camera=allow_camera, allow_throttle=allow_throttle, throttle_start_tick=throttle_start_tick, presentation_slot=presentation_slot, session_frames=session_frames, startup=startup, allow_semaphore_checkpoint=allow_semaphore_checkpoint, allow_worker_dispatch=allow_worker_dispatch)
         errors.append('native trace or worker evidence unavailable/invalid: ' + str(error))
     for source in (engine, output, stderr):
         try:

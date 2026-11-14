@@ -16,6 +16,7 @@
 #include <unistd.h>
 #include "../lockstep_sha256.h"
 #include "player_semaphore_original_view.h"
+#include "player_semaphore_dispatch_callback.h"
 
 #define EXPORT __attribute__((visibility("default")))
 #define TARGET_SEMAPHORE ((void *)(uintptr_t)0x3e59e20)
@@ -31,6 +32,18 @@ static _Atomic uint64_t next_token;
 static _Atomic uint64_t observation_state;
 static _Atomic unsigned receipt_count, incomplete, constructor_state;
 static _Thread_local unsigned movement_wait_scope;
+static _Atomic(player_semaphore_dispatch_callback) dispatch_callback;
+EXPORT int x4mp_semaphore_dispatch_register(player_semaphore_dispatch_callback callback) {
+    player_semaphore_dispatch_callback empty = NULL;
+    return callback && atomic_compare_exchange_strong_explicit(&dispatch_callback, &empty, callback,
+        memory_order_release, memory_order_acquire);
+}
+static void dispatch_event(void *sem, unsigned kind, unsigned returning, uintptr_t caller,
+                           uint64_t argument, uint64_t result) {
+    player_semaphore_dispatch_callback callback = atomic_load_explicit(&dispatch_callback, memory_order_acquire);
+    if (sem == TARGET_SEMAPHORE && callback)
+        callback(kind, returning, caller, argument, result, movement_wait_scope);
+}
 static const size_t function_lengths[4] = {0x150, 0xe0, 0xd0, 0x170};
 static const char *const function_hashes[4] = {
     "67068087dfa9e4c1de02561561448ca0ffd47327a46108c2015ce5fea7f30ab2",
@@ -131,6 +144,7 @@ static void leave(unsigned kind, uint64_t token, uintptr_t caller, uint64_t argu
 EXPORT uint64_t x4mp_semaphore_observer_constructor(void *sem, unsigned initial, unsigned maximum) {
     uintptr_t caller = (uintptr_t)__builtin_return_address(0);
     int incoming_errno = errno;
+    dispatch_event(sem, 0, 0, caller, ((uint64_t)initial << 32) | maximum, 0);
     uint64_t token = enter(0, sem, caller, ((uint64_t)initial << 32) | maximum);
     if (token && atomic_exchange_explicit(&constructor_state, 1, memory_order_acq_rel))
         atomic_store(&incomplete, 1);
@@ -138,6 +152,7 @@ EXPORT uint64_t x4mp_semaphore_observer_constructor(void *sem, unsigned initial,
     uint64_t result = ((uint64_t (*)(void *, unsigned, unsigned))originals[0])(sem, initial, maximum);
     int native_errno = errno;
     if (token) atomic_store_explicit(&constructor_state, 2, memory_order_release);
+    dispatch_event(sem, 0, 1, caller, ((uint64_t)initial << 32) | maximum, result);
     leave(0, token, caller, ((uint64_t)initial << 32) | maximum, result);
     errno = native_errno;
     return result;
@@ -146,11 +161,13 @@ EXPORT uint64_t x4mp_semaphore_observer_constructor(void *sem, unsigned initial,
 EXPORT uint64_t NAME SIGNATURE { \
     uintptr_t caller = (uintptr_t)__builtin_return_address(0); \
     int incoming_errno = errno; \
+    dispatch_event(sem, INDEX, 0, caller, EXTRA, 0); \
     uint64_t token = enter(INDEX, sem, caller, EXTRA); \
     if (token && atomic_load_explicit(&constructor_state, memory_order_acquire) != 2) atomic_store(&incomplete, 1); \
     errno = incoming_errno; \
     uint64_t result = ((uint64_t (*) SIGNATURE)originals[INDEX]) ARGUMENTS; \
     int native_errno = errno; \
+    dispatch_event(sem, INDEX, 1, caller, EXTRA, result); \
     leave(INDEX, token, caller, EXTRA, result); \
     errno = native_errno; \
     return result; \

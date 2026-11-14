@@ -1,7 +1,13 @@
 #define _GNU_SOURCE
 #include <assert.h>
 #include "player_semaphore_observer_preload.c"
-static unsigned calls[4];
+static unsigned calls[4], dispatch_events;
+static void resident_callback(unsigned kind, unsigned returning, uintptr_t caller,
+                              uint64_t argument, uint64_t result, unsigned movement) {
+    (void)kind; (void)returning; (void)caller; (void)argument; (void)result; (void)movement;
+    ++dispatch_events;
+    errno = EILSEQ; /* wrapper must restore native/incoming errno across callbacks */
+}
 static uint64_t fake_constructor(void *sem, unsigned initial, unsigned maximum) {
     assert(sem == TARGET_SEMAPHORE && initial == 0 && maximum == 1 && errno == EDOM);
     ++calls[0]; errno = EBUSY; return UINT64_C(0x1111222233334444);
@@ -36,12 +42,16 @@ int main(void) {
            !status.incomplete && status.constructor_state == 2);
     errno = EDOM; assert(x4mp_semaphore_observer_checkpoint(219)); assert(errno == EDOM);
     assert(atomic_load(&observation_state) == OBSERVATION_CLOSED);
+    assert(x4mp_semaphore_dispatch_register(resident_callback));
+    assert(!x4mp_semaphore_dispatch_register(resident_callback));
     errno = EDOM; assert(x4mp_semaphore_observer_post(TARGET_SEMAPHORE, 1) == UINT64_C(0x5555666677778888));
+    assert(dispatch_events == 2);
     assert(errno == ENOSPC && calls[1] == 3 && atomic_load(&receipt_count) == 8);
     atomic_store(&observation_state, 0);
     atomic_store(&receipt_count, MAX_RECEIPTS);
     errno = EDOM; assert(x4mp_semaphore_observer_post(TARGET_SEMAPHORE, 1) == UINT64_C(0x5555666677778888));
     assert(errno == ENOSPC && calls[1] == 4 && x4mp_semaphore_observer_incomplete());
+    assert(dispatch_events == 4);
     atomic_store(&observation_state, 1);
     atomic_store(&incomplete, 0);
     atomic_store(&receipt_count, 8);

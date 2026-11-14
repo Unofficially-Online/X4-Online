@@ -133,6 +133,33 @@ class SemaphoreEvidenceTest(unittest.TestCase):
         finally:
             os.close(captured['fd'])
 
+    def test_dispatch_opt_in_environment_and_receipts(self):
+        manifest = dict(self.options, semaphore_observer_sha256='a' * 64, semaphore_observer_size=123)
+        program = [str(self.directory / 'game/X4')]
+        env, _ = bundle.wrap_program(self.directory, manifest, {'X4_DEV_WORKER_DISPATCH': '1'}, program)
+        self.assertNotIn('X4_DEV_WORKER_DISPATCH', env)
+        manifest['worker_dispatch'] = True
+        env, _ = bundle.wrap_program(self.directory, manifest, {}, program)
+        self.assertEqual(env['X4_DEV_WORKER_DISPATCH'], '1')
+        with self.assertRaises(ValueError):
+            bundle.enabled(dict(manifest, semaphore_observer=False))
+        with self.assertRaises(ValueError):
+            bundle.enabled(dict(manifest, worker_dispatch='1'))
+        self.options['worker_dispatch'] = True
+        self.physics['frames'] = [{'tick': tick} for tick in range(40, 220)]
+        self.assertFalse(self.collect()['pass'])
+        self.lifecycle.write_text(self.lifecycle.read_text() +
+            'X4LAN WORKER_DISPATCH bootstrap=1 parked=1 count=0 maximum=1\n' +
+            ''.join(f'X4LAN WORKER_DISPATCH tick={tick} ticket={tick} consumed=1 post_returned=1\n'
+                    for tick in range(37, 220)))
+        self.physics['log_sha256'] = hashlib.sha256(self.lifecycle.read_bytes()).hexdigest()
+        result = self.collect()
+        self.assertTrue(result['pass'], result['errors'])
+        self.assertEqual(result['worker_dispatch']['dispatches'], 183)
+        self.lifecycle.write_text(self.lifecycle.read_text().replace('ticket=219', 'ticket=218'))
+        self.physics['log_sha256'] = hashlib.sha256(self.lifecycle.read_bytes()).hexdigest()
+        self.assertFalse(self.collect()['pass'])
+
     def test_wrapper_never_preloads_the_python_helper(self):
         manifest = dict(self.options, semaphore_observer_sha256='a' * 64, semaphore_observer_size=123)
         env, program = bundle.wrap_program(self.directory, manifest, {'LD_PRELOAD': '/view.so'},

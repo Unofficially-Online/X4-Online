@@ -9,11 +9,14 @@ of a session between different PCs.
 ## Native player-control progress, 14 November 2026
 
 The latest development work adds Linux consumers for the shared VIEW records,
-including scoped camera projection and selection handling. A new two-instance
-run completed 360 controller updates at ticks 40–399; its 399 recorded world
-digests agreed. A late guest-window capture showed a bright cockpit with a
-readable HUD and radar. This run did not include deliberate player input, so it
-does not add evidence of independent flight or firing.
+including scoped camera projection and selection handling. A two-instance run
+completed 900 controller updates at ticks 40–939. Four synthetic keyboard edges
+were sent only to the guest window; both peers applied each captured edge two
+ticks later. All 3,600 recorded body-state rows and 939 rolling world-digest rows
+matched between the peers. Guest-window captures show a bright cockpit, HUD and
+radar, with a changed exterior view and a final speed display of 72 m/s. This
+establishes bounded input replay and state agreement, not complete human control
+or firing support.
 
 A default-off semaphore observer now records paired native calls from startup
 through an explicit final worker checkpoint. The first run stopped during pin
@@ -25,11 +28,49 @@ Separate reanalysis with the corrected, explicitly enabled parser accepted both
 clients' bounded physics records, worker ancestry, semaphore ledgers and VIEW
 records. The original logs and verdict were preserved.
 
-The observer does **not** prove which native wake belongs to each simulation
-tick. A pending startup wake can otherwise be mistaken for the next controlled
-step. Establishing that handoff and keeping the controls active for a sustained
-session remain open. No playable Linux package or Windows/Linux human-session
-acceptance is claimed by this update.
+A subsequent, default-off worker dispatcher now drains the pending startup wake
+before assigning simulation work. Each dispatch binds a ticket to the native
+movement worker; the next frame waits for that worker to finish its native tail
+and return to the controlled wait. The observer alone still does not establish
+this ownership contract.
+
+With the dispatcher enabled, both Linux instances completed 360 physics frames
+at ticks 40–399. Their dispatch records cover tickets 37–399, including the
+three preparation ticks, and all 399 recorded rolling world digests agree.
+Bounded physics, dispatch, semaphore-ledger and VIEW checks passed. The first
+native attempts exposed an early log write and a fork check that did not
+recognize the dispatcher's parked worker; both were corrected and their failed
+runs retained. The fork exception requires the exact registered worker, matching
+completed generation and an idle dispatcher. Other thread checks are unchanged.
+
+The later 900-frame input run used the same dispatcher. Both successful bounded
+runs deliberately exited with code 223; their overall runner results remain
+false. Recorded rolling digests do not cover every hidden world field.
+
+Once worker takeover has been requested, explicit stop or validation failure now
+terminates the process with code 225 before restoring hooks or forwarding native
+frames. Focused tests cover the actual stop entry points and takeover/stop races.
+A subsequent native attempt exercised this termination path when the presentation
+fork refused an active video thread at tick 42. That failed run is retained; it
+provides no flight or performance acceptance. Resuming the ordinary single-player
+simulation after takeover is unsupported.
+
+Fresh mapping transactions reduce repeated semaphore-validation map reads from
+98 to two per check in the focused fixture. The transactions retain provider,
+patch, memory-permission and mapping-change checks. A bounded presentation-fork
+retry now permits transient contention to clear within 50 ms while retaining
+the thread and ownership checks. An in-flight system call cannot be preempted;
+late success is released and refused.
+
+The subsequent 900-frame native input comparison completed with the same four
+guest input edges, body-state stream and rolling world digests as the earlier
+900-frame run. Across ticks 100–900, the measured mean gate cycle fell from
+282.3 ms to 107.1 ms, approximately 3.54 to 9.34 simulation steps per wall second.
+The mean work before the frame fell from about 182 ms to 5.6 ms. These are
+instrumented two-instance measurements, not renderer FPS or a cross-platform
+benchmark. Both processes ended deliberately and their owned process groups
+were empty afterwards. Sustained controls and Windows/Linux player-session
+compatibility remain open; no playable Linux package is claimed.
 
 The 14 November Python/Lua check ran 2,899 tests: 2,872 passed and 27 were
 skipped because Windows-only facilities or external reference files were

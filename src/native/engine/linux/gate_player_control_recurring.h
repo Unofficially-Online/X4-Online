@@ -97,6 +97,8 @@ static _Noreturn void player_recurring_fatal(const char *reason) {
     if (length > 0 && (size_t)length < sizeof(message)) (void)write(STDERR_FILENO, message, (size_t)length);
     _exit(222);
 }
+#include "gate_player_worker_dispatch.h"
+
 static void player_recurring_write_complete(uint64_t generation) {
     char message[256];
     int length = snprintf(message, sizeof(message),
@@ -118,6 +120,9 @@ static void player_recurring_write_complete(uint64_t generation) {
 static unsigned player_recurring_configure(void) {
     unsigned mode = atomic_load_explicit(&player_recurring_mode, memory_order_acquire);
     if (mode) return mode;
+    const char *dispatch_setting = getenv("X4_DEV_WORKER_DISPATCH");
+    if (dispatch_setting && strcmp(dispatch_setting, "1")) player_recurring_fatal("invalid_dispatch_mode");
+    player_dispatch_enabled = dispatch_setting != NULL;
     const char *setting = getenv("X4LAN_PLAYER_CONTROL_RECURRING");
     const char *tail_setting = getenv("X4LAN_PLAYER_CONTROL_RECURRING_TAIL");
     const char *physics_setting = getenv("X4_DEV_PLAYER_PHYSICS");
@@ -132,6 +137,7 @@ static unsigned player_recurring_configure(void) {
     if (tail_setting && *tail_setting && strcmp(tail_setting, "1"))
         player_recurring_fatal("invalid_tail_mode");
     if (!setting || !*setting) {
+        if (player_dispatch_enabled) player_recurring_fatal("dispatch_requires_recurring");
         if (session_text) player_recurring_fatal("session_requires_recurring");
         if (physics_setting && *physics_setting) player_recurring_fatal("physics_requires_recurring");
         if (tail_setting && *tail_setting) player_recurring_fatal("tail_requires_recurring");
@@ -171,6 +177,15 @@ static unsigned player_recurring_configure(void) {
         (!player_recurring_tail || end <= player_startup()->take || end > (session_text ? player_session_budget.recurring_end :
                  player_recurring_physics == 3 ? 604u : 184u)))
         player_recurring_fatal("physics_requires_bounded_tail");
+    if (player_dispatch_enabled && (!player_recurring_tail || player_recurring_physics != 3 ||
+        !getenv("X4MP_SEMAPHORE_OBSERVER") || strcmp(getenv("X4MP_SEMAPHORE_OBSERVER"), "1")))
+        player_recurring_fatal("dispatch_requires_network_tail_provider");
+    if (player_dispatch_enabled) {
+        if (player_physics_frame_prefix || player_fork_owned_worker_park)
+            player_recurring_fatal("dispatch_receipt_conflict");
+        player_physics_frame_prefix = player_dispatch_frame_prefix;
+        player_fork_owned_worker_park = player_dispatch_parked_for_fork;
+    }
     player_recurring_end = end;
     atomic_store_explicit(&player_recurring_worker_last, phase->take - 1, memory_order_relaxed);
     atomic_store_explicit(&player_recurring_mode, 2, memory_order_release);
@@ -200,6 +215,8 @@ static int player_recurring_before_frame(void) {
     if (!stats.active) return 0;
     uint64_t generation = stats.issued;
     atomic_store_explicit(&player_recurring_main_tick, generation, memory_order_release);
+    if (player_dispatch_enabled && generation == player_startup()->take - 1)
+        player_dispatch_request();
     if (generation < player_startup()->take) return 0;
     if (generation > player_recurring_end) {
         uint64_t completed = atomic_load_explicit(&player_recurring_rendezvous.state,
@@ -224,8 +241,15 @@ static int player_recurring_before_frame(void) {
         return 0;
     }
     if (GetCurrentThreadId() != main_thread || boot_phase != 3 || !path_installed ||
-        !stock_observer_worker_thread || stock_observer_worker_thread != ui_thread ||
-        atomic_load_explicit(&player_recurring_worker_busy, memory_order_acquire) ||
+        !stock_observer_worker_thread || stock_observer_worker_thread != ui_thread)
+        player_recurring_fatal("arm_admission");
+    if (player_dispatch_enabled && !player_dispatch_post_sites_pinned())
+        player_recurring_fatal("dispatch_post_pins");
+    if (player_dispatch_enabled &&
+        !pwda_arm(&player_dispatch, generation, GetCurrentThreadId())) player_recurring_fatal("dispatch_arm");
+    /* Dispatch park acknowledges the entire native tail, including this
+     * adapter's cleanup after FWRR made the main return visible. */
+    if (atomic_load_explicit(&player_recurring_worker_busy, memory_order_acquire) ||
         atomic_load_explicit(&player_recurring_worker_last, memory_order_acquire) != generation - 1)
         player_recurring_fatal("arm_admission");
     if (generation == player_startup()->take &&
@@ -237,6 +261,7 @@ static int player_recurring_before_frame(void) {
         player_recurring_fatal("tail_install");
     if (fwrr_arm(&player_recurring_rendezvous, generation, GetCurrentThreadId()) != FWRR_OK)
         player_recurring_fatal("arm");
+    if (player_dispatch_enabled && !pwda_publish_arm(&player_dispatch)) player_recurring_fatal("dispatch_publish");
     return 2;
 }
 static void player_recurring_after_frame(void) {
@@ -324,6 +349,8 @@ static void player_recurring_tail_callback(void *semaphore, unsigned count) {
     atomic_store_explicit(&player_recurring_worker_last, generation, memory_order_release);
     if (fwrr_worker_release(&player_recurring_rendezvous, generation, GetCurrentThreadId(), &token) != FWRR_OK)
         player_recurring_fatal("tail_release");
+    if (player_dispatch_enabled && !pwda_tail(&player_dispatch, GetCurrentThreadId(), &player_dispatch_ticket))
+        player_recurring_fatal("dispatch_tail");
     atomic_store_explicit(&player_recurring_worker_busy, 0, memory_order_release);
 }
 /* Return 1 when this mode owns the hook, including frames outside the window. */
@@ -333,6 +360,10 @@ static int player_recurring_after_join(void) {
     if (mode == 3) return 1;
     uint64_t state = atomic_load_explicit(&player_recurring_rendezvous.state, memory_order_acquire);
     if (!state) {
+        if (player_dispatch_enabled && pwda_phase(&player_dispatch) != PWDA_OFF) {
+            if (!player_dispatch_startup_join()) player_recurring_fatal("dispatch_startup_join");
+            return 1;
+        }
         if (atomic_load_explicit(&player_recurring_main_tick, memory_order_acquire) >=
             player_startup()->take) player_recurring_fatal("worker_before_arm");
         return 1; /* before the bounded window */
@@ -341,7 +372,9 @@ static int player_recurring_after_join(void) {
     if (!atomic_compare_exchange_strong_explicit(&player_recurring_worker_busy, &idle, 1,
                                                   memory_order_acq_rel, memory_order_acquire))
         player_recurring_fatal("worker_reentry");
-    uint64_t generation = fwrr_generation(state);
+    uint64_t generation = player_dispatch_enabled ? player_dispatch_ticket : fwrr_generation(state);
+    if (player_dispatch_enabled && !pwda_join(&player_dispatch, GetCurrentThreadId(), generation))
+        player_recurring_fatal("dispatch_join");
     if (!factory_probe_joined_boundary() || generation < player_startup()->take ||
         generation > player_recurring_end ||
         atomic_load_explicit(&player_recurring_worker_last, memory_order_acquire) != generation - 1 ||

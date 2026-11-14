@@ -1536,8 +1536,10 @@ def physics_environment_mode(frames, network=False):
     return 'network-frames-discard' if network else ('bounded-frames-discard' if frames > 1 else 'single-frame-discard')
 
 
-def collect_network_client(arguments, stderr, frames, slot, camera=False, throttle=False, throttle_start_tick=5, presentation=False, session_frames=0, startup=None, cursor=False, space=False, *, allow_view=False, allow_semaphore_checkpoint=False):
+def collect_network_client(arguments, stderr, frames, slot, camera=False, throttle=False, throttle_start_tick=5, presentation=False, session_frames=0, startup=None, cursor=False, space=False, *, allow_view=False, allow_semaphore_checkpoint=False, allow_worker_dispatch=False):
     kwargs = {'allow_camera': True} if camera else {}
+    if allow_worker_dispatch is not False:
+        kwargs['allow_worker_dispatch'] = allow_worker_dispatch
     if allow_semaphore_checkpoint is not False:
         kwargs['allow_semaphore_checkpoint'] = allow_semaphore_checkpoint
     if allow_view is not False:
@@ -2797,6 +2799,8 @@ def bundle(args):
         'player_view_query_observer': view_query_enabled,
         'view_query_source_version': semaphore_bundle.SOURCE_VERSION,
         'semaphore_observer': semaphore_observer_enabled,
+        'worker_dispatch': getattr(args, 'worker_dispatch', False),
+        'worker_dispatch_evidence_version': 1 if getattr(args, 'worker_dispatch', False) else None,
         'semaphore_observer_evidence_version': 1 if semaphore_observer_enabled else None,
         'semaphore_observer_sha256': files.get('semaphore_observer/' + semaphore_bundle.PROVIDER),
         'semaphore_observer_size': (out / 'semaphore_observer' / semaphore_bundle.PROVIDER).stat().st_size if semaphore_observer_enabled else None,
@@ -3958,7 +3962,8 @@ def run(args):
                             camera=camera_enabled, throttle=bool(throttle_environment),
                             throttle_start_tick=manifest.get('player_throttle_start_tick') or 5,
                             presentation=presentation_enabled, session_frames=manifest.get('player_ui_session_frames',0), startup=manifest.get('player_startup_phases'), cursor=cursor_enabled, space=space_enabled, allow_view=view_wire_enabled,
-                            allow_semaphore_checkpoint=semaphore_observer_enabled)
+                            allow_semaphore_checkpoint=semaphore_observer_enabled,
+                            allow_worker_dispatch=manifest.get('worker_dispatch', False))
                     else:
                         clients_evidence[str(slot)] = collect_physics_client(arguments, stderr, physics_frames)
                 else:
@@ -4260,6 +4265,8 @@ def main(argv=None):
                    help='default-off pre-main view query observer; requires independent >=4 frames and lifetime preload')
     b.add_argument('--player-lifetime-preload', action='store_true',
                    help='bundle default-off pre-main lifetime guard for disposable physics experiments only')
+    b.add_argument('--worker-dispatch', action='store_true',
+                   help='finite native worker dispatch handoff; requires --semaphore-observer')
     b.add_argument('--semaphore-observer', action='store_true',
                    help='bounded target semaphore diagnostics for a finite T40 session; no ownership proof')
     b.add_argument('--player-factory-probe', action='store_true',
