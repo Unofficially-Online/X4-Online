@@ -224,6 +224,113 @@ static void pvehk_fade_install(void) {
 static void pvehk_fade_restore(void) {
     if(pvehk_fade_installed && pview_cas(PVEHK_FADE,pvehk_fade_patched,pvehk_fade_head,5)) pvehk_fade_installed=0;
 }
+/* ---- a flying slot's reference frame while X4's own player has no flight control ----
+ * A PlayerController with a reference object (+0x19390: set while it docks) refreshes its frame offsets in 0xd9b250,
+ * which walks up from the environment zone (image 0x6b661e8, one of the slot bank's regions) without a test for
+ * none. X4 calls it from the controller's pose query (0xd8d096) during its own tree walk, outside every scope, where
+ * the zone is X4's own player's: none while that player is on foot. In the plain game the only PlayerController is
+ * that player's, so the two never meet. Here slot k's suit docked at its ship while slot 1 stood in its own (scripted,
+ * two clients, 15 Nov): both clients faulted at 0xd9b279 in the same tick. The routine's entry is hooked (as the
+ * fade's): for slot k's controller outside its scope the zone is slot k's own for the call (its stored bank's value,
+ * on the frame thread; the live one back after it); a zone that is none: the offsets stay as they are, no call.
+ * Pinned; else X4's own. Status zone=installed/own/none. */
+#define PVEHK_ZONE 0xd9b250u
+#define PVEHK_ZONE_SIZE 0x150u
+#define PVEHK_ZONE_SHA "fd0f07686216a79b10edba28734546d7b2d301793798b5003884996c96965679"
+#define PVEHK_ZONE_POINTER 0x6b661e8u         /* lockstep_virtual_players.h: environment_zone */
+#define PVEHK_ZONE_STUB 0x1c0u                /* on the slots' near page, after the speech's (0x180, 0x1a0) */
+#define PVEHK_ZONE_TRAMPOLINE 0x1e0u          /* the routine's first instruction, then on at +5 */
+static const unsigned char pvehk_zone_head[5]={0x48,0x89,0x74,0x24,0x20};
+typedef void (*pvehk_zone_fn)(void *controller);
+static int pvehk_zone_installed;
+static unsigned char pvehk_zone_patched[5];
+static volatile LONG64 pvehk_zone_own,pvehk_zone_none;
+static pvehk_zone_fn pvehk_zone_original;   /* tests: in place of the trampoline */
+/* Slot k's environment zone while its scope is closed: its place in the slot's stored bank (pslot_exchange's order). */
+static int pvehk_zone_stored(unsigned k,void **zone) {
+    unsigned n=0;
+    for(unsigned i=0;i<VPL_REGION_COUNT;i++) {
+        const vpl_region *r=&vpl_regions[i];
+        if(r->base!=VPL_BASE_IMAGE || !(PSLOT_CLASSES>>r->cls&1u)) continue;
+        if(r->offset==PVEHK_ZONE_POINTER && r->size==8 && n+8u<=pslots[k].length) {memcpy(zone,pslots[k].store+n,8);return 1;}
+        n+=r->size;
+    }
+    return 0;
+}
+__attribute__((noinline)) static void pvehk_zone(void *controller) {
+    const pvehk_zone_fn original=pvehk_zone_original?pvehk_zone_original:(pvehk_zone_fn)(void*)(pslot_page+PVEHK_ZONE_TRAMPOLINE);
+    void *volatile *const live=(void*volatile*)(pnat_base+PVEHK_ZONE_POINTER);
+    const unsigned k=pslot_of(controller);
+    void *own=NULL;
+    if(k && pstk_scope_slot!=k && pslot_frame_thread() && pvehk_zone_stored(k,&own)) {
+        if(!own) {InterlockedIncrement64(&pvehk_zone_none);return;}
+        void *const was=*live;
+        *live=own;original(controller);*live=was;
+        InterlockedIncrement64(&pvehk_zone_own);return;
+    }
+    if(!*live) {InterlockedIncrement64(&pvehk_zone_none);return;}
+    original(controller);
+}
+static void pvehk_zone_install(void) {
+    DWORD old,ignored;int32_t rel=0;
+    if(pvehk_zone_installed || !pslot_page || !hash_ok(pnat_base+PVEHK_ZONE,PVEHK_ZONE_SIZE,PVEHK_ZONE_SHA) ||
+       memcmp(pnat_base+PVEHK_ZONE,pvehk_zone_head,sizeof(pvehk_zone_head))) return;
+    if(!VirtualProtect(pslot_page,PVIEW_PAGE,PAGE_READWRITE,&old)) return;
+    pview_abs_jump(pslot_page+PVEHK_ZONE_STUB,(void*)pvehk_zone);
+    memcpy(pslot_page+PVEHK_ZONE_TRAMPOLINE,pvehk_zone_head,sizeof(pvehk_zone_head));
+    pview_abs_jump(pslot_page+PVEHK_ZONE_TRAMPOLINE+sizeof(pvehk_zone_head),pnat_base+PVEHK_ZONE+sizeof(pvehk_zone_head));
+    if(!VirtualProtect(pslot_page,PVIEW_PAGE,PAGE_EXECUTE_READ,&ignored)) return;
+    FlushInstructionCache(GetCurrentProcess(),pslot_page,PVIEW_PAGE);
+    rel=(int32_t)((intptr_t)(pslot_page+PVEHK_ZONE_STUB)-(intptr_t)(pnat_base+PVEHK_ZONE+5));
+    pvehk_zone_patched[0]=0xe9;memcpy(pvehk_zone_patched+1,&rel,4);
+    if(pview_cas(PVEHK_ZONE,pvehk_zone_head,pvehk_zone_patched,5)) pvehk_zone_installed=1;
+}
+static void pvehk_zone_restore(void) {
+    if(pvehk_zone_installed && pview_cas(PVEHK_ZONE,pvehk_zone_patched,pvehk_zone_head,5)) pvehk_zone_installed=0;
+}
+/* ---- X4's entry check for a suited slot while X4's own player has no flight control ----
+ * U::Player's update (0x7113e0) asks every frame whether its ship is docked and has arrived (0x7ced40: the dock it is
+ * connected to, state +0x368 not 6; 0x7d1c70) and then runs 0x731560, which for a spacesuit is the entry 0x710390.
+ * That whole part sits behind one test of the flight control byte (0x712160: image 0x2f4b828), which outside the
+ * scopes is X4's own player's. With slot 1 on foot the check never ran for anybody: a slot's suit flew to its ship,
+ * docked and stayed outside (scripted 15 Nov, limit after 900 ticks 2 m from the ship; the same by hand: the suit at
+ * the right place, nothing happens). While that byte is off, the pass asks X4's same three routines for every slot
+ * in its suit; 0x731560's entry call is this module's (pvehk_enter above), so an arrival is noted as always. Pinned
+ * (0x731560 up to that call); else nothing. Status poll=on/asked/entered. */
+#define PVEHK_DOCKED 0x7ced40u                /* (ship, &dock) */
+#define PVEHK_DOCKED_SIZE 0x6du
+#define PVEHK_DOCKED_SHA "0122c090f3b4047b9ade0772cf0e131d122b02794d89aef09c6d7e4ca5649fa2"
+#define PVEHK_ARRIVED 0x7d1c70u               /* (ship) */
+#define PVEHK_ARRIVED_SIZE 0x84u
+#define PVEHK_ARRIVED_SHA "af84c27d9efd9e487504a551eea3e57a3afb102e4c1b431c0f135133472efad5"
+#define PVEHK_DOCK_STEP 0x731560u             /* (player) */
+#define PVEHK_DOCK_STEP_HEAD 0x75u
+#define PVEHK_DOCK_STEP_SHA "33fcd7d1956a1bc1e9f66c6fc0c0f768a0cbcf4a44c52b28be018a97e3409477"
+#define PVEHK_DOCK_GATE 0x712160u             /* 0x7113e0: the flight control byte, then the three */
+#define PVEHK_DOCK_GATE_SIZE 0x86u
+#define PVEHK_DOCK_GATE_SHA "b7872ef6dff4fd3fecfe8e0a3e5bc9e0223ad031daa3bef72e7e5f66ccb96641"
+#define PVEHK_DOCK_STATE 0x368u
+static int pvehk_poll_on;
+static volatile LONG64 pvehk_polls,pvehk_poll_entered;
+static void pvehk_poll_pins(void) {
+    pvehk_poll_on=pnat_base && hash_ok(pnat_base+PVEHK_DOCKED,PVEHK_DOCKED_SIZE,PVEHK_DOCKED_SHA) &&
+        hash_ok(pnat_base+PVEHK_ARRIVED,PVEHK_ARRIVED_SIZE,PVEHK_ARRIVED_SHA) &&
+        hash_ok(pnat_base+PVEHK_DOCK_STEP,PVEHK_DOCK_STEP_HEAD,PVEHK_DOCK_STEP_SHA) &&
+        hash_ok(pnat_base+PVEHK_DOCK_GATE,PVEHK_DOCK_GATE_SIZE,PVEHK_DOCK_GATE_SHA);
+}
+static void pvehk_dock_poll(unsigned k) {
+    pslot_slot *x=&pslots[k];unsigned char *dock=NULL;int state=6,fault=0;
+    if(!pvehk_poll_on || !pvehk_enter_installed || !x->seated || !x->ship || !x->player || *PNAT_U8(PNAT_FLIGHT)) return;
+    InterlockedIncrement64(&pvehk_polls);
+    __try {
+        (void)((void*(*)(void*,void**))(void*)(pnat_base+PVEHK_DOCKED))(x->ship,(void**)&dock);
+        if(dock && read_local(dock+PVEHK_DOCK_STATE,&state,4) && state!=6 && ((unsigned char(*)(void*))(void*)(pnat_base+PVEHK_ARRIVED))(x->ship)) {
+            ((void(*)(void*))(void*)(pnat_base+PVEHK_DOCK_STEP))(x->player);InterlockedIncrement64(&pvehk_poll_entered);
+        }
+    }
+    __except(GetExceptionCode()==EXCEPTION_ACCESS_VIOLATION?EXCEPTION_EXECUTE_HANDLER:EXCEPTION_CONTINUE_SEARCH) {fault=1;}
+    if(fault) pvehk_poll_on=0;
+}
 static void pvehk_enter_install(void) {
     if(pvehk_enter_installed || !pslot_page || !hash_ok(pnat_base+PVEHK_ENTER,PVEHK_ENTER_SIZE,PVEHK_ENTER_SHA)) return;
     if(!pres_site_install(PVEHK_ENTER_SITE_FRAME,PVEHK_ENTER,PVEHK_ENTER_STUB,(void*)pvehk_enter,pvehk_enter_patched[0])) return;
@@ -241,11 +348,14 @@ static int pdeath_guard_install(void) {
     if(pdeath_guard_installed) return 1;
     if(!pslot_page && !(pslot_page=pslot_alloc_page())) return 0;
     if(!pres_site_install(PDEATH_GAME_OVER_CALL,PDEATH_GAME_OVER,PDEATH_STUB,(void*)pdeath_game_over,pdeath_guard_patched)) return 0;
+    pvehk_poll_pins();       /* before the entry's call site inside 0x731560 is re-pointed */
     pvehk_enter_install();   /* X4's entry of a suited player (above): where this image has it */
     pvehk_fade_install();    /* the fade of an exit or an entry: on the client whose player it is */
+    pvehk_zone_install();    /* a flying slot's reference frame: its own environment zone */
     pdeath_guard_installed=1;return 1;
 }
 static void pdeath_restore(void) {
+    pvehk_zone_restore();
     pvehk_fade_restore();
     pvehk_enter_restore();
     if(pdeath_guard_installed && pres_site_uninstall(PDEATH_GAME_OVER_CALL,PDEATH_GAME_OVER,pdeath_guard_patched)) pdeath_guard_installed=0;
@@ -403,8 +513,7 @@ static int pdeath_seat(unsigned k,unsigned char *controller) {
  * PILOT_DEATH's frame; status vehicle=adopts/lefts/in_suit. Slots 2..N: not yet (their player is not X4's own). */
 #define PVEH_WINDOW 1800u
 #define PVEH_SUIT_VTABLE 0x2b789b0u            /* U::SpaceSuit */
-static uint64_t pveh_allow_until,pveh_adopts,pveh_lefts;
-static int pveh_in_suit;
+static uint64_t pveh_allow_until,pveh_adopts,pveh_lefts;   /* pveh_in_suit: lockstep_pilot_native.h (the stop's text) */
 static const char *pveh_why="-";
 static void pveh_allow(uint64_t tick) {pveh_allow_until=tick+PVEH_WINDOW;}
 /* Another ship than slot 1's holds X4's player: expected when the slot has no ship, or inside the window of an applied
@@ -427,17 +536,64 @@ static int pveh_adopt(uint64_t tick,unsigned char *controller) {
     return 1;
 }
 /* Slot 1's player is off its suit and lives (the suit gone, or X4's player without a PlayerController): X4 teleported it
- * into a ship. 1: handled here. */
+ * into a ship. 1: handled here.
+ * The life asked is the Player entity's (slot 1's own, X4's singleton outside every scope). Until 15 Nov it was asked of
+ * pdeath_player, which is the object the PlayerController holds (the pass's player_object) and so none exactly when
+ * the controller is: this never took, and slot 1's dock-in from its suit stopped both gates with
+ * stock_controller_changed (scripted, two clients, 26 ticks after the dock request: changed=ctl:none ... suit:1). */
+static const unsigned char *pveh_player_test;   /* tests: in place of X4's player */
+/* ...and where X4 put it. Its entry from a docked suit (0x710390 -> 0x7154b0) stands the player on foot in the ship the
+ * suit docked at. That ship is slot 1's from there on, as after a stand-up in it: no controller, the walking pass adopts
+ * the next seat in it. Left without a ship (the first form, 15 Nov, scripted) the slot's viewpoint stayed the removed
+ * suit: the ship around X4's player lost its walk mesh and its interior within a few seconds (the digest part navmesh
+ * changed 70 ticks after the entry), client 1 showed open space and the walking keys moved nothing. A ship is the
+ * player's first ancestor of the ship class (716e20's own walk, vtable +0x11e8 with 0x70); a spacesuit (still under
+ * its own suit) or a ship that is going is none. Asked again every pass for PVEH_WINDOW ticks after the suit was left,
+ * while slot 1 lives without a ship and without a controller (X4 may take the player in some ticks after it took the
+ * controls); a slot whose ship died under its feet is not asked (it has no ship: the loss's rule). Event aboard1; status
+ * vehicle=../../../aboards. */
+#define PVEH_SHIP_CLASS 0x70
+static uint64_t pveh_aboards,pveh_aboard_until;
+static unsigned char *(*pveh_around_test)(const unsigned char *);   /* tests: in place of the walk up the parents */
+static unsigned char *pveh_ship_around(const unsigned char *player) {
+    unsigned char *c=NULL;
+    if(pveh_around_test) return pveh_around_test(player);
+    if(!player || !read_local(player+0x70,&c,8)) return NULL;
+    for(unsigned depth=0;c && depth<32;depth++) {
+        void **vtable=NULL;unsigned char is=0;int fault=0;
+        if(!read_local(c,&vtable,8) || !vtable) return NULL;
+        __try {is=((unsigned char(*)(void*,int))vtable[0x11e8u/8u])(c,PVEH_SHIP_CLASS);}
+        __except(GetExceptionCode()==EXCEPTION_ACCESS_VIOLATION?EXCEPTION_EXECUTE_HANDLER:EXCEPTION_CONTINUE_SEARCH) {fault=1;}
+        if(fault) return NULL;
+        if(is) return c;
+        if(!read_local(c+0x70,&c,8)) return NULL;
+    }
+    return NULL;
+}
+static int pveh_aboard(pilot_slot *s,pdeath_slot *d) {
+    const unsigned char *player=pveh_player_test?pveh_player_test:pslot_p1?pslot_p1:pnat_player();
+    unsigned char life=1,*ship;uint64_t id=0;void *vtable=NULL;
+    if(!d->lost || s->dead || pveh_in_suit || !player || !read_local(player+PDEATH_LIFECYCLE,&life,1) || life) return 0;
+    if(!(ship=pveh_ship_around(player)) || !read_local(ship+8,&id,8) || !id || !read_local(ship+PDEATH_LIFECYCLE,&life,1) || life) return 0;
+    if(read_local(ship,&vtable,8) && pnat_base && vtable==(void*)(pnat_base+PVEH_SUIT_VTABLE)) return 0;
+    const uint64_t was=s->runtime;
+    s->runtime=id;s->reversed=1;s->renewed=1;s->seen=0;
+    if(!pilot_resolve(s,pdeath_find,pdeath_map,pdeath_player) || s->object!=ship) {s->runtime=was;s->seen=0;return 0;}   /* stays without a ship */
+    pnat_ship=ship;pnat_controller=NULL;d->lost=0;d->state=PDEATH_ALIVE;++pveh_aboards;pveh_aboard_until=0;pdeath_event("aboard1",1);
+    return 1;
+}
 static int pveh_left(pilot_slot *s,pdeath_slot *d,uint64_t tick,const unsigned char *controller) {
     unsigned char life=1;
     if(!pveh_in_suit || s->dead || d->lost || (controller && !pdeath_dying(s))) return 0;
-    if(!pdeath_player || !read_local((const unsigned char *)pdeath_player+PDEATH_LIFECYCLE,&life,1) || life) return 0;   /* the player goes too: a death */
+    const unsigned char *player=pveh_player_test?pveh_player_test:pslot_p1?pslot_p1:pnat_player();
+    if(!player || !read_local(player+PDEATH_LIFECYCLE,&life,1) || life) return 0;   /* the player goes too: a death */
     pveh_in_suit=0;++pveh_lefts;
     if(pfire_armed) {(void)pfire_end(s,&pfire_slots[0],1);memset(&pfire_slots[0],0,sizeof(pfire_slots[0]));}
     d->lost=1;d->ship=0;   /* no ship until X4 seats its player again (pveh_adopt_ok: any seat) */
     pnat_ship=NULL;pnat_controller=NULL;
     if(pfoot_armed) {pfoot_state=PFOOT_WALKING;pfoot_transition_tick=tick;}
     pdeath_event("left1",1);
+    pveh_aboard_until=tick+PVEH_WINDOW;(void)pveh_aboard(s,d);
     return 1;
 }
 /* ---- slots 2..N through the airlock (package 1) ----
@@ -678,6 +834,8 @@ static int pdeath_pass(uint64_t tick,unsigned char *controller) {
         if(!pilot_slot_enrolled(k,tick) || (pilot_slot_absent(k) && !pslots[k].seated && !pilot_slots[k-1].dead)) continue;
         pilot_slot *s=&pilot_slots[k-1];pdeath_slot *d=&pdeath_slots[k-1];
         if(k==1 && pveh_left(s,d,tick,controller)) continue;   /* out of its spacesuit by a teleport into a ship: no death */
+        if(k==1 && d->lost && !s->dead && !controller && pveh_aboard_until && tick<=pveh_aboard_until) (void)pveh_aboard(s,d);   /* ...and on foot in a ship by now */
+        if(k>=2 && d->out==2 && !s->dead && !d->lost) pvehk_dock_poll(k);   /* X4's entry check, where its own player's byte keeps it off */
         if(k>=2 && d->out==2) {const int taken=pvehk_taken(k,tick);if(taken<0) return 0;if(taken) continue;}   /* X4 took it home */
         if(!s->dead && !d->lost && pdeath_dying(s)) {   /* who is aboard decides (header) */
             if(pdeath_off_seat(k,controller)?!pdeath_lose(k,tick):!pdeath_die(k,tick)) return 0;
@@ -744,8 +902,13 @@ static int pdeath_status(char *out,size_t capacity) {
                                               pvehk_enter_installed,(long long)pvehk_enters,(long long)pvehk_enters_else);
     if(n>0 && (size_t)n<capacity) n+=snprintf(out+n,capacity-(size_t)n," fade=%d/%lld/%lld",pvehk_fade_installed,
                                               (long long)pvehk_fades_shown,(long long)pvehk_fades_kept);
-    if(n>0 && (size_t)n<capacity) n+=snprintf(out+n,capacity-(size_t)n," vehicle=%llu/%llu/%d",(unsigned long long)pveh_adopts,
-                                              (unsigned long long)pveh_lefts,pveh_in_suit);   /* slot 1: adopted vehicles, suits left, in a suit */
+    if(n>0 && (size_t)n<capacity) n+=snprintf(out+n,capacity-(size_t)n," poll=%d/%lld/%lld",pvehk_poll_on,(long long)pvehk_polls,
+                                              (long long)pvehk_poll_entered);
+    if(n>0 && (size_t)n<capacity) n+=snprintf(out+n,capacity-(size_t)n," zone=%d/%lld/%lld",pvehk_zone_installed,
+                                              (long long)pvehk_zone_own,(long long)pvehk_zone_none);
+    if(n>0 && (size_t)n<capacity) n+=snprintf(out+n,capacity-(size_t)n," vehicle=%llu/%llu/%d/%llu",(unsigned long long)pveh_adopts,
+                                              (unsigned long long)pveh_lefts,pveh_in_suit,   /* slot 1: adopted vehicles, suits left, in a suit, */
+                                              (unsigned long long)pveh_aboards);              /* on foot into a ship */
     if(n>0 && (size_t)n<capacity) n+=snprintf(out+n,capacity-(size_t)n," airlock=%llu/%llu/%llu/%llu/%u",(unsigned long long)pvehk_outs,
                                               (unsigned long long)pvehk_homes,(unsigned long long)pvehk_far,(unsigned long long)pvehk_weapons,
                                               pvehk_equip_faults);   /* slots 2..N: into a suit, home again, asked too far away; suit weapons installed, faults */

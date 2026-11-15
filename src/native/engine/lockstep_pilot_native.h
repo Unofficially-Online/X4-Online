@@ -818,6 +818,18 @@ static int pnat_intact(void) {
     pnat_vector_entry=where;return 1;
 }
 static int pnat_fail(const char *stage) {pnat_stage=stage;pilot_stage=stage;pnat_failed=1;return 0;}
+/* What stock_controller_changed found (the stop's why text, changed=): X4's PlayerController none / the one held /
+ * another, its ship, the input object, and whether the pass knew the slot dead, walking or in a suit. */
+static char pnat_changed[96];
+static int pveh_in_suit;
+static int pnat_fail_changed(const unsigned char *controller,int dead,int foot) {
+    unsigned char *ship=NULL,*input=NULL;
+    const int has_ship=controller && read_local(controller+0x28,&ship,8),has_input=read_local(pnat_base+PNAT_INPUT,&input,8);
+    snprintf(pnat_changed,sizeof(pnat_changed),"ctl:%s/ship:%s/input:%s/dead:%d/foot:%d/suit:%d",
+        !controller?"none":controller==pnat_controller?"held":"other",!has_ship?"-":ship==pnat_ship?"held":"other",
+        !has_input?"-":input==pnat_input?"held":"other",dead,foot,pveh_in_suit);
+    return pnat_fail("stock_controller_changed");
+}
 /* One live pass (start-1 .. stop): every invariant the pieces rely on. */
 static int pnat_check(unsigned char *controller,const uint32_t *counter,const unsigned char *contexts) {
     unsigned char *ship=NULL,*input=NULL;uint32_t count=0;unsigned char requested=0;
@@ -835,13 +847,13 @@ static int pnat_check(unsigned char *controller,const uint32_t *counter,const un
             if(foot<0) return pnat_fail(pfoot_why);
             if(foot==2 && !pveh_adopt(stats.issued,controller)) return pnat_fail(pveh_why);   /* another vehicle: slot 1's ship now */
             if(foot==1) {
-                if(!read_local(pnat_base+PNAT_INPUT,&input,8) || input!=pnat_input) return pnat_fail("stock_controller_changed");
+                if(!read_local(pnat_base+PNAT_INPUT,&input,8) || input!=pnat_input) return pnat_fail_changed(controller,dead,1);
                 return 1;
             }
         }
         if(!dead && pnat_flight_seen!=pstk_flight && !pfoot_flight_grace(stats.issued)) return pnat_fail("stock_flight_drift");
         if((!dead && (!controller || controller!=pnat_controller || !read_local(controller+0x28,&ship,8) || ship!=pnat_ship)) ||
-           !read_local(pnat_base+PNAT_INPUT,&input,8) || input!=pnat_input) return pnat_fail("stock_controller_changed");
+           !read_local(pnat_base+PNAT_INPUT,&input,8) || input!=pnat_input) return pnat_fail_changed(controller,dead,0);
         pnat_stop_in_menu=*PNAT_U8(PNAT_STOP_IN_MENU);
         if(counter && contexts && read_local(counter,&count,4) && read_local(contexts,&requested,1) && (count || !requested))
             InterlockedIncrement64(&pnat_ui_passes);

@@ -32,8 +32,18 @@
  *   K2-4  70eee0(P_k): its FPC (Positional::vfunc829 replaces what the factory left), then one pose query: its first
  *         update (d7cdb0) at the seat, as X4's own player's FPC had it long before it stands; this client's FIRST_PERSON
  *         flags (0x38f4e7c requested = 1, 0x38f4e80 share = 0) are held for the stand-up so d81d20(1) requests nothing.
- *   K2-5  the placement as 716e20 finds it (8d3f60, 455f90, 771430, class 0x4d), always the direct 717c30(P_k, target,
- *         1) on the initialised FPC, never the animation 7176f0; no target: it stands at its seat (counted unplaced).
+ *   K2-5  the placement as 716e20 finds it (8d3f60; 455f90 and the connection's record 455f20 on the ship, else 771430
+ *         and 7713c0 on the docked ancestor; a class 0x4d target), with the routine 716e20 picks: 7176f0 when the
+ *         record carries the get-up tag (image 0x395cac8; with the record's +0x128), else 717c30; both as X4's
+ *         immediate stand-up calls them (flag 1: the FPC posed at the connection the routine finds for the control
+ *         position). No target: it stands at its seat (counted unplaced).
+ *         Until 15 Nov this was always 717c30. In a small ship's cockpit the seat's record carries the tag, and
+ *         717c30 looks for another connection, finds none and leaves the FPC at the seat's pose with a fixed step
+ *         (its own fallback): slot k stood inside its seat, 0.4 m above the floor, and was pushed out of it in any
+ *         direction (playtest reports of 14 and 15 Nov: out of the ship, too far forward). Seen with execute
+ *         breakpoints, two clients: every stand-up of slot 2 took 717c30's fallback (0x717e04); X4's own player's
+ *         GET_UP ran 7176f0 (call at 0x717391). 7176f0 also queues the seat's animation on the ship (its event
+ *         0x25 with the record's name, 99a3f0), as for X4's own player: every client, the same tick.
  *         Then the control position none, the FPC's seat flag +0x2e0 = 0 (d7d2e0's answer for a player without one
  *         and no camera on it), P_k's +0x6a0d = 1 without its event (70ecf0's contexts are this process's).
  *   K2-6  slot k's walking bank: 0x38f4e40..0x38f4e93 without 0x38f4e7c and 0x38f4e80..83 (this client's own), swapped
@@ -57,6 +67,13 @@
 #define PFSLOT_CONN_TYPE 0x8d3f60u
 #define PFSLOT_SHIP_CONN 0x455f90u
 #define PFSLOT_DOCK_CONN 0x771430u
+#define PFSLOT_PLACE_TAGGED 0x7176f0u     /* (player, target, the record's +0x128, flag) */
+#define PFSLOT_SHIP_RECORD 0x455f20u      /* (ship, type) -> the connection's record */
+#define PFSLOT_DOCK_RECORD 0x7713c0u
+#define PFSLOT_TAG_HAS 0xcb170u           /* (tags, &tag) */
+#define PFSLOT_GETUP_TAG 0x395cac8u       /* image: the tag 716e20 asks the record for (runtime value) */
+#define PFSLOT_RECORD_TAGS 0x100u
+#define PFSLOT_RECORD_NAME 0x128u
 #define PFSLOT_CALL_SITE 0x9fe604u        /* call d7f8d0 in UniverseFrameUpdate (9fc670's answer in rcx) */
 #define PFSLOT_STUB 0xa0u                 /* on the slots' near page: d95180 0, refill 0x40, pick 0x60, game over 0x80 */
 #define PFSLOT_POSITION_NONE 0x6d113d0u   /* the control position 716e20 writes when the player stands */
@@ -79,6 +96,10 @@ typedef struct {
     int (*conn_type)(int);                                /* 8d3f60 */
     unsigned char (*ship_conn)(void *,void *,int);        /* 455f90 */
     unsigned char (*dock_conn)(void *,void *,int);        /* 771430 */
+    void (*place_tagged)(void *,void *,void *,unsigned char);   /* 7176f0 */
+    void *(*ship_record)(void *,int);                     /* 455f20 */
+    void *(*dock_record)(void *,int);                     /* 7713c0 */
+    unsigned char (*tag_has)(void *,const int *);         /* cb170 */
 } pfslot_fns;
 typedef struct {
     unsigned char bank[PFOOT_BANK_SIZE];                  /* slot k's walking bank while no scope of it is open */
@@ -86,7 +107,7 @@ typedef struct {
     int walking;
     uint64_t stood_tick,frame_hash,frame_bank,frame_pose;   /* the receipt's hash; its two halves for the status (fw=) */
     unsigned char frame_state;
-    volatile LONG64 getups,kept,stood,sat,ignored,updates,placed,unplaced,lost;
+    volatile LONG64 getups,kept,stood,sat,ignored,updates,placed,unplaced,lost,tagged;
 } pfslot_slot;
 static pfslot_fns pfslot_fn;
 static pfslot_slot pfslots[PILOT_SLOTS+1];
@@ -104,6 +125,10 @@ static const struct {unsigned rva,size;const char *sha;} pfslot_pin_table[]={
     {0x8d3f60u,0xa6,"6be169d571c8b043238d1fccd2b6854f18dc42f11ebddd3a7043568fbd8c70bd"},    /* control position -> connection type */
     {0x455f90u,0x8a,"c8e8ac2a8a45a68206392e25ce4d0c5d8fe3c54eb5a30f3aa99fef8f39b7fc9c"},    /* the ship's stand-up connection */
     {0x771430u,0x8a,"5334855facc9ccec856d9a78ebfc0da5220958b8c4f470c4cc4bbafc45d6f5e5"},    /* the dock's */
+    {0x7176f0u,0x391,"7d20eeec5b27c2a81840902abef34d6bd28c9023a91cd1ebab6c904c7b682d74"},   /* the placement of a tagged connection */
+    {0x455f20u,0x6b,"1e6b432c3a126d022e34fee5d94b2c42a7f5bc3d060850101f47443879f3a654"},    /* the ship's connection record */
+    {0x7713c0u,0x6b,"21d7e35b1eda7bb38a1f68e271b99e70a8845783df4d9511a60e2b2b54ddd79e"},    /* the dock's */
+    {0xcb170u,0x7e,"15bdf418895812f828a0e1ccec525e68d5afa9bf0edda94ebf87978ae79062af"},     /* a tag in a record's tags */
     {0x7172dau,0xce,"226d36091a9a390a1a7160d252042b0320751337051b8ca18d174d4e12c644fc"},    /* 716e20's placement and control position none */
     {0xd7d2e0u,0x84,"bb97323466584f509d5a158283f79a6a71e421b05b9a6593f1ac88ea64d7c5be"},    /* in its seat: the camera, a control position */
     {0x706cc0u,0x39,"-"}};                                                                    /* GetUpEvent's handler (bytes checked below) */
@@ -176,12 +201,24 @@ static int pfslot_place(pslot_slot *s) {
     int position=0,type=PFSLOT_CONN_NONE;
     memcpy(&position,s->player+PFSLOT_POSITION,4);
     if(ship && dock) type=pfslot_fn.conn_type(position);
-    void *out[2]={NULL,NULL};
+    void *out[2]={NULL,NULL};unsigned char *record=NULL;
     if(type!=PFSLOT_CONN_NONE) {
-        if(!pfslot_fn.ship_conn(ship,out,type)) {out[0]=out[1]=NULL;if(!pfslot_fn.dock_conn(dock,out,type)) out[0]=out[1]=NULL;}
+        if(pfslot_fn.ship_conn(ship,out,type)) record=pfslot_fn.ship_record(ship,type);
+        else {
+            out[0]=out[1]=NULL;
+            if(pfslot_fn.dock_conn(dock,out,type)) record=pfslot_fn.dock_record(dock,type);else out[0]=out[1]=NULL;
+        }
     }
-    if(out[0] && out[1] && pfslot_is(out[0],PFSLOT_TARGET_CLASS,0x11e0u)) {pfslot_fn.place(s->player,out[0],1);return 1;}
-    return 0;
+    if(!out[0] || !out[1] || !pfslot_is(out[0],PFSLOT_TARGET_CLASS,0x11e0u)) return 0;
+    /* 716e20's choice (0x71735d): the record's get-up tag. */
+    int tag=0;memcpy(&tag,pnat_base+PFSLOT_GETUP_TAG,4);
+    if(record && pfslot_fn.tag_has(record+PFSLOT_RECORD_TAGS,&tag)) {
+        void *name=NULL;memcpy(&name,record+PFSLOT_RECORD_NAME,8);
+        pfslot_fn.place_tagged(s->player,out[0],name,1);
+        return 2;
+    }
+    pfslot_fn.place(s->player,out[0],1);
+    return 1;
 }
 
 /* ---- the stand-up and the sit-down (pstk_slot_replay, slot k's GET_UP, in scope k) ---- */
@@ -262,6 +299,7 @@ static int pfslot_get_up(unsigned k,double now) {
     pfslot_bank_start(1);   /* K2-6: the live bank is slot k's in this scope */
     f->fpc=fpc;f->walking=1;s->walking=1;f->stood_tick=stats.issued;InterlockedIncrement64(&f->stood);
     InterlockedIncrement64(placed?&f->placed:&f->unplaced);
+    if(placed==2) InterlockedIncrement64(&f->tagged);
     return 1;
 }
 
@@ -433,6 +471,9 @@ static void pfslot_use_image(void) {
     pfslot_fn.update=(void(*)(void*))(image+PFSLOT_FPC_UPDATE);pfslot_fn.pose=(void(*)(void*,float*,double,unsigned char))(image+PFSLOT_FPC_POSE);
     pfslot_fn.place=(void(*)(void*,void*,unsigned char))(image+PFSLOT_PLACE);pfslot_fn.conn_type=(int(*)(int))(image+PFSLOT_CONN_TYPE);
     pfslot_fn.ship_conn=(unsigned char(*)(void*,void*,int))(image+PFSLOT_SHIP_CONN);pfslot_fn.dock_conn=(unsigned char(*)(void*,void*,int))(image+PFSLOT_DOCK_CONN);
+    pfslot_fn.place_tagged=(void(*)(void*,void*,void*,unsigned char))(image+PFSLOT_PLACE_TAGGED);
+    pfslot_fn.ship_record=(void*(*)(void*,int))(image+PFSLOT_SHIP_RECORD);pfslot_fn.dock_record=(void*(*)(void*,int))(image+PFSLOT_DOCK_RECORD);
+    pfslot_fn.tag_has=(unsigned char(*)(void*,const int*))(image+PFSLOT_TAG_HAS);
 }
 /* After gate.pilot_foot (and the stock slots), before the first tick; identical rerun 1. */
 static int pfslot_arm_using(void) {
@@ -440,7 +481,8 @@ static int pfslot_arm_using(void) {
     if(!pfoot_armed) return pstk_arm_refuse("foot_slots_without_foot");
     if(!pslot_armed || !(pslot_mask&~1u)) return pstk_arm_refuse("foot_slots_without_slots");
     if(!pfslot_fn.may_stand || !pfslot_fn.make_fpc || !pfslot_fn.update || !pfslot_fn.pose || !pfslot_fn.place || !pfslot_fn.conn_type ||
-       !pfslot_fn.ship_conn || !pfslot_fn.dock_conn) return pstk_arm_refuse("foot_slots_functions");
+       !pfslot_fn.ship_conn || !pfslot_fn.dock_conn || !pfslot_fn.place_tagged || !pfslot_fn.ship_record || !pfslot_fn.dock_record ||
+       !pfslot_fn.tag_has) return pstk_arm_refuse("foot_slots_functions");
     memset(pfslots,0,sizeof(pfslots));pfslot_dying_skips=0;
     pfslot_failed=0;pfslot_hook_installed=0;pfslot_update_tick=0;pfslot_stage="armed";pfslot_why="-";pfslot_armed=1;return 1;
 }

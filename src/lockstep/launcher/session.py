@@ -59,6 +59,8 @@ class Options:
     keep_views: bool = False
     fast: bool = False  # render-only settings down, no frame cap, no sound (profile.FAST)
     borderless: bool = False  # X4's borderless window instead of a sizable one (no tiling: the windows stay where X4 puts them)
+    focus: bool = True  # False: while the clients start (two minutes) a client window that takes the keyboard focus gives it back
+    display: int | None = None  # tile the client windows on this monitor only (Windows' number, \.\DISPLAY<n>)
     startup: int = 70  # seconds budgeted per client to reach the start menu; snapshot clients then arm together
     steam_fix: bool = False  # re-register Steam's pid before each client (see steam.py); restored at the end
     checkpoint_at: int | None = None  # every client saves save_001 after this tick; the session ends there
@@ -249,12 +251,65 @@ def kill(pid):
     subprocess.run(['taskkill', '/PID', str(pid), '/T', '/F'], capture_output=True)
 
 
-def tile(pids, width, height, columns=2):
-    """Best effort: place each client's main window on a grid."""
+def display_rect(number):
+    """(left, top, right, bottom) of the monitor Windows numbers `number` (its device name ends with DISPLAY<number>), or None."""
+    import ctypes
+    from ctypes import wintypes
+
+    class Info(ctypes.Structure):
+        _fields_ = [('size', wintypes.DWORD), ('monitor', wintypes.RECT), ('work', wintypes.RECT), ('flags', wintypes.DWORD),
+                    ('device', wintypes.WCHAR * 32)]
+    user32 = ctypes.windll.user32
+    rects = []
+
+    @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HANDLE, wintypes.HDC, ctypes.POINTER(wintypes.RECT), wintypes.LPARAM)
+    def visit(monitor, _dc, _rect, _data):
+        info = Info()
+        info.size = ctypes.sizeof(Info)
+        if user32.GetMonitorInfoW(wintypes.HANDLE(monitor), ctypes.byref(info)) and info.device.upper().endswith(f'DISPLAY{number}'):
+            rects.append((info.monitor.left, info.monitor.top, info.monitor.right, info.monitor.bottom))
+        return True
+
+    user32.EnumDisplayMonitors(None, None, visit, 0)
+    return rects[0] if rects else None
+
+
+def yield_focus(pids):
+    """A client window that took the keyboard focus gives it to the window below it that is not a client's (the one the
+    person was working in). True when the focus moved."""
+    import ctypes
+    from ctypes import wintypes
+    user32, kernel32 = ctypes.windll.user32, ctypes.windll.kernel32
+    front = user32.GetForegroundWindow()
+    owner = wintypes.DWORD()
+    thread = user32.GetWindowThreadProcessId(front, ctypes.byref(owner)) if front else 0
+    if not front or owner.value not in pids:
+        return False
+    window = front
+    while True:
+        window = user32.GetWindow(window, 2)   # the next one below
+        if not window:
+            return False
+        user32.GetWindowThreadProcessId(window, ctypes.byref(owner))
+        style = user32.GetWindowLongW(window, -20)
+        if (owner.value not in pids and user32.IsWindowVisible(window) and not user32.IsIconic(window)
+                and user32.GetWindowTextLengthW(window) and not style & 0x08000080):   # no tool or no-activate window
+            break
+    me = kernel32.GetCurrentThreadId()
+    user32.AttachThreadInput(me, thread, True)
+    moved = bool(user32.SetForegroundWindow(window))
+    user32.AttachThreadInput(me, thread, False)
+    return moved
+
+
+def tile(pids, width, height, columns=2, display=None):
+    """Best effort: place each client's main window on a grid; with `display`, on that monitor only (a window that
+    would reach past its edge is moved back onto it, over its neighbour)."""
     import ctypes
     from ctypes import wintypes
     user32 = ctypes.windll.user32
     found = {}
+    area = display_rect(display) if display else None
 
     @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
     def visit(hwnd, _):
@@ -267,7 +322,13 @@ def tile(pids, width, height, columns=2):
     user32.EnumWindows(visit, 0)
     for i, pid in enumerate(pids):
         if pid in found:
-            user32.SetWindowPos(found[pid], 0, (i % columns) * width, (i // columns) * (height + 40), 0, 0, 0x0001 | 0x0004)
+            x, y = (i % columns) * width, (i // columns) * (height + 40)
+            if area:
+                rect = wintypes.RECT()
+                user32.GetWindowRect(found[pid], ctypes.byref(rect))
+                x = area[0] + max(0, min(x, area[2] - area[0] - (rect.right - rect.left)))
+                y = area[1] + max(0, min(y, area[3] - area[1] - (rect.bottom - rect.top)))
+            user32.SetWindowPos(found[pid], 0, x, y, 0, 0, 0x0001 | 0x0004 | 0x0010)   # no size, no order, no activation
     return len(found)
 
 
@@ -704,8 +765,14 @@ def monitor_play(o, run_dir, relay, clients, log):
                     line = progress(run_dir, tick_hz, armed_at)
                     if line:
                         log(line + (f", {counts['error']} error row(s) in errors.log" if counts.get('error') else ''))
-                if not tiled and not o.borderless and time.time() - started > 20:
-                    tiled = tile([proc.pid for _, _, proc in clients], o.width, o.height) == len(clients)
+                # On a chosen monitor the windows are moved as soon as they exist (X4 opens them on the primary one) and once
+                # more after the main windows are up; without one, once after 20 s as before.
+                if not o.focus and time.time() - started < 120:
+                    yield_focus({proc.pid for _, _, proc in clients})
+                if o.display and not o.borderless and time.time() - started < 45:
+                    tile([proc.pid for _, _, proc in clients], o.width, o.height, 2, o.display)
+                elif not tiled and not o.borderless and time.time() - started > 20:
+                    tiled = tile([proc.pid for _, _, proc in clients], o.width, o.height, 2, o.display) == len(clients)
                 for k, _, proc in clients:
                     for line in tails[k].lines():
                         if FAIL.search(line):

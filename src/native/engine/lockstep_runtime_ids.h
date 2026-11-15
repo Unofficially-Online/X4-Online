@@ -219,6 +219,12 @@ static const rid_site_t rid_sites[]={
      * shared ID four apart from 2144 on and every digest after it. The manager's other two ways to the same container
      * (0xada7a0, 0xae9050) are the view's already. */
     RID_BODY(0xadacb0u,0xadb00bu,RID_ROUTE_VIEW,0),
+    /* The manager's fourth way to that container: 0xad8610 (under 0xad8820 / 0xad8a20, from the event queue), when the
+     * player comes into a ship: what this client's manager lists there differs per client. Scripted, two clients, 15
+     * Nov: slot 1 docked back in from its suit at 4527 (the first time that ran through), four IDs on client 2 and
+     * none on client 1 on the stack 350ecb,7c7f9e,7da1c1,ad86f7,ad8872,ad8a83,99c5b0; the digest part rid apart from
+     * that tick on. */
+    RID_BODY(0xad8610u,0xad8813u,RID_ROUTE_VIEW,0),
     /* EffectObject, FogVolume, LensFlare, Stardust: the two constructors' Positional calls; EffectObjectCreator. */
     RID_CALL(0x8e1b44u,0x7429c0u,RID_ROUTE_VIEW),RID_CALL(0x8e48a6u,0x7426d0u,RID_ROUTE_VIEW),RID_CALL(0xd9d312u,0x7429c0u,RID_ROUTE_VIEW),RID_CALL(0x8e4bbeu,0x7426d0u,RID_ROUTE_VIEW),
     RID_CALL(0xe233feu,0x7429c0u,RID_ROUTE_VIEW),RID_CALL(0xe233aeu,0x7426d0u,RID_ROUTE_VIEW),RID_CALL(0xe417aeu,0x7429c0u,RID_ROUTE_VIEW),RID_CALL(0xe4175eu,0x7426d0u,RID_ROUTE_VIEW),
@@ -239,6 +245,7 @@ static const struct {unsigned rva,size;const char *sha;} rid_local_bodies[]={
     {0xe189d0u,0x242u,"d90d3e7d011e4eb2f6e97fc1a34f793d9dbea88a610ede13909650902f40e32c"},
     {0xada7a0u,0x248u,"cc73ccaee5d464051845bbf7d696ff7d5b3afc2622e4e19b78d465dd9c729d39"},
     {0xadacb0u,0x35bu,"09cf2c62308b1447c09b0d5ba608f9793dc80ee230941592027cfb9e2f9a13e8"},
+    {0xad8610u,0x203u,"35a8a4b8e80566ec602b3a2f6b13e1b5ea93d05d1ca84685ccdfceff2cda0d6d"},
     {0xae9050u,0x518u,"e82ea5ab07935a100dfdd738182a37ee5ddb73468bd31f570bab71657831c59b"},
     {0xb3bad0u,0xceu,"87a23ed23ef4be0fdf493a983342282860054eb3eb14f2388e134abc88762261"},
     {0x121c1f0u,0x6au,"5d20ad384ae9ce74bb15625b923fd33638ad20d3f9e553c5d9cb7d264b20ed6f"},

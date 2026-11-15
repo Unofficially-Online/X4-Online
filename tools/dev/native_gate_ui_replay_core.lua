@@ -658,8 +658,8 @@ function K.session(p)
    local ok,result=pcall(e.call,S)
    if scoped then p.present(false) end
    if p.local_mark and not e.canonical then p.local_mark(1) end
-   log(string.format('UI_REPLAY_SCRIPT tick=%d op=%s ok=%s result=%s%s',tick,tostring(e.op),tostring(ok),tostring(result),
-     e.scoped and (scoped and ' scope=1' or ' scope=0') or ''))
+   if not (e.quiet and ok and result==nil) then log(string.format('UI_REPLAY_SCRIPT tick=%d op=%s ok=%s result=%s%s',tick,tostring(e.op),tostring(ok),tostring(result),
+     e.scoped and (scoped and ' scope=1' or ' scope=0') or '')) end
   end
  end
  -- Test protection (native_gate_ui_replay_min_hull): every slot ship keeps at least this hull percentage, set by MD
@@ -761,7 +761,7 @@ end
 -- ship the player controls (ui/core/messageconfigurationgraph.xml: untargetableconditions is_playercontrolled), and in
 -- the probe's canonical frame that is slot 1's ship on every client, so slot k could not target it. The other ops keep
 -- the canonical frame their live runs (U5, U7) passed with. Guidance is set and ended where the map's click runs too.
-K.SCOPED={target_slot=true,target_none=true,guidance_slot=true,guidance_end=true,inv_read=true,inv_drop=true}
+K.SCOPED={target_slot=true,target_none=true,target_home=true,dock_home=true,suit_home=true,guidance_slot=true,guidance_end=true,inv_read=true,inv_drop=true}
 -- A canonical op is the probe's own call, not a person's click: a test fixture that every client's plan holds at the same
 -- tick (MD runs it on every client alike, nothing is captured).
 K.CANONICAL={mis_fixture=true,gm_limit=true,slot_kill=true,slot_airlock=true,launch_stock=true,inv_seed=true,inv_look=true,inv_join_state=true,inv_join_give=true}
@@ -802,6 +802,37 @@ function K.mission_tools(C,env)
  end
  return T
 end
+-- The flight home of a scripted spacesuit (the op suit_home). X4 takes a suit in when it reaches the ship it asked to
+-- dock at, so after the request the suit has to fly there as a person flies it: the flight keys as states of this
+-- client's own record (strafe 6..9, throttle 13/14), chosen every tick from where the ship is in the suit's frame
+-- (tools.suit_delta: right, up, ahead in metres; nil once the player is no longer in a suit). The throttle is a set
+-- point: its key ticks are counted so it comes back to zero. All keys are released at the arrival or the limit.
+function K.suit_fly(tools,limit)
+ local F={throttle=0,held={},done=false}
+ local function set(id,on)
+  on=on and 1 or 0
+  if (F.held[id] or 0)~=on then F.held[id]=on;tools.gate.pilot_stock_inject('state',id,on) end
+ end
+ function F.start()
+  local home=tools.home_id()
+  return tostring(home)..'='..tostring(tools.C.RequestDockAt(home,false))
+ end
+ function F.step(i)
+  if F.done then return nil end
+  local d=tools.suit_delta()
+  if not d or i>=limit then
+   for _,id in ipairs({6,7,8,9,13,14}) do set(id,false) end
+   F.done=true;return (d and 'limit' or 'home')..' after='..i
+  end
+  set(7,d[1]>1);set(6,d[1]<-1);set(8,d[2]>1);set(9,d[2]<-1)
+  local want=d[3]>3 and 10 or d[3]<-3 and -10 or 0
+  local up,down=F.throttle<want,F.throttle>want
+  set(13,up);set(14,down);F.throttle=F.throttle+(up and 1 or down and -1 or 0)
+  if i%60==0 then return string.format('d=%.1f/%.1f/%.1f throttle=%d',d[1],d[2],d[3],F.throttle) end
+  return nil
+ end
+ return F
+end
 -- Named script actions for runs without people; arguments are saved IDs or slots, resolved when they run.
 -- plan: list of {tick, op, ...}, ticks relative to the pilot window start.
 function K.script(plan,start,tools)
@@ -824,6 +855,25 @@ function K.script(plan,start,tools)
   elseif op=='ap_toggle' then call=function() return tools.C.ToggleAutoPilot(false) end
   elseif op=='quickdock' then call=function() return tools.C.QuickDock() end
   elseif op=='dock_at' then call=function() return tools.C.RequestDockAt(tools.saved_id(e[3]),false) end
+  -- The spacesuit, out and home, through the calls the stock menus make (each is captured as a person's click is:
+  -- lockstep_ui_compslot.h 'terminal', lockstep_ui_replay.h's dock family), for this client's own player, slot 1 too:
+  --  {tick,'suit_out'}: the transporter menu's "Use Spacesuit" while the player walks in its ship
+  --    (TransportPlayerToTarget with a zone, the menu's spacesuit target); the ship is noted as the way home.
+  --  {tick,'dock_home'}: the ship menu's "Request Docking" on the ship left (menu.buttonDockRequest's RequestDockAt).
+  --  {tick,'target_home'}: that ship as the soft target, where a click runs; {tick,'input','action',0xaf,0} is the
+  --    dock key then.
+  --  {tick,'suit_home'[,limit]}: dock_home, then the suit flies to the ship by its flight keys until X4 has taken the
+  --    player in, at most `limit` ticks (900): K.suit_fly.
+  elseif op=='suit_out' then call=function()
+    local target,zone=tools.suit_target();tools.C.TransportPlayerToTarget(target);return 'zone='..tostring(zone) end
+  elseif op=='dock_home' then call=function() local home=tools.home_id();return tostring(home)..'='..tostring(tools.C.RequestDockAt(home,false)) end
+  elseif op=='target_home' then call=function() return tools.C.SetSofttarget(tools.home_id(),'') end
+  elseif op=='suit_home' then
+    local fly=K.suit_fly(tools,e[3] or 900)
+    call=fly.start
+    for i=1,e[3] or 900 do
+     by[at+i]=by[at+i] or {};by[at+i][#by[at+i]+1]={op='suit_fly',call=function() return fly.step(i) end,quiet=true}
+    end
   elseif op=='undock' then call=function() return ffi.string(tools.C.UndockPlayerShip(false)) end
   elseif op=='wgroup' then call=function() return tools.C.SetDefensibleActiveWeaponGroup(tools.slot_id(tools.own_slot),e[3]==1,e[4]) end
   elseif op=='wkey' then call=function() return tools.gate.pilot_stock_inject('action',e[3],0) end

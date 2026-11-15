@@ -65,6 +65,11 @@ def main(argv=None):
     pl.add_argument('--borderless', action='store_true',
                     help="X4's borderless window at --size for every client of this PC (it cannot be resized; a resize reloads "
                          "X4's UI). The windows lie on top of each other: Alt+Tab between them")
+    pl.add_argument('--display', type=int,
+                    help='keep the client windows on this monitor only (the number Windows gives it: 1, 2, 3, ...)')
+    pl.add_argument('--no-focus', action='store_true',
+                    help='while the clients start, a client window that takes the keyboard focus gives it back to the window '
+                         'the person was working in (click a client window after that to play in it)')
     pl.add_argument('--game', type=Path)
     pl.add_argument('--lanes', type=Path, help='where client views go (default <game drive>:\\x4ls-lanes)')
     pl.add_argument('--startup', type=int, default=70, help='seconds budgeted per client to reach the start menu')
@@ -330,7 +335,7 @@ def main(argv=None):
                                   lookahead=lookahead, timeout=args.timeout, width=width, height=height, game=args.game,
                                   lanes=args.lanes, startup=args.startup, steam_fix=args.steam_fix, play=True,
                                   stall_drop_ms=1000 * args.stall_drop if lookahead else 0, relay_args=args.relay_args,
-                                  close_when_over=args.close_when_over, borderless=args.borderless,
+                                  close_when_over=args.close_when_over, borderless=args.borderless, display=args.display, focus=not args.no_focus,
                                   remote_slots=tuple(int(v) for v in args.remote_slots.split(',') if v.strip()),
                                   bind=args.bind, allow_from=tuple(a for a in args.allow_from.split(',') if a.strip()),
                                   port=args.port, join_wait=args.join_wait, public_host=args.public_host,

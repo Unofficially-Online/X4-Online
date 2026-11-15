@@ -139,6 +139,7 @@ static int pilot_why_text(char *out,size_t capacity) {
     if(!pilot_armed) return 0;
     int n=snprintf(out,capacity,"reason=%u pilot=%s native=%s fail=%s arm_why=%s",pilot_stop_reason(),pilot_stage?pilot_stage:"-",
         pnat_stage?pnat_stage:"-",pnat_fail_stage?pnat_fail_stage:"-",pstk_arm_why[0]?pstk_arm_why:"-");
+    if(n>0 && (size_t)n<capacity && pnat_changed[0]) n+=snprintf(out+n,capacity-(size_t)n," changed=%s",pnat_changed);
     if(n>0 && (size_t)n<capacity && pfoot_armed)
         n+=snprintf(out+n,capacity-(size_t)n," foot=%s foot_why=%s foot_state=%u foot_entries=%u/%lld",pfoot_stage,pfoot_why,pfoot_state,pfoot_entries,
             (long long)pfoot_entries_late);

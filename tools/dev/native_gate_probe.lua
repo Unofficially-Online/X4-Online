@@ -2596,7 +2596,7 @@ local function death_frame(tick)
   -- Slot 1 adopted its own spacesuit (the kinds below are letters only; this one ends in a digit): its oxygen and hull
   -- floor as a slot 2..N's suit has them (death_air), raised on every client at this tick; back in a seat: no second one.
   if events:find('suit1:1',1,true) then death_air(1) death.air[1]=tick+DEATH_AIR_AGAIN end
-  if events:find('seat1:1',1,true) then death.air[1]=nil end
+  if events:find('seat1:1',1,true) or events:find('left1:1',1,true) then death.air[1]=nil end   -- left1: out of the suit into a ship on foot
   for kind,slot in events:gmatch('(%a+):(%d+)') do
    slot=tonumber(slot)
    if kind=='suit' then death_suit(slot)
@@ -2699,6 +2699,8 @@ function pilot_view.arm_ui_replay(slot,window)
  for _,line in ipairs({'void StartPlayerActivity(const char*);','void StopPlayerActivity(const char*);','bool SetSofttarget(UniverseID,const char*const);',
    'bool RemoveAllOrders(UniverseID);','bool RemoveAllOrders2(UniverseID,bool,bool);','bool ToggleAutoPilot(bool);','bool QuickDock(void);',
    'bool RequestDockAt(UniverseID,bool);','const char* UndockPlayerShip(bool);','void SetDefensibleActiveWeaponGroup(UniverseID,bool,uint32_t);',
+   'typedef struct { UniverseID component; const char* connection; } UIComponentSlot;','void TransportPlayerToTarget(UIComponentSlot);',
+   'UniverseID GetContextByClass(UniverseID,const char*,bool);','bool IsComponentClass(UniverseID,const char*);',
    'uint32_t CreateOrder(UniverseID,const char*,bool);','bool EnableOrder(UniverseID,size_t);','bool AdjustOrder(UniverseID,size_t,size_t,bool,bool,bool);',
    'bool RemoveOrder(UniverseID,size_t,bool,bool);','void SetGuidance(UniverseID,UIPosRot);','void EndGuidance(void);',
    'void ShowInfoLine(const char*,uint32_t);','void ToggleFlightAssist(void);','void AddPlayerMoney(int64_t);',
@@ -2810,6 +2812,34 @@ function pilot_view.arm_ui_replay(slot,window)
   slot_lua=function(s) return ConvertStringToLuaID(string.format('%.0f',(assert(gate.pilot_ship(s),'ui replay script: slot ship unresolved')))) end,
   saved_id=function(saved) return ConvertStringTo64Bit((assert(gate.ui_replay_saved(saved),'ui replay script: saved ID unresolved'))) end,
   saved_lua=function(saved) return ConvertStringToLuaID((assert(gate.ui_replay_saved(saved),'ui replay script: saved ID unresolved'))) end}
+ -- The spacesuit ops (core.script suit_out, dock_home, target_home). The menu's spacesuit target is a zone: the one this
+ -- client's player's ship is in; that ship is the way home (slots 2..N: the gate's own note once the slot is in its suit).
+ tools.suit_target=function()
+  local ship=assert(gate.pilot_ship(slot),'ui replay script: slot ship unresolved')
+  -- No terminal in a suit: X4's command there (slot 1) is not the menu's and stopped a session (reason 155, 15 Nov).
+  assert(not ffi.C.IsComponentClass(ffi.new('UniverseID',ship),'spacesuit'),'ui replay script: the player is in a spacesuit already')
+  local zone=ffi.C.GetContextByClass(ffi.new('UniverseID',ship),'zone',false)
+  assert(tonumber(zone)~=0,'ui replay script: the ship is in no zone')
+  local target=ffi.new('UIComponentSlot');target.component=zone;target.connection=''
+  tools.left=ship
+  return target,(tostring(zone):gsub('ULL$',''))
+ end
+ tools.home_id=function()
+  local home=(slot>=2 and gate.pilot_death_home and gate.pilot_death_home(slot)) or tools.left
+  return ffi.new('UniverseID',(assert(home,'ui replay script: no ship was left for a suit')))
+ end
+ -- Where the ship left is, seen from this client's player's suit: metres right, up, ahead (the suit's yaw; a scripted
+ -- suit stays close to upright). Nil when the player is in no suit (any more).
+ tools.suit_delta=function()
+  local ship=gate.pilot_ship(slot)
+  local home=(slot>=2 and gate.pilot_death_home and gate.pilot_death_home(slot)) or tools.left
+  if not ship or not home or ship==home then return nil end
+  local s,h=ffi.new('UniverseID',ship),ffi.new('UniverseID',home)
+  if not ffi.C.IsComponentOperational(s) or not ffi.C.IsComponentOperational(h) or not ffi.C.IsComponentClass(s,'spacesuit') then return nil end
+  local p,q=ffi.C.GetObjectPositionInSector(s),ffi.C.GetObjectPositionInSector(h)
+  local dx,dy,dz,sy,cy=q.x-p.x,q.y-p.y,q.z-p.z,math.sin(p.yaw),math.cos(p.yaw)
+  return {dx*cy-dz*sy,dy,dx*sy+dz*cy}
+ end
  tools.missions=core.mission_tools(ffi.C,_G)
  local plan=cfg.native_gate_ui_replay_script   -- one plan per client, {} or false for none
  assert(plan==nil or plan==false or type(plan)=='table','ui replay refused: invalid script')

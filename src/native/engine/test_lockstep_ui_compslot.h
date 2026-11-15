@@ -6,6 +6,9 @@ static unsigned char test_uics_original_single(void *container,unsigned index) {
 static unsigned char test_uics_original_multi(void *container,unsigned index) {(void)container;++test_uics_originals[1];test_uics_last_index=index;return 1;}
 static unsigned char *test_uics_container;static int test_uics_multi;static unsigned test_uics_exports;static uint64_t test_uics_component;
 static char test_uics_connection[UICS_NAME_MAX+1];
+static unsigned char *test_uics_home,*test_uics_around_ship;   /* slot 1 on foot into a ship (pveh_aboard) */
+static void *test_uics_find_home(void *map,uint64_t id,unsigned kind) {(void)kind;return map==test_uics_home && id==0x4321?test_uics_home:NULL;}
+static unsigned char *test_uics_around(const unsigned char *player) {(void)player;return test_uics_around_ship;}
 /* X4's export as far as this module sees it: the container's perform for the index, its answer back. */
 static unsigned char test_uics_export(const uics_slot_arg *slot,uint32_t index) {
     ++test_uics_exports;test_uics_component=slot->component;snprintf(test_uics_connection,sizeof(test_uics_connection),"%s",slot->connection);
@@ -57,9 +60,10 @@ static void test_ui_compslot(void) {
      * whole or gone: the slot walks without a ship, no death; still at the controls of a whole suit: nothing; not in a
      * suit, or the player dying with it: not this */
     {   static _Alignas(16) unsigned char player[0x200],seat[8];pilot_slot s;pdeath_slot d;const void *const was=pdeath_player;
+        pdeath_player=NULL;   /* as live: the controller's object, none without a controller; the life asked is the player's */
         const int in=pveh_in_suit,foot=pfoot_armed,fire=pfire_armed;const unsigned state=(unsigned)pfoot_state;const uint64_t lefts=pveh_lefts,ptick=pfoot_transition_tick;
         unsigned char *const ship=pnat_ship,*const ctl=pnat_controller;
-        memset(player,0,sizeof(player));memset(&s,0,sizeof(s));memset(&d,0,sizeof(d));pdeath_player=player;pfoot_armed=1;pfire_armed=0;
+        memset(player,0,sizeof(player));memset(&s,0,sizeof(s));memset(&d,0,sizeof(d));pveh_player_test=player;pfoot_armed=1;pfire_armed=0;
         pveh_in_suit=0;assert(!pveh_left(&s,&d,7,NULL));                                   /* not in a suit */
         pveh_in_suit=1;assert(!pveh_left(&s,&d,7,seat) && pveh_in_suit && !d.lost);        /* flying it: nothing (the suit not seen dying) */
         player[PDEATH_LIFECYCLE]=1;assert(!pveh_left(&s,&d,7,NULL) && pveh_in_suit);       /* the player goes too: a death, not this */
@@ -68,7 +72,20 @@ static void test_ui_compslot(void) {
                pveh_lefts==lefts+1);
         {const char *e=pdeath_take_events();assert(e && strstr(e,"left1:1"));}
         assert(!pveh_left(&s,&d,8,NULL));                                                   /* once */
-        pdeath_player=was;pveh_in_suit=in;pfoot_armed=foot;pfire_armed=fire;pfoot_state=state;pveh_lefts=lefts;pfoot_transition_tick=ptick;pnat_ship=ship;pnat_controller=ctl;
+        /* ...and stands in a ship by then: that ship is the slot's, no controller (as after a stand-up in it); a suit
+         * around it, a ship that is going, no ship: still none */
+        {   static _Alignas(16) unsigned char home[0x200];const pilot_find_fn find=pdeath_find;void *const map=pdeath_map;const uint64_t aboards=pveh_aboards;
+            uint64_t id=0x4321;memset(home,0,sizeof(home));memcpy(home+8,&id,8);
+            pdeath_find=test_uics_find_home;pdeath_map=home;test_uics_home=home;pveh_around_test=test_uics_around;
+            test_uics_around_ship=NULL;assert(!pveh_aboard(&s,&d) && d.lost);                           /* in no ship */
+            test_uics_around_ship=home;home[PDEATH_LIFECYCLE]=1;assert(!pveh_aboard(&s,&d) && d.lost);  /* a ship that is going */
+            home[PDEATH_LIFECYCLE]=0;
+            assert(pveh_aboard(&s,&d) && !d.lost && s.runtime==id && s.object==home && pnat_ship==home && !pnat_controller && pveh_aboards==aboards+1);
+            {const char *e=pdeath_take_events();assert(e && strstr(e,"aboard1:1"));}
+            assert(!pveh_aboard(&s,&d));                                                    /* once */
+            pdeath_find=find;pdeath_map=map;pveh_around_test=NULL;pveh_aboards=aboards;pveh_aboard_until=0;
+        }
+        pdeath_player=was;pveh_player_test=NULL;pveh_in_suit=in;pfoot_armed=foot;pfire_armed=fire;pfoot_state=state;pveh_lefts=lefts;pfoot_transition_tick=ptick;pnat_ship=ship;pnat_controller=ctl;
     }
     /* the on-foot click: refused until this module is armed, then this client's own */
     {   const int foot=pfoot_armed,on=uics_on;

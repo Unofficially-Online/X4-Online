@@ -25,6 +25,8 @@ static void *test_pdf_fade(double a,double b,double c,double d,uint64_t e,uint64
 }
 static unsigned test_pdf_entered;
 static void test_pdf_enter(void *player,void *suit,void *room,void *fourth,unsigned char fifth) {(void)player;(void)suit;(void)room;(void)fourth;(void)fifth;++test_pdf_entered;}
+static void *test_pdf_zone_live;static unsigned test_pdf_zone_calls;   /* 0xd9b250 as the hook's original: the zone it would read */
+static void test_pdf_zone_original(void *controller) {(void)controller;memcpy(&test_pdf_zone_live,pnat_base+PVEHK_ZONE_POINTER,8);++test_pdf_zone_calls;}
 static int test_pdf_events(const char *want) {const char *e=pdeath_take_events();return want?e && !strcmp(e,want):!e;}
 /* The suit's weapons (pvehk_equip): X4's installer, group and active-group calls as far as the module sees them. */
 static unsigned test_pdf_installs,test_pdf_grouped[2],test_pdf_activated[2],test_pdf_ended;static unsigned char test_pdf_weapon[4][16],test_pdf_macro_block[0x10c0];
@@ -85,7 +87,8 @@ static void test_pdf_begin(unsigned char *region,unsigned char *input,unsigned c
     {int32_t rel=(int32_t)(PFSLOT_FPC_UPDATE-(PFSLOT_CALL_SITE+5u));region[PFSLOT_CALL_SITE]=0xe8;memcpy(region+PFSLOT_CALL_SITE+1,&rel,4);}
     memcpy(region+PFBODY_KILL_SITE,pfbody_kill_bytes,sizeof(pfbody_kill_bytes));
     pfslot_fn=(pfslot_fns){test_pfslot_may_stand,test_pfslot_make_fpc,test_pfslot_update_fn,test_pfslot_pose,test_pfslot_place,test_pfslot_conn_type,
-        test_pfslot_ship_conn,test_pfslot_dock_conn};
+        test_pfslot_ship_conn,test_pfslot_dock_conn,test_pfslot_place_tagged,test_pfslot_ship_record,test_pfslot_dock_record,test_pfslot_tag_has};
+    *(int*)(region+PFSLOT_GETUP_TAG)=0x4242;
     test_pfslot_may=1;test_pfslot_ship_found=0;memset(test_pfslot_fpc,0,sizeof(test_pfslot_fpc));
     test_pslot_ship_vt[PFBODY_KILL_SLOT]=(void*)test_pdf_spare;pvt[PFBODY_KILL_SLOT]=(void*)test_pdf_spare;test_pslot_ship_vt[PDEATH_KILL_SLOT]=(void*)test_pdeath_kill;
     test_pdeath_kills=0;
@@ -324,6 +327,30 @@ static void test_pilot_death_foot_block(unsigned char *region,unsigned char *inp
             pvehk_fade_site_test=0;pstk_capture_slot=2;pstk_scope_slot=0;
             assert(pvehk_fade(1,1,0,0,0,0,1,0,1)==(void*)&test_pdf_faded && test_pdf_faded==3 && pvehk_fades_shown==shown+2 && pvehk_fades_kept==kept+2);
             pvehk_fade_site_test=-1;pvehk_fade_original=was;pstk_capture_slot=own;pstk_scope_slot=scope;
+        }
+        /* a flying slot's reference frame (pvehk_zone): slot 2's controller outside its scope reads slot 2's own environment
+         * zone for the call and X4's is back after it; a zone that is none (slot 2's, or X4's own player's on foot for any
+         * other controller): no call, where X4's routine faults; inside slot 2's scope and for X4's own: as X4 has it */
+        {   pslot_slot *x=&pslots[2];void *const ctl=x->controller;const unsigned len=x->length,scope=pstk_scope_slot;unsigned at=0,found=0;
+            static unsigned char fake[16];void *z1=(void*)0x1111,*z2=(void*)0x2222,*none=NULL,*was_live=NULL;unsigned char was_store[8];
+            const pvehk_zone_fn was=pvehk_zone_original;const LONG64 own=pvehk_zone_own,nones=pvehk_zone_none;
+            for(unsigned i=0;i<VPL_REGION_COUNT;i++) {
+                const vpl_region *r=&vpl_regions[i];
+                if(r->base!=VPL_BASE_IMAGE || !(PSLOT_CLASSES>>r->cls&1u)) continue;
+                if(r->offset==PVEHK_ZONE_POINTER) {found=1;break;}
+                at+=r->size;
+            }
+            assert(found && at+8u<=sizeof(x->store));
+            memcpy(&was_live,pnat_base+PVEHK_ZONE_POINTER,8);memcpy(was_store,x->store+at,8);if(x->length<at+8u) x->length=at+8u;
+            x->controller=fake;pvehk_zone_original=test_pdf_zone_original;test_pdf_zone_calls=0;pstk_scope_slot=0;
+            memcpy(pnat_base+PVEHK_ZONE_POINTER,&none,8);memcpy(x->store+at,&z2,8);
+            pvehk_zone(fake);assert(test_pdf_zone_calls==1 && test_pdf_zone_live==z2 && !*(void**)(pnat_base+PVEHK_ZONE_POINTER) && pvehk_zone_own==own+1);
+            memcpy(x->store+at,&none,8);pvehk_zone(fake);assert(test_pdf_zone_calls==1 && pvehk_zone_none==nones+1);            /* slot 2's is none */
+            pvehk_zone(fake+8);assert(test_pdf_zone_calls==1 && pvehk_zone_none==nones+2);                                         /* X4's own is none */
+            memcpy(pnat_base+PVEHK_ZONE_POINTER,&z1,8);pvehk_zone(fake+8);assert(test_pdf_zone_calls==2 && test_pdf_zone_live==z1);    /* as X4 has it */
+            pstk_scope_slot=2;pvehk_zone(fake);assert(test_pdf_zone_calls==3 && test_pdf_zone_live==z1 && pvehk_zone_own==own+1);    /* inside its scope */
+            pstk_scope_slot=scope;x->controller=ctl;x->length=len;memcpy(x->store+at,was_store,8);memcpy(pnat_base+PVEHK_ZONE_POINTER,&was_live,8);
+            pvehk_zone_original=was;InterlockedExchange64(&pvehk_zone_own,own);InterlockedExchange64(&pvehk_zone_none,nones);
         }
         *(void**)(test_pslot_ship2+0x70)=parent_was;test_pdeath_ids[2]=0;memset(&pstk_build,0,sizeof(pstk_build));
         /* an asked exit whose suit never came: nothing happens */

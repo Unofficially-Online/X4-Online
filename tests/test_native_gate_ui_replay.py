@@ -372,6 +372,49 @@ class SessionTests(unittest.TestCase):
         logs = values(g.logs)
         self.assertTrue(any('UI_REPLAY_SCRIPT tick=45 op=undock ok=true result=granted' in l for l in logs))
 
+    def test_the_spacesuit_ops_make_the_stock_menus_calls(self):
+        """suit_out: the transporter menu's TransportPlayerToTarget with its spacesuit target; dock_home: the ship menu's
+        RequestDockAt on the ship left; target_home: that ship as the soft target, in the presentation scope."""
+        lua, g = client()
+        lua.execute('''
+          C.TransportPlayerToTarget=function(t) stock_calls[#stock_calls+1]='Transport:'..tostring(t) end
+          C.RequestDockAt=function(id,c) stock_calls[#stock_calls+1]='RequestDockAt:'..tostring(id)..':'..tostring(c);return true end
+          C.SetSofttarget=function(id,c) stock_calls[#stock_calls+1]='SetSofttarget:'..tostring(id)..':'..c;return true end
+          present=function(on) stock_calls[#stock_calls+1]=on and 'resume' or 'pause';return true end
+          plan={{0,'suit_out'},{1,'target_home'},{2,'dock_home'}}
+          tools={gate=gate,C=C,env=env,own_slot=2,suit_target=function() return 'zone-target',55 end,home_id=function() return 1002ULL end}
+          S=new_session({script=X4LAN_UI_REPLAY_CORE.script(plan,40,tools),present=present})
+          for t=40,43 do S.frame(t) end
+        ''')
+        self.assertEqual(values(g.stock_calls), ['Transport:zone-target', 'resume', 'SetSofttarget:1002ULL:', 'pause', 'resume', 'RequestDockAt:1002ULL:false', 'pause'])
+        rows = [line for line in values(g.logs) if 'UI_REPLAY_SCRIPT' in line]
+        self.assertEqual(rows, ['UI_REPLAY_SCRIPT tick=40 op=suit_out ok=true result=zone=55',
+                                'UI_REPLAY_SCRIPT tick=41 op=target_home ok=true result=true scope=1',
+                                'UI_REPLAY_SCRIPT tick=42 op=dock_home ok=true result=1002ULL=true scope=1'])
+
+    def test_suit_home_asks_to_dock_and_flies_the_suit_to_its_ship(self):
+        """The request, then the flight keys as states every tick from where the ship is, the throttle counted back to
+        zero, every key released when the player is no longer in a suit."""
+        lua, g = client()
+        lua.execute('''
+          C.RequestDockAt=function(id,c) stock_calls[#stock_calls+1]='RequestDockAt:'..tostring(id);return true end
+          gate.pilot_stock_inject=function(kind,id,v) stock_calls[#stock_calls+1]=kind..id..'='..v;return 1 end
+          DELTAS={{0,-20,10},{0,-20,10},{0,-0.5,2},{0,-0.5,2},{0,-0.5,2}}
+          tools={gate=gate,C=C,env=env,own_slot=2,home_id=function() return 1002ULL end,
+            suit_delta=function() N=(N or 0)+1;return DELTAS[N] end}
+          S=new_session({script=X4LAN_UI_REPLAY_CORE.script({{0,'suit_home',20}},40,tools)})
+          for t=40,48 do S.frame(t) end
+        ''')
+        self.assertEqual(values(g.stock_calls), ['RequestDockAt:1002ULL',
+                                                 'state9=1', 'state13=1',      # below and ahead: down, throttle up (1)
+                                                 # tick 2: the same keys stay held (throttle 2)
+                                                 'state9=0', 'state13=0', 'state14=1',   # close: throttle back (1)
+                                                 # tick 4: throttle back (0)
+                                                 'state14=0'])                 # tick 5: throttle zero, nothing held
+        rows = [line for line in values(g.logs) if 'UI_REPLAY_SCRIPT' in line]
+        self.assertEqual(rows, ['UI_REPLAY_SCRIPT tick=40 op=suit_home ok=true result=1002ULL=true scope=0',
+                                'UI_REPLAY_SCRIPT tick=46 op=suit_fly ok=true result=home after=6'])
+
     def test_the_missile_op_holds_and_releases_the_recorded_trigger(self):
         lua, g = client()
         lua.execute('''
@@ -414,7 +457,7 @@ class SessionTests(unittest.TestCase):
                                 'UI_REPLAY_SCRIPT tick=42 op=target_none ok=true result=nil scope=1',
                                 'UI_REPLAY_SCRIPT tick=43 op=target_slot ok=true result=false scope=0',
                                 'UI_REPLAY_SCRIPT tick=50 op=target_slot ok=true result=false scope=0'])
-        self.assertEqual(dict(g.X4LAN_UI_REPLAY_CORE.SCOPED), {'target_slot': True, 'target_none': True, 'guidance_slot': True, 'guidance_end': True, 'inv_read': True, 'inv_drop': True})
+        self.assertEqual(dict(g.X4LAN_UI_REPLAY_CORE.SCOPED), {'target_slot': True, 'target_none': True, 'target_home': True, 'dock_home': True, 'suit_home': True, 'guidance_slot': True, 'guidance_end': True, 'inv_read': True, 'inv_drop': True})
 
     def test_the_guidance_ops_set_and_end_it_where_the_maps_click_runs(self):
         """play39p-long: client 2's map set guidance on slot 1's ship (SetGuidance) inside its presentation scope; the ops do

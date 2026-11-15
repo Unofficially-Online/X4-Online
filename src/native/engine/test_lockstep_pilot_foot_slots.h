@@ -44,6 +44,21 @@ static void test_pfslot_place(void *player,void *target,unsigned char flag) {
     float pose[16];test_pfslot_pose(test_pfslot_fpc,pose,100.0,1);
     float x=5.0f;memcpy(test_pfslot_fpc+0x100,&x,4);++test_pfslot_places;
 }
+/* 7176f0: the same for a connection whose record carries the get-up tag; 455f20 / 7713c0: the record; cb170: its tag. */
+static unsigned test_pfslot_tagged_places;static int test_pfslot_record_tagged;
+static unsigned char test_pfslot_record[0x140],test_pfslot_record_name[8];
+static void test_pfslot_place_tagged(void *player,void *target,void *name,unsigned char flag) {
+    assert(player==test_pslot_p2 && target==test_pfslot_target && name==test_pfslot_record_name && flag==1 && test_pslot_singleton()==test_pslot_p2);
+    float pose[16];test_pfslot_pose(test_pfslot_fpc,pose,100.0,1);
+    float x=7.0f;memcpy(test_pfslot_fpc+0x100,&x,4);++test_pfslot_tagged_places;
+}
+static void *test_pfslot_ship_record(void *ship,int type) {
+    assert(ship==test_pslot_ship2 && type==3);void *name=test_pfslot_record_name;memcpy(test_pfslot_record+PFSLOT_RECORD_NAME,&name,8);return test_pfslot_record;
+}
+static void *test_pfslot_dock_record(void *dock,int type) {(void)dock;assert(type==3);return NULL;}   /* a connection without a record: 717c30 */
+static unsigned char test_pfslot_tag_has(void *tags,const int *tag) {
+    assert(tags==test_pfslot_record+PFSLOT_RECORD_TAGS && *tag==0x4242);return test_pfslot_record_tagged!=0;
+}
 static int test_pfslot_conn_type(int position) {assert(position==0x77);return 3;}
 static unsigned char test_pfslot_ship_conn(void *ship,void *out,int type) {
     assert(ship==test_pslot_ship2 && type==3);
@@ -86,7 +101,8 @@ static void test_pilot_foot_slots_block(unsigned char *region,unsigned char *inp
     {int32_t rel=(int32_t)(PFSLOT_FPC_UPDATE-(PFSLOT_CALL_SITE+5u));region[PFSLOT_CALL_SITE]=0xe8;memcpy(region+PFSLOT_CALL_SITE+1,&rel,4);}
     /* Arming: after slot 1's foot and the stock slots, X4's functions there (with the death module too: its block below). */
     pfslot_fn=(pfslot_fns){test_pfslot_may_stand,test_pfslot_make_fpc,test_pfslot_update_fn,test_pfslot_pose,test_pfslot_place,test_pfslot_conn_type,
-        test_pfslot_ship_conn,test_pfslot_dock_conn};
+        test_pfslot_ship_conn,test_pfslot_dock_conn,test_pfslot_place_tagged,test_pfslot_ship_record,test_pfslot_dock_record,test_pfslot_tag_has};
+    *(int*)(region+PFSLOT_GETUP_TAG)=0x4242;
     pfoot_armed=0;assert(!pfslot_arm_using() && !strcmp(pstk_arm_why,"foot_slots_without_foot"));pfoot_armed=1;
     pfslot_fn.place=NULL;assert(!pfslot_arm_using() && !strcmp(pstk_arm_why,"foot_slots_functions"));pfslot_fn.place=test_pfslot_place;
     {unsigned mask=pslot_mask;pslot_mask=0;assert(!pfslot_arm_using() && !strcmp(pstk_arm_why,"foot_slots_without_slots"));pslot_mask=mask;}
@@ -219,9 +235,13 @@ static void test_pilot_foot_slots_block(unsigned char *region,unsigned char *inp
         assert(test_pslot_count('T')==1 && *(int*)(p2+PFSLOT_POSITION)==0x77 && test_pfslot_fpc[PFSLOT_FPC_SEAT]==1 && !f->bank[0x3d] && !p2[PFOOT_PLAYER_FLAG]);
         assert(!pfslot_own_walking() && pfoot_own_seated() && pfslot_claim_ok(2) && !pfslot_any_walking());
         {char a[64];pfslot_frame();assert(pfslot_frame_text(a,sizeof(a)) && !strcmp(a,"|W2:0:0000000000000000"));}
-        /* Up again: the FPC is there already (70eee0 keeps it); the ship's own stand-up connection this time. */
-        tick=21;stats.issued=tick;pstk_slot_frames[1].tick=tick;test_pfslot_ship_found=1;
-        assert(pslot_replay(tick) && f->walking && f->stood==2 && f->placed==2 && f->fpc==test_pfslot_fpc && !s->controller);}
+        /* Up again: the FPC is there already (70eee0 keeps it); the ship's own stand-up connection this time, and its
+         * record carries the get-up tag: 716e20's choice, the tagged placement with the record's name (never 717c30). */
+        tick=21;stats.issued=tick;pstk_slot_frames[1].tick=tick;test_pfslot_ship_found=1;test_pfslot_record_tagged=1;
+        {const unsigned places=test_pfslot_places;test_pfslot_tagged_places=0;
+         assert(pslot_replay(tick) && f->walking && f->stood==2 && f->placed==2 && f->tagged==1 && f->fpc==test_pfslot_fpc && !s->controller);
+         float x;memcpy(&x,test_pfslot_fpc+0x100,4);assert(test_pfslot_tagged_places==1 && test_pfslot_places==places && x==7.0f);}
+        test_pfslot_record_tagged=0;}
     /* The status row names each slot: walking/getups/kept/stood/sat/ignored/updates/placed/unplaced. */
     {   char row[1024];assert(pfslot_status(row,sizeof(row)) && strstr(row," foot_slots=walking foot_slots_why=- foot_slots_hook=1/") && strstr(row," fs2=1/5/2/2/1/0/"));}
     /* stop+1: the call site back before the seats go; the walking seat leaves with its pointers only. */

@@ -35,11 +35,12 @@ FAST = {'gfxquality': 0, 'shaderquality': 0, 'shadows': 0, 'softshadows': 'false
 
 
 def config_xml(width, height, fast=False, borderless=False):
-    """borderless: X4's borderless window (it fills the screen and cannot be resized: a resize reloads X4's UI)."""
+    """borderless: X4's borderless window (it fills the screen and cannot be resized: a resize reloads X4's UI).
+    X4's own option "confine mouse" is off: a test client that has the focus does not keep the cursor inside its window."""
     extra = ''.join(f'<{k}>{v}</{k}>' for k, v in FAST.items()) if fast else ''
     return ('<?xml version="1.0"?><root><autosave>false</autosave><uisafemode>false</uisafemode>'
             f'<fullscreen>false</fullscreen><borderless>{"true" if borderless else "false"}</borderless><res_width>{width}</res_width>'
-            f'<res_height>{height}</res_height><antialiasing>0</antialiasing><vsync>false</vsync>{extra}</root>\n')
+            f'<res_height>{height}</res_height><antialiasing>0</antialiasing><vsync>false</vsync><confinemouse>false</confinemouse>{extra}</root>\n')
 
 
 def content_xml(extension_ids):
