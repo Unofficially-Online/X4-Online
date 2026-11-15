@@ -27,6 +27,12 @@ static unsigned test_pdf_entered;
 static void test_pdf_enter(void *player,void *suit,void *room,void *fourth,unsigned char fifth) {(void)player;(void)suit;(void)room;(void)fourth;(void)fifth;++test_pdf_entered;}
 static void *test_pdf_zone_live;static unsigned test_pdf_zone_calls;   /* 0xd9b250 as the hook's original: the zone it would read */
 static void test_pdf_zone_original(void *controller) {(void)controller;memcpy(&test_pdf_zone_live,pnat_base+PVEHK_ZONE_POINTER,8);++test_pdf_zone_calls;}
+static struct {void *player;unsigned vtable;uint64_t was,is;} test_pdf_posts[4];static unsigned test_pdf_post_n;   /* pvehk_event_post */
+static void test_pdf_post(void *player,unsigned vtable,uint64_t was,uint64_t is) {
+    if(test_pdf_post_n<4) {test_pdf_posts[test_pdf_post_n].player=player;test_pdf_posts[test_pdf_post_n].vtable=vtable;
+        test_pdf_posts[test_pdf_post_n].was=was;test_pdf_posts[test_pdf_post_n].is=is;}
+    ++test_pdf_post_n;
+}
 static int test_pdf_events(const char *want) {const char *e=pdeath_take_events();return want?e && !strcmp(e,want):!e;}
 /* The suit's weapons (pvehk_equip): X4's installer, group and active-group calls as far as the module sees them. */
 static unsigned test_pdf_installs,test_pdf_grouped[2],test_pdf_activated[2],test_pdf_ended;static unsigned char test_pdf_weapon[4][16],test_pdf_macro_block[0x10c0];
@@ -351,6 +357,20 @@ static void test_pilot_death_foot_block(unsigned char *region,unsigned char *inp
             pstk_scope_slot=2;pvehk_zone(fake);assert(test_pdf_zone_calls==3 && test_pdf_zone_live==z1 && pvehk_zone_own==own+1);    /* inside its scope */
             pstk_scope_slot=scope;x->controller=ctl;x->length=len;memcpy(x->store+at,was_store,8);memcpy(pnat_base+PVEHK_ZONE_POINTER,&was_live,8);
             pvehk_zone_original=was;InterlockedExchange64(&pvehk_zone_own,own);InterlockedExchange64(&pvehk_zone_none,nones);
+        }
+        /* MD's object and room events (pvehk_changed): after a seat change slot 2's player gets X4's two events, the old
+         * and the new ship, the old and the new cockpit room; the same ship or room, or none before: no event of it */
+        {   static pslot_slot kept;static unsigned char ship[16],room[16],body[16];const uint64_t a=0x111,b=0x222;
+            const LONG64 posted=pvehk_events_posted;
+            kept=pslots[2];memcpy(ship+8,&a,8);memcpy(room+8,&b,8);
+            pslots[2].seated=1;pslots[2].ship=ship;pslots[2].room=room;pslots[2].player=body;
+            pvehk_event_test=test_pdf_post;test_pdf_post_n=0;
+            pvehk_changed(2,0x999,0x888);
+            assert(test_pdf_post_n==2 && test_pdf_posts[0].player==body && test_pdf_posts[0].vtable==PVEHK_EVENT_OBJECT && test_pdf_posts[0].was==0x999 &&
+                   test_pdf_posts[0].is==a && test_pdf_posts[1].vtable==PVEHK_EVENT_ROOM && test_pdf_posts[1].was==0x888 && test_pdf_posts[1].is==b);
+            pvehk_changed(2,a,b);assert(test_pdf_post_n==2);                       /* where it was already */
+            pvehk_changed(2,0,0x888);assert(test_pdf_post_n==3 && test_pdf_posts[2].vtable==PVEHK_EVENT_ROOM);   /* no ship before */
+            pslots[2]=kept;pvehk_event_test=NULL;InterlockedExchange64(&pvehk_events_posted,posted);
         }
         *(void**)(test_pslot_ship2+0x70)=parent_was;test_pdeath_ids[2]=0;memset(&pstk_build,0,sizeof(pstk_build));
         /* an asked exit whose suit never came: nothing happens */

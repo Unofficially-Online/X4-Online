@@ -331,6 +331,64 @@ static void pvehk_dock_poll(unsigned k) {
     __except(GetExceptionCode()==EXCEPTION_ACCESS_VIOLATION?EXCEPTION_EXECUTE_HANDLER:EXCEPTION_CONTINUE_SEARCH) {fault=1;}
     if(fault) pvehk_poll_on=0;
 }
+/* ---- MD's object and room events for a slot's player ----
+ * When X4 moves its own player into another ship or room, the player's parent change (Player vfunc 0x1380 -> 0x553660)
+ * posts U::ChangedObjectEvent and U::ChangedRoomEvent on the player (0x554177, 0x55420c: 0x28 bytes, the old ID at
+ * +0x18, the new one at +0x20): MD's event_object_changed_object / event_object_changed_room. A slot's player goes
+ * into its suit and home through the seat's pointers (pvehk_seat), never through that parent change, so MD heard
+ * nothing: a slot's own story stood still at the step that waits for its player in a spacesuit (the cadet story's
+ * repair, a playtest of 15 Nov: the satellite repaired, the mission's success logged, the chapter never closed
+ * because its dialogue starts from event_object_changed_room on player.entity). After the seat the pass posts the
+ * same two events on P_k, old and new ship, old and new cockpit room, through X4's deferred post (dispatched in
+ * X4's own event phase, where a claimed cue's frames run in their owner's scope): every client, the same tick.
+ * Pinned (the builder's part of 0x553660, the allocator and the post as the cutscene module pins them); else none.
+ * Status events=on/posted. */
+#define PVEHK_EVENT_OBJECT 0x2ba9820u          /* U::ChangedObjectEvent's vtable */
+#define PVEHK_EVENT_ROOM 0x2ba9938u            /* U::ChangedRoomEvent's */
+#define PVEHK_EVENT_SIZE 0x28u
+#define PVEHK_EVENT_BUILD 0x55411du            /* 0x553660: both events built and posted */
+#define PVEHK_EVENT_BUILD_SIZE 0x11cu
+#define PVEHK_EVENT_BUILD_SHA "65487259c1e9d0a804b3ac7d3bac2c09ab3c8f838dcb07c1bc5c33ba76335322"
+#define PVEHK_EVENT_ALLOCATE 0x14b7140u        /* SMem::Allocate(size, -, -, -, alignment) */
+#define PVEHK_EVENT_POST 0x99a720u             /* EventSource::PostEventDeferred(source, event, time) */
+#define PVEHK_EVENT_POST_SIZE 0xedu
+#define PVEHK_EVENT_POST_SHA "58b80a15cd07746aeb8e15c6b91230adeb30b3355fe80f58dc1b93b5c72925c3"
+static int pvehk_events_on;
+static volatile LONG64 pvehk_events_posted;
+static void (*pvehk_event_test)(void *player,unsigned vtable,uint64_t was,uint64_t is);   /* tests: in place of the post */
+static void pvehk_events_pins(void) {
+    pvehk_events_on=pnat_base && hash_ok(pnat_base+PVEHK_EVENT_BUILD,PVEHK_EVENT_BUILD_SIZE,PVEHK_EVENT_BUILD_SHA) &&
+        hash_ok(pnat_base+PVEHK_EVENT_POST,PVEHK_EVENT_POST_SIZE,PVEHK_EVENT_POST_SHA);
+}
+static void pvehk_event_post(unsigned char *player,unsigned vtable,uint64_t was,uint64_t is,double now) {
+    if(!was || !is || was==is) return;
+    InterlockedIncrement64(&pvehk_events_posted);
+    if(pvehk_event_test) {pvehk_event_test(player,vtable,was,is);return;}
+    __try {
+        unsigned char *event=((void*(*)(size_t,uintptr_t,uintptr_t,uintptr_t,unsigned))(void*)(pnat_base+PVEHK_EVENT_ALLOCATE))(PVEHK_EVENT_SIZE,0,0,0,0x10);
+        if(event) {
+            void *vt=pnat_base+vtable;
+            memset(event,0,PVEHK_EVENT_SIZE);memcpy(event,&vt,8);memcpy(event+0x18,&was,8);memcpy(event+0x20,&is,8);
+            ((void(*)(void*,void*,double))(void*)(pnat_base+PVEHK_EVENT_POST))(player,event,now);
+        }
+    }
+    __except(GetExceptionCode()==EXCEPTION_ACCESS_VIOLATION?EXCEPTION_EXECUTE_HANDLER:EXCEPTION_CONTINUE_SEARCH) {pvehk_events_on=0;}
+}
+/* The IDs of slot k's ship and cockpit room as its seat has them now (0: none). */
+static void pvehk_where(unsigned k,uint64_t *object,uint64_t *room) {
+    const pslot_slot *x=&pslots[k];
+    *object=*room=0;
+    if(x->seated && x->ship) (void)read_local(x->ship+8,object,8);
+    if(x->seated && x->room) (void)read_local(x->room+8,room,8);
+}
+/* After slot k's seat changed (its suit, its ship again): what MD hears of it. */
+static void pvehk_changed(unsigned k,uint64_t old_object,uint64_t old_room) {
+    uint64_t object=0,room=0;double now=0;
+    if((!pvehk_events_on && !pvehk_event_test) || !pslots[k].player || !pnat_fn.time || !pnat_fn.time(&now)) return;
+    pvehk_where(k,&object,&room);
+    pvehk_event_post(pslots[k].player,PVEHK_EVENT_OBJECT,old_object,object,now);
+    pvehk_event_post(pslots[k].player,PVEHK_EVENT_ROOM,old_room,room,now);
+}
 static void pvehk_enter_install(void) {
     if(pvehk_enter_installed || !pslot_page || !hash_ok(pnat_base+PVEHK_ENTER,PVEHK_ENTER_SIZE,PVEHK_ENTER_SHA)) return;
     if(!pres_site_install(PVEHK_ENTER_SITE_FRAME,PVEHK_ENTER,PVEHK_ENTER_STUB,(void*)pvehk_enter,pvehk_enter_patched[0])) return;
@@ -349,6 +407,7 @@ static int pdeath_guard_install(void) {
     if(!pslot_page && !(pslot_page=pslot_alloc_page())) return 0;
     if(!pres_site_install(PDEATH_GAME_OVER_CALL,PDEATH_GAME_OVER,PDEATH_STUB,(void*)pdeath_game_over,pdeath_guard_patched)) return 0;
     pvehk_poll_pins();       /* before the entry's call site inside 0x731560 is re-pointed */
+    pvehk_events_pins();     /* MD's object and room events for a slot's player */
     pvehk_enter_install();   /* X4's entry of a suited player (above): where this image has it */
     pvehk_fade_install();    /* the fade of an exit or an entry: on the client whose player it is */
     pvehk_zone_install();    /* a flying slot's reference frame: its own environment zone */
@@ -769,11 +828,13 @@ static int pvehk_pass(unsigned k,uint64_t tick) {
         d->suit_tick=0;
         if(!suit || !x->seated || !x->walking) {d->out=0;d->suit=0;pdeath_event("noout",k);return 1;}
         const uint64_t home=x->runtime;
+        uint64_t left_object=0,left_room=0;pvehk_where(k,&left_object,&left_room);
         pfslot_lose(k);                                                 /* the walk ends where it is */
         if(!pfbody_release_slot(k)) {pdeath_why=pfbody_why;return 0;}   /* none while it walks (parked); for the order */
         if(!pslot_release(k)) {pdeath_why=pslot_why;return 0;}          /* the seat's pointers back */
         pvehk_equip(k,suit);                                            /* its weapon groups, as X4's eject restores them */
         if(!pvehk_seat(k,d->suit,"suited")) return 0;
+        pvehk_changed(k,left_object,left_room);                         /* MD: its player changed object and room */
         d->home=home;d->out=2;d->ask=d->ranged=0;d->dock_tick=0;d->arrive=0;d->arrive_room=NULL;++pvehk_outs;
         return 1;
     }
@@ -793,10 +854,12 @@ static int pvehk_pass(unsigned k,uint64_t tick) {
      * X4 killed the slot's player with its suit and never came out of the teardown (live 12 Nov, both clients spinning in
      * one tick after the home key: SpaceSuit and its Cockpit dead, P_2 dying with no parent, an MD action at the root).
      * Earlier runs went home before the body had settled. */
+    uint64_t left_object=0,left_room=0;pvehk_where(k,&left_object,&left_room);
     if(!pfbody_release_slot(k)) {pdeath_why=pfbody_why;return 0;}
     if(!pslot_release(k)) {pdeath_why=pslot_why;return 0;}
     if(pnat_fn.time(&now) && read_local(suit,&vtable,8) && vtable) ((hitn_kill_fn)vtable[PDEATH_KILL_SLOT])(suit,PDEATH_KILL_REMOVED,NULL,now);
     if(!pvehk_seat(k,d->home,"home")) return 0;
+    pvehk_changed(k,left_object,left_room);
     d->out=0;d->home=0;d->suit=0;d->ask=d->ranged=0;d->dock_tick=0;d->arrive=0;d->arrive_room=NULL;++pvehk_homes;
     return 1;
 }
@@ -811,12 +874,14 @@ static int pvehk_taken(unsigned k,uint64_t tick) {
     unsigned char *home=d->home?pdeath_find(pdeath_map,d->home,4):NULL;
     if(!home || home==suit || !read_local(x->player+PDEATH_LIFECYCLE,&life,1) || life) return 0;
     if(!read_local(x->player+0x70,&inside,8) || !inside || uics_under(inside,suit) || !uics_under(inside,home)) return 0;
+    uint64_t left_object=0,left_room=0;pvehk_where(k,&left_object,&left_room);
     if(!pfbody_release_slot(k)) {pdeath_why=pfbody_why;return -1;}
     if(read_local(suit+PDEATH_LIFECYCLE,&lifecycle,1) && !lifecycle && pslot_controller_has(suit,0,x->controller)==1) {
         if(!pslot_release(k)) {pdeath_why=pslot_why;return -1;}
         if(pnat_fn.time(&now) && read_local(suit,&vtable,8) && vtable) ((hitn_kill_fn)vtable[PDEATH_KILL_SLOT])(suit,PDEATH_KILL_REMOVED,NULL,now);
     } else pslot_retire(k);
     if(!pvehk_seat(k,d->home,"home")) return -1;
+    pvehk_changed(k,left_object,left_room);
     d->out=0;d->home=0;d->suit=0;d->ask=d->ranged=0;d->dock_tick=0;++pvehk_homes;++pvehk_taken_in;
     return 1;
 }
@@ -902,6 +967,7 @@ static int pdeath_status(char *out,size_t capacity) {
                                               pvehk_enter_installed,(long long)pvehk_enters,(long long)pvehk_enters_else);
     if(n>0 && (size_t)n<capacity) n+=snprintf(out+n,capacity-(size_t)n," fade=%d/%lld/%lld",pvehk_fade_installed,
                                               (long long)pvehk_fades_shown,(long long)pvehk_fades_kept);
+    if(n>0 && (size_t)n<capacity) n+=snprintf(out+n,capacity-(size_t)n," events=%d/%lld",pvehk_events_on,(long long)pvehk_events_posted);
     if(n>0 && (size_t)n<capacity) n+=snprintf(out+n,capacity-(size_t)n," poll=%d/%lld/%lld",pvehk_poll_on,(long long)pvehk_polls,
                                               (long long)pvehk_poll_entered);
     if(n>0 && (size_t)n<capacity) n+=snprintf(out+n,capacity-(size_t)n," zone=%d/%lld/%lld",pvehk_zone_installed,

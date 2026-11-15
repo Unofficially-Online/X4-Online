@@ -416,8 +416,8 @@ def run(o: Options, log=print):
             raise SystemExit('--open with --bind needs --allow-from (the joiners\' addresses) as dotted IPv4')
     if (o.state / 'session.json').exists():
         raise SystemExit('a previous session is still recorded; run x4ls clean first')
-    if x4_running():
-        raise SystemExit('X4 is running; close it first')
+    if x4_running() and not os.environ.get('X4LS_BESIDE'):   # X4LS_BESIDE=1: another local session's clients are running (their own
+        raise SystemExit('X4 is running; close it first')    # profiles, lanes, port and state directory)
     ok, message = steam.status()
     if not ok and not o.steam_fix:
         raise SystemExit(message)
@@ -624,8 +624,8 @@ def capture_snapshot(out, gamestart='custom_creative', game_dir=None, lanes=None
         raise SystemExit(f'{out} exists')
     if (Path(state_dir) / 'session.json').exists():
         raise SystemExit('a previous session is still recorded; run x4ls clean first')
-    if x4_running():
-        raise SystemExit('X4 is running; close it first')
+    if x4_running() and not os.environ.get('X4LS_BESIDE'):   # X4LS_BESIDE=1: another local session's clients are running (their own
+        raise SystemExit('X4 is running; close it first')    # profiles, lanes, port and state directory)
     ok, message = steam.status()
     if not ok and not steam_fix:
         raise SystemExit(message)

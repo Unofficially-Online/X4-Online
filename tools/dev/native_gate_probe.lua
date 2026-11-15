@@ -2542,7 +2542,9 @@ local function death_answer(name,slot,hand)
   end
   if name=='X4LAN_PilotRespawn.Suit' then death.suit_id[slot]=id end   -- the suit MD built: its oxygen pause comes later (death_air)
   log(name:gsub('^X4LAN_PilotRespawn.','PILOT_RESPAWN_'):upper()..' slot='..slot..' accepted='..tostring(hand(slot,id)))
-  if pilot_view.hud_ship_changed then pilot_view.hud_ship_changed('respawn') end   -- the slot's new ship (MD answers on every client)
+  -- No HUD event from here: this callback runs outside the probe's frame, where the UI guard takes the raise for a
+  -- person's and refuses it (every suit exit showed "AddUITriggeredEvent is not shared between the players yet").
+  -- The slot's seat in what MD built comes some ticks later as a gate event (suited, insuit, live): raised there.
  end)
 end
 local function death_arm(delay,start,suit)
@@ -2617,9 +2619,12 @@ local function death_frame(tick)
     -- 1344 on the session, 30 s after the load on the joiner). The count is the window's state, the same on every client.
     AddUITriggeredEvent('X4LAN_PilotRespawn','Respawn',{slotname=tostring(slot),seed=7000+100*slot+death.built[slot],
      x=pose.x,y=pose.y+1000*death.built[slot],z=pose.z,yaw=pose.yaw,pitch=pose.pitch,roll=pose.roll})
-   elseif kind=='live' and tostring(cfg.slot)=='p'..slot then
-    -- The new ship starts from nothing held: the aim script sends its axes and its stop again.
-    stock_aim_state.stopped=false;stock_aim_state.axes[1]=0;stock_aim_state.axes[2]=0
+   elseif kind=='live' or kind=='insuit' then
+    if pilot_view.hud_ship_changed then pilot_view.hud_ship_changed(kind) end   -- the slot sits in its new ship, or in its suit after a death
+    if kind=='live' and tostring(cfg.slot)=='p'..slot then
+     -- The new ship starts from nothing held: the aim script sends its axes and its stop again.
+     stock_aim_state.stopped=false;stock_aim_state.axes[1]=0;stock_aim_state.axes[2]=0
+    end
    end
   end
  end
