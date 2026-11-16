@@ -252,6 +252,7 @@ static int pfslot_sit_down(unsigned k) {
     s->controller=controller;pslot_set_routes(s,1);
     f->fpc[PFSLOT_FPC_SEAT]=1;pnat_base[PFOOT_ACTIVE]=0;s->player[PFOOT_PLAYER_FLAG]=0;
     f->walking=0;s->walking=0;InterlockedIncrement64(&f->sat);
+    pvehk_control(k,1);   /* MD: its player took the ship's controls (lockstep_pilot_death.h, the control events) */
     return 1;
 }
 static int pfslot_get_up(unsigned k,double now) {
@@ -298,6 +299,7 @@ static int pfslot_get_up(unsigned k,double now) {
     fpc[PFSLOT_FPC_SEAT]=0;s->player[PFOOT_PLAYER_FLAG]=1;
     pfslot_bank_start(1);   /* K2-6: the live bank is slot k's in this scope */
     f->fpc=fpc;f->walking=1;s->walking=1;f->stood_tick=stats.issued;InterlockedIncrement64(&f->stood);
+    pvehk_control(k,0);   /* MD: its player left the ship's controls */
     InterlockedIncrement64(placed?&f->placed:&f->unplaced);
     if(placed==2) InterlockedIncrement64(&f->tagged);
     return 1;

@@ -745,7 +745,7 @@ static void test_pilot_slots(void) {
         memcpy(region+PRES_UI_ENTRY,&entry,8);memcpy(region+PRES_REFILL_CALL,pres_refill_bytes,5);memcpy(region+PRES_PICK_CALL,pres_pick_bytes,5);
         *(int*)(test_pslot_room+PRES_ATTENTION)=9;*(int*)(test_pslot_room+PRES_VIEW_ATTENTION+PRES_VIEW_STRIDE)=8;test_pres_picks=0;
         /* The canonical player's fixture stays as it is, its parent is what comes back. This thread reads bank 1. */
-        *(int*)(region+PRES_VIEW_INDEX)=1;*(uint64_t*)(test_pslot_ship2+8)=0x176ad5;*(int*)(test_pslot_room+0x40)=5;
+        *(int*)(region+PRES_VIEW_INDEX)=1;*(int*)(region+PRES_MAIN_INDEX)=1;*(uint64_t*)(test_pslot_ship2+8)=0x176ad5;*(int*)(test_pslot_room+0x40)=5;
         test_pres_answer_ship=0;
         test_pres_ui_calls=test_pres_refills=test_pres_renders=test_pres_local_calls=0;
         test_pres_fault=test_pres_write=0;memset(test_pres_self,0,sizeof(test_pres_self));
@@ -1511,7 +1511,7 @@ static void test_pilot_slots(void) {
         pslots[2].authority=1;pslots[3].authority=0;
         {unsigned char a=7;assert(pslot_authority(test_pslot3_c[0],&a) && a==1 && pslot_authority(test_pslot3_c[1],&a) && a==0);}
         /* Client 3 presents slot 3, slot 2 is remote. */
-        pres_slot=3;pres_active=1;pres_open=0;*(int*)(region+PRES_VIEW_INDEX)=0;
+        pres_slot=3;pres_active=1;pres_open=0;*(int*)(region+PRES_VIEW_INDEX)=0;*(int*)(region+PRES_MAIN_INDEX)=0;
         {   void *room3=test_pslot3_room[1],*parent=NULL,*view=NULL,*parent1=NULL,*view1=NULL;
             memcpy(&parent1,p1+PRES_PARENT,8);memcpy(&view1,p1+PRES_VIEW_CACHE,8);
             assert(pres_enter() && test_pslot_singleton()==p1 && region[0x2f4b750]==0x61);

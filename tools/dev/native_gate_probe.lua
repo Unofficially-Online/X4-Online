@@ -4929,6 +4929,15 @@ local function frame()
     gate.speech_local()==1,'speech local refused '..tostring(gate.speech_local_status and gate.speech_local_status()))
    log('SPEECH_LOCAL_ARMED')
   end
+  -- A mission's picture on the target monitor (lockstep_md_media.h; a session default, Windows gate): started by the
+  -- simulation on every client at the action's tick, shown by its owner's monitor (the gate answers the monitor script's
+  -- four Lua functions itself: that script has its own environment, globals wrapped here never reached it). A gate
+  -- without it runs as before: each client's monitor starts every player's call.
+  if cfg.native_gate_md_media and gate.md_media then
+   assert(cfg.native_gate_md_media==true and gate.md_media_frame and gate.md_media_status and gate.md_media(1)==1,
+    'md media refused '..tostring(gate.md_media_status and gate.md_media_status()))
+   log('MD_MEDIA_ARMED '..tostring(gate.md_media_status()))
+  end
   -- MD must not read this client's own screen (lockstep_md_presentation.h, the menu state): player.isinfullscreenmenu
   -- answers false on every client while the session runs. A map open on one client made a stock script queue a crew use case
   -- there and start it on the other: runtime IDs apart from then on (a person's session, 11 Nov). Every session, no key.
@@ -5440,7 +5449,9 @@ local function frame()
    -- Inside slot k's scope ship k answers P_k as its pilot (lockstep_pilot_slots.h pslot_post_enter; the autopilot's
    -- own check `$ship.pilot != player.entity`); native_gate_pilot_slots_post, a session default.
    if cfg.native_gate_pilot_slots_post~=nil and cfg.native_gate_pilot_slots_post~=false then
-    assert(cfg.native_gate_pilot_slots_post==true and cfg.native_gate_pilot_stock_slots~=nil and gate.pilot_slots_post and gate.pilot_slots_post(1)==1,
+    local held=cfg.native_gate_pilot_slots_post=='held'   -- the entry stays the slot's player outside its scope too (an experiment)
+    assert((cfg.native_gate_pilot_slots_post==true or held) and cfg.native_gate_pilot_stock_slots~=nil and gate.pilot_slots_post and
+      gate.pilot_slots_post(held and 2 or 1)==1,
      'pilot slots post refused: native_gate_pilot_slots_post must be true and needs native_gate_pilot_stock_slots')
     log('PILOT_SLOTS_POST_ARMED slot='..slot)
    end
@@ -5809,6 +5820,7 @@ local function frame()
   if cfg.native_gate_interrupt_rng then log('INTERRUPT_SEEDS count='..s.interrupt_seeds) end
   if cfg.native_gate_interrupt_diag then log('INTERRUPT_STOP calls='..s.interrupt_calls..' restored='..s.interrupt_restored..' failures='..s.interrupt_failures) end
   if cfg.native_gate_missions_per_player and gate.mpp_status then log('MISSIONS_PER_PLAYER_STOP '..gate.mpp_status()) end
+  if cfg.native_gate_md_media and gate.md_media_status then log('MD_MEDIA_STOP '..gate.md_media_status()) end
   if cfg.native_gate_interrupt_diag then log('INTERRUPT_STEP_STOP calls='..s.interrupt_step_calls..' restored='..s.interrupt_step_restored..' failures='..s.interrupt_failures) end
   if cfg.native_gate_interrupt_diag and gate.interrupt_faults then log('INTERRUPT_FAULTS_STOP '..tostring(gate.interrupt_faults())) end
   if gate.observer_status then log('OBSERVERS_STOP '..tostring(gate.observer_status())) end
@@ -6414,6 +6426,10 @@ local function frame()
  if cfg.native_gate_speech_local and gate.speech_local then
   gate.speech_local_frame()   -- every step: mute or not for the lines of the coming steps (canonical state, the probe's frame)
   ticklog.status('SPEECH_LOCAL',tick,gate.speech_local_status,'speech local status unavailable')
+ end
+ if cfg.native_gate_md_media and gate.md_media_frame then
+  gate.md_media_frame()   -- every step, on every client: a timeout that is over, notifications that are gone
+  ticklog.status('MD_MEDIA',tick,gate.md_media_status,'md media status unavailable')
  end
  if cfg.native_gate_speech_clock then ticklog.status('SPEECH_CLOCK',tick,gate.speech_clock_status,'speech clock status unavailable') end
  if cfg.native_gate_world_nav_stride then ticklog.status('WORLD_NAV',tick,gate.world_nav_status,'world nav hash status unavailable') end

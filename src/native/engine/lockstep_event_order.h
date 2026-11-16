@@ -233,6 +233,10 @@ static uint64_t event_order_find(const unsigned char *batch,uint64_t count,const
 }
 /* The native loop already read slot j into (source,event,time) and releases
  * slot j after this returns, so the slot's current contents are delivered. */
+/* A due event whose source is a slot's own player is delivered inside that slot's scope (lockstep_pilot_death.h sets the
+ * two functions; none: as before). The answer of enter is what leave gets; 0: no scope was opened. */
+static int (*event_order_scope_enter)(void *source);
+static void (*event_order_scope_leave)(int scope);
 static void event_order_deliver_with(event_order_deliver_fn native,unsigned char *batch,const volatile uint64_t *count_slot,
                                      void *source,void *event,double time) {
     /* After any failure the remaining calls stay native until the gate stops (80). */
@@ -248,7 +252,11 @@ static void event_order_deliver_with(event_order_deliver_fn native,unsigned char
     event_order_entry e=event_order_read(batch,j);
     event_order_marks[j].event=NULL;event_order_next=j+1;
     double due;memcpy(&due,&e.time,8);
-    if(e.source) event_rng_deliver(native,e.source,e.event,due); /* native unless native_gate_event_rng is armed */
+    if(e.source) {
+        const int scope=event_order_scope_enter?event_order_scope_enter(e.source):0;
+        event_rng_deliver(native,e.source,e.event,due); /* native unless native_gate_event_rng is armed */
+        if(scope && event_order_scope_leave) event_order_scope_leave(scope);
+    }
 }
 static void event_order_deliver(void *source,void *event,double time) {
     event_order_deliver_with((event_order_deliver_fn)(image+EVENT_ORDER_DELIVER),image+EVENT_ORDER_BATCH,

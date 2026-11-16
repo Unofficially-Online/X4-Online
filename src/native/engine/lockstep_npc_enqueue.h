@@ -59,8 +59,11 @@ static unsigned char npc_enqueue_observe(npc_enqueue_fn original,void *self,void
     if(!s->result && speaker->request_serial==serial) *speaker=previous;
     return (unsigned char)s->result;
 }
+static void spl_queue_note(void *data);   /* lockstep_speech_local.h: the lines of a player's own cue are that player's (its own hook of this entry
+                                            * is not installed while this one is) */
 static unsigned char npc_enqueue_run(void *self,void *vector,int priority,unsigned char interrupt,
         void *recipient,void *source,unsigned flags,void *text) {
+    spl_queue_note(self);
     return npc_enqueue_observe((npc_enqueue_fn)(thunk+1216),self,vector,priority,interrupt,recipient,source,flags,text,interrupt_rng());
 }
 static int npc_enqueue_swap(uint64_t expected,uint64_t value) {

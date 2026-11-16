@@ -342,10 +342,41 @@ static void pvehk_dock_poll(unsigned k) {
  * same two events on P_k, old and new ship, old and new cockpit room, through X4's deferred post (dispatched in
  * X4's own event phase, where a claimed cue's frames run in their owner's scope): every client, the same tick.
  * Pinned (the builder's part of 0x553660, the allocator and the post as the cutscene module pins them); else none.
- * Status events=on/posted. */
+ * Status events=on/posted.
+ * The audit of 15 Nov (the mission fixture's listeners, the same scripted actions as slot 1 and as slot 2) named three
+ * more that only X4's own player got: U::ControlStartedEvent / U::ControlStoppedEvent (0x70dc50 at 0x70e062, 0x70e0f0
+ * at 0x70e504: 0x28 bytes, the controlled object's ID at +0x18, its class from vtable +0x11d0 at +0x20; MD's
+ * event_player_started_control / stopped_control, 53 uses in the stock scripts) and U::TeleportSuccessfulEvent
+ * (0x7052f0 at 0x705918: 0x30 bytes, the room left at +0x18, the room reached at +0x20, a flag byte at +0x28;
+ * event_player_teleport_successful, 36 uses). X4's own player hears: stand-up = stopped(ship); into the suit =
+ * teleport(suit's room) then started(suit); back = teleport(ship's room) then stopped(suit). A slot's player gets the
+ * same at the gate's own steps (the stand-up and sit-down of lockstep_pilot_foot_slots.h, the suit, the way home),
+ * and started(ship) at its arrival, which is the pilot seat here.
+ * These three are MD's event_player_* kind: the listening cue is on the slot's own player object (read from the
+ * listener tables, 15 Nov), but a first form that posted them deferred, as the object and room events are, was never
+ * heard (twelve posts, no row): the script side takes them only while their source is the universe's player, and at
+ * X4's event phase that is slot 1's. So they are posted with immediate dispatch inside slot k's scope (the scope is
+ * opened for the post where the pass has none), as X4's own posts of that kind reach a slot's missions (travel
+ * mode, activity: posted while the slot's input is replayed in its scope). Status events=on/posted/more/unscoped. */
 #define PVEHK_EVENT_OBJECT 0x2ba9820u          /* U::ChangedObjectEvent's vtable */
 #define PVEHK_EVENT_ROOM 0x2ba9938u            /* U::ChangedRoomEvent's */
 #define PVEHK_EVENT_SIZE 0x28u
+#define PVEHK_EVENT_TELEPORT 0x2ba9858u        /* U::TeleportSuccessfulEvent's */
+#define PVEHK_EVENT_TELEPORT_SIZE 0x30u
+#define PVEHK_EVENT_CONTROL_ON 0x2ba9040u      /* U::ControlStartedEvent's */
+#define PVEHK_EVENT_CONTROL_OFF 0x2ba9008u     /* U::ControlStoppedEvent's */
+#define PVEHK_EVENT_CLASS_SLOT (0x11d0u/8u)    /* a component's class, as the control events carry it */
+static const struct {unsigned rva,size;const char *sha;} pvehk_event_builders[]={
+    {0x70e033u,0x76u,"a14a1d34dc1275aed0164ad17a270f8e56dd2070ebaebed4b75a130d9c845ed6"},   /* control started */
+    {0x70e4d5u,0x76u,"23b6a4808c652b33071e79b329e685aa4b2deac846ae2da4592fc07a77c01e3e"},   /* control stopped */
+    {0x7058e5u,0x59u,"291a315822eafec3fadbdf7260f766bca1244f2685bc5db797892c176d6b5fcf"},   /* teleport successful */
+    {0x705a64u,0x11u,"643b0d3d441e87bb62301aa2a2da4b06ceb7aafd3388ef24713bcc54635b850a"}};  /* ...its post */
+static int pvehk_events_more;                  /* the three above: their builders hold */
+#define PVEHK_EVENT_POST_NOW 0x99a3f0u         /* EventSource::PostEvent(source, event, time, immediate) */
+#define PVEHK_EVENT_POST_NOW_SIZE 807u
+#define PVEHK_EVENT_POST_NOW_SHA "5ca12a5d17041238645af6d6028c718bb3714cc53e9dd6963769d51827087c0d"
+static volatile LONG64 pvehk_events_unscoped;
+static int pslot_enter(unsigned k);static int pslot_leave(unsigned k);
 #define PVEHK_EVENT_BUILD 0x55411du            /* 0x553660: both events built and posted */
 #define PVEHK_EVENT_BUILD_SIZE 0x11cu
 #define PVEHK_EVENT_BUILD_SHA "65487259c1e9d0a804b3ac7d3bac2c09ab3c8f838dcb07c1bc5c33ba76335322"
@@ -359,20 +390,132 @@ static void (*pvehk_event_test)(void *player,unsigned vtable,uint64_t was,uint64
 static void pvehk_events_pins(void) {
     pvehk_events_on=pnat_base && hash_ok(pnat_base+PVEHK_EVENT_BUILD,PVEHK_EVENT_BUILD_SIZE,PVEHK_EVENT_BUILD_SHA) &&
         hash_ok(pnat_base+PVEHK_EVENT_POST,PVEHK_EVENT_POST_SIZE,PVEHK_EVENT_POST_SHA);
+    pvehk_events_more=pvehk_events_on && hash_ok(pnat_base+PVEHK_EVENT_POST_NOW,PVEHK_EVENT_POST_NOW_SIZE,PVEHK_EVENT_POST_NOW_SHA);
+    for(unsigned i=0;pvehk_events_more && i<sizeof(pvehk_event_builders)/sizeof(*pvehk_event_builders);i++)
+        pvehk_events_more=hash_ok(pnat_base+pvehk_event_builders[i].rva,pvehk_event_builders[i].size,pvehk_event_builders[i].sha);
 }
-static void pvehk_event_post(unsigned char *player,unsigned vtable,uint64_t was,uint64_t is,double now) {
-    if(!was || !is || was==is) return;
+/* One event of `size` bytes with the two words at +0x18 and +0x20 (what follows stays zero), posted on the player. */
+static void pvehk_event_raw(unsigned char *player,unsigned vtable,unsigned size,uint64_t first,uint64_t second,double now) {
     InterlockedIncrement64(&pvehk_events_posted);
-    if(pvehk_event_test) {pvehk_event_test(player,vtable,was,is);return;}
+    if(pvehk_event_test) {pvehk_event_test(player,vtable,first,second);return;}
     __try {
-        unsigned char *event=((void*(*)(size_t,uintptr_t,uintptr_t,uintptr_t,unsigned))(void*)(pnat_base+PVEHK_EVENT_ALLOCATE))(PVEHK_EVENT_SIZE,0,0,0,0x10);
+        unsigned char *event=((void*(*)(size_t,uintptr_t,uintptr_t,uintptr_t,unsigned))(void*)(pnat_base+PVEHK_EVENT_ALLOCATE))(size,0,0,0,0x10);
         if(event) {
             void *vt=pnat_base+vtable;
-            memset(event,0,PVEHK_EVENT_SIZE);memcpy(event,&vt,8);memcpy(event+0x18,&was,8);memcpy(event+0x20,&is,8);
+            memset(event,0,size);memcpy(event,&vt,8);memcpy(event+0x18,&first,8);memcpy(event+0x20,&second,8);
             ((void(*)(void*,void*,double))(void*)(pnat_base+PVEHK_EVENT_POST))(player,event,now);
         }
     }
-    __except(GetExceptionCode()==EXCEPTION_ACCESS_VIOLATION?EXCEPTION_EXECUTE_HANDLER:EXCEPTION_CONTINUE_SEARCH) {pvehk_events_on=0;}
+    __except(GetExceptionCode()==EXCEPTION_ACCESS_VIOLATION?EXCEPTION_EXECUTE_HANDLER:EXCEPTION_CONTINUE_SEARCH) {pvehk_events_on=0;pvehk_events_more=0;}
+}
+/* X4's own deferred posts on a slot's player (its target change: 0xaecb60 posts U::PlayerChangedTargetEvent through
+ * the deferred post while the slot's replayed input runs in its scope) are due at X4's event phase, outside every
+ * scope, and were dropped the same way (the audit: changed_target for slot 1 only). A due event whose source is a
+ * slot's player is delivered inside that slot's scope (lockstep_event_order.h's delivery asks here). A scope that
+ * cannot be opened there (another one open, another thread): delivered as before, counted. Status deliver=in/out. */
+static volatile LONG64 pvehk_delivered_scoped,pvehk_delivered_plain;
+static int pvehk_deliver_enter(void *source) {
+    if(!source || !pvehk_events_more) return 0;
+    for(unsigned k=2;k<=PILOT_SLOTS;k++) {
+        if(pslots[k].player!=(unsigned char *)source || !pslots[k].seated) continue;
+        if(pstk_scope_slot==k) return 0;
+        if(pslot_enter(k)) {InterlockedIncrement64(&pvehk_delivered_scoped);return (int)k;}
+        InterlockedIncrement64(&pvehk_delivered_plain);return 0;
+    }
+    return 0;
+}
+static void pvehk_deliver_leave(int scope) {if(scope>=2 && scope<=(int)PILOT_SLOTS && pstk_scope_slot==(unsigned)scope) (void)pslot_leave((unsigned)scope);}
+/* The same event dispatched at once inside slot k's scope (the event_player_* kind; header). */
+static void pvehk_event_now(unsigned k,unsigned vtable,unsigned size,uint64_t first,uint64_t second,double now) {
+    unsigned char *const player=pslots[k].player;
+    if(pvehk_event_test) {InterlockedIncrement64(&pvehk_events_posted);pvehk_event_test(player,vtable,first,second);return;}
+    const int entered=pstk_scope_slot==k?0:pslot_enter(k);
+    if(pstk_scope_slot!=k) {InterlockedIncrement64(&pvehk_events_unscoped);return;}
+    InterlockedIncrement64(&pvehk_events_posted);
+    __try {
+        unsigned char *event=((void*(*)(size_t,uintptr_t,uintptr_t,uintptr_t,unsigned))(void*)(pnat_base+PVEHK_EVENT_ALLOCATE))(size,0,0,0,0x10);
+        if(event) {
+            void *vt=pnat_base+vtable;
+            memset(event,0,size);memcpy(event,&vt,8);memcpy(event+0x18,&first,8);memcpy(event+0x20,&second,8);
+            ((void(*)(void*,void*,double,unsigned char))(void*)(pnat_base+PVEHK_EVENT_POST_NOW))(player,event,now,1);
+        }
+    }
+    __except(GetExceptionCode()==EXCEPTION_ACCESS_VIOLATION?EXCEPTION_EXECUTE_HANDLER:EXCEPTION_CONTINUE_SEARCH) {pvehk_events_more=0;}
+    if(entered) (void)pslot_leave(k);
+}
+/* A kill by a slot's ship. X4's kill notice (0x3e54d6..) posts U::KilledComponentEvent (vtable 0x2baadc8: 0x28 bytes,
+ * the kill method dword +0x18, the killed object's ID +0x20) at once on the killer (0x3e5563), then asks 0x9f9250 for
+ * the object the universe's player controls and, when that is the killer, posts the same event at once on the
+ * universe's player: MD's event_player_killed_object. It runs in the simulation outside every scope, where the
+ * universe's player is player 1: a kill by slot k's ship told nobody, so slot k's kill missions never counted it.
+ * The first post's call is answered here: X4's post runs unchanged, and when the killer is the ship slot k sits in,
+ * the same event is dispatched on slot k's player inside its scope (pvehk_event_now). (The call of 0x9f9250 itself,
+ * 0x3e556d, lies across two 16-byte blocks and cannot be re-pointed in one exchange.) Status kill=installed/told. */
+#define PVEHK_KILL_SITE 0x3e5563u
+#define PVEHK_KILL_BLOCK 0x3e5560u
+#define PVEHK_KILL_BLOCK_SIZE 0x100u
+#define PVEHK_KILL_BLOCK_SHA "abfbe982a41f6af4bd4e6b5fe7628bd8ac1a446479211178c24752f1cc7a1ab2"
+#define PVEHK_KILL_ASK 0x9f9250u
+#define PVEHK_KILL_ASK_SIZE 0x100u
+#define PVEHK_KILL_ASK_SHA "8658e6b8562c4baea792f82004644aa7434e561df2f80333ffa1d611705c38ed"
+#define PVEHK_KILL_STUB 0x200u                /* on the slots' near page, after the zone's (0x1c0, 0x1e0) */
+#define PVEHK_EVENT_KILLED 0x2baadc8u
+static int pvehk_kill_installed;
+static unsigned char pvehk_kill_patched[5];
+static volatile LONG64 pvehk_kills_told;
+/* The slot whose ship the killer is (0: none, or player 1's, which X4 tells itself); the event goes out. */
+static unsigned pvehk_killed(unsigned char *killer,uint64_t killed_id,unsigned method) {
+    double now=0;
+    if(!killer || !killed_id || (!pvehk_events_more && !pvehk_event_test)) return 0;
+    for(unsigned k=2;k<=PILOT_SLOTS;k++) {
+        if(!pslots[k].seated || !pslots[k].player || pslots[k].ship!=killer) continue;
+        if(!pvehk_event_test && (!pnat_fn.time || !pnat_fn.time(&now))) return 0;
+        InterlockedIncrement64(&pvehk_kills_told);
+        pvehk_event_now(k,PVEHK_EVENT_KILLED,PVEHK_EVENT_SIZE,method,killed_id,now);
+        return k;
+    }
+    return 0;
+}
+static uintptr_t pvehk_kill(unsigned char *killer,unsigned char *event,double time,unsigned char immediate) {
+    uint64_t id=0;unsigned method=0;void *vtable=NULL;
+    /* read before the post: an event dispatched at once may be gone after it */
+    const int ours=killer && event && !pstk_scope_slot && read_local(event,&vtable,8) && vtable==(void*)(pnat_base+PVEHK_EVENT_KILLED) &&
+                   read_local(event+0x18,&method,4) && read_local(event+0x20,&id,8);
+    const uintptr_t answer=((uintptr_t(*)(void*,void*,double,unsigned char))(void*)(pnat_base+PVEHK_EVENT_POST_NOW))(killer,event,time,immediate);
+    if(ours) (void)pvehk_killed(killer,id,method);
+    return answer;
+}
+static void pvehk_kill_install(void) {
+    if(pvehk_kill_installed || !pslot_page || !pvehk_events_more || !hash_ok(pnat_base+PVEHK_KILL_BLOCK,PVEHK_KILL_BLOCK_SIZE,PVEHK_KILL_BLOCK_SHA) ||
+       !hash_ok(pnat_base+PVEHK_KILL_ASK,PVEHK_KILL_ASK_SIZE,PVEHK_KILL_ASK_SHA)) return;
+    if(pres_site_install(PVEHK_KILL_SITE,PVEHK_EVENT_POST_NOW,PVEHK_KILL_STUB,(void*)pvehk_kill,pvehk_kill_patched)) pvehk_kill_installed=1;
+}
+static void pvehk_kill_restore(void) {
+    if(pvehk_kill_installed && pres_site_uninstall(PVEHK_KILL_SITE,PVEHK_EVENT_POST_NOW,pvehk_kill_patched)) pvehk_kill_installed=0;
+}
+static void pvehk_event_post(unsigned char *player,unsigned vtable,uint64_t was,uint64_t is,double now) {
+    if(!was || !is || was==is) return;
+    pvehk_event_raw(player,vtable,PVEHK_EVENT_SIZE,was,is,now);
+}
+/* A component's ID and class as a control event carries them (0 and 0x79 for none, as X4 writes them). */
+static void pvehk_control_of(unsigned char *object,uint64_t *id,unsigned *cls) {
+    void **vtable=NULL;
+    *id=0;*cls=0x79u;
+    if(!object || !read_local(object+8,id,8) || !*id || pvehk_event_test) return;
+    __try {if(read_local(object,&vtable,8) && vtable) *cls=((unsigned(*)(void*))vtable[PVEHK_EVENT_CLASS_SLOT])(object);}
+    __except(GetExceptionCode()==EXCEPTION_ACCESS_VIOLATION?EXCEPTION_EXECUTE_HANDLER:EXCEPTION_CONTINUE_SEARCH) {*cls=0x79u;}
+}
+/* Slot k's player took (started) or left the controls of the object with that ID and class. */
+static void pvehk_control_id(unsigned k,int started,uint64_t id,unsigned cls) {
+    double now=0;
+    if((!pvehk_events_more && !pvehk_event_test) || k<2 || k>PILOT_SLOTS || !pslots[k].player || !id || !pnat_fn.time || !pnat_fn.time(&now)) return;
+    pvehk_event_now(k,started?PVEHK_EVENT_CONTROL_ON:PVEHK_EVENT_CONTROL_OFF,PVEHK_EVENT_SIZE,id,cls,now);
+}
+/* ...of the ship its seat is in now. */
+static void pvehk_control(unsigned k,int started) {
+    uint64_t id=0;unsigned cls=0x79u;
+    if(k<2 || k>PILOT_SLOTS || !pslots[k].seated) return;
+    pvehk_control_of(pslots[k].ship,&id,&cls);pvehk_control_id(k,started,id,cls);
 }
 /* The IDs of slot k's ship and cockpit room as its seat has them now (0: none). */
 static void pvehk_where(unsigned k,uint64_t *object,uint64_t *room) {
@@ -381,13 +524,16 @@ static void pvehk_where(unsigned k,uint64_t *object,uint64_t *room) {
     if(x->seated && x->ship) (void)read_local(x->ship+8,object,8);
     if(x->seated && x->room) (void)read_local(x->room+8,room,8);
 }
-/* After slot k's seat changed (its suit, its ship again): what MD hears of it. */
+/* After slot k's seat changed (its suit, its ship again): what MD hears of it. The object and the room, then (X4's
+ * order for its own player) the teleport into the new room. */
 static void pvehk_changed(unsigned k,uint64_t old_object,uint64_t old_room) {
     uint64_t object=0,room=0;double now=0;
     if((!pvehk_events_on && !pvehk_event_test) || !pslots[k].player || !pnat_fn.time || !pnat_fn.time(&now)) return;
     pvehk_where(k,&object,&room);
     pvehk_event_post(pslots[k].player,PVEHK_EVENT_OBJECT,old_object,object,now);
     pvehk_event_post(pslots[k].player,PVEHK_EVENT_ROOM,old_room,room,now);
+    if((pvehk_events_more || pvehk_event_test) && old_room && room && old_room!=room)
+        pvehk_event_now(k,PVEHK_EVENT_TELEPORT,PVEHK_EVENT_TELEPORT_SIZE,old_room,room,now);
 }
 static void pvehk_enter_install(void) {
     if(pvehk_enter_installed || !pslot_page || !hash_ok(pnat_base+PVEHK_ENTER,PVEHK_ENTER_SIZE,PVEHK_ENTER_SHA)) return;
@@ -408,12 +554,16 @@ static int pdeath_guard_install(void) {
     if(!pres_site_install(PDEATH_GAME_OVER_CALL,PDEATH_GAME_OVER,PDEATH_STUB,(void*)pdeath_game_over,pdeath_guard_patched)) return 0;
     pvehk_poll_pins();       /* before the entry's call site inside 0x731560 is re-pointed */
     pvehk_events_pins();     /* MD's object and room events for a slot's player */
+    event_order_scope_enter=pvehk_deliver_enter;event_order_scope_leave=pvehk_deliver_leave;   /* ...and its due events in its scope */
     pvehk_enter_install();   /* X4's entry of a suited player (above): where this image has it */
     pvehk_fade_install();    /* the fade of an exit or an entry: on the client whose player it is */
     pvehk_zone_install();    /* a flying slot's reference frame: its own environment zone */
+    pvehk_kill_install();    /* a kill by a slot's ship: told to that slot's player */
     pdeath_guard_installed=1;return 1;
 }
 static void pdeath_restore(void) {
+    event_order_scope_enter=NULL;event_order_scope_leave=NULL;
+    pvehk_kill_restore();
     pvehk_zone_restore();
     pvehk_fade_restore();
     pvehk_enter_restore();
@@ -810,7 +960,7 @@ static int pvehk_seat(unsigned k,uint64_t runtime,const char *event) {
     if(!pilot_resolve(s,pdeath_find,pdeath_map,pdeath_player)) return pdeath_fail("vehicle_unresolved");
     pstk_slot_frames[k-1].flight=0;pstk_slot_frames[k-1].flight_known=1;
     if(!pslot_seat(k)) {pdeath_why=pslot_why;return 0;}
-    pfbody_place_seat(k);   /* a suit has no room for a body: P_k gets its place for MD here */
+    pfbody_place_seat(k);   /* P_k's place for MD from this tick on (its body, where the seat has one, comes later) */
     /* The local controls stayed active through the change: the edge the new flight control needs. */
     if(pstk_capturing && pstk_capture_slot==k && pstk_local_active==1) pstk_record_event(PSTK_SPACE,8,1u);
     pdeath_event(event,k);
@@ -835,6 +985,7 @@ static int pvehk_pass(unsigned k,uint64_t tick) {
         pvehk_equip(k,suit);                                            /* its weapon groups, as X4's eject restores them */
         if(!pvehk_seat(k,d->suit,"suited")) return 0;
         pvehk_changed(k,left_object,left_room);                         /* MD: its player changed object and room */
+        pvehk_control(k,1);                                             /* ...and took the suit's controls */
         d->home=home;d->out=2;d->ask=d->ranged=0;d->dock_tick=0;d->arrive=0;d->arrive_room=NULL;++pvehk_outs;
         return 1;
     }
@@ -854,12 +1005,14 @@ static int pvehk_pass(unsigned k,uint64_t tick) {
      * X4 killed the slot's player with its suit and never came out of the teardown (live 12 Nov, both clients spinning in
      * one tick after the home key: SpaceSuit and its Cockpit dead, P_2 dying with no parent, an MD action at the root).
      * Earlier runs went home before the body had settled. */
-    uint64_t left_object=0,left_room=0;pvehk_where(k,&left_object,&left_room);
+    uint64_t left_object=0,left_room=0;unsigned left_class=0x79u;pvehk_where(k,&left_object,&left_room);
+    {uint64_t id=0;pvehk_control_of(suit,&id,&left_class);}
     if(!pfbody_release_slot(k)) {pdeath_why=pfbody_why;return 0;}
     if(!pslot_release(k)) {pdeath_why=pslot_why;return 0;}
     if(pnat_fn.time(&now) && read_local(suit,&vtable,8) && vtable) ((hitn_kill_fn)vtable[PDEATH_KILL_SLOT])(suit,PDEATH_KILL_REMOVED,NULL,now);
     if(!pvehk_seat(k,d->home,"home")) return 0;
     pvehk_changed(k,left_object,left_room);
+    pvehk_control_id(k,0,left_object,left_class);pvehk_control(k,1);   /* off the suit's controls, at its ship's (the arrival is the seat) */
     d->out=0;d->home=0;d->suit=0;d->ask=d->ranged=0;d->dock_tick=0;d->arrive=0;d->arrive_room=NULL;++pvehk_homes;
     return 1;
 }
@@ -874,7 +1027,8 @@ static int pvehk_taken(unsigned k,uint64_t tick) {
     unsigned char *home=d->home?pdeath_find(pdeath_map,d->home,4):NULL;
     if(!home || home==suit || !read_local(x->player+PDEATH_LIFECYCLE,&life,1) || life) return 0;
     if(!read_local(x->player+0x70,&inside,8) || !inside || uics_under(inside,suit) || !uics_under(inside,home)) return 0;
-    uint64_t left_object=0,left_room=0;pvehk_where(k,&left_object,&left_room);
+    uint64_t left_object=0,left_room=0;unsigned left_class=0x79u;pvehk_where(k,&left_object,&left_room);
+    {uint64_t id=0;pvehk_control_of(suit,&id,&left_class);}
     if(!pfbody_release_slot(k)) {pdeath_why=pfbody_why;return -1;}
     if(read_local(suit+PDEATH_LIFECYCLE,&lifecycle,1) && !lifecycle && pslot_controller_has(suit,0,x->controller)==1) {
         if(!pslot_release(k)) {pdeath_why=pslot_why;return -1;}
@@ -882,6 +1036,7 @@ static int pvehk_taken(unsigned k,uint64_t tick) {
     } else pslot_retire(k);
     if(!pvehk_seat(k,d->home,"home")) return -1;
     pvehk_changed(k,left_object,left_room);
+    pvehk_control_id(k,0,left_object,left_class);pvehk_control(k,1);
     d->out=0;d->home=0;d->suit=0;d->ask=d->ranged=0;d->dock_tick=0;++pvehk_homes;++pvehk_taken_in;
     return 1;
 }
@@ -967,7 +1122,8 @@ static int pdeath_status(char *out,size_t capacity) {
                                               pvehk_enter_installed,(long long)pvehk_enters,(long long)pvehk_enters_else);
     if(n>0 && (size_t)n<capacity) n+=snprintf(out+n,capacity-(size_t)n," fade=%d/%lld/%lld",pvehk_fade_installed,
                                               (long long)pvehk_fades_shown,(long long)pvehk_fades_kept);
-    if(n>0 && (size_t)n<capacity) n+=snprintf(out+n,capacity-(size_t)n," events=%d/%lld",pvehk_events_on,(long long)pvehk_events_posted);
+    if(n>0 && (size_t)n<capacity) n+=snprintf(out+n,capacity-(size_t)n," events=%d/%lld/%d/%lld deliver=%lld/%lld kill=%d/%lld",pvehk_events_on,(long long)pvehk_events_posted,pvehk_events_more,(long long)pvehk_events_unscoped,
+                                              (long long)pvehk_delivered_scoped,(long long)pvehk_delivered_plain,pvehk_kill_installed,(long long)pvehk_kills_told);
     if(n>0 && (size_t)n<capacity) n+=snprintf(out+n,capacity-(size_t)n," poll=%d/%lld/%lld",pvehk_poll_on,(long long)pvehk_polls,
                                               (long long)pvehk_poll_entered);
     if(n>0 && (size_t)n<capacity) n+=snprintf(out+n,capacity-(size_t)n," zone=%d/%lld/%lld",pvehk_zone_installed,

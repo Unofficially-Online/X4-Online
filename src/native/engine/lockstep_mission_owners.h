@@ -68,6 +68,7 @@ static int mpp_armed;
 static volatile LONG64 mpp_claims,mpp_claim_gone,mpp_full,mpp_frames,mpp_entered,mpp_inside,mpp_conflicts,mpp_refused,
                        mpp_leave_failed,mpp_calls,mpp_call_refused,mpp_generations,mpp_generated,mpp_pruned,mpp_created;
 static unsigned mpp_depth;        /* frames of the open scope's slot's own cues on the MD stack now */
+static unsigned mpp_depth1;       /* frames of cues slot 1 owns on the MD stack now, outside every scope */
 static unsigned mpp_generating;   /* the slot whose generic offers are being generated now (inside its scope), else 0 */
 static unsigned mpp_story_slot;   /* the slot whose start story is being begun now (inside its scope), else 0 */
 static uint64_t mpp_story_key;    /* ...and the path key of the static cue that begins it */
@@ -204,7 +205,7 @@ static int mpp_hook_install(void) {
 /* The session's end (uirep_restore): the two calls go back; the table stays for the last status row. */
 static void mpp_restore_hook(void) {
     if(!mpp_armed) return;
-    mpp_hook_restored=mpp_hook_uninstall();mpp_generating=0;mpp_depth=0;
+    mpp_hook_restored=mpp_hook_uninstall();mpp_generating=0;mpp_depth=0;mpp_depth1=0;
 }
 /* gate.mpp_generate(k): slot k's generic offers are generated until gate.mpp_generate(0); only inside slot k's call scope. */
 static int mpp_generate(unsigned k) {
@@ -242,6 +243,15 @@ static void mpp_faction_leave(unsigned k) {
  * own (counted in mpp_depth until it leaves). */
 #define MPP_FRAME_OWNED 0x100u
 #define MPP_FRAME_FACTION 0x200u   /* this frame opened its slot's faction (a mission frame inside a piloting scope does too) */
+#define MPP_FRAME_OWNED1 0x400u    /* a frame of a cue slot 1 owns (no scope: the canonical player is slot 1's) */
+/* The player whose own cue's frame runs now, 0 none: what that frame shows and says is that player's alone
+ * (lockstep_md_presentation.h, lockstep_md_media.h, lockstep_speech_local.h). Slot 1's missions too: its frames need no
+ * scope, but its hints, music and calls are not the other players'. */
+static unsigned mpp_show_slot(void) {
+    const unsigned k=pstk_scope_slot;
+    if(k) return k>=2 && mpp_depth?k:0;
+    return mpp_depth1?1u:0u;
+}
 /* gate.mpp_story(k, path): the static cue with this path is slot k's from its next frame on (inside slot k's call scope,
  * one cue per ask). gate.mpp_story(0): the ask is over; 1 when its cue was claimed (or nothing was asked), 0 when no
  * frame of that cue came or the cue was somebody's already. */
@@ -270,7 +280,11 @@ static unsigned mpp_frame_enter(void *cue) {
     if(mpp_story_slot) mpp_story_frame(cue,scope);
     if(!mpp_count) return 0;
     const unsigned k=mpp_slot_of(cue);
-    if(k<2) return 0;   /* nobody's, or slot 1's: the canonical player as it is */
+    if(!k) return 0;   /* nobody's */
+    if(k==1) {         /* slot 1's: the canonical player as it is; what the frame shows and says is slot 1's */
+        if(scope) return 0;
+        ++mpp_depth1;spl_owner_enter(1);return MPP_FRAME_OWNED1;
+    }
     InterlockedIncrement64(&mpp_frames);
     /* The lines an owned frame starts are its owner's (lockstep_speech_local.h): client k hears them, the others do not. */
     if(scope==k) {InterlockedIncrement64(&mpp_inside);++mpp_depth;spl_owner_enter(k);return MPP_FRAME_OWNED|(mpp_faction_enter(k)?MPP_FRAME_FACTION:0u);}
@@ -279,6 +293,7 @@ static unsigned mpp_frame_enter(void *cue) {
     InterlockedIncrement64(&mpp_entered);++mpp_depth;spl_owner_enter(k);return k|MPP_FRAME_OWNED|(mpp_faction_enter(k)?MPP_FRAME_FACTION:0u);
 }
 static void mpp_frame_leave(unsigned code) {
+    if(code&MPP_FRAME_OWNED1) {spl_owner_leave();if(mpp_depth1) --mpp_depth1;return;}
     if(code&MPP_FRAME_OWNED) spl_owner_leave();
     if((code&MPP_FRAME_OWNED) && mpp_depth) --mpp_depth;
     if(code&MPP_FRAME_FACTION) mpp_faction_leave(mpp_faction_open);
@@ -438,7 +453,7 @@ static int mpp_arm(void) {
     if(mpp_armed) return 1;
     if(stats.issued) return 0;   /* before the first tick, as every module the probe arms */
     if(!mpp_hook_install()) return 0;
-    mpp_count=0;memset(mpp_active,0,sizeof(mpp_active));mpp_active_open=0;mpp_depth=0;mpp_generating=0;
+    mpp_count=0;memset(mpp_active,0,sizeof(mpp_active));mpp_active_open=0;mpp_depth=0;mpp_depth1=0;mpp_generating=0;
     mpp_story_slot=0;mpp_story_key=0;mpp_story_missed=0;
     mpp_ai_frames=mpp_ai_entered=mpp_ai_inside=mpp_ai_conflicts=mpp_ai_refused=0;mpp_armed=1;return 1;
 }

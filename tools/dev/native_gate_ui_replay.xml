@@ -111,6 +111,60 @@
       </cue>
       <!-- The mission ends at its player's first zone change and pays: whose money moves (coop: the shared wallet;
            factions mode: the owner's own faction, once mission frames run with its faction). -->
+      <!-- The audit's kill: when this mission's player clears its target, a fragile ownerless scout appears 200 m ahead
+           of its ship; the plan's shots then destroy it. Whose mission hears event_player_killed_object is the result.
+           (event_player_activated_weapon is no shot: it comes when the weapons are taken over at a seat.) -->
+      <cue name="AuditDummy">
+       <conditions><event_player_changed_target/><check_value value="not event.param"/></conditions>
+       <actions>
+        <transform_position name="$Ahead" refposition="player.ship.position" refrotation="player.ship.rotation">
+         <position z="60m"/>
+        </transform_position>
+        <create_ship name="$Dummy" macro="macro.ship_arg_s_scout_01_a_macro" zone="player.zone">
+         <owner exact="faction.ownerless"/>
+         <position value="$Ahead"/>
+        </create_ship>
+        <create_position name="$Seen" space="player.ship" object="$Dummy"/>
+        <set_object_shield object="$Dummy" exact="0"/>
+        <set_object_hull object="$Dummy" exact="1"/>
+        <set_value name="$Until" exact="player.age + 8s"/>
+        <set_player_target object="$Dummy"/>
+        <!-- a wall of the same scouts around it: wherever this client's guns point inside their cone, a shot lands -->
+        <create_group groupname="$Wall"/>
+        <do_all exact="7" counter="$I">
+         <do_all exact="7" counter="$J">
+          <transform_position name="$At" refposition="player.ship.position" refrotation="player.ship.rotation">
+           <position x="($I - 4) * 14m" y="($J - 4) * 14m" z="75m"/>
+          </transform_position>
+          <create_ship name="$One" macro="macro.ship_arg_s_scout_01_a_macro" zone="player.zone">
+           <owner exact="faction.ownerless"/>
+           <position value="$At"/>
+          </create_ship>
+          <set_object_shield object="$One" exact="0"/>
+          <set_object_hull object="$One" exact="1"/>
+          <add_to_group groupname="$Wall" object="$One"/>
+         </do_all>
+        </do_all>
+        <debug_text text="'[X4LAN] MPP_AUDIT_DUMMY dummy=%s player=%s ship=%s distance=%s hull=%s seen=%s time=%s'.[$Dummy, player.entity, player.ship, $Dummy.distanceto.{player.ship}, $Dummy.hull, $Seen, player.age]"/>
+       </actions>
+       <cues>
+        <cue name="AuditDummyTrack" instantiate="true" checkinterval="1s">
+         <conditions><check_value value="$Dummy.exists and player.age lt $Until"/></conditions>
+         <actions>
+          <create_position name="$Seen" space="player.ship" object="$Dummy"/>
+          <debug_text text="'[X4LAN] MPP_AUDIT_DUMMY_TRACK dummy=%s hull=%s shield=%s seen=%s speed=%s time=%s'.[$Dummy, $Dummy.hull, $Dummy.shield, $Seen, player.ship.speed, player.age]"/>
+         </actions>
+        </cue>
+        <cue name="AuditWallDead" instantiate="true">
+         <conditions><event_object_destroyed group="$Wall"/></conditions>
+         <actions><debug_text text="'[X4LAN] MPP_AUDIT_WALL_DEAD object=%s killer=%s method=%s player=%s left=%s time=%s'.[event.object, event.param, event.param2, player.entity, $Wall.count, player.age]"/></actions>
+        </cue>
+        <cue name="AuditDummyDead">
+         <conditions><event_object_destroyed object="$Dummy"/></conditions>
+         <actions><debug_text text="'[X4LAN] MPP_AUDIT_DUMMY_DEAD killer=%s method=%s player=%s time=%s'.[event.param, event.param2, player.entity, player.age]"/></actions>
+        </cue>
+       </cues>
+      </cue>
       <cue name="FixtureReward">
        <conditions><event_object_changed_zone object="player.entity"/></conditions>
        <actions>
@@ -119,6 +173,213 @@
         <debug_text text="'[X4LAN] UI_MISSIONS_MD_REWARD player=%s faction=%s money=%s->%s time=%s'.[player.entity, faction.player, $Before, player.money, player.age]"/>
         <remove_mission cue="$Mission" type="completed"/>
        </actions>
+      </cue>
+      <!-- The audit (a playtest of 15 Nov: a slot's own story stood still because one event never came for its
+           player): every player event the stock mission scripts wait for, as a mission of this player hears it. One
+           row per event; a scripted run does the same things as slot 1 and as slot 2 and the rows are compared. -->
+      <cue name="Audit_Object_changed_sector" instantiate="true">
+       <conditions><event_object_changed_sector object="player.entity"/></conditions>
+       <actions><debug_text text="'[X4LAN] MPP_AUDIT event=object_changed_sector player=%s ship=%s on=%s p=%s time=%s'.[player.entity, @player.occupiedship, @event.object, @event.param, player.age]"/></actions>
+      </cue>
+      <cue name="Audit_Object_changed_room" instantiate="true">
+       <conditions><event_object_changed_room object="player.entity"/></conditions>
+       <actions><debug_text text="'[X4LAN] MPP_AUDIT event=object_changed_room player=%s ship=%s on=%s p=%s time=%s'.[player.entity, @player.occupiedship, @event.object, @event.param, player.age]"/></actions>
+      </cue>
+      <cue name="Audit_Object_changed_object" instantiate="true">
+       <conditions><event_object_changed_object object="player.entity"/></conditions>
+       <actions><debug_text text="'[X4LAN] MPP_AUDIT event=object_changed_object player=%s ship=%s on=%s p=%s time=%s'.[player.entity, @player.occupiedship, @event.object, @event.param, player.age]"/></actions>
+      </cue>
+      <cue name="Audit_Object_signalled" instantiate="true">
+       <conditions><event_object_signalled object="player.entity"/></conditions>
+       <actions><debug_text text="'[X4LAN] MPP_AUDIT event=object_signalled player=%s ship=%s on=%s p=%s time=%s'.[player.entity, @player.occupiedship, @event.object, @event.param, player.age]"/></actions>
+      </cue>
+      <cue name="Audit_Object_destroyed" instantiate="true">
+       <conditions><event_object_destroyed object="player.entity"/></conditions>
+       <actions><debug_text text="'[X4LAN] MPP_AUDIT event=object_destroyed player=%s ship=%s on=%s p=%s time=%s'.[player.entity, @player.occupiedship, @event.object, @event.param, player.age]"/></actions>
+      </cue>
+      <cue name="Audit_Object_changed_zone" instantiate="true">
+       <conditions><event_object_changed_zone object="player.entity"/></conditions>
+       <actions><debug_text text="'[X4LAN] MPP_AUDIT event=object_changed_zone player=%s ship=%s on=%s p=%s time=%s'.[player.entity, @player.occupiedship, @event.object, @event.param, player.age]"/></actions>
+      </cue>
+      <cue name="Audit_Object_docked" instantiate="true">
+       <conditions><event_object_docked object="player.entity"/></conditions>
+       <actions><debug_text text="'[X4LAN] MPP_AUDIT event=object_docked player=%s ship=%s on=%s p=%s time=%s'.[player.entity, @player.occupiedship, @event.object, @event.param, player.age]"/></actions>
+      </cue>
+      <cue name="Audit_Object_undocked" instantiate="true">
+       <conditions><event_object_undocked object="player.entity"/></conditions>
+       <actions><debug_text text="'[X4LAN] MPP_AUDIT event=object_undocked player=%s ship=%s on=%s p=%s time=%s'.[player.entity, @player.occupiedship, @event.object, @event.param, player.age]"/></actions>
+      </cue>
+      <cue name="Audit_Object_docking_started" instantiate="true">
+       <conditions><event_object_docking_started object="player.entity"/></conditions>
+       <actions><debug_text text="'[X4LAN] MPP_AUDIT event=object_docking_started player=%s ship=%s on=%s p=%s time=%s'.[player.entity, @player.occupiedship, @event.object, @event.param, player.age]"/></actions>
+      </cue>
+      <cue name="Audit_Object_dock_assigned" instantiate="true">
+       <conditions><event_object_dock_assigned object="player.entity"/></conditions>
+       <actions><debug_text text="'[X4LAN] MPP_AUDIT event=object_dock_assigned player=%s ship=%s on=%s p=%s time=%s'.[player.entity, @player.occupiedship, @event.object, @event.param, player.age]"/></actions>
+      </cue>
+      <cue name="Audit_Object_enemy_found" instantiate="true">
+       <conditions><event_object_enemy_found object="player.entity"/></conditions>
+       <actions><debug_text text="'[X4LAN] MPP_AUDIT event=object_enemy_found player=%s ship=%s on=%s p=%s time=%s'.[player.entity, @player.occupiedship, @event.object, @event.param, player.age]"/></actions>
+      </cue>
+      <cue name="Audit_Object_control_entity_added" instantiate="true">
+       <conditions><event_control_entity_added object="player.entity"/></conditions>
+       <actions><debug_text text="'[X4LAN] MPP_AUDIT event=object_control_entity_added player=%s ship=%s on=%s p=%s time=%s'.[player.entity, @player.occupiedship, @event.object, @event.param, player.age]"/></actions>
+      </cue>
+      <cue name="Audit_Object_control_entity_removed" instantiate="true">
+       <conditions><event_control_entity_removed object="player.entity"/></conditions>
+       <actions><debug_text text="'[X4LAN] MPP_AUDIT event=object_control_entity_removed player=%s ship=%s on=%s p=%s time=%s'.[player.entity, @player.occupiedship, @event.object, @event.param, player.age]"/></actions>
+      </cue>
+      <cue name="Audit_inventory_added" instantiate="true">
+       <conditions><event_inventory_added object="player.entity"/></conditions>
+       <actions><debug_text text="'[X4LAN] MPP_AUDIT event=inventory_added player=%s ship=%s on=%s p=%s time=%s'.[player.entity, @player.occupiedship, @event.object, @event.param, player.age]"/></actions>
+      </cue>
+      <cue name="Audit_inventory_removed" instantiate="true">
+       <conditions><event_inventory_removed object="player.entity"/></conditions>
+       <actions><debug_text text="'[X4LAN] MPP_AUDIT event=inventory_removed player=%s ship=%s on=%s p=%s time=%s'.[player.entity, @player.occupiedship, @event.object, @event.param, player.age]"/></actions>
+      </cue>
+      <cue name="Audit_long_range_scan_sent" instantiate="true">
+       <conditions><event_long_range_scan_sent object="player.entity"/></conditions>
+       <actions><debug_text text="'[X4LAN] MPP_AUDIT event=long_range_scan_sent player=%s ship=%s on=%s p=%s time=%s'.[player.entity, @player.occupiedship, @event.object, @event.param, player.age]"/></actions>
+      </cue>
+      <cue name="Audit_Player_signal_unlock_finished" instantiate="true">
+       <conditions><event_player_signal_unlock_finished/></conditions>
+       <actions><debug_text text="'[X4LAN] MPP_AUDIT event=player_signal_unlock_finished player=%s ship=%s on=%s p=%s time=%s'.[player.entity, @player.occupiedship, @event.object, @event.param, player.age]"/></actions>
+      </cue>
+      <cue name="Audit_Player_repaired_signal_leak" instantiate="true">
+       <conditions><event_player_repaired_signal_leak/></conditions>
+       <actions><debug_text text="'[X4LAN] MPP_AUDIT event=player_repaired_signal_leak player=%s ship=%s on=%s p=%s time=%s'.[player.entity, @player.occupiedship, @event.object, @event.param, player.age]"/></actions>
+      </cue>
+      <cue name="Audit_Player_teleport_successful" instantiate="true">
+       <conditions><event_player_teleport_successful/></conditions>
+       <actions><debug_text text="'[X4LAN] MPP_AUDIT event=player_teleport_successful player=%s ship=%s on=%s p=%s time=%s'.[player.entity, @player.occupiedship, @event.object, @event.param, player.age]"/></actions>
+      </cue>
+      <cue name="Audit_Player_relation_changed" instantiate="true">
+       <conditions><event_player_relation_changed/></conditions>
+       <actions><debug_text text="'[X4LAN] MPP_AUDIT event=player_relation_changed player=%s ship=%s on=%s p=%s time=%s'.[player.entity, @player.occupiedship, @event.object, @event.param, player.age]"/></actions>
+      </cue>
+      <cue name="Audit_Player_started_control" instantiate="true">
+       <conditions><event_player_started_control/></conditions>
+       <actions><debug_text text="'[X4LAN] MPP_AUDIT event=player_started_control player=%s ship=%s on=%s p=%s time=%s'.[player.entity, @player.occupiedship, @event.object, @event.param, player.age]"/></actions>
+      </cue>
+      <cue name="Audit_Player_changed_activity" instantiate="true">
+       <conditions><event_player_changed_activity/></conditions>
+       <actions><debug_text text="'[X4LAN] MPP_AUDIT event=player_changed_activity player=%s ship=%s on=%s p=%s time=%s'.[player.entity, @player.occupiedship, @event.object, @event.param, player.age]"/></actions>
+      </cue>
+      <cue name="Audit_Player_interaction" instantiate="true">
+       <conditions><event_player_interaction/></conditions>
+       <actions><debug_text text="'[X4LAN] MPP_AUDIT event=player_interaction player=%s ship=%s on=%s p=%s time=%s'.[player.entity, @player.occupiedship, @event.object, @event.param, player.age]"/></actions>
+      </cue>
+      <cue name="Audit_Player_changed_target" instantiate="true">
+       <conditions><event_player_changed_target/></conditions>
+       <actions><debug_text text="'[X4LAN] MPP_AUDIT event=player_changed_target player=%s ship=%s on=%s p=%s time=%s'.[player.entity, @player.occupiedship, @event.object, @event.param, player.age]"/></actions>
+      </cue>
+      <cue name="Audit_Player_stopped_control" instantiate="true">
+       <conditions><event_player_stopped_control/></conditions>
+       <actions><debug_text text="'[X4LAN] MPP_AUDIT event=player_stopped_control player=%s ship=%s on=%s p=%s time=%s'.[player.entity, @player.occupiedship, @event.object, @event.param, player.age]"/></actions>
+      </cue>
+      <cue name="Audit_Player_bomb_attached" instantiate="true">
+       <conditions><event_player_bomb_attached/></conditions>
+       <actions><debug_text text="'[X4LAN] MPP_AUDIT event=player_bomb_attached player=%s ship=%s on=%s p=%s time=%s'.[player.entity, @player.occupiedship, @event.object, @event.param, player.age]"/></actions>
+      </cue>
+      <cue name="Audit_Player_killed_object" instantiate="true">
+       <conditions><event_player_killed_object/></conditions>
+       <actions><debug_text text="'[X4LAN] MPP_AUDIT event=player_killed_object player=%s ship=%s on=%s p=%s time=%s'.[player.entity, @player.occupiedship, @event.object, @event.param, player.age]"/></actions>
+      </cue>
+      <cue name="Audit_Player_opened_crate" instantiate="true">
+       <conditions><event_player_opened_crate/></conditions>
+       <actions><debug_text text="'[X4LAN] MPP_AUDIT event=player_opened_crate player=%s ship=%s on=%s p=%s time=%s'.[player.entity, @player.occupiedship, @event.object, @event.param, player.age]"/></actions>
+      </cue>
+      <cue name="Audit_Player_travelmode_started" instantiate="true">
+       <conditions><event_player_travelmode_started/></conditions>
+       <actions><debug_text text="'[X4LAN] MPP_AUDIT event=player_travelmode_started player=%s ship=%s on=%s p=%s time=%s'.[player.entity, @player.occupiedship, @event.object, @event.param, player.age]"/></actions>
+      </cue>
+      <cue name="Audit_Player_travelmode_stopped" instantiate="true">
+       <conditions><event_player_travelmode_stopped/></conditions>
+       <actions><debug_text text="'[X4LAN] MPP_AUDIT event=player_travelmode_stopped player=%s ship=%s on=%s p=%s time=%s'.[player.entity, @player.occupiedship, @event.object, @event.param, player.age]"/></actions>
+      </cue>
+      <cue name="Audit_Player_attacked_object" instantiate="true">
+       <conditions><event_player_attacked_object/></conditions>
+       <actions><debug_text text="'[X4LAN] MPP_AUDIT event=player_attacked_object player=%s ship=%s on=%s p=%s time=%s'.[player.entity, @player.occupiedship, @event.object, @event.param, player.age]"/></actions>
+      </cue>
+      <cue name="Audit_Player_activated_weapon" instantiate="true">
+       <conditions><event_player_activated_weapon/></conditions>
+       <actions><debug_text text="'[X4LAN] MPP_AUDIT event=player_activated_weapon player=%s ship=%s on=%s p=%s time=%s'.[player.entity, @player.occupiedship, @event.object, @event.param, player.age]"/></actions>
+      </cue>
+      <cue name="Audit_Player_collected_ware" instantiate="true">
+       <conditions><event_player_collected_ware/></conditions>
+       <actions><debug_text text="'[X4LAN] MPP_AUDIT event=player_collected_ware player=%s ship=%s on=%s p=%s time=%s'.[player.entity, @player.occupiedship, @event.object, @event.param, player.age]"/></actions>
+      </cue>
+      <cue name="Audit_Player_trade_completed" instantiate="true">
+       <conditions><event_player_trade_completed/></conditions>
+       <actions><debug_text text="'[X4LAN] MPP_AUDIT event=player_trade_completed player=%s ship=%s on=%s p=%s time=%s'.[player.entity, @player.occupiedship, @event.object, @event.param, player.age]"/></actions>
+      </cue>
+      <cue name="Audit_Player_discovered_object" instantiate="true">
+       <conditions><event_player_discovered_object/></conditions>
+       <actions><debug_text text="'[X4LAN] MPP_AUDIT event=player_discovered_object player=%s ship=%s on=%s p=%s time=%s'.[player.entity, @player.occupiedship, @event.object, @event.param, player.age]"/></actions>
+      </cue>
+      <cue name="Audit_Player_boost_started" instantiate="true">
+       <conditions><event_player_boost_started/></conditions>
+       <actions><debug_text text="'[X4LAN] MPP_AUDIT event=player_boost_started player=%s ship=%s on=%s p=%s time=%s'.[player.entity, @player.occupiedship, @event.object, @event.param, player.age]"/></actions>
+      </cue>
+      <cue name="Audit_Player_boost_stopped" instantiate="true">
+       <conditions><event_player_boost_stopped/></conditions>
+       <actions><debug_text text="'[X4LAN] MPP_AUDIT event=player_boost_stopped player=%s ship=%s on=%s p=%s time=%s'.[player.entity, @player.occupiedship, @event.object, @event.param, player.age]"/></actions>
+      </cue>
+      <cue name="Audit_Player_activated_weapongroup" instantiate="true">
+       <conditions><event_player_activated_weapongroup/></conditions>
+       <actions><debug_text text="'[X4LAN] MPP_AUDIT event=player_activated_weapongroup player=%s ship=%s on=%s p=%s time=%s'.[player.entity, @player.occupiedship, @event.object, @event.param, player.age]"/></actions>
+      </cue>
+      <cue name="Audit_Player_hacked_object" instantiate="true">
+       <conditions><event_player_hacked_object/></conditions>
+       <actions><debug_text text="'[X4LAN] MPP_AUDIT event=player_hacked_object player=%s ship=%s on=%s p=%s time=%s'.[player.entity, @player.occupiedship, @event.object, @event.param, player.age]"/></actions>
+      </cue>
+      <cue name="Audit_Player_collected_ammo" instantiate="true">
+       <conditions><event_player_collected_ammo/></conditions>
+       <actions><debug_text text="'[X4LAN] MPP_AUDIT event=player_collected_ammo player=%s ship=%s on=%s p=%s time=%s'.[player.entity, @player.occupiedship, @event.object, @event.param, player.age]"/></actions>
+      </cue>
+      <cue name="Audit_Player_ejected" instantiate="true">
+       <conditions><event_player_ejected/></conditions>
+       <actions><debug_text text="'[X4LAN] MPP_AUDIT event=player_ejected player=%s ship=%s on=%s p=%s time=%s'.[player.entity, @player.occupiedship, @event.object, @event.param, player.age]"/></actions>
+      </cue>
+      <cue name="Audit_Player_ejecting" instantiate="true">
+       <conditions><event_player_ejecting/></conditions>
+       <actions><debug_text text="'[X4LAN] MPP_AUDIT event=player_ejecting player=%s ship=%s on=%s p=%s time=%s'.[player.entity, @player.occupiedship, @event.object, @event.param, player.age]"/></actions>
+      </cue>
+      <cue name="Audit_Player_repaired_object" instantiate="true">
+       <conditions><event_player_repaired_object/></conditions>
+       <actions><debug_text text="'[X4LAN] MPP_AUDIT event=player_repaired_object player=%s ship=%s on=%s p=%s time=%s'.[player.entity, @player.occupiedship, @event.object, @event.param, player.age]"/></actions>
+      </cue>
+      <cue name="Audit_Player_ship_hit" instantiate="true">
+       <conditions><event_player_ship_hit/></conditions>
+       <actions><debug_text text="'[X4LAN] MPP_AUDIT event=player_ship_hit player=%s ship=%s on=%s p=%s time=%s'.[player.entity, @player.occupiedship, @event.object, @event.param, player.age]"/></actions>
+      </cue>
+      <cue name="Audit_Player_launched_missile" instantiate="true">
+       <conditions><event_player_launched_missile/></conditions>
+       <actions><debug_text text="'[X4LAN] MPP_AUDIT event=player_launched_missile player=%s ship=%s on=%s p=%s time=%s'.[player.entity, @player.occupiedship, @event.object, @event.param, player.age]"/></actions>
+      </cue>
+      <cue name="Audit_Player_money_updated" instantiate="true">
+       <conditions><event_player_money_updated/></conditions>
+       <actions><debug_text text="'[X4LAN] MPP_AUDIT event=player_money_updated player=%s ship=%s on=%s p=%s time=%s'.[player.entity, @player.occupiedship, @event.object, @event.param, player.age]"/></actions>
+      </cue>
+      <cue name="Audit_Player_entered_gate" instantiate="true">
+       <conditions><event_player_entered_gate/></conditions>
+       <actions><debug_text text="'[X4LAN] MPP_AUDIT event=player_entered_gate player=%s ship=%s on=%s p=%s time=%s'.[player.entity, @player.occupiedship, @event.object, @event.param, player.age]"/></actions>
+      </cue>
+      <cue name="Audit_Player_out_of_ammo" instantiate="true">
+       <conditions><event_player_out_of_ammo/></conditions>
+       <actions><debug_text text="'[X4LAN] MPP_AUDIT event=player_out_of_ammo player=%s ship=%s on=%s p=%s time=%s'.[player.entity, @player.occupiedship, @event.object, @event.param, player.age]"/></actions>
+      </cue>
+      <cue name="Audit_Player_owned_killed_object" instantiate="true">
+       <conditions><event_player_owned_killed_object/></conditions>
+       <actions><debug_text text="'[X4LAN] MPP_AUDIT event=player_owned_killed_object player=%s ship=%s on=%s p=%s time=%s'.[player.entity, @player.occupiedship, @event.object, @event.param, player.age]"/></actions>
+      </cue>
+      <cue name="Audit_Player_owned_attacked_object" instantiate="true">
+       <conditions><event_player_owned_attacked_object/></conditions>
+       <actions><debug_text text="'[X4LAN] MPP_AUDIT event=player_owned_attacked_object player=%s ship=%s on=%s p=%s time=%s'.[player.entity, @player.occupiedship, @event.object, @event.param, player.age]"/></actions>
+      </cue>
+      <cue name="Audit_Player_signal_unlock_started" instantiate="true">
+       <conditions><event_player_signal_unlock_started/></conditions>
+       <actions><debug_text text="'[X4LAN] MPP_AUDIT event=player_signal_unlock_started player=%s ship=%s on=%s p=%s time=%s'.[player.entity, @player.occupiedship, @event.object, @event.param, player.age]"/></actions>
       </cue>
      </cues>
     </cue>

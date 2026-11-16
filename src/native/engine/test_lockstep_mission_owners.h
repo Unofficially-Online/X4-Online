@@ -96,10 +96,15 @@ static void test_mission_owners(void) {
     mpp_armed=0;assert(!mpp_call_enter(2) && mpp_call_refused==4 && !mpp_calls);
     assert(!mpp_claim(2,0x1615a0));                                                /* not armed: no claim */
     {char out[768];mpp_armed=1;assert(mpp_status(out,sizeof(out))>0 && strstr(out,"armed=1 owners=1 ") && strstr(out," refused=1 "));}
-    /* Slot 1's claim: an owner for the lists, never a scope. */
-    {   mpp_armed=1;mpp_count=0;mpp_claim_id(1,0x1615a0);const LONG64 frames=mpp_frames;
-        assert(mpp_slot_of(sub)==1 && !mpp_frame_enter(sub) && mpp_frames==frames);
-        mpp_count=0;}
+    /* Slot 1's claim: an owner for the lists and for what its frames show and say, never a scope. */
+    {   mpp_armed=1;mpp_count=0;mpp_claim_id(1,0x1615a0);const LONG64 frames=mpp_frames;const unsigned scope=pstk_scope_slot;
+        pstk_scope_slot=0;assert(mpp_slot_of(sub)==1 && !mpp_show_slot());
+        {const unsigned c=mpp_frame_enter(sub);assert(c==MPP_FRAME_OWNED1 && mpp_frames==frames && mpp_depth1==1 && mpp_show_slot()==1 && !pstk_scope_slot);
+         {const unsigned inner=mpp_frame_enter(sub);assert(inner==MPP_FRAME_OWNED1 && mpp_depth1==2);mpp_frame_leave(inner);assert(mpp_depth1==1);}
+         mpp_frame_leave(c);assert(!mpp_depth1 && !mpp_show_slot());}
+        pstk_scope_slot=3;assert(!mpp_frame_enter(sub) && !mpp_depth1 && !mpp_show_slot());   /* inside another slot's scope: as it is */
+        pstk_scope_slot=2;mpp_depth=1;assert(mpp_show_slot()==2);mpp_depth=0;assert(!mpp_show_slot());
+        pstk_scope_slot=scope;mpp_count=0;}
     /* The active mission per slot: a planted manager with three missions (IDs 0x51, 0x52, 0x53), slot 1's active one 0x52. */
     {   static _Alignas(16) unsigned char manager[0x400],list[UIMIS_MISSION_SIZE*3];
         unsigned char *const base=pnat_base;uint64_t kept=0;void *m=manager;uint64_t v;

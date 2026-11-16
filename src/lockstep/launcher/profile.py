@@ -8,7 +8,11 @@ import os
 from pathlib import Path
 import shutil
 
-PROFILES = (45850, 45851, 45853, 45854, 45855, 45856, 45857, 45858)
+ALL_PROFILES = (45850, 45851, 45853, 45854, 45855, 45856, 45857, 45858)
+# A second session on the same PC beside a running one takes its profiles from further down the list: the environment
+# variable X4LS_FIRST_PROFILE is the index its client 1 starts at (2: clients 1 and 2 use 45853 and 45854).
+FIRST_PROFILE = max(0, min(len(ALL_PROFILES) - 1, int(os.environ.get('X4LS_FIRST_PROFILE', '0') or 0)))
+PROFILES = ALL_PROFILES[FIRST_PROFILE:] + ALL_PROFILES[:FIRST_PROFILE]
 CAPTURE_PROFILE = 45841  # tools/dev/native_gate_snapshot.lua only saves inside .../45841/save
 SNAPSHOT_SLOT = 'save_009.xml.gz'
 

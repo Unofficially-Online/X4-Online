@@ -294,7 +294,9 @@ static void test_pilot_death_foot_block(unsigned char *region,unsigned char *inp
             {   const LONG64 marks=pfbody_marks;const pfbody_mark_fn mark_was=pfbody_mark;void (*const unplace_was)(unsigned char *)=pslot_unplace;
                 const int roomless=s->roomless;const unsigned char in_was=test_pslot_ship2[PFBODY_PLACED],p_was=p2[PFBODY_PLACED];
                 pfbody_mark=test_pfbody_mark;pslot_unplace=pfbody_unplace;p2[PFBODY_PLACED]=0;
-                s->roomless=0;test_pslot_ship2[PFBODY_PLACED]=1;pfbody_place_seat(2);assert(!p2[PFBODY_PLACED] && pfbody_marks==marks);
+                /* a seat with a room too, from the tick of the seat (its body comes later); once */
+                s->roomless=0;test_pslot_ship2[PFBODY_PLACED]=1;pfbody_place_seat(2);assert(p2[PFBODY_PLACED]==1 && pfbody_marks==marks+1);
+                pfbody_place_seat(2);assert(pfbody_marks==marks+1);p2[PFBODY_PLACED]=0;InterlockedExchange64(&pfbody_marks,marks);
                 s->roomless=1;test_pslot_ship2[PFBODY_PLACED]=0;pfbody_place_seat(2);assert(!p2[PFBODY_PLACED] && pfbody_marks==marks);
                 test_pslot_ship2[PFBODY_PLACED]=1;pfbody_place_seat(2);pfbody_place_seat(1);assert(p2[PFBODY_PLACED]==1 && pfbody_marks==marks+1);
                 pfbody_unplace(p2);assert(!p2[PFBODY_PLACED]);
@@ -365,11 +367,20 @@ static void test_pilot_death_foot_block(unsigned char *region,unsigned char *inp
             kept=pslots[2];memcpy(ship+8,&a,8);memcpy(room+8,&b,8);
             pslots[2].seated=1;pslots[2].ship=ship;pslots[2].room=room;pslots[2].player=body;
             pvehk_event_test=test_pdf_post;test_pdf_post_n=0;
-            pvehk_changed(2,0x999,0x888);
-            assert(test_pdf_post_n==2 && test_pdf_posts[0].player==body && test_pdf_posts[0].vtable==PVEHK_EVENT_OBJECT && test_pdf_posts[0].was==0x999 &&
-                   test_pdf_posts[0].is==a && test_pdf_posts[1].vtable==PVEHK_EVENT_ROOM && test_pdf_posts[1].was==0x888 && test_pdf_posts[1].is==b);
-            pvehk_changed(2,a,b);assert(test_pdf_post_n==2);                       /* where it was already */
-            pvehk_changed(2,0,0x888);assert(test_pdf_post_n==3 && test_pdf_posts[2].vtable==PVEHK_EVENT_ROOM);   /* no ship before */
+            pvehk_changed(2,0x999,0x888);   /* the object, the room, then the teleport into the new room */
+            assert(test_pdf_post_n==3 && test_pdf_posts[0].player==body && test_pdf_posts[0].vtable==PVEHK_EVENT_OBJECT && test_pdf_posts[0].was==0x999 &&
+                   test_pdf_posts[0].is==a && test_pdf_posts[1].vtable==PVEHK_EVENT_ROOM && test_pdf_posts[1].was==0x888 && test_pdf_posts[1].is==b &&
+                   test_pdf_posts[2].vtable==PVEHK_EVENT_TELEPORT && test_pdf_posts[2].was==0x888 && test_pdf_posts[2].is==b);
+            pvehk_changed(2,a,b);assert(test_pdf_post_n==3);                       /* where it was already */
+            test_pdf_post_n=0;pvehk_changed(2,0,0x888);assert(test_pdf_post_n==2 && test_pdf_posts[0].vtable==PVEHK_EVENT_ROOM);   /* no ship before */
+            /* the controls: started and stopped with the ship's ID (its class is X4's to say; none in a test) */
+            test_pdf_post_n=0;pvehk_control(2,1);pvehk_control(2,0);pvehk_control_id(2,0,0x555,7);pvehk_control(1,1);
+            assert(test_pdf_post_n==3 && test_pdf_posts[0].vtable==PVEHK_EVENT_CONTROL_ON && test_pdf_posts[0].was==a && test_pdf_posts[1].vtable==PVEHK_EVENT_CONTROL_OFF &&
+                   test_pdf_posts[1].was==a && test_pdf_posts[2].vtable==PVEHK_EVENT_CONTROL_OFF && test_pdf_posts[2].was==0x555 && test_pdf_posts[2].is==7);
+            /* a kill: by slot 2's ship it is told to slot 2's player; by any other object (player 1's ship, an NPC) not here */
+            test_pdf_post_n=0;assert(pvehk_killed(pslots[2].ship,0x999,3)==2 && test_pdf_post_n==1 && test_pdf_posts[0].vtable==PVEHK_EVENT_KILLED &&
+                                     test_pdf_posts[0].was==3 && test_pdf_posts[0].is==0x999);
+            assert(!pvehk_killed(pslots[1].ship,0x999,3) && !pvehk_killed((unsigned char*)&kept,0x999,3) && !pvehk_killed(pslots[2].ship,0,3) && test_pdf_post_n==1);
             pslots[2]=kept;pvehk_event_test=NULL;InterlockedExchange64(&pvehk_events_posted,posted);
         }
         *(void**)(test_pslot_ship2+0x70)=parent_was;test_pdeath_ids[2]=0;memset(&pstk_build,0,sizeof(pstk_build));

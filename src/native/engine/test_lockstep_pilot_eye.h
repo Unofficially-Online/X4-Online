@@ -110,6 +110,19 @@ static void test_pilot_eye(void) {
     {float out[16];test_peye_call6(out,1);assert(test_peye_close(out,test_peye_seat1,16,0) && peye_poses==3);}   /* outside: X4's own */
     InterlockedExchange(&pres_open,1);peye_leave();InterlockedExchange(&pres_open,0);
     assert(!memcmp(before,test_peye_p1,sizeof(before)) && !memcmp(fpc_before,test_peye_fpc,sizeof(fpc_before)) && !peye_lost && peye_scopes==1);
+    /* The frame thread's bank, the other index between two swaps: the same pose there in its own block; both pointers back
+     * at the exit. The same bank again: nothing. */
+    {   unsigned char *view0=test_peye_p1+PRES_VIEW_CACHE,*none=NULL;const LONG64 mains=peye_main_scopes;
+        static unsigned char before0[sizeof(test_peye_p1)];
+        memcpy(view0+PEYE_VIEW_BLOCK,&published,8);memcpy(before0,test_peye_p1,sizeof(before0));
+        peye_enter(test_peye_p1,view,1,&s,test_peye_room1);
+        peye_enter_main(view,1);assert(!peye_main_published && peye_main_scopes==mains);
+        peye_enter_main(view0,0);assert(peye_main_published && peye_main_scopes==mains+1);
+        {float *b0=NULL,*b1=NULL;memcpy(&b0,view0+PEYE_VIEW_BLOCK,8);memcpy(&b1,view+PEYE_VIEW_BLOCK,8);
+         assert(b0==peye_block[0] && b1==peye_block[1] && test_peye_close(b0,test_peye_seat2,16,1e-5f));}
+        peye_leave();assert(!peye_main_published && !memcmp(before0,test_peye_p1,sizeof(before0)) && !peye_lost);
+        memcpy(view0+PEYE_VIEW_BLOCK,&none,8);InterlockedExchange64(&peye_scopes,1);InterlockedExchange64(&peye_main_scopes,mains);
+    }
     /* A block the engine replaced in the scope stays the engine's (lost); a NULL block is identity with D. */
     {   unsigned char *engine=(unsigned char*)test_peye_engine_block,*none=NULL;
         peye_enter(test_peye_p1,view,1,&s,test_peye_room1);memcpy(view+PEYE_VIEW_BLOCK,&engine,8);peye_leave();
@@ -148,6 +161,26 @@ static void test_pilot_eye(void) {
             float *block=NULL;memcpy(&block,view+PEYE_VIEW_BLOCK,8);memcpy(want,test_peye_seat2,64);   /* the published pose's w lanes */
             for(unsigned i=0;i<4;i++) want[4*i+3]=test_peye_published[4*i+3];
             assert(block==peye_block[1] && test_peye_close(block,want,16,1e-6f));}
+        /* The HUD's anchor scene (peye_anchor_enter): the camera's anchor component, a child of the player with a
+         * UIAnchorController: its published pose in both banks is the identity for the scope (the w lanes kept), the
+         * engine's pointers back after it; a scene of another parent or another controller is left alone. */
+        {   static unsigned char scene[0x300],ctl[0x10],cam[0x800];static __attribute__((aligned(16))) float lean[2][16];
+            void *vt=pnat_base+PEYE_UI_ANCHOR_VTABLE,*c=ctl,*sc=scene,*p=test_peye_p1,*b[2]={lean[0],lean[1]},*seen=NULL,*other=test_peye_p2;
+            const LONG64 scopes=peye_anchor_scopes,lost=peye_lost;
+            for(unsigned i=0;i<2;i++) {peye_identity(lean[i]);lean[i][4]=0.995f;lean[i][5]=0.103f;lean[i][8]=-0.103f;lean[i][9]=0.995f;lean[i][3]=0.5f;}
+            memcpy(ctl,&vt,8);memcpy(scene+PRES_PARENT,&p,8);memcpy(scene+PEYE_MOVEMENT,&c,8);memcpy(cam+PEYE_CAMERA_ANCHOR,&sc,8);
+            memcpy(scene+PRES_VIEW_CACHE+PEYE_VIEW_BLOCK,&b[0],8);memcpy(scene+PRES_VIEW_CACHE+PRES_VIEW_STRIDE+PEYE_VIEW_BLOCK,&b[1],8);
+            peye_anchor_enter(test_peye_p1,cam);assert(peye_anchor_published==3 && peye_anchor_scopes==scopes+1);
+            for(unsigned i=0;i<2;i++) {
+                memcpy(&seen,scene+PRES_VIEW_CACHE+i*PRES_VIEW_STRIDE+PEYE_VIEW_BLOCK,8);
+                assert(seen==(void*)peye_anchor_block[i] && peye_anchor_block[i][4]==1.0f && peye_anchor_block[i][5]==0.0f && peye_anchor_block[i][3]==0.5f);
+            }
+            peye_anchor_leave();assert(!peye_anchor_published && peye_lost==lost);
+            for(unsigned i=0;i<2;i++) {memcpy(&seen,scene+PRES_VIEW_CACHE+i*PRES_VIEW_STRIDE+PEYE_VIEW_BLOCK,8);assert(seen==b[i]);}
+            memcpy(scene+PRES_PARENT,&other,8);peye_anchor_enter(test_peye_p1,cam);assert(!peye_anchor_published);memcpy(scene+PRES_PARENT,&p,8);
+            vt=(void*)0x1234;memcpy(ctl,&vt,8);peye_anchor_enter(test_peye_p1,cam);assert(!peye_anchor_published && peye_anchor_scopes==scopes+1);
+            InterlockedExchange64(&peye_anchor_scopes,scopes);
+        }
         InterlockedExchange(&pres_open,0);
         {float out[16];test_peye_call6(out,1);assert(test_peye_close(out,walking,16,0));}   /* outside: X4's own walking pose */
         InterlockedExchange(&pres_open,1);peye_leave();InterlockedExchange(&pres_open,0);

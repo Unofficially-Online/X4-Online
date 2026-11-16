@@ -80,6 +80,10 @@ static const char *peye_stage="off";
 static int peye_own_seat=1;
 static unsigned char *peye_key[4];                /* ship 1, room 1, ship k, room k of D */
 static unsigned char *peye_ctl,*peye_block_saved,*volatile *peye_block_at;
+/* The same pose in the other bank (peye_enter_main): the one the frame thread reads between two swaps. */
+static unsigned char *peye_main_saved,*volatile *peye_main_at;
+static unsigned peye_main_bank;static int peye_main_published;
+static volatile LONG64 peye_main_scopes;
 static volatile LONG64 peye_updates,peye_scopes,peye_poses,peye_lost,peye_other;
 static unsigned peye_other_vtable;
 /* X4's composition of PosRots (16 floats: translation, then three rows; row vectors): the child's pose
@@ -231,8 +235,86 @@ static void peye_enter(unsigned char *p1,unsigned char *view,unsigned bank,const
     *at=(unsigned char*)peye_block[bank];peye_published=1;
     InterlockedIncrement64(&peye_scopes);
 }
+/* In pres_enter, right after peye_enter: the published pose of the OTHER view bank.
+ * X4 keeps two banks of every component's view cache. A reader takes its index from 0x38f4ee0 when its thread carries
+ * the MoveWorker's TLS flag (the render walks) and from 0x38f4eb4 when it does not (0x979f0e: every reader on the frame
+ * thread); between two swaps the two indices name different banks. The scope is opened on the frame thread and
+ * replaced the render bank's entry only, so X4's own readers INSIDE the scope still saw the canonical player's real
+ * pose: the cockpit HUD takes the camera's rotation from U::Camera::UICameraBridge (vfunc3 0x978750 -> 0x979ef0, from
+ * the UI's frame at 0xb2bc24, and the export GetCameraRotation) and turns its elements against it, and on client k it
+ * got player 1's head movement (the roll of its lean, 0.103 rad at a held roll key) while the picture came from slot
+ * k's seat. Two clients, 15 Nov: client 2 idle, player 1 rolling, pitching, yawing by script: client 2's HUD group
+ * slid up to 50 px and came back seconds after each key; its background did not move. Breakpoint at the query: render
+ * index 1, frame index 0, bank 1 holding this module's block and bank 0 X4's with the roll in its rows.
+ * The other bank's entry gets the same pose, built the same way from what that bank publishes, and its own pointer
+ * back at the exit (a block the engine replaced meanwhile stays the engine's, counted lost with the first). */
+static void peye_enter_main(unsigned char *view,unsigned bank) {
+    peye_main_published=0;
+    if(!peye_published || !view || bank>1 || bank==peye_bank) return;
+    unsigned char *volatile *at=(unsigned char *volatile*)(view+PEYE_VIEW_BLOCK);
+    unsigned char *published=*at;__attribute__((aligned(16))) float pose[16];
+    if(published) memcpy(pose,published,sizeof(pose));
+    else peye_identity(pose);
+    double now=0;
+    if(peye_walk_fpc && pnat_fn.time(&now)) peye_fpc_pose(peye_walk_fpc,peye_block[bank],now,1);
+    else peye_apply(pose,peye_block[bank]);
+    peye_main_at=at;peye_main_saved=published;peye_main_bank=bank;
+    *at=(unsigned char*)peye_block[bank];peye_main_published=1;
+    InterlockedIncrement64(&peye_main_scopes);
+}
+/* ---- the HUD's anchor ----
+ * X4 moves a seated pilot's head with the ship's turns: the Player's own pose leans (its FirstPersonController, up to
+ * 0.13 rad), the camera sits on it, and the cockpit HUD must not lean with it. The HUD hangs on the camera's anchor
+ * scene (camera +0x778: a U::Scene under the player, movement controller U::UIAnchorController, vtable 0x2ad0c20),
+ * and that controller answers the inverse of the head movement, so the scene stays fixed to the cockpit.
+ * This module presents the player at slot k's seat without any head movement, but the scene still published the
+ * inverse of player 1's: on client k the HUD turned against a lean the picture does not have. Two clients, 15 Nov,
+ * client 2 idle, player 1 holding a roll key by script: the player's published rows (0.995,-0.103,0), the scene's
+ * (0.995,+0.103,0) in both banks, the HUD group up to 50 px off; the same with pitch and yaw, back to rest some
+ * seconds after each key (reported by a player as the camera warping with the other player's steering). The UI's own
+ * rotation query (U::Camera::UICameraBridge, 0x978750, asked every frame at 0xb2bc24) answered 0.103 rad of roll
+ * there; with the scene at rest it answers 0 and needs no change of its own.
+ * In the scope, for a pose held at a seat or at slot k's own walk, the scene's published pose in both banks is the
+ * identity (what it publishes at rest; the w lanes kept), the engine's own pointers back at the exit. The D pose
+ * (peye_own_seat off) carries X4's head movement and keeps X4's scene. Display only. Status eye_anchor=scopes. */
+#define PEYE_UI_ANCHOR_VTABLE 0x2ad0c20u   /* U::UIAnchorController */
+#define PEYE_CAMERA_ANCHOR 0x778u          /* camera: the component its anchor is on */
+static __attribute__((aligned(16))) float peye_anchor_block[2][16];
+static unsigned char *peye_anchor_saved[2],*volatile *peye_anchor_at[2];
+static unsigned peye_anchor_published;     /* bit per bank */
+static volatile LONG64 peye_anchor_scopes;
+static void peye_anchor_enter(unsigned char *p1,unsigned char *camera) {
+    unsigned char *scene=NULL,*parent=NULL,*ctl=NULL;void *vt=NULL;
+    peye_anchor_published=0;
+    if(!peye_published || !(peye_seat_mode || peye_walk_fpc) || !camera || !read_local(camera+PEYE_CAMERA_ANCHOR,&scene,8) || !scene ||
+       !read_local(scene+PRES_PARENT,&parent,8) || parent!=p1 || !read_local(scene+PEYE_MOVEMENT,&ctl,8) || !ctl || !read_local(ctl,&vt,8) ||
+       vt!=(void*)(pnat_base+PEYE_UI_ANCHOR_VTABLE)) return;
+    for(unsigned bank=0;bank<2;bank++) {
+        unsigned char *volatile *at=(unsigned char *volatile*)(scene+PRES_VIEW_CACHE+bank*PRES_VIEW_STRIDE+PEYE_VIEW_BLOCK);
+        unsigned char *published=*at;float pose[16];
+        if(!published || !read_local(published,pose,sizeof(pose))) continue;   /* none: the identity already */
+        peye_identity(peye_anchor_block[bank]);
+        for(unsigned i=0;i<4;i++) peye_anchor_block[bank][4*i+3]=pose[4*i+3];
+        peye_anchor_at[bank]=at;peye_anchor_saved[bank]=published;
+        *at=(unsigned char*)peye_anchor_block[bank];peye_anchor_published|=1u<<bank;
+    }
+    if(peye_anchor_published) InterlockedIncrement64(&peye_anchor_scopes);
+}
+static void peye_anchor_leave(void) {
+    for(unsigned bank=0;bank<2;bank++) if(peye_anchor_published>>bank&1u) {
+        if(*peye_anchor_at[bank]==(unsigned char*)peye_anchor_block[bank]) *peye_anchor_at[bank]=peye_anchor_saved[bank];
+        else InterlockedIncrement64(&peye_lost);
+    }
+    peye_anchor_published=0;
+}
 /* In pres_leave, before the identity goes back. */
 static void peye_leave(void) {
+    peye_anchor_leave();
+    if(peye_main_published) {
+        if(*peye_main_at==(unsigned char*)peye_block[peye_main_bank]) *peye_main_at=peye_main_saved;
+        else InterlockedIncrement64(&peye_lost);
+        peye_main_published=0;
+    }
     if(peye_published) {
         if(*peye_block_at==(unsigned char*)peye_block[peye_bank]) *peye_block_at=peye_block_saved;
         else InterlockedIncrement64(&peye_lost);
@@ -244,12 +326,16 @@ static void peye_leave(void) {
     }
 }
 static void peye_reset(void) {
-    peye_on=0;peye_seat_mode=0;peye_walk_fpc=NULL;peye_live=peye_published=0;peye_stage="off";memset(peye_key,0,sizeof(peye_key));peye_ctl=NULL;
+    peye_on=0;peye_seat_mode=0;peye_walk_fpc=NULL;peye_live=peye_published=0;peye_main_published=0;peye_main_scopes=0;peye_stage="off";memset(peye_key,0,sizeof(peye_key));peye_ctl=NULL;
     peye_updates=peye_scopes=peye_poses=peye_lost=peye_other=0;peye_other_vtable=0;peye_identity(peye_delta);
 }
 static int peye_status(char *out,size_t capacity) {
     int n=snprintf(out,capacity," eye=%s/%lld/%lld/%lld/%.3f,%.3f,%.3f",peye_stage,(long long)peye_scopes,(long long)peye_poses,(long long)peye_lost,
         (double)peye_delta[0],(double)peye_delta[1],(double)peye_delta[2]);
+    if(n>0 && (size_t)n<capacity && peye_main_scopes)   /* scopes that covered the frame thread's bank too */
+        n+=snprintf(out+n,capacity-(size_t)n," eye_main=%lld",(long long)peye_main_scopes);
+    if(n>0 && (size_t)n<capacity && peye_anchor_scopes)   /* scopes with the HUD's anchor scene at rest */
+        n+=snprintf(out+n,capacity-(size_t)n," eye_anchor=%lld",(long long)peye_anchor_scopes);
     if(n>0 && (size_t)n<capacity && peye_other) {
         int more=snprintf(out+n,capacity-(size_t)n," eye_controller=%llx:%lld",(unsigned long long)peye_other_vtable,(long long)peye_other);
         n=more>0?n+more:-1;

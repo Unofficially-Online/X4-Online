@@ -428,8 +428,27 @@ static unsigned char *volatile *pslot_post_cell_of(const pslot_slot *s) {
        (size_t)(end-table)<16u*((size_t)s->post+1u)) return NULL;
     return (unsigned char *volatile*)(table+16u*(size_t)s->post+8u);
 }
+/* Held (native_gate_pilot_slots_post = 'held', an experiment of 15 Nov, off by default): the entry stays P_k after the
+ * scope, for as long as slot k sits at its controls. X4 asks a ship for its control entity outside every scope too:
+ * the weapon, boost, kill, repair and collect paths post their "the player did it" event on what GetControlEntity
+ * (0x44d680) answers (4e62b0 -> 4e6379 for a weapon), which for slot k's ship was nobody, so slot k's missions never
+ * heard them (the audit: activated_weapon, boost for slot 1 only). The plain game's own player sits in that entry all
+ * the time. The entry goes back the moment the slot is off its controls (the next scope of it, the seat's end). */
+static volatile LONG64 pslot_post_held,pslot_post_dropped;
+static void pslot_post_drop(unsigned k,pslot_slot *s) {
+    unsigned char *volatile *cell=pslot_post_cell[k];unsigned char *now=NULL;
+    if(!cell) return;
+    pslot_post_cell[k]=NULL;
+    if(pslot_post_cell_of(s)!=cell || !read_local((const void*)cell,&now,8) || now!=s->player) {InterlockedIncrement64(&pslot_post_lost);return;}
+    *cell=pslot_post_saved[k];InterlockedIncrement64(&pslot_post_dropped);
+}
 static void pslot_post_enter(unsigned k,pslot_slot *s) {
     unsigned char *now=NULL;
+    if(pslot_post_cell[k]) {   /* held since an earlier scope */
+        if(pslot_post_on==2 && s->seated && !s->walking && s->controller && pslot_post_cell_of(s)==pslot_post_cell[k] &&
+           read_local((const void*)pslot_post_cell[k],&now,8) && now==s->player) return;
+        pslot_post_drop(k,s);
+    }
     pslot_post_cell[k]=NULL;
     if(!pslot_post_on || !s->seated || s->walking || !s->controller) return;
     unsigned char *volatile *cell=pslot_post_cell_of(s);
@@ -441,6 +460,7 @@ static void pslot_post_enter(unsigned k,pslot_slot *s) {
 static void pslot_post_leave(unsigned k,pslot_slot *s) {
     unsigned char *volatile *cell=pslot_post_cell[k];unsigned char *now=NULL;
     if(!cell) return;
+    if(pslot_post_on==2 && s->seated && !s->walking && s->controller) {InterlockedIncrement64(&pslot_post_held);return;}   /* held */
     pslot_post_cell[k]=NULL;
     if(pslot_post_cell_of(s)!=cell || !read_local((const void*)cell,&now,8) || now!=s->player) {InterlockedIncrement64(&pslot_post_lost);return;}
     *cell=pslot_post_saved[k];
@@ -1010,6 +1030,7 @@ static int pslot_enroll_late(uint64_t tick,uint64_t take) {
     return 1;
 }
 static int pslot_release(unsigned k) {
+    if(k>=2 && k<=PILOT_SLOTS) pslot_post_drop(k,&pslots[k]);   /* a held pilot post entry goes back with the seat */
     pslot_slot *s=&pslots[k];
     if(!s->seated) return 1;
     /* On foot (lockstep_pilot_foot_slots.h): its controller went at the stand-up; only the seat's pointers go back. */
@@ -1034,6 +1055,7 @@ static int pslot_release(unsigned k) {
 /* The ship is already being killed: the controller stays with it, under this vtable copy, until X4
  * deletes it. Readers get the last answers; what would run in a scope does nothing. */
 static void pslot_retire(unsigned k) {
+    if(k>=2 && k<=PILOT_SLOTS) pslot_post_drop(k,&pslots[k]);   /* a held pilot post entry goes back with the seat */
     pslot_slot *s=&pslots[k];
     s->retired[s->retired_next++%PSLOT_RETIRED]=s->controller;
     s->controller=NULL;s->seated=0;s->released=1;

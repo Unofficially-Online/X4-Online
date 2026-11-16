@@ -2,12 +2,12 @@
 static unsigned test_mdp_ran[MDP_ACTIONS];
 #define TEST_MDP_STOCK(i) static void test_mdp_stock_##i(void *node,void *exec,void *frame) {(void)node;(void)exec;(void)frame;++test_mdp_ran[i];}
 TEST_MDP_STOCK(0) TEST_MDP_STOCK(1) TEST_MDP_STOCK(2) TEST_MDP_STOCK(3) TEST_MDP_STOCK(4) TEST_MDP_STOCK(5) TEST_MDP_STOCK(6) TEST_MDP_STOCK(7)
-TEST_MDP_STOCK(8) TEST_MDP_STOCK(9) TEST_MDP_STOCK(10)
+TEST_MDP_STOCK(8) TEST_MDP_STOCK(9) TEST_MDP_STOCK(10) TEST_MDP_STOCK(11)
 static void test_md_presentation(void) {
     static const mdp_fn stock[MDP_ACTIONS]={test_mdp_stock_0,test_mdp_stock_1,test_mdp_stock_2,test_mdp_stock_3,test_mdp_stock_4,test_mdp_stock_5,
-        test_mdp_stock_6,test_mdp_stock_7,test_mdp_stock_8,test_mdp_stock_9,test_mdp_stock_10};
+        test_mdp_stock_6,test_mdp_stock_7,test_mdp_stock_8,test_mdp_stock_9,test_mdp_stock_10,test_mdp_stock_11};
     const uint64_t issued_was=stats.issued;const DWORD ui_was=ui_thread;const uint32_t active_was=stats.active,slot_was=stats.slot;
-    const unsigned scope_was=pstk_scope_slot,depth_was=mpp_depth;
+    const unsigned scope_was=pstk_scope_slot,depth_was=mpp_depth,depth1_was=mpp_depth1;
     void *slot_was_at[MDP_ACTIONS];
     for(unsigned i=0;i<MDP_ACTIONS;i++) {
         memcpy(&slot_was_at[i],image+mdp_actions[i].vtable+MDP_SLOT,8);
@@ -15,7 +15,7 @@ static void test_md_presentation(void) {
         for(unsigned j=0;j<i;j++) assert(mdp_actions[j].vtable!=mdp_actions[i].vtable && mdp_actions[j].execute!=mdp_actions[i].execute);
     }
     mdp_armed=0;memset(mdp_installed,0,sizeof(mdp_installed));
-    ui_thread=GetCurrentThreadId();stats.active=1;stats.slot=1;pstk_scope_slot=0;mpp_depth=0;
+    ui_thread=GetCurrentThreadId();stats.active=1;stats.slot=1;pstk_scope_slot=0;mpp_depth=0;mpp_depth1=0;
     /* Before the first tick, on the frame thread, every slot the stock function: else nothing is swapped. */
     stats.issued=1;assert(!mdp_arm() && !strcmp(mdp_why,"late_or_thread"));stats.issued=0;
     stats.active=0;assert(!mdp_arm() && !strcmp(mdp_why,"not_started"));stats.active=1;   /* before the gate's start */
@@ -46,7 +46,13 @@ static void test_md_presentation(void) {
     /* Another thread, a stopped session: the stock function. */
     mpp_depth=1;ui_thread=GetCurrentThreadId()+1;mdp_wrappers[1](NULL,NULL,NULL);assert(test_mdp_ran[1]==2);ui_thread=GetCurrentThreadId();
     stats.active=0;mdp_wrappers[1](NULL,NULL,NULL);assert(test_mdp_ran[1]==3 && !mdp_skips[1]);stats.active=1;
-    {char status[512];assert(mdp_status(status,sizeof(status))>0 && strstr(status,"armed=1 installed=11/11 ") && strstr(status,"skipped=3 "));}
+    /* A frame of one of slot 1's own cues (no scope: the canonical player): on client 1, not on client 2. */
+    pstk_scope_slot=0;mpp_depth=0;mpp_depth1=1;
+    stats.slot=1;mdp_wrappers[11](NULL,NULL,NULL);assert(test_mdp_ran[11]==2 && !mdp_skips[11]);
+    stats.slot=2;mdp_wrappers[11](NULL,NULL,NULL);assert(test_mdp_ran[11]==2 && mdp_skips[11]==1);
+    mpp_depth1=0;mdp_wrappers[11](NULL,NULL,NULL);assert(test_mdp_ran[11]==3 && mdp_skips[11]==1);   /* nobody's frame again */
+    pstk_scope_slot=2;mpp_depth=1;stats.slot=1;
+    {char status[512];assert(mdp_status(status,sizeof(status))>0 && strstr(status,"armed=1 installed=12/12 ") && strstr(status,"skipped=4 "));}
     /* The end: every slot holds what it held; a slot somebody else changed stays and is named. */
     for(unsigned i=0;i<MDP_ACTIONS;i++) mdp_original[i]=(mdp_fn)(image+mdp_actions[i].execute);
     mdp_restore();assert(!mdp_armed);
@@ -57,7 +63,7 @@ static void test_md_presentation(void) {
      void *now;memcpy(&now,image+mdp_actions[2].vtable+MDP_SLOT,8);assert(now==foreign);mdp_installed[2]=0;}
     for(unsigned i=0;i<MDP_ACTIONS;i++) memcpy(image+mdp_actions[i].vtable+MDP_SLOT,&slot_was_at[i],8);
     mdp_why="-";mdp_runs=0;memset((void*)mdp_skips,0,sizeof(mdp_skips));
-    pstk_scope_slot=scope_was;mpp_depth=depth_was;stats.issued=issued_was;ui_thread=ui_was;stats.active=active_was;stats.slot=slot_was;
+    pstk_scope_slot=scope_was;mpp_depth=depth_was;mpp_depth1=depth1_was;stats.issued=issued_was;ui_thread=ui_was;stats.active=active_was;stats.slot=slot_was;
     printf("md presentation: slots swapped and restored, an owned frame's actions on its owner's client only, refusals PASS\n");
 }
 static int test_mdm_pin_answer;
@@ -91,6 +97,7 @@ static void test_md_presentation_native_image(const char *path) {
         void *now=NULL;memcpy(&now,image+mdp_actions[i].vtable+MDP_SLOT,8);
         assert(now==(void*)(image+mdp_actions[i].execute));   /* the map is relocated: the slot points into it */
     }
+    assert(hash_ok(image+mdp_actions[11].execute,0x180,"eab827dc4650bbcf905ce9a7790a0315ccb5d3dd6a78af9d35005a5df6487ce6"));   /* play_sound as read */
     image=prior;
-    printf("pinned native image md presentation verified (eleven action vtables, the full-screen menu property's call)\n");
+    printf("pinned native image md presentation verified (twelve action vtables, the full-screen menu property's call)\n");
 }

@@ -70,6 +70,12 @@ def main(argv=None):
     pl.add_argument('--no-focus', action='store_true',
                     help='while the clients start, a client window that takes the keyboard focus gives it back to the window '
                          'the person was working in (click a client window after that to play in it)')
+    pl.add_argument('--never-focus', action='store_true',
+                    help='--no-focus for the whole session: a client window never keeps the keyboard focus or the cursor '
+                         '(scripted test clients beside a person at work; such a window cannot be played in)')
+    pl.add_argument('--tile-skip', type=int, default=0,
+                    help="the first client window's cell on the tiling grid (two columns): for a second session beside a "
+                         'running one, whose windows hold the cells before it')
     pl.add_argument('--game', type=Path)
     pl.add_argument('--lanes', type=Path, help='where client views go (default <game drive>:\\x4ls-lanes)')
     pl.add_argument('--startup', type=int, default=70, help='seconds budgeted per client to reach the start menu')
@@ -335,7 +341,7 @@ def main(argv=None):
                                   lookahead=lookahead, timeout=args.timeout, width=width, height=height, game=args.game,
                                   lanes=args.lanes, startup=args.startup, steam_fix=args.steam_fix, play=True,
                                   stall_drop_ms=1000 * args.stall_drop if lookahead else 0, relay_args=args.relay_args,
-                                  close_when_over=args.close_when_over, borderless=args.borderless, display=args.display, focus=not args.no_focus,
+                                  close_when_over=args.close_when_over, borderless=args.borderless, display=args.display, focus=not (args.no_focus or args.never_focus), never_focus=args.never_focus, tile_skip=args.tile_skip,
                                   remote_slots=tuple(int(v) for v in args.remote_slots.split(',') if v.strip()),
                                   bind=args.bind, allow_from=tuple(a for a in args.allow_from.split(',') if a.strip()),
                                   port=args.port, join_wait=args.join_wait, public_host=args.public_host,

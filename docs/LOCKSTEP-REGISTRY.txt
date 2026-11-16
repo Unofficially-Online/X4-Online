@@ -176,12 +176,40 @@ function's entry, must agree with its owner first)
              0x1265960, is the option speaktargetname on        option                           +0x180): X4's answer; when on, the
                                                                                                    player's speaker (0x703ac0) is
                                                                                                    noted for the slot it runs for
+  0x10d2adb  Cutscenes::PlayCutsceneAction 0x10d25e0, the       lockstep_md_media.h mdv_make     call re-pointed (slots' near page
+             target monitor branch: call 0x156980, the          (native_gate_md_media)           +0x300): X4's constructor; the
+             Notification's constructor                                                           notification is noted for the
+                                                                                                   action that runs
+  0x2c6d730  Cutscenes::PlayCutsceneAction's vtable slot +0x18  lockstep_md_media.h mdv_action   8 bytes (the slot, not code): X4's
+             (its execute, 0x10d25e0)                                                             action, then the noted
+                                                                                                   notification's cutscene starts as
+                                                                                                   the UI's StartCutscene 0xb12e20
+                                                                                                   starts it (0x10f1630, 0x10f1310)
+  0xb11310   the UI's Lua functions GetNotificationPriority,    lockstep_md_media.h mdv_ui /     E9 -> stub, six bytes each (slots'
+  0xb12e20   StartCutscene, StopCutscene and                    lockstep_gate.c mdv_lua_*        near page +0x320..+0x400, a stub
+  0xb14820   ReleaseNotification (their entries)                                                  and a trampoline per entry): a
+  0xb113b0                                                                                        notification or descriptor of a
+                                                                                                   simulation-started picture is
+                                                                                                   answered here; all else is X4's
+  0x561a10   U::EntitySpeakData's request to speak (the         lockstep_speech_local.h spl_     E9 -> stub (slots' near page
+             speak action, an entity's own lines)               queue (native_gate_speech_local)  +0x420, trampoline +0x440): the
+                                                                                                   speaker of a request made in a
+                                                                                                   player's own cue is noted, then
+                                                                                                   X4's request; not installed
+                                                                                                   while the speech diagnostic
+                                                                                                   (lockstep_npc_enqueue.h) holds
+                                                                                                   the entry
+  0x2c0abc0  Scripts::PlaySoundAction's vtable slot +0x18       lockstep_md_presentation.h       8 bytes (the slot): not run inside
+             (0xc1d8e0), the twelfth of that module's slots     mdp_ (missions per player)       another player's own cue's frame
   Called, not patched: 0xaea500 (the UI message manager's player setter; lockstep_pilot_foot.h puts X4's own player back
   when a slot's scope left another one there), 0x730f30 / 0x1252850 (the GET_UP context's request and withdrawal, same file),
   0x703ac0 (a player's speaker entity among its children; lockstep_speech_local.h), 0xb3be20 / 0xb3be90 (the UI's game plan
   handlers, now also on client 1: lockstep_pilot_present.h pres_plan_canon), 0x70ecf0 / 0x70ed50 (the UI's first-person half,
   now also on client 1: lockstep_pilot_foot.h),
-  0x730df0 (the UNDOCK key context's keeper, asked again with each client's own player, same file).
+  0x730df0 (the UNDOCK key context's keeper, asked again with each client's own player, same file),
+  0x10f1310 / 0x10f1630 (the cutscene manager's start and its stop by ID), 0x317ae0 (a render target's ID from its name),
+  0x151dc0 / 0x157860 (a notification by its ID; its removal): lockstep_md_media.h, the start of a mission's picture on
+  the target monitor in the UI's place and the end of its timeout.
 
 4. STOP REASONS (gate finish(reason); stats.reason, the probe's STOP line)
 Codes 1..99 belong to the gate core (lockstep_gate.c, linux/gate_linux.c);

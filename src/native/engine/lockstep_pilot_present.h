@@ -93,7 +93,8 @@
 #define PRES_TARGET 0x6dd0u             /* Player: soft target */
 #define PRES_VIEW_CACHE 0xe0u           /* Component: view cache [A] at +0xe0+A*0x80, +0 the published parent */
 #define PRES_VIEW_STRIDE 0x80u
-#define PRES_VIEW_INDEX 0x38f4ee0u      /* the bank this thread reads (0x3de630, 0x3d91e0: TLS flag set on the MoveWorker) */
+#define PRES_VIEW_INDEX 0x38f4ee0u      /* the bank a thread with the MoveWorker's TLS flag reads (0x3de630, 0x3d91e0): the render walks */
+#define PRES_MAIN_INDEX 0x38f4eb4u      /* the bank every other thread reads (0x979f0e): X4's own readers inside the scope, the HUD's */
 #define PRES_OCCUPIED 0xb05e30u         /* GetPlayerOccupiedShipID */
 #define PRES_CONTROLLED 0x1e9bd0u       /* GetPlayerControlledShipID */
 #define PRES_ZONE 0x1a4f90u             /* GetPlayerZoneID */
@@ -134,6 +135,10 @@ static const unsigned char pres_refill_bytes[5]={0xe8,0x68,0xb7,0xf7,0xff}; /* c
 static const unsigned char pres_pick_bytes[5]={0xe8,0xfb,0x98,0xd1,0xff};   /* call 0x717ed0 from 0x9fe5d5 */
 static int pres_armed,pres_active,pres_paused,pres_ui_installed,pres_refill_installed,pres_pick_installed,pres_pins_checked,pres_hud,pres_anchor_moved;
 static int pres_room_attention_saved,pres_room_view_attention_saved,pres_diff_ready;
+/* The frame thread's bank, when it is the other one (lockstep_pilot_eye.h peye_enter_main): the player's published
+ * parent and the room's published attention there, as in the render bank. */
+static unsigned char *pres_main_at,*pres_main_parent_saved;
+static int pres_main_attention_saved;
 static char pres_diff_text[3584];
 static int pres_restored=1;
 static unsigned pres_slot;
@@ -384,8 +389,21 @@ static int pres_enter(void) {
         *(volatile int*)(s->room+PRES_ATTENTION)=PRES_ROOM_ATTENTION;
         *(volatile int*)(s->room+PRES_VIEW_ATTENTION+bank*PRES_VIEW_STRIDE)=PRES_ROOM_ATTENTION;
     }
+    pres_main_at=NULL;
+    {   unsigned other=bank;
+        if(read_local(pnat_base+PRES_MAIN_INDEX,&other,4) && other<=1 && other!=bank) {
+            pres_main_at=p1+PRES_VIEW_CACHE+other*PRES_VIEW_STRIDE;
+            pres_main_parent_saved=*(unsigned char *volatile*)pres_main_at;*(unsigned char *volatile*)pres_main_at=s->room;
+            if(!s->roomless) {
+                memcpy(&pres_main_attention_saved,s->room+PRES_VIEW_ATTENTION+other*PRES_VIEW_STRIDE,4);
+                *(volatile int*)(s->room+PRES_VIEW_ATTENTION+other*PRES_VIEW_STRIDE)=PRES_ROOM_ATTENTION;
+            }
+        }
+    }
     /* The eye at slot k's seat (lockstep_pilot_eye.h): the player's own pose, live and published, with D applied. */
     peye_enter(p1,pres_view_at,bank,s,pres_parent_saved);
+    if(pres_main_at) peye_enter_main(pres_main_at,(unsigned)((size_t)(pres_main_at-(p1+PRES_VIEW_CACHE))/PRES_VIEW_STRIDE));
+    peye_anchor_enter(p1,pres_camera);   /* the HUD's anchor scene: no head movement of X4's own player in it */
     pres_foot_enter(p1,s,pres_slot);   /* a walking slot: its interactables and its floor (the terminal, header above) */
     InterlockedExchange(&pres_open,1);InterlockedIncrement64(&pres_scopes);
     mpp_active_enter(pres_slot);   /* this client's own active mission on its HUD and in its menus */
@@ -403,6 +421,12 @@ static void pres_leave(void) {
         size_t bank=(size_t)(pres_view_at-(p1+PRES_VIEW_CACHE));
         *(volatile int*)(s->room+PRES_ATTENTION)=pres_room_attention_saved;
         *(volatile int*)(s->room+PRES_VIEW_ATTENTION+bank)=pres_room_view_attention_saved;
+    }
+    if(pres_main_at) {
+        const size_t other=(size_t)(pres_main_at-(p1+PRES_VIEW_CACHE));
+        if(!s->roomless) *(volatile int*)(s->room+PRES_VIEW_ATTENTION+other)=pres_main_attention_saved;
+        if(*(unsigned char *volatile*)pres_main_at==s->room) *(unsigned char *volatile*)pres_main_at=pres_main_parent_saved;   /* else the engine's own by now */
+        pres_main_at=NULL;
     }
     *(unsigned char *volatile*)pres_view_at=pres_view_parent_saved;
     *(unsigned char *volatile*)(p1+PRES_PARENT)=pres_parent_saved;

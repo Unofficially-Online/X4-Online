@@ -60,6 +60,8 @@ class Options:
     fast: bool = False  # render-only settings down, no frame cap, no sound (profile.FAST)
     borderless: bool = False  # X4's borderless window instead of a sizable one (no tiling: the windows stay where X4 puts them)
     focus: bool = True  # False: while the clients start (two minutes) a client window that takes the keyboard focus gives it back
+    tile_skip: int = 0  # the first client's cell on the tiling grid (another local session's windows hold the cells before it)
+    never_focus: bool = False  # with focus False: for the whole session, not only while the clients start (scripted clients)
     display: int | None = None  # tile the client windows on this monitor only (Windows' number, \.\DISPLAY<n>)
     startup: int = 70  # seconds budgeted per client to reach the start menu; snapshot clients then arm together
     steam_fix: bool = False  # re-register Steam's pid before each client (see steam.py); restored at the end
@@ -132,6 +134,35 @@ def x4_running():
     out = subprocess.run(['tasklist', '/FI', 'IMAGENAME eq X4.exe', '/FO', 'CSV', '/NH'],
                          capture_output=True, text=True).stdout
     return '"X4.exe"' in out
+
+
+def other_clients():
+    """Running X4 processes as (pid, is a launcher client): one whose command line names a disposable profile."""
+    out = subprocess.run(['powershell', '-NoProfile', '-Command',
+                          "Get-CimInstance Win32_Process -Filter \"Name='X4.exe'\" | ForEach-Object { '{0}|{1}' -f $_.ProcessId, $_.CommandLine }"],
+                         capture_output=True, text=True).stdout
+    found = []
+    for line in out.splitlines():
+        pid, _, command = line.partition('|')
+        if pid.strip().isdigit():
+            match = re.search(r'-personalfolderid\s+(\d+)', command)
+            found.append((int(pid), bool(match) and int(match.group(1)) in profile.ALL_PROFILES))
+    return found
+
+
+def release_beside(own):
+    """Before a client start: X4's instance mutex is freed in every other session's launcher client (never in an X4
+    that is not a launcher client). A client another session started a moment ago holds the mutex until its own
+    launcher frees it at the start menu; a client of this session started in that time would be refused by X4 and
+    the session would wait for its start menu in vain (seen twice with three sessions on one PC)."""
+    for pid, client in other_clients():
+        if client and pid not in own:
+            try:
+                freed = instance.release_instance_mutex(pid)
+            except OSError:   # it ended since the listing
+                continue
+            if freed:
+                log(f'beside X4 pid {pid}: released {freed} instance mutex handle(s)')
 
 
 def overlay_tick_hz(overlay):
@@ -274,9 +305,21 @@ def display_rect(number):
     return rects[0] if rects else None
 
 
+CURSOR = {'at': None}   # where the person's cursor was while no client window had the focus (yield_focus)
+
+
+def no_activate_startup():
+    """Startup information for a client process: its first window is shown without being activated."""
+    info = subprocess.STARTUPINFO()
+    info.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+    info.wShowWindow = 4   # SW_SHOWNOACTIVATE
+    return info
+
+
 def yield_focus(pids):
     """A client window that took the keyboard focus gives it to the window below it that is not a client's (the one the
-    person was working in). True when the focus moved."""
+    person was working in), and the cursor goes back to where it was before X4 took it (X4 centres and keeps the
+    cursor of a window that has the focus). True when the focus moved."""
     import ctypes
     from ctypes import wintypes
     user32, kernel32 = ctypes.windll.user32, ctypes.windll.kernel32
@@ -284,6 +327,9 @@ def yield_focus(pids):
     owner = wintypes.DWORD()
     thread = user32.GetWindowThreadProcessId(front, ctypes.byref(owner)) if front else 0
     if not front or owner.value not in pids:
+        point = wintypes.POINT()
+        if user32.GetCursorPos(ctypes.byref(point)):
+            CURSOR['at'] = (point.x, point.y)
         return False
     window = front
     while True:
@@ -299,10 +345,13 @@ def yield_focus(pids):
     user32.AttachThreadInput(me, thread, True)
     moved = bool(user32.SetForegroundWindow(window))
     user32.AttachThreadInput(me, thread, False)
+    user32.ClipCursor(None)
+    if CURSOR['at']:
+        user32.SetCursorPos(*CURSOR['at'])
     return moved
 
 
-def tile(pids, width, height, columns=2, display=None):
+def tile(pids, width, height, columns=2, display=None, skip=0):
     """Best effort: place each client's main window on a grid; with `display`, on that monitor only (a window that
     would reach past its edge is moved back onto it, over its neighbour)."""
     import ctypes
@@ -322,7 +371,7 @@ def tile(pids, width, height, columns=2, display=None):
     user32.EnumWindows(visit, 0)
     for i, pid in enumerate(pids):
         if pid in found:
-            x, y = (i % columns) * width, (i // columns) * (height + 40)
+            x, y = ((i + skip) % columns) * width, ((i + skip) // columns) * (height + 40)   # skip: the grid cells another session's windows hold
             if area:
                 rect = wintypes.RECT()
                 user32.GetWindowRect(found[pid], ctypes.byref(rect))
@@ -330,6 +379,30 @@ def tile(pids, width, height, columns=2, display=None):
                 y = area[1] + max(0, min(y, area[3] - area[1] - (rect.bottom - rect.top)))
             user32.SetWindowPos(found[pid], 0, x, y, 0, 0, 0x0001 | 0x0004 | 0x0010)   # no size, no order, no activation
     return len(found)
+
+
+def start_placer(o, clients, stop):
+    """While the clients start, one after the other (a minute each): every client window goes to the chosen monitor as
+    soon as it exists (X4 opens it on the primary one) and gives the keyboard focus back, twenty times a second, until
+    `stop` is set (the session's own loop does the same from then on). With never_focus the focus part goes on for
+    the whole session: scripted test clients beside a person at work."""
+    import threading
+
+    def loop():
+        while o.never_focus or not stop.is_set():
+            pids = [proc.pid for _, _, proc in list(clients)]
+            try:
+                if pids and o.display and not o.borderless and not stop.is_set():
+                    tile(pids, o.width, o.height, 2, o.display, o.tile_skip)
+                if not o.focus:
+                    yield_focus(set(pids))
+            except Exception:   # a window that went away between two calls
+                pass
+            time.sleep(0.05)
+
+    thread = threading.Thread(target=loop, daemon=True)
+    thread.start()
+    return thread
 
 
 def wait_for_log(path, text, proc, timeout):
@@ -416,8 +489,16 @@ def run(o: Options, log=print):
             raise SystemExit('--open with --bind needs --allow-from (the joiners\' addresses) as dotted IPv4')
     if (o.state / 'session.json').exists():
         raise SystemExit('a previous session is still recorded; run x4ls clean first')
-    if x4_running() and not os.environ.get('X4LS_BESIDE'):   # X4LS_BESIDE=1: another local session's clients are running (their own
-        raise SystemExit('X4 is running; close it first')    # profiles, lanes, port and state directory)
+    # A second session beside a running one has its own profiles (X4LS_FIRST_PROFILE, profile.py), or is told that the
+    # running clients are another session's with other profiles (X4LS_BESIDE=1): the other X4s are not its own, but they
+    # must be launcher clients (never the person's own game), and the last of them still holds X4's instance mutex,
+    # which is released as for every client but a session's last.
+    if x4_running():
+        others = other_clients()
+        if not (profile.FIRST_PROFILE or os.environ.get('X4LS_BESIDE')) or not others or not all(client for _, client in others):
+            raise SystemExit('X4 is running; close it first')
+        for pid, _ in others:
+            log(f'beside X4 pid {pid}: released {instance.release_instance_mutex(pid)} instance mutex handle(s)')
     ok, message = steam.status()
     if not ok and not o.steam_fix:
         raise SystemExit(message)
@@ -460,6 +541,10 @@ def run(o: Options, log=print):
             for k in opened:
                 log(f'slot {k} is open: a player joins it while the session runs (on any PC the relay allows), with:\n  '
                     + join_command(o, o.public_host or o.bind, port, token, k, None))
+        import threading
+        placed = threading.Event()
+        if o.display or not o.focus:
+            start_placer(o, clients, placed)
         for k in local:
             view = lanes / f'c{k}'
             game.create_view(install, view)
@@ -476,7 +561,9 @@ def run(o: Options, log=print):
                             borderless=o.borderless)
             if o.steam_fix:
                 steam.fix(o.state / 'steam-fix.json')  # Steam can reset it once a client connects
-            proc = subprocess.Popen(client_command(view, profile_id, k, seed), cwd=view, env=steam.client_environment())
+            release_beside(set(state['pids']))
+            proc = subprocess.Popen(client_command(view, profile_id, k, seed), cwd=view, env=steam.client_environment(),
+                                    startupinfo=None if o.focus else no_activate_startup())
             clients.append((k, profile_id, proc))
             state['pids'].append(proc.pid)
             save_state(o, state)
@@ -485,8 +572,9 @@ def run(o: Options, log=print):
             wait_for_log(profile.profile_dir(profile_id) / f'x4ls-c{k}.log', 'Entering startmenu', proc, 180)
             if arm_at and time.time() > arm_at - 5:
                 raise SystemExit(f'client {k} reached the start menu after the common arm time; raise --startup')
-            if k != local[-1] or remote or opened:  # X4 refuses to start while another process holds EGOSOFT_X4_INSTANCE
+            if k != local[-1] or remote or opened or profile.FIRST_PROFILE:  # X4 refuses to start while another process holds EGOSOFT_X4_INSTANCE
                 log(f'client {k}: released {instance.release_instance_mutex(proc.pid)} instance mutex handle(s)')
+        placed.set()
         # The arm time was budgeted before any client started (--startup a client). With every player on this PC they
         # are all at their start menus now: name an earlier common second in each profile (the probe asks
         # gate.arm_early every frame), so nobody sits out the rest of the budget. Remote players keep the budget.
@@ -770,9 +858,9 @@ def monitor_play(o, run_dir, relay, clients, log):
                 if not o.focus and time.time() - started < 120:
                     yield_focus({proc.pid for _, _, proc in clients})
                 if o.display and not o.borderless and time.time() - started < 45:
-                    tile([proc.pid for _, _, proc in clients], o.width, o.height, 2, o.display)
+                    tile([proc.pid for _, _, proc in clients], o.width, o.height, 2, o.display, o.tile_skip)
                 elif not tiled and not o.borderless and time.time() - started > 20:
-                    tiled = tile([proc.pid for _, _, proc in clients], o.width, o.height, 2, o.display) == len(clients)
+                    tiled = tile([proc.pid for _, _, proc in clients], o.width, o.height, 2, o.display, o.tile_skip) == len(clients)
                 for k, _, proc in clients:
                     for line in tails[k].lines():
                         if FAIL.search(line):

@@ -1393,6 +1393,7 @@ static int uirep_status(char *out,size_t capacity) {
 #include "lockstep_ui_missions.h"
 #include "lockstep_mission_owners.h"   /* personal missions per player: slot k's calls and owned cue trees in slot k's scope */
 #include "lockstep_md_presentation.h"   /* what an owned cue shows (help, notifications, menus, music): on its owner's client only */
+#include "lockstep_md_media.h"          /* a mission's picture on the target monitor: started by the simulation, shown by its owner */
 /* The trade family of the replay (native_gate_ui_replay lists trade, default off). */
 #include "lockstep_ui_trade.h"
 /* The faction family: the player faction's settings for every slot (claims on the guard's hooks; uses the trade scope). */

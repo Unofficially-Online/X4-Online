@@ -7,35 +7,37 @@
  * and player 2's music.
  *
  * Those are Scripts::*Action objects; the interpreter calls their vtable slot 3 (action node, exec state, frame). The slot
- * of each action below points at a wrapper here: inside an MD frame of a cue slot k owns (the frame rule: the slot's scope
- * is open and mpp_depth counts an owned frame), on a client whose own slot is not k, the action is not run. Everywhere
- * else the stock function runs: on client k, in a frame nobody owns (the session's own story and the world's cues show
- * on every client as before), off the simulation's thread, before the session and after it.
+ * of each action below points at a wrapper here: inside an MD frame of a cue slot k owns (the frame rule,
+ * mpp_show_slot: slot k's scope is open and mpp_depth counts an owned frame, or the frame is one of slot 1's own cues),
+ * on a client whose own slot is not k, the action is not run. Everywhere else the stock function runs: on client k, in a
+ * frame nobody owns (the session's own story and the world's cues show on every client as before), off the simulation's
+ * thread, before the session and after it. play_sound is one of them since 15 Nov (a mission's alarm, its UI sounds).
  *
  * The actions here change no simulation state by what they are for (UI queues, sound, the screen, the platform's
  * achievements); whether one of them draws from the script's RNG stream or takes a runtime ID on the way is not read
  * statically: a run with an owned story compares the RNG and ID rows of the owner's client (ran) and another client's
  * (skipped). Spoken lines are not here: they must run everywhere (their end is an event), only their voice is local
- * (lockstep_speech_local.h). write_to_logbook and raise_lua_event are not here either (a logbook is in the save; a Lua
- * event can be anything). */
+ * (lockstep_speech_local.h). A mission's picture on the target monitor (play_cutscene) must run everywhere too: its
+ * start is an event the dialogue waits for (lockstep_md_media.h). write_to_logbook and raise_lua_event are not here
+ * either (a logbook is in the save; a Lua event can be anything). */
 typedef void (*mdp_fn)(void *,void *,void *);
-#define MDP_ACTIONS 11u
+#define MDP_ACTIONS 12u
 #define MDP_SLOT 0x18u   /* vtable slot 3: the action's execute */
 static const struct {const char *name;uint32_t vtable,execute;} mdp_actions[MDP_ACTIONS]={
     {"show_help",0x2c0f760u,0xb7a1b0u},{"show_help_multi",0x2c0f6e8u,0xb7b1e0u},{"show_help_overlay",0x2c0f710u,0xb7bfb0u},
     {"remove_help_overlay",0x2c0f7d8u,0xb7c290u},{"remove_help",0x2c0f7b0u,0xb7dfe0u},{"show_notification",0x2c0e0c0u,0xbb9ab0u},
     {"open_menu",0x2c0c550u,0xbf4320u},{"set_cockpit_tint",0x2c0b5e0u,0xc08b80u},{"unlock_achievement",0x2c0aaf8u,0xc1e8d0u},
-    {"fade_screen",0x2c0a458u,0xc32f10u},{"music",0x2c0abe8u,0xc1db30u}};
+    {"fade_screen",0x2c0a458u,0xc32f10u},{"music",0x2c0abe8u,0xc1db30u},{"play_sound",0x2c0abc0u,0xc1d8e0u}};
 static mdp_fn mdp_original[MDP_ACTIONS];
 static int mdp_installed[MDP_ACTIONS],mdp_armed;
 static volatile LONG64 mdp_runs,mdp_skips[MDP_ACTIONS];
 static const char *mdp_why="-";
-static unsigned pstk_scope_slot;   /* lockstep_pilot_stock.h */
-static unsigned mpp_depth;         /* lockstep_mission_owners.h */
+static unsigned mpp_show_slot(void);   /* lockstep_mission_owners.h */
 /* This call is inside an MD frame of a cue another player owns. */
 static int mdp_foreign(void) {
-    const unsigned k=pstk_scope_slot;
-    return mdp_armed && stats.active && GetCurrentThreadId()==ui_thread && k>=2 && mpp_depth && k!=stats.slot;
+    if(!mdp_armed || !stats.active || GetCurrentThreadId()!=ui_thread) return 0;
+    const unsigned k=mpp_show_slot();
+    return k && k!=stats.slot;
 }
 static void mdp_run(unsigned i,void *node,void *exec,void *frame) {
     if(mdp_foreign()) {InterlockedIncrement64(&mdp_skips[i]);return;}
@@ -43,8 +45,9 @@ static void mdp_run(unsigned i,void *node,void *exec,void *frame) {
 }
 #define MDP_WRAP(i) static void mdp_wrap_##i(void *node,void *exec,void *frame) {mdp_run(i,node,exec,frame);}
 MDP_WRAP(0) MDP_WRAP(1) MDP_WRAP(2) MDP_WRAP(3) MDP_WRAP(4) MDP_WRAP(5) MDP_WRAP(6) MDP_WRAP(7) MDP_WRAP(8) MDP_WRAP(9) MDP_WRAP(10)
+MDP_WRAP(11)
 static const mdp_fn mdp_wrappers[MDP_ACTIONS]={mdp_wrap_0,mdp_wrap_1,mdp_wrap_2,mdp_wrap_3,mdp_wrap_4,mdp_wrap_5,mdp_wrap_6,mdp_wrap_7,
-    mdp_wrap_8,mdp_wrap_9,mdp_wrap_10};
+    mdp_wrap_8,mdp_wrap_9,mdp_wrap_10,mdp_wrap_11};
 static int mdp_slot_swap(unsigned i,void *expected,void *value) {
     void **slot=(void **)(image+mdp_actions[i].vtable+MDP_SLOT);DWORD old,ignored;
     if(!VirtualProtect(slot,8,PAGE_READWRITE,&old)) return 0;

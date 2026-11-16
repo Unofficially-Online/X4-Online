@@ -1104,6 +1104,7 @@ static void test_dynamic_registry(void) {
 #include "test_lockstep_ik_diag.h"
 #include "test_lockstep_mission_owners.h"
 #include "test_lockstep_md_presentation.h"
+#include "test_lockstep_md_media.h"
 #include "test_lockstep_view_cameras.h"
 #include "test_lockstep_scan_long.h"
 #include "test_lockstep_spline_calc_watch.h"
@@ -1123,6 +1124,7 @@ int main(int argc,char **argv) {
     if(argc==2) test_ui_build_native_image(argv[1]);
     if(argc==2) test_ui_construct_native_image(argv[1]);
     if(argc==2) test_md_presentation_native_image(argv[1]);
+    if(argc==2) test_md_media_native_image(argv[1]);
     if(argc==2) test_view_cameras_native_image(argv[1]);
     if(argc==2) test_scan_long_native_image(argv[1]);
     if(argc==2) {test_mission_owners_native_image(argv[1]);test_pilot_aim_native_image(argv[1]);test_ui_missions_native_image(argv[1]);}
@@ -1242,6 +1244,7 @@ int main(int argc,char **argv) {
     test_ik_diag();
     test_mission_owners();
     test_md_presentation();
+    test_md_media();
     test_md_menu_state();
     test_view_cameras();
     test_scan_long();

@@ -118,12 +118,18 @@ static void pfbody_unplace(unsigned char *player) {
     if(!pfbody_mark || !player || !read_local(player+PFBODY_PLACED,&in,1) || !in) return;
     pfbody_mark(player,0);InterlockedIncrement64(&pfbody_unmarks);
 }
-/* A slot seated where no body sits (a spacesuit has no cockpit room): no connect ever gives P_k the byte, and MD's
+/* A slot seated where no body sits (a seat without a cockpit room): no connect ever gives P_k the byte, and MD's
  * distance of the slot's player fails as it did for a parked body (live sx1, 11 Nov: $ApproachObject.distanceto, the
- * slot in its own suit). The same mark, from the ship; the seat's end takes it off (pslot_unplace). */
+ * slot in its own suit). The same mark, from the ship; the seat's end takes it off (pslot_unplace).
+ * A seat with a cockpit room too, from the tick of the seat: its body comes PFBODY_SETTLE ticks later, and only while
+ * nobody walks, and a cue that starts in between and asks whether its player exists was told no. The cadet story's
+ * approach check after the suit exit, started by the room event the death module posts right after the seat,
+ * cancelled itself there (15 Nov: the wingmate's lines never came, the suit 3 m from the satellite); the same second
+ * after a home gave "$ApproachObject.distanceto ... invalid context". X4's connect sets the same byte again later. */
 static void pfbody_place_seat(unsigned k) {
-    pslot_slot *s=k>=2 && k<=PILOT_SLOTS?&pslots[k]:NULL;unsigned char in=0;
-    if(!s || !pfbody_mark || !s->seated || !s->roomless || !s->player || !s->ship || !read_local(s->ship+PFBODY_PLACED,&in,1) || !in) return;
+    pslot_slot *s=k>=2 && k<=PILOT_SLOTS?&pslots[k]:NULL;unsigned char in=0,has=0;
+    if(!s || !pfbody_mark || !s->seated || !s->player || !s->ship || !read_local(s->ship+PFBODY_PLACED,&in,1) || !in) return;
+    if(read_local(s->player+PFBODY_PLACED,&has,1) && has) return;
     pfbody_mark(s->player,1);InterlockedIncrement64(&pfbody_marks);
 }
 static volatile LONG64 pfbody_kill_off,pfbody_kill_spared,pfbody_kill_late;
