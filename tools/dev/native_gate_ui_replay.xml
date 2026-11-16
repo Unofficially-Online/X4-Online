@@ -413,6 +413,21 @@
   <!-- Generic mission offers per slot (lockstep_mission_owners.h 'offers'): the probe signals the galaxy inside slot k's
        scope at the same tick on every client; X4's own selection (GenericMissions.Manager.EvaluateSectorMissions) then
        runs at once, in that scope, for the sector and the player of slot k. The row names the player it ran for. -->
+  <!-- The audit's shared listener: a cue nobody owns, registered on the universe's player of the game's start. With
+       native_gate_shared_listeners it also runs for what players 2..N do, and its row names that player. -->
+  <cue name="AuditShared" instantiate="true">
+   <conditions>
+    <check_any>
+     <event_object_changed_room object="player.entity"/>
+     <event_player_changed_target/>
+     <event_player_killed_object/>
+     <event_player_started_control/>
+    </check_any>
+   </conditions>
+   <actions>
+    <debug_text text="'[X4LAN] MPP_AUDIT_SHARED event=%s player=%s ship=%s time=%s'.[event.name, player.entity, player.ship, player.age]"/>
+   </actions>
+  </cue>
   <cue name="SlotOffers" instantiate="true">
    <conditions><event_object_signalled object="player.galaxy" param="'x4lan_slot_offers'"/></conditions>
    <actions>

@@ -425,6 +425,81 @@ static int pvehk_deliver_enter(void *source) {
     return 0;
 }
 static void pvehk_deliver_leave(int scope) {if(scope>=2 && scope<=(int)PILOT_SLOTS && pstk_scope_slot==(unsigned)scope) (void)pslot_leave((unsigned)scope);}
+/* ---- Scripts nobody owns hear every player (native_gate_shared_listeners, a session default) ----
+ * A script that belongs to no player (the world's plots, story activators, statistics, the managers: the data vaults,
+ * the signal leak manager, "the player entered sector X") registered its player listeners at the game's start, on the
+ * universe's player of that moment: player 1's object. What players 2..N did never reached it: only player 1 could
+ * open a data vault for the plot, start a story by flying somewhere, count a kill. (Read from a live session, 15 Nov:
+ * player 1's object carries listeners for 92 event types, 41 cues on its sector change alone; a slot's player has its
+ * own missions' and the engine's.) An event of slot k's player that the gate delivers inside slot k's scope (its own
+ * posts, X4's due posts on that player) is therefore also handed to player 1's listeners of that type, as X4's
+ * delivery 0x99c470 hands it over (lookup 0x999ae0(source, type, 0) -> the listener pointers at +8..+0x10; each one
+ * still registered, 0x999dc0, gets vtable[4](listener, source, time, type, event); here once with player 1's object
+ * as the source and once with slot k's, see the call), with these limits:
+ *   - only listeners that are MD cues (vtable 0x2c75170) owned by no slot (lockstep_mission_owners.h): a mission
+ *     player 1 accepted keeps hearing player 1 only, and the engine's own listeners (mission manager, UI) too;
+ *   - inside slot k's scope, so the script's player.entity, player.ship and player.sector are slot k's and what it
+ *     starts is seen from that player (an instance it makes stays everybody's unless a claim is on the stack).
+ * A one-time script goes to whoever triggers it first. Status shared=on/events/calls/owned/over. */
+#define PVEHK_FWD_LOOKUP 0x999ae0u
+#define PVEHK_FWD_LOOKUP_SIZE 0x265u
+#define PVEHK_FWD_LOOKUP_SHA "084258cbc58aec67bc26725e55bf8b8af8e2a3294900f6dda6cda4df102e6954"
+#define PVEHK_FWD_LISTENS 0x999dc0u
+#define PVEHK_FWD_LISTENS_SIZE 0x99u
+#define PVEHK_FWD_LISTENS_SHA "a812d3d260bae97bf2547e3e90698adbe20ab0c4f4e486957f45d7708ee03028"
+#define PVEHK_FWD_MAX 512u
+static int pvehk_forward_on;
+static volatile LONG64 pvehk_forward_events,pvehk_forward_calls,pvehk_forward_owned,pvehk_forward_over;
+static unsigned mpp_slot_of(const unsigned char *cue);   /* lockstep_mission_owners.h */
+/* tests: in place of X4's lookup (then no registration check) and of the cue's owner */
+static unsigned char *(*pvehk_forward_lookup_test)(void *source,unsigned type);
+static unsigned (*pvehk_forward_owner_test)(const unsigned char *cue);
+static int pvehk_forward_arm(void) {
+    pvehk_forward_on=pnat_base && hash_ok(pnat_base+PVEHK_FWD_LOOKUP,PVEHK_FWD_LOOKUP_SIZE,PVEHK_FWD_LOOKUP_SHA) &&
+        hash_ok(pnat_base+PVEHK_FWD_LISTENS,PVEHK_FWD_LISTENS_SIZE,PVEHK_FWD_LISTENS_SHA);
+    return pvehk_forward_on;
+}
+/* Inside slot k's scope: the event to player 1's listeners that no slot owns. */
+static void pvehk_forward(unsigned k,unsigned char *event,double now) {
+    unsigned char *const first=pslot_p1;void *listeners[PVEHK_FWD_MAX];unsigned n=0,type=0;
+    if(!pvehk_forward_on || k<2 || k>PILOT_SLOTS || pstk_scope_slot!=k || !event || !first || first==pslots[k].player) return;
+    __try {
+        void **vtable=NULL;unsigned char *entry=NULL;void **at=NULL,**end=NULL;
+        if(read_local(event,&vtable,8) && vtable) {
+            type=((unsigned(*)(void*))vtable[1])(event);
+            entry=pvehk_forward_lookup_test?pvehk_forward_lookup_test(first,type):
+                  ((unsigned char*(*)(void*,unsigned,unsigned char))(void*)(pnat_base+PVEHK_FWD_LOOKUP))(first,type,0);
+        }
+        if(entry && read_local(entry+8,&at,8) && read_local(entry+0x10,&end,8) && at && end>at) {
+            for(;at<end;at++) {
+                if(n==PVEHK_FWD_MAX) {InterlockedIncrement64(&pvehk_forward_over);break;}
+                if(!read_local((const void*)at,&listeners[n],8)) break;
+                n++;
+            }
+        }
+        if(n) InterlockedIncrement64(&pvehk_forward_events);
+        for(unsigned i=0;i<n;i++) {
+            unsigned char *const cue=listeners[i];void **cv=NULL;
+            /* a listener an earlier one took away is skipped before anything of it is read, as X4's delivery does */
+            if(!cue || (!pvehk_forward_lookup_test &&
+                        !((unsigned char(*)(void*,void*,unsigned))(void*)(pnat_base+PVEHK_FWD_LISTENS))(first,cue,type))) continue;
+            if(!read_local(cue,&cv,8) || cv!=(void**)(void*)(pnat_base+SCRIPT_RNG_CUE_VT)) continue;   /* the engine's own listeners stay player 1's */
+            if(pvehk_forward_owner_test?pvehk_forward_owner_test(cue):mpp_slot_of(cue)) {InterlockedIncrement64(&pvehk_forward_owned);continue;}
+            InterlockedIncrement64(&pvehk_forward_calls);
+            /* Twice, for the two forms a script's condition has. An object condition (event_object_... object=
+             * "player.entity") holds player 1's object and takes the event from that source; a player condition
+             * (event_player_...) takes it from the universe's player, which in this scope is slot k's (the audit:
+             * with player 1 as the source only the object form ran). Each call can match one form only. */
+            ((void(*)(void*,void*,double,unsigned,void*))cv[4])(cue,first,now,type,event);
+            if(pvehk_forward_lookup_test || ((unsigned char(*)(void*,void*,unsigned))(void*)(pnat_base+PVEHK_FWD_LISTENS))(first,cue,type))
+                ((void(*)(void*,void*,double,unsigned,void*))cv[4])(cue,pslots[k].player,now,type,event);
+        }
+    }
+    __except(GetExceptionCode()==EXCEPTION_ACCESS_VIOLATION?EXCEPTION_EXECUTE_HANDLER:EXCEPTION_CONTINUE_SEARCH) {pvehk_forward_on=0;}
+}
+static void pvehk_deliver_forward(int scope,void *event,double time) {
+    if(scope>=2 && scope<=(int)PILOT_SLOTS) pvehk_forward((unsigned)scope,event,time);
+}
 /* The same event dispatched at once inside slot k's scope (the event_player_* kind; header). */
 static void pvehk_event_now(unsigned k,unsigned vtable,unsigned size,uint64_t first,uint64_t second,double now) {
     unsigned char *const player=pslots[k].player;
@@ -439,6 +514,7 @@ static void pvehk_event_now(unsigned k,unsigned vtable,unsigned size,uint64_t fi
             memset(event,0,size);memcpy(event,&vt,8);
             if(size>=0x20u) memcpy(event+0x18,&first,8);
             if(size>=0x28u) memcpy(event+0x20,&second,8);
+            pvehk_forward(k,event,now);   /* the scripts nobody owns first: X4's post may free the event */
             ((void(*)(void*,void*,double,unsigned char))(void*)(pnat_base+PVEHK_EVENT_POST_NOW))(player,event,now,1);
         }
     }
@@ -610,6 +686,42 @@ static void pvehk_scan(unsigned char *player,unsigned char flag) {
     native(player,flag);
     (void)pslot_leave(k);
 }
+/* The routine's own posts. Inside slot k's scope they reach slot k's listeners; the scripts nobody owns keep theirs on
+ * player 1's object (pvehk_forward): the data vault plot waits there for event_player_signal_unlock_finished (28 cues
+ * in a live session), the signal leak manager too. Five of the routine's six posts on its player are answered (the
+ * sixth, the failed unlock at 0x71d90d, lies across two 16-byte blocks): the event goes to those scripts first, then
+ * X4's post runs unchanged. Pinned with the routine's body. Status scanposts=installed/5/forwarded. */
+#define PVEHK_SCAN_BODY 0x71cf80u
+#define PVEHK_SCAN_BODY_SIZE 0x20b5u
+#define PVEHK_SCAN_BODY_SHA "d562229b9cc2af6e4a8cae53299d4ef74c0dabd865c24e878a78657c13d77b53"
+#define PVEHK_SCAN_POST_STUB 0x460u           /* on the slots' near page, after the speech queue's (0x420, 0x440) */
+#define PVEHK_SCAN_POSTS 5u
+static const unsigned pvehk_scan_post_sites[PVEHK_SCAN_POSTS]={0x71d9d2u,0x71d9e8u,0x71db78u,0x71ed2au,0x71efd7u};
+static unsigned char pvehk_scan_post_patched[PVEHK_SCAN_POSTS][5];
+static int pvehk_scan_posts_installed;
+static volatile LONG64 pvehk_scan_posts_forwarded;
+static uintptr_t pvehk_scan_post(unsigned char *source,unsigned char *event,double time,unsigned char immediate) {
+    const unsigned k=pstk_scope_slot;
+    if(k>=2 && k<=PILOT_SLOTS && source && source==pslots[k].player && event) {
+        InterlockedIncrement64(&pvehk_scan_posts_forwarded);
+        pvehk_forward(k,event,time);
+    }
+    return ((uintptr_t(*)(void*,void*,double,unsigned char))(void*)(pnat_base+PVEHK_EVENT_POST_NOW))(source,event,time,immediate);
+}
+static void pvehk_scan_posts_install(void) {
+    if(pvehk_scan_posts_installed || !pvehk_scan_installed || !hash_ok(pnat_base+PVEHK_SCAN_BODY,PVEHK_SCAN_BODY_SIZE,PVEHK_SCAN_BODY_SHA)) return;
+    for(unsigned i=0;i<PVEHK_SCAN_POSTS;i++) {
+        if(pres_site_install(pvehk_scan_post_sites[i],PVEHK_EVENT_POST_NOW,PVEHK_SCAN_POST_STUB,(void*)pvehk_scan_post,pvehk_scan_post_patched[i])) {
+            pvehk_scan_posts_installed++;continue;
+        }
+        while(i--) if(pres_site_uninstall(pvehk_scan_post_sites[i],PVEHK_EVENT_POST_NOW,pvehk_scan_post_patched[i])) pvehk_scan_posts_installed--;
+        return;   /* all five or none */
+    }
+}
+static void pvehk_scan_posts_restore(void) {
+    for(unsigned i=0;i<PVEHK_SCAN_POSTS && pvehk_scan_posts_installed;i++)
+        if(pres_site_uninstall(pvehk_scan_post_sites[i],PVEHK_EVENT_POST_NOW,pvehk_scan_post_patched[i])) pvehk_scan_posts_installed--;
+}
 static void pvehk_scan_install(void) {
     DWORD old,ignored;int32_t rel=0;
     if(pvehk_scan_installed || !pslot_page || !pvehk_events_more || !hash_ok(pnat_base+PVEHK_SCAN,PVEHK_SCAN_SIZE,PVEHK_SCAN_SHA) ||
@@ -689,15 +801,18 @@ static int pdeath_guard_install(void) {
     pvehk_poll_pins();       /* before the entry's call site inside 0x731560 is re-pointed */
     pvehk_events_pins();     /* MD's object and room events for a slot's player */
     event_order_scope_enter=pvehk_deliver_enter;event_order_scope_leave=pvehk_deliver_leave;   /* ...and its due events in its scope */
+    event_order_scope_forward=pvehk_deliver_forward;
     pvehk_enter_install();   /* X4's entry of a suited player (above): where this image has it */
     pvehk_fade_install();    /* the fade of an exit or an entry: on the client whose player it is */
     pvehk_zone_install();    /* a flying slot's reference frame: its own environment zone */
     pvehk_did_install();     /* what a slot's ship did (kill, repair, collect, defuse): told to that slot's player */
     pvehk_scan_install();    /* a slot's player's scan and unlock progress: inside its scope */
+    pvehk_scan_posts_install();   /* ...and its posts also to the scripts nobody owns */
     pdeath_guard_installed=1;return 1;
 }
 static void pdeath_restore(void) {
-    event_order_scope_enter=NULL;event_order_scope_leave=NULL;
+    event_order_scope_enter=NULL;event_order_scope_leave=NULL;event_order_scope_forward=NULL;
+    pvehk_scan_posts_restore();
     pvehk_scan_restore();
     pvehk_did_restore();
     pvehk_zone_restore();
@@ -1263,8 +1378,10 @@ static int pdeath_status(char *out,size_t capacity) {
                                               pvehk_did_sites[PVEHK_DID_LEAK].installed,(long long)pvehk_did_sites[PVEHK_DID_LEAK].told,
                                               pvehk_did_installed(),(int)PVEHK_DID_SITES,pvehk_did_told());
     if(n>0 && (size_t)n<capacity) n+=pvehk_did_seen(out+n,capacity-(size_t)n);
-    if(n>0 && (size_t)n<capacity) n+=snprintf(out+n,capacity-(size_t)n," scan=%d/%lld/%lld",pvehk_scan_installed,(long long)pvehk_scans_scoped,
-                                              (long long)pvehk_scans_plain);
+    if(n>0 && (size_t)n<capacity) n+=snprintf(out+n,capacity-(size_t)n," shared=%d/%lld/%lld/%lld/%lld",pvehk_forward_on,(long long)pvehk_forward_events,
+                                              (long long)pvehk_forward_calls,(long long)pvehk_forward_owned,(long long)pvehk_forward_over);
+    if(n>0 && (size_t)n<capacity) n+=snprintf(out+n,capacity-(size_t)n," scan=%d/%lld/%lld scanposts=%d/%u/%lld",pvehk_scan_installed,(long long)pvehk_scans_scoped,
+                                              (long long)pvehk_scans_plain,pvehk_scan_posts_installed,PVEHK_SCAN_POSTS,(long long)pvehk_scan_posts_forwarded);
     if(n>0 && (size_t)n<capacity) n+=snprintf(out+n,capacity-(size_t)n," poll=%d/%lld/%lld",pvehk_poll_on,(long long)pvehk_polls,
                                               (long long)pvehk_poll_entered);
     if(n>0 && (size_t)n<capacity) n+=snprintf(out+n,capacity-(size_t)n," zone=%d/%lld/%lld",pvehk_zone_installed,

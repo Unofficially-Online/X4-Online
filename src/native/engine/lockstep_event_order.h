@@ -237,6 +237,7 @@ static uint64_t event_order_find(const unsigned char *batch,uint64_t count,const
  * two functions; none: as before). The answer of enter is what leave gets; 0: no scope was opened. */
 static int (*event_order_scope_enter)(void *source);
 static void (*event_order_scope_leave)(int scope);
+static void (*event_order_scope_forward)(int scope,void *event,double time);   /* inside that scope, after the delivery */
 static void event_order_deliver_with(event_order_deliver_fn native,unsigned char *batch,const volatile uint64_t *count_slot,
                                      void *source,void *event,double time) {
     /* After any failure the remaining calls stay native until the gate stops (80). */
@@ -255,6 +256,7 @@ static void event_order_deliver_with(event_order_deliver_fn native,unsigned char
     if(e.source) {
         const int scope=event_order_scope_enter?event_order_scope_enter(e.source):0;
         event_rng_deliver(native,e.source,e.event,due); /* native unless native_gate_event_rng is armed */
+        if(scope && event_order_scope_forward) event_order_scope_forward(scope,e.event,due);
         if(scope && event_order_scope_leave) event_order_scope_leave(scope);
     }
 }

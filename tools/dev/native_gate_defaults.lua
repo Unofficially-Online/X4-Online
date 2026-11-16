@@ -205,6 +205,7 @@ D.ON={
  {'native_gate_pilot_slots_post',true,'native_gate_pilot_stock_slots','a player 2+ own ship answers that player as its pilot while the game runs as that player (the autopilot check)'},
  {'native_gate_missions_per_player_ai_frames',true,'native_gate_missions_per_player','the autopilot and other scripts of a player 2+ own ship computer run as that player'},
  {'native_gate_md_media',true,'native_gate_pilot_stock_slots','a mission call on the target monitor starts in the simulation at one tick on every client and shows on its owner client only'},
+ {'native_gate_shared_listeners',true,'native_gate_pilot_stock_slots','a script no player owns (world plots, story activators, statistics) hears the events of every player, each inside that player scope'},
  {'native_gate_ui_reload_hold',true,'native_gate_ui_guard','a window resize, a UI scale change or a controller-mode switch no longer ends a player session: X4 reloads its UI after the session'},
  {'native_gate_ui_compslot',true,'native_gate_ui_guard native_gate_pilot_foot_slots','on foot a click works: the pilot seat (sit down) and the transporter terminal (its menu, Use Spacesuit) for every player'},
  {'native_gate_guidance_local',true,'native_gate_pilot_present native_gate_runtime_ids_local native_gate_script_rng native_gate_md_timed_rng','a client own guidance takes local runtime IDs'},

@@ -5581,6 +5581,14 @@ local function frame()
     assert(armed==1,'pilot death refused: '..tostring(why))
     pilot_view.death=true;pilot_view.death_arm(respawn or 0,window[1],suit)
     log('PILOT_DEATH_ARMED slot='..slot..' respawn='..tostring(respawn or 'off')..' suit='..tostring(suit==true))
+    -- Scripts nobody owns hear every player (lockstep_pilot_death.h pvehk_forward; a session default, Windows gate):
+    -- an event of slot k's player is also handed to the listeners that the world's own scripts keep on player 1's
+    -- object, inside slot k's scope. Armed here: it rides the events this module delivers, and the gate knows the
+    -- game's image from the pilot modules on. A gate without it runs as before: those scripts hear player 1 only.
+    if cfg.native_gate_shared_listeners and gate.shared_listeners then
+     assert(cfg.native_gate_shared_listeners==true and gate.shared_listeners(1)==1,'shared listeners refused')
+     log('SHARED_LISTENERS_ARMED')
+    end
    else
     assert(cfg.native_gate_pilot_respawn==nil,'pilot respawn refused: needs native_gate_pilot_death')
     assert(cfg.native_gate_pilot_death_suit==nil,'pilot death suit refused: needs native_gate_pilot_death')
