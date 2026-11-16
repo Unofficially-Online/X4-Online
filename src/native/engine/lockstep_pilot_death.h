@@ -436,62 +436,196 @@ static void pvehk_event_now(unsigned k,unsigned vtable,unsigned size,uint64_t fi
         unsigned char *event=((void*(*)(size_t,uintptr_t,uintptr_t,uintptr_t,unsigned))(void*)(pnat_base+PVEHK_EVENT_ALLOCATE))(size,0,0,0,0x10);
         if(event) {
             void *vt=pnat_base+vtable;
-            memset(event,0,size);memcpy(event,&vt,8);memcpy(event+0x18,&first,8);memcpy(event+0x20,&second,8);
+            memset(event,0,size);memcpy(event,&vt,8);
+            if(size>=0x20u) memcpy(event+0x18,&first,8);
+            if(size>=0x28u) memcpy(event+0x20,&second,8);
             ((void(*)(void*,void*,double,unsigned char))(void*)(pnat_base+PVEHK_EVENT_POST_NOW))(player,event,now,1);
         }
     }
     __except(GetExceptionCode()==EXCEPTION_ACCESS_VIOLATION?EXCEPTION_EXECUTE_HANDLER:EXCEPTION_CONTINUE_SEARCH) {pvehk_events_more=0;}
     if(entered) (void)pslot_leave(k);
 }
-/* A kill by a slot's ship. X4's kill notice (0x3e54d6..) posts U::KilledComponentEvent (vtable 0x2baadc8: 0x28 bytes,
- * the kill method dword +0x18, the killed object's ID +0x20) at once on the killer (0x3e5563), then asks 0x9f9250 for
- * the object the universe's player controls and, when that is the killer, posts the same event at once on the
- * universe's player: MD's event_player_killed_object. It runs in the simulation outside every scope, where the
- * universe's player is player 1: a kill by slot k's ship told nobody, so slot k's kill missions never counted it.
- * The first post's call is answered here: X4's post runs unchanged, and when the killer is the ship slot k sits in,
- * the same event is dispatched on slot k's player inside its scope (pvehk_event_now). (The call of 0x9f9250 itself,
- * 0x3e556d, lies across two 16-byte blocks and cannot be re-pointed in one exchange.) Status kill=installed/told. */
-#define PVEHK_KILL_SITE 0x3e5563u
-#define PVEHK_KILL_BLOCK 0x3e5560u
-#define PVEHK_KILL_BLOCK_SIZE 0x100u
-#define PVEHK_KILL_BLOCK_SHA "abfbe982a41f6af4bd4e6b5fe7628bd8ac1a446479211178c24752f1cc7a1ab2"
+/* What the ship a slot sits in did. Six notices of X4 have one shape: the event is posted on the object that did it
+ * (the actor), then 0x9f9250 is asked for the object the universe's player controls and, when that is the actor, the
+ * same event is posted on the universe's player. That last post is MD's event_player_* form of it, the trigger of the
+ * kill, repair, collect and bomb missions. The notices run in the simulation outside every scope, where the universe's
+ * player is player 1: what slot k's ship or suit did told nobody.
+ *   kill       0x3e54d6..  U::KilledComponentEvent 0x2baadc8, 0x28: method dword +0x18, killed ID +0x20
+ *   leak       0x6511cb..  U::SignalLeakRepairedEvent 0x2ba65d0, 0x28: leak ID +0x18, its parent's ID +0x20
+ *   powerup    0x3cc4f4..  U::CollectedPowerUpEvent 0x2ac1668, 0x18: no fields
+ *   ammo       0x3cd138..  U::CollectedAmmoEvent 0x2ba9d98, 0x28: +0x18 qword, +0x20 dword
+ *   repaired   0x5180cb..  U::DestructibleRepairedEvent 0x2ba6678, 0x28: repaired ID +0x18, +0x20 a second ID
+ *   defused    0x846881..  U::BombDefusedEvent 0x2bab260, 0x20: +0x18 qword
+ * The actor's post is answered here (its call carries the actor and the event): X4's post runs unchanged and, when
+ * the actor is the ship slot k sits in, an event with the same fields is dispatched on slot k's player inside its
+ * scope (pvehk_event_now). The repaired notice's posts lie across two 16-byte blocks, which one exchange cannot
+ * re-point; there the call of the event's constructor (0x9cfc70, which reads no r9) is answered and its stub hands
+ * over the actor the block holds in rbx. (The call of 0x9f9250 itself lies across two blocks in the kill notice.)
+ * Status did=installed/sites/seen/told (seen: notices that came by, anybody's), kill= and leak= their own counts. */
 #define PVEHK_KILL_ASK 0x9f9250u
 #define PVEHK_KILL_ASK_SIZE 0x100u
 #define PVEHK_KILL_ASK_SHA "8658e6b8562c4baea792f82004644aa7434e561df2f80333ffa1d611705c38ed"
-#define PVEHK_KILL_STUB 0x200u                /* on the slots' near page, after the zone's (0x1c0, 0x1e0) */
 #define PVEHK_EVENT_KILLED 0x2baadc8u
-static int pvehk_kill_installed;
-static unsigned char pvehk_kill_patched[5];
-static volatile LONG64 pvehk_kills_told;
-/* The slot whose ship the killer is (0: none, or player 1's, which X4 tells itself); the event goes out. */
-static unsigned pvehk_killed(unsigned char *killer,uint64_t killed_id,unsigned method) {
+#define PVEHK_EVENT_LEAK 0x2ba65d0u
+#define PVEHK_EVENT_POWERUP 0x2ac1668u
+#define PVEHK_EVENT_AMMO 0x2ba9d98u
+#define PVEHK_EVENT_REPAIRED 0x2ba6678u
+#define PVEHK_EVENT_DEFUSED 0x2bab260u
+#define PVEHK_REPAIRED_CTOR 0x9cfc70u
+#define PVEHK_REPAIRED_CTOR_SIZE 0x40u
+#define PVEHK_REPAIRED_CTOR_SHA "eff31ea1abc2056f615b0a8cd5857451db5fde1254bce8359d9deca8db216734"
+enum {PVEHK_DID_KILL=0,PVEHK_DID_LEAK,PVEHK_DID_POWERUP,PVEHK_DID_AMMO,PVEHK_DID_DEFUSED,PVEHK_DID_REPAIRED,PVEHK_DID_SITES};
+typedef struct {
+    unsigned site,target,block,stub,vtable,size;   /* the call, what it calls, the pinned 0x100 bytes, the stub on the slots' near page */
+    const char *sha;
+    int installed;unsigned char patched[5];volatile LONG64 told,seen;   /* seen: notices of this kind that came by, anybody's */
+} pvehk_did_site;
+static pvehk_did_site pvehk_did_sites[PVEHK_DID_SITES]={
+    [PVEHK_DID_KILL]    ={0x3e5563u,PVEHK_EVENT_POST_NOW,0x3e5560u,0x200u,PVEHK_EVENT_KILLED,0x28u,"abfbe982a41f6af4bd4e6b5fe7628bd8ac1a446479211178c24752f1cc7a1ab2",0,{0},0,0},
+    [PVEHK_DID_LEAK]    ={0x651249u,PVEHK_EVENT_POST_NOW,0x651200u,0x220u,PVEHK_EVENT_LEAK,0x28u,"e47b2103857684f9d8b6fb5eede8aff7bd159cc515924466edf071e4f24aa10d",0,{0},0,0},
+    [PVEHK_DID_POWERUP] ={0x3cc565u,PVEHK_EVENT_POST_NOW,0x3cc500u,0x240u,PVEHK_EVENT_POWERUP,0x18u,"e8d8a38ea129bbe7be8eb3a79fe644159b2dd77379f0d744ec8bd02ce88c41bf",0,{0},0,0},
+    [PVEHK_DID_AMMO]    ={0x3cd1b0u,PVEHK_EVENT_POST_NOW,0x3cd150u,0x260u,PVEHK_EVENT_AMMO,0x28u,"417a8accead609baa50b184fbeb8a5e94ceefc95af5896476e1a8fb9309a96f8",0,{0},0,0},
+    [PVEHK_DID_DEFUSED] ={0x8468e1u,PVEHK_EVENT_POST_NOW,0x846880u,0x2a0u,PVEHK_EVENT_DEFUSED,0x20u,"79db70aa9d92b41e6b26addb92d2e0a526e8572d56e6c17ae55e715085c9877b",0,{0},0,0},
+    [PVEHK_DID_REPAIRED]={0x518158u,PVEHK_REPAIRED_CTOR,0x518100u,0x280u,PVEHK_EVENT_REPAIRED,0x28u,"cee9e10334bbbcff93e5bbc93f0a311acf88b620f57530b4eac0c52f407ee3fe",0,{0},0,0},
+};
+/* The slot whose ship the actor is (0: none, or player 1's, which X4 tells itself); the event goes out. */
+static unsigned pvehk_did(unsigned which,unsigned char *actor,uint64_t first,uint64_t second) {
     double now=0;
-    if(!killer || !killed_id || (!pvehk_events_more && !pvehk_event_test)) return 0;
+    if(which>=PVEHK_DID_SITES || !actor || (!pvehk_events_more && !pvehk_event_test)) return 0;
     for(unsigned k=2;k<=PILOT_SLOTS;k++) {
-        if(!pslots[k].seated || !pslots[k].player || pslots[k].ship!=killer) continue;
+        if(!pslots[k].seated || !pslots[k].player || pslots[k].ship!=actor) continue;
         if(!pvehk_event_test && (!pnat_fn.time || !pnat_fn.time(&now))) return 0;
-        InterlockedIncrement64(&pvehk_kills_told);
-        pvehk_event_now(k,PVEHK_EVENT_KILLED,PVEHK_EVENT_SIZE,method,killed_id,now);
+        InterlockedIncrement64(&pvehk_did_sites[which].told);
+        pvehk_event_now(k,pvehk_did_sites[which].vtable,pvehk_did_sites[which].size,first,second,now);
         return k;
     }
     return 0;
 }
-static uintptr_t pvehk_kill(unsigned char *killer,unsigned char *event,double time,unsigned char immediate) {
-    uint64_t id=0;unsigned method=0;void *vtable=NULL;
-    /* read before the post: an event dispatched at once may be gone after it */
-    const int ours=killer && event && !pstk_scope_slot && read_local(event,&vtable,8) && vtable==(void*)(pnat_base+PVEHK_EVENT_KILLED) &&
-                   read_local(event+0x18,&method,4) && read_local(event+0x20,&id,8);
-    const uintptr_t answer=((uintptr_t(*)(void*,void*,double,unsigned char))(void*)(pnat_base+PVEHK_EVENT_POST_NOW))(killer,event,time,immediate);
-    if(ours) (void)pvehk_killed(killer,id,method);
+static unsigned pvehk_killed(unsigned char *killer,uint64_t killed_id,unsigned method) {
+    return killed_id?pvehk_did(PVEHK_DID_KILL,killer,method,killed_id):0;
+}
+/* The leak's parent may be none (X4 writes 0 then); it goes out as X4 wrote it. */
+static unsigned pvehk_leak_repaired(unsigned char *repairer,uint64_t leak_id,uint64_t parent_id) {
+    return leak_id?pvehk_did(PVEHK_DID_LEAK,repairer,leak_id,parent_id):0;
+}
+/* The fields of an event X4 built, by its vtable: which notice it is, or PVEHK_DID_SITES. */
+static unsigned pvehk_did_read(const unsigned char *event,uint64_t *first,uint64_t *second) {
+    void *vtable=NULL;
+    *first=0;*second=0;
+    if(!event || !read_local(event,&vtable,8)) return PVEHK_DID_SITES;
+    for(unsigned i=0;i<PVEHK_DID_SITES;i++) {
+        if(vtable!=(void*)(pnat_base+pvehk_did_sites[i].vtable)) continue;
+        if(pvehk_did_sites[i].size>=0x20u && !read_local(event+0x18,first,8)) return PVEHK_DID_SITES;
+        if(pvehk_did_sites[i].size>=0x28u && !read_local(event+0x20,second,8)) return PVEHK_DID_SITES;
+        return i;
+    }
+    return PVEHK_DID_SITES;
+}
+/* The actor's post. The fields are read before it: an event dispatched at once may be gone after it. */
+static uintptr_t pvehk_did_post(unsigned char *actor,unsigned char *event,double time,unsigned char immediate) {
+    uint64_t first=0,second=0;
+    const unsigned which=actor && !pstk_scope_slot?pvehk_did_read(event,&first,&second):PVEHK_DID_SITES;
+    const uintptr_t answer=((uintptr_t(*)(void*,void*,double,unsigned char))(void*)(pnat_base+PVEHK_EVENT_POST_NOW))(actor,event,time,immediate);
+    if(which<PVEHK_DID_SITES) InterlockedIncrement64(&pvehk_did_sites[which].seen);
+    if(which==PVEHK_DID_KILL) (void)pvehk_killed(actor,second,(unsigned)first);
+    else if(which==PVEHK_DID_LEAK) (void)pvehk_leak_repaired(actor,first,second);
+    else if(which<PVEHK_DID_SITES) (void)pvehk_did(which,actor,first,second);
     return answer;
 }
-static void pvehk_kill_install(void) {
-    if(pvehk_kill_installed || !pslot_page || !pvehk_events_more || !hash_ok(pnat_base+PVEHK_KILL_BLOCK,PVEHK_KILL_BLOCK_SIZE,PVEHK_KILL_BLOCK_SHA) ||
-       !hash_ok(pnat_base+PVEHK_KILL_ASK,PVEHK_KILL_ASK_SIZE,PVEHK_KILL_ASK_SHA)) return;
-    if(pres_site_install(PVEHK_KILL_SITE,PVEHK_EVENT_POST_NOW,PVEHK_KILL_STUB,(void*)pvehk_kill,pvehk_kill_patched)) pvehk_kill_installed=1;
+/* The repaired notice: the constructor of the actor's event, with the actor from the stub. */
+static void *pvehk_did_ctor(unsigned char *event,void *repaired,void *other,unsigned char *actor) {
+    void *made=((void*(*)(void*,void*,void*))(void*)(pnat_base+PVEHK_REPAIRED_CTOR))(event,repaired,other);
+    uint64_t first=0,second=0;
+    InterlockedIncrement64(&pvehk_did_sites[PVEHK_DID_REPAIRED].seen);
+    if(actor && !pstk_scope_slot && pvehk_did_read(event,&first,&second)==PVEHK_DID_REPAIRED && first) (void)pvehk_did(PVEHK_DID_REPAIRED,actor,first,second);
+    return made;
 }
-static void pvehk_kill_restore(void) {
-    if(pvehk_kill_installed && pres_site_uninstall(PVEHK_KILL_SITE,PVEHK_EVENT_POST_NOW,pvehk_kill_patched)) pvehk_kill_installed=0;
+static void pvehk_did_install(void) {
+    static const unsigned char head[3]={0x49,0x89,0xd9};   /* mov r9,rbx: the repaired notice's actor */
+    if(!pslot_page || !pvehk_events_more || !hash_ok(pnat_base+PVEHK_KILL_ASK,PVEHK_KILL_ASK_SIZE,PVEHK_KILL_ASK_SHA)) return;
+    for(unsigned i=0;i<PVEHK_DID_SITES;i++) {
+        pvehk_did_site *d=&pvehk_did_sites[i];
+        if(d->installed || !hash_ok(pnat_base+d->block,0x100u,d->sha)) continue;
+        if(i!=PVEHK_DID_REPAIRED) {
+            if(pres_site_install(d->site,d->target,d->stub,(void*)pvehk_did_post,d->patched)) d->installed=1;
+            continue;
+        }
+        if(!hash_ok(pnat_base+PVEHK_REPAIRED_CTOR,PVEHK_REPAIRED_CTOR_SIZE,PVEHK_REPAIRED_CTOR_SHA)) continue;
+        DWORD old,ignored;int32_t rel=(int32_t)((intptr_t)(pnat_base+d->target)-(intptr_t)(pnat_base+d->site+5));
+        unsigned char original[5]={0xe8,0,0,0,0};memcpy(original+1,&rel,4);
+        if(memcmp(pnat_base+d->site,original,5) || !VirtualProtect(pslot_page,PVIEW_PAGE,PAGE_READWRITE,&old)) continue;
+        memcpy(pslot_page+d->stub,head,sizeof(head));
+        pview_abs_jump(pslot_page+d->stub+sizeof(head),(void*)pvehk_did_ctor);
+        if(!VirtualProtect(pslot_page,PVIEW_PAGE,PAGE_EXECUTE_READ,&ignored)) continue;
+        FlushInstructionCache(GetCurrentProcess(),pslot_page,PVIEW_PAGE);
+        rel=(int32_t)((intptr_t)(pslot_page+d->stub)-(intptr_t)(pnat_base+d->site+5));
+        d->patched[0]=0xe8;memcpy(d->patched+1,&rel,4);
+        if(pview_cas(d->site,original,d->patched,5)) d->installed=1;
+    }
+}
+static void pvehk_did_restore(void) {
+    for(unsigned i=0;i<PVEHK_DID_SITES;i++) {
+        pvehk_did_site *d=&pvehk_did_sites[i];
+        if(d->installed && pres_site_uninstall(d->site,d->target,d->patched)) d->installed=0;
+    }
+}
+static int pvehk_did_installed(void) {int n=0;for(unsigned i=0;i<PVEHK_DID_SITES;i++) n+=pvehk_did_sites[i].installed!=0;return n;}
+static long long pvehk_did_told(void) {long long n=0;for(unsigned i=0;i<PVEHK_DID_SITES;i++) n+=(long long)pvehk_did_sites[i].told;return n;}
+static int pvehk_did_seen(char *out,size_t capacity) {   /* kill:leak:powerup:ammo:defused:repaired */
+    int n=0;
+    for(unsigned i=0;i<PVEHK_DID_SITES && n>=0 && (size_t)n<capacity;i++) n+=snprintf(out+n,capacity-(size_t)n,"%s%lld",i?":":"",(long long)pvehk_did_sites[i].seen);
+    return n;
+}
+/* A player's scan and unlock routine. U::Player's own update (0x7113e0) runs for every player object every frame and
+ * calls 0x71cf10(player, 0) at 0x7118ec: the progress of a signal leak scan or a lock's unlock, with six posts at once
+ * on that player (U::SignalUnlockStarted / Finished / Failed / Impossible ...: MD's event_player_signal_unlock_*, the
+ * most used mission trigger of the stock scripts). For a slot's player it ran outside every scope, where the
+ * universe's player is player 1 and MD takes the event_player_* kind from nobody else: slot k's missions never heard
+ * its own unlocks. The routine's entry jumps here (its one call, 0x7118ec, lies across two 16-byte blocks): for the
+ * player of a seated slot it runs inside that slot's scope, as it does for X4's own player; for every other player
+ * object it is X4's routine unchanged. A scope that cannot be opened there: X4's routine, counted.
+ * Status scan=installed/scoped/plain. */
+#define PVEHK_SCAN 0x71cf10u
+#define PVEHK_SCAN_SIZE 0x70u
+#define PVEHK_SCAN_SHA "da24aed61fc050968cfa30091a8b21a5ed05adc14eda67d29d518b11757781b7"
+#define PVEHK_SCAN_STUB 0x2c0u                /* on the slots' near page, after the notices' (0x200..0x2a0) */
+#define PVEHK_SCAN_TRAMPOLINE 0x2e0u          /* the routine's first two instructions, then on at +6 */
+static const unsigned char pvehk_scan_head[6]={0x48,0x8b,0xc4,0x88,0x50,0x10};   /* mov rax,rsp; mov [rax+0x10],dl */
+static int pvehk_scan_installed;
+static unsigned char pvehk_scan_patched[5];
+static volatile LONG64 pvehk_scans_scoped,pvehk_scans_plain;
+static void (*pvehk_scan_test)(void *player,unsigned char flag);
+/* The slot (2..N) whose seated player this is, when no scope is open; 0 otherwise. */
+static unsigned pvehk_scan_slot(const unsigned char *player) {
+    if(!player || pstk_scope_slot) return 0;
+    for(unsigned k=2;k<=PILOT_SLOTS;k++) if(pslots[k].seated && pslots[k].player==player) return k;
+    return 0;
+}
+static void pvehk_scan(unsigned char *player,unsigned char flag) {
+    void (*const native)(void*,unsigned char)=pvehk_scan_test?pvehk_scan_test:(void(*)(void*,unsigned char))(void*)(pslot_page+PVEHK_SCAN_TRAMPOLINE);
+    const unsigned k=pvehk_scan_slot(player);
+    if(!k) {native(player,flag);return;}
+    if(!pslot_enter(k)) {InterlockedIncrement64(&pvehk_scans_plain);native(player,flag);return;}
+    InterlockedIncrement64(&pvehk_scans_scoped);
+    native(player,flag);
+    (void)pslot_leave(k);
+}
+static void pvehk_scan_install(void) {
+    DWORD old,ignored;int32_t rel=0;
+    if(pvehk_scan_installed || !pslot_page || !pvehk_events_more || !hash_ok(pnat_base+PVEHK_SCAN,PVEHK_SCAN_SIZE,PVEHK_SCAN_SHA) ||
+       memcmp(pnat_base+PVEHK_SCAN,pvehk_scan_head,sizeof(pvehk_scan_head))) return;
+    if(!VirtualProtect(pslot_page,PVIEW_PAGE,PAGE_READWRITE,&old)) return;
+    pview_abs_jump(pslot_page+PVEHK_SCAN_STUB,(void*)pvehk_scan);
+    memcpy(pslot_page+PVEHK_SCAN_TRAMPOLINE,pvehk_scan_head,sizeof(pvehk_scan_head));
+    pview_abs_jump(pslot_page+PVEHK_SCAN_TRAMPOLINE+sizeof(pvehk_scan_head),pnat_base+PVEHK_SCAN+sizeof(pvehk_scan_head));
+    if(!VirtualProtect(pslot_page,PVIEW_PAGE,PAGE_EXECUTE_READ,&ignored)) return;
+    FlushInstructionCache(GetCurrentProcess(),pslot_page,PVIEW_PAGE);
+    rel=(int32_t)((intptr_t)(pslot_page+PVEHK_SCAN_STUB)-(intptr_t)(pnat_base+PVEHK_SCAN+5));
+    pvehk_scan_patched[0]=0xe9;memcpy(pvehk_scan_patched+1,&rel,4);
+    if(pview_cas(PVEHK_SCAN,pvehk_scan_head,pvehk_scan_patched,5)) pvehk_scan_installed=1;
+}
+static void pvehk_scan_restore(void) {
+    if(pvehk_scan_installed && pview_cas(PVEHK_SCAN,pvehk_scan_patched,pvehk_scan_head,5)) pvehk_scan_installed=0;
 }
 static void pvehk_event_post(unsigned char *player,unsigned vtable,uint64_t was,uint64_t is,double now) {
     if(!was || !is || was==is) return;
@@ -558,12 +692,14 @@ static int pdeath_guard_install(void) {
     pvehk_enter_install();   /* X4's entry of a suited player (above): where this image has it */
     pvehk_fade_install();    /* the fade of an exit or an entry: on the client whose player it is */
     pvehk_zone_install();    /* a flying slot's reference frame: its own environment zone */
-    pvehk_kill_install();    /* a kill by a slot's ship: told to that slot's player */
+    pvehk_did_install();     /* what a slot's ship did (kill, repair, collect, defuse): told to that slot's player */
+    pvehk_scan_install();    /* a slot's player's scan and unlock progress: inside its scope */
     pdeath_guard_installed=1;return 1;
 }
 static void pdeath_restore(void) {
     event_order_scope_enter=NULL;event_order_scope_leave=NULL;
-    pvehk_kill_restore();
+    pvehk_scan_restore();
+    pvehk_did_restore();
     pvehk_zone_restore();
     pvehk_fade_restore();
     pvehk_enter_restore();
@@ -1122,8 +1258,13 @@ static int pdeath_status(char *out,size_t capacity) {
                                               pvehk_enter_installed,(long long)pvehk_enters,(long long)pvehk_enters_else);
     if(n>0 && (size_t)n<capacity) n+=snprintf(out+n,capacity-(size_t)n," fade=%d/%lld/%lld",pvehk_fade_installed,
                                               (long long)pvehk_fades_shown,(long long)pvehk_fades_kept);
-    if(n>0 && (size_t)n<capacity) n+=snprintf(out+n,capacity-(size_t)n," events=%d/%lld/%d/%lld deliver=%lld/%lld kill=%d/%lld",pvehk_events_on,(long long)pvehk_events_posted,pvehk_events_more,(long long)pvehk_events_unscoped,
-                                              (long long)pvehk_delivered_scoped,(long long)pvehk_delivered_plain,pvehk_kill_installed,(long long)pvehk_kills_told);
+    if(n>0 && (size_t)n<capacity) n+=snprintf(out+n,capacity-(size_t)n," events=%d/%lld/%d/%lld deliver=%lld/%lld kill=%d/%lld leak=%d/%lld did=%d/%d/%lld seen=",pvehk_events_on,(long long)pvehk_events_posted,pvehk_events_more,(long long)pvehk_events_unscoped,
+                                              (long long)pvehk_delivered_scoped,(long long)pvehk_delivered_plain,pvehk_did_sites[PVEHK_DID_KILL].installed,(long long)pvehk_did_sites[PVEHK_DID_KILL].told,
+                                              pvehk_did_sites[PVEHK_DID_LEAK].installed,(long long)pvehk_did_sites[PVEHK_DID_LEAK].told,
+                                              pvehk_did_installed(),(int)PVEHK_DID_SITES,pvehk_did_told());
+    if(n>0 && (size_t)n<capacity) n+=pvehk_did_seen(out+n,capacity-(size_t)n);
+    if(n>0 && (size_t)n<capacity) n+=snprintf(out+n,capacity-(size_t)n," scan=%d/%lld/%lld",pvehk_scan_installed,(long long)pvehk_scans_scoped,
+                                              (long long)pvehk_scans_plain);
     if(n>0 && (size_t)n<capacity) n+=snprintf(out+n,capacity-(size_t)n," poll=%d/%lld/%lld",pvehk_poll_on,(long long)pvehk_polls,
                                               (long long)pvehk_poll_entered);
     if(n>0 && (size_t)n<capacity) n+=snprintf(out+n,capacity-(size_t)n," zone=%d/%lld/%lld",pvehk_zone_installed,

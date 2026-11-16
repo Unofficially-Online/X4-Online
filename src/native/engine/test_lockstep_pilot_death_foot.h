@@ -381,6 +381,20 @@ static void test_pilot_death_foot_block(unsigned char *region,unsigned char *inp
             test_pdf_post_n=0;assert(pvehk_killed(pslots[2].ship,0x999,3)==2 && test_pdf_post_n==1 && test_pdf_posts[0].vtable==PVEHK_EVENT_KILLED &&
                                      test_pdf_posts[0].was==3 && test_pdf_posts[0].is==0x999);
             assert(!pvehk_killed(pslots[1].ship,0x999,3) && !pvehk_killed((unsigned char*)&kept,0x999,3) && !pvehk_killed(pslots[2].ship,0,3) && test_pdf_post_n==1);
+            /* a repaired leak: from slot 2's ship or suit it is told to slot 2's player with the leak and its parent */
+            test_pdf_post_n=0;assert(pvehk_leak_repaired(pslots[2].ship,0x777,0x778)==2 && test_pdf_post_n==1 && test_pdf_posts[0].vtable==PVEHK_EVENT_LEAK &&
+                                     test_pdf_posts[0].was==0x777 && test_pdf_posts[0].is==0x778);
+            assert(!pvehk_leak_repaired(pslots[1].ship,0x777,0x778) && !pvehk_leak_repaired(pslots[2].ship,0,0x778) && test_pdf_post_n==1);
+            /* the other notices of the table, and the count each keeps */
+            test_pdf_post_n=0;assert(pvehk_did(PVEHK_DID_REPAIRED,pslots[2].ship,0x111,0x222)==2 && pvehk_did(PVEHK_DID_DEFUSED,pslots[2].ship,0x333,0)==2 &&
+                                     pvehk_did(PVEHK_DID_POWERUP,pslots[2].ship,0,0)==2 && pvehk_did(PVEHK_DID_AMMO,pslots[2].ship,0x444,5)==2 && test_pdf_post_n==4);
+            assert(test_pdf_posts[0].vtable==PVEHK_EVENT_REPAIRED && test_pdf_posts[0].was==0x111 && test_pdf_posts[0].is==0x222 && test_pdf_posts[1].vtable==PVEHK_EVENT_DEFUSED &&
+                   test_pdf_posts[2].vtable==PVEHK_EVENT_POWERUP && test_pdf_posts[3].vtable==PVEHK_EVENT_AMMO && test_pdf_posts[3].is==5);
+            assert(!pvehk_did(PVEHK_DID_SITES,pslots[2].ship,1,1) && !pvehk_did(PVEHK_DID_AMMO,NULL,1,1) && test_pdf_post_n==4);
+            for(unsigned i=0;i<PVEHK_DID_SITES;i++) InterlockedExchange64(&pvehk_did_sites[i].told,0);
+            /* the scan routine's scope: slot 2's seated player only, and never inside an open scope */
+            assert(pvehk_scan_slot(pslots[2].player)==2 && !pvehk_scan_slot(pslots[1].player) && !pvehk_scan_slot(NULL) && !pvehk_scan_slot((unsigned char*)&kept));
+            {const unsigned open=pstk_scope_slot;pstk_scope_slot=2;assert(!pvehk_scan_slot(pslots[2].player));pstk_scope_slot=open;}
             pslots[2]=kept;pvehk_event_test=NULL;InterlockedExchange64(&pvehk_events_posted,posted);
         }
         *(void**)(test_pslot_ship2+0x70)=parent_was;test_pdeath_ids[2]=0;memset(&pstk_build,0,sizeof(pstk_build));

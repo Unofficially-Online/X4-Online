@@ -113,9 +113,11 @@
            factions mode: the owner's own faction, once mission frames run with its faction). -->
       <!-- The audit's kill: when this mission's player clears its target, a fragile ownerless scout appears 200 m ahead
            of its ship; the plan's shots then destroy it. Whose mission hears event_player_killed_object is the result.
-           (event_player_activated_weapon is no shot: it comes when the weapons are taken over at a seat.) -->
+           (event_player_activated_weapon is no shot: it comes when the weapons are taken over at a seat.)
+           Only for a ship at rest with its player at the controls: X4 also drops the target in travel mode, and a wall
+           put in front of a ship at 150 m/s was rammed (the suit trips after it could not dock, three audit runs). -->
       <cue name="AuditDummy">
-       <conditions><event_player_changed_target/><check_value value="not event.param"/></conditions>
+       <conditions><event_player_changed_target/><check_value value="not event.param and player.controlled and player.ship.speed lt 1"/></conditions>
        <actions>
         <transform_position name="$Ahead" refposition="player.ship.position" refrotation="player.ship.rotation">
          <position z="60m"/>
