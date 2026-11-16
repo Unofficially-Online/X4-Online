@@ -2906,6 +2906,11 @@ function pilot_view.arm_ui_replay(slot,window)
     'native_gate_missions_per_player_ai_frames must be true and needs a gate that has it')
   end
   log('MISSIONS_PER_PLAYER_ARMED slot='..slot..' '..tostring(gate.mpp_status()))
+  -- The MD scheduler's own calls (a cue's delayed actions, pending states, forced cues) run in the cue's owner's scope
+  -- too (lockstep_mission_owners.h). Here: after the arming above and after the MD modules that pin the scheduler
+  -- routine as X4 has it (the timed checks, armed earlier in this frame). A gate that cannot (another build's bytes)
+  -- answers 0 and those calls stay X4's.
+  if gate.mpp_sched then log('MPP_SCHED sites='..tostring(gate.mpp_sched())) end
   -- What an owned cue shows (help texts, notifications, a menu, the cockpit tint, a fade, music, an achievement) runs on its
   -- owner's client only (lockstep_md_presentation.h); a gate without it shows them on every client as before.
   if gate.md_presentation then

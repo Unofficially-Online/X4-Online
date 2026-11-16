@@ -145,6 +145,103 @@ static __attribute__((noinline)) void *mpp_create_hook(void *self,void *model,vo
     if(!parent) mpp_created_root(made);
     return made;
 }
+/* ---- the MD scheduler's own calls ----
+ * MDScheduler_Update 0x1121f80 takes its due entries by kind: 1 the timed check of a cue (Cue_CheckConditions, a frame
+ * of the script RNG's and so of an owner's scope already), 2 a cue's DELAYED ACTIONS (Cue_RunActions 0x111c5f0 at
+ * 0x112207e), 3 a pending state (Cue_ApplyPendingState 0x111e0a0 at 0x1122071), 4 a forced cue (Cue_Force 0x111cbe0 at
+ * 0x1122064), 5 a delayed signal (its listeners' checks are frames again). Kinds 2 to 4 were no frame of anybody: the
+ * actions behind a <delay> of slot k's mission ran outside every scope, as player 1 (the mission type tests of 16 Nov:
+ * the step five seconds after slot 2's accept gave its items to player 1 and measured from player 1's ship; slot 2 timed
+ * out in every library), and a cue that such a call completed registered its children's player listeners on player 1.
+ * The three go through mpp_frame_enter / mpp_frame_leave like every other frame of that cue.
+ * How: kinds 3 and 4 by re-pointing their calls. Kind 2's call lies in the 16-byte block that the timed-check module
+ * (lockstep_script_rng_md.h) exchanges for kind 1's call, so its bytes stay X4's: the branch that leads to it
+ * (0x1122037 `je kind 2; sub ecx,1`, five bytes) jumps to a stub on mpp_page that runs the hook for kind 2 and does
+ * the same `sub ecx,1` for the others before it goes back. Several modules pin the whole scheduler routine before they
+ * arm, the timed-check module among them, so these three go in AFTER them: gate.mpp_sched(), which the probe calls
+ * once the MD modules are armed (plain writes on the frame thread, MD's own, like the constructor's two calls).
+ * Pinned (the dispatch block up to kind 1's call); a build that differs keeps X4's calls.
+ * Status sched=installed/actions/states/forced. */
+#define MPP_SCHED_SITES 3u
+#define MPP_SCHED_BLOCK 0x1122020u
+#define MPP_SCHED_BLOCK_SIZE 0x68u
+#define MPP_SCHED_BLOCK_SHA "945b45bf7410124607adef410af9843aea1ac1893d60ab6b82b52603f549ead0"
+#define MPP_SCHED_STUBS 64u    /* on mpp_page, after the constructor's stub: kind 2's 64 bytes, then 32 for each call */
+#define MPP_SCHED_BRANCH 0x1122037u   /* je 0x112207b; sub ecx,1 */
+#define MPP_SCHED_BRANCH_BACK 0x112203cu
+#define MPP_SCHED_LOOP 0x1121fd3u     /* where every kind's case jumps when it is done */
+#define MPP_SCHED_ACTIONS 0x111c5f0u  /* MD::Cue_RunActions(cue) */
+static const struct {uint32_t site,target;} mpp_sched_site[MPP_SCHED_SITES]={{MPP_SCHED_BRANCH,0},{0x1122071u,0x111e0a0u},{0x1122064u,0x111cbe0u}};
+static const unsigned char mpp_sched_branch[5]={0x74,0x42,0x83,0xe9,0x01};
+static unsigned char mpp_sched_original[MPP_SCHED_SITES][5],mpp_sched_patched[MPP_SCHED_SITES][5];
+static int mpp_sched_installed[MPP_SCHED_SITES];
+static volatile LONG64 mpp_sched_calls[MPP_SCHED_SITES];
+static void mpp_sched_run(unsigned i,void *cue) {
+    InterlockedIncrement64(&mpp_sched_calls[i]);
+    const unsigned code=mpp_frame_enter(cue);
+    ((void(*)(void*))(image+(i?mpp_sched_site[i].target:MPP_SCHED_ACTIONS)))(cue);
+    mpp_frame_leave(code);   /* the cue may be gone by now: the code alone says what to leave */
+}
+static __attribute__((noinline)) void mpp_sched_actions(void *cue) {mpp_sched_run(0,cue);}
+static __attribute__((noinline)) void mpp_sched_state(void *cue) {mpp_sched_run(1,cue);}
+static __attribute__((noinline)) void mpp_sched_force(void *cue) {mpp_sched_run(2,cue);}
+/* The dispatch block as X4 has it, the branch, and each call as `mov rcx,rsi; call <its routine>`. */
+static int mpp_sched_pins(void) {
+    static const unsigned char cue_arg[3]={0x48,0x8b,0xce};
+    if(!hash_ok(image+MPP_SCHED_BLOCK,MPP_SCHED_BLOCK_SIZE,MPP_SCHED_BLOCK_SHA) || memcmp(image+MPP_SCHED_BRANCH,mpp_sched_branch,5)) return 0;
+    for(unsigned i=1;i<MPP_SCHED_SITES;i++) {
+        unsigned char bytes[5],before[3];int32_t rel;
+        if(!read_local(image+mpp_sched_site[i].site,bytes,5) || bytes[0]!=0xe8 || !read_local(image+mpp_sched_site[i].site-3,before,3) ||
+           memcmp(before,cue_arg,3)) return 0;
+        memcpy(&rel,bytes+1,4);
+        if(mpp_sched_site[i].site+5u+(uint32_t)rel!=mpp_sched_site[i].target) return 0;
+    }
+    return 1;
+}
+static int mpp_write5(unsigned char *at,const unsigned char *bytes) {
+    DWORD old,ignored;
+    if(!VirtualProtect(at,5,PAGE_EXECUTE_READWRITE,&old)) return 0;
+    memcpy(at,bytes,5);VirtualProtect(at,5,old,&ignored);FlushInstructionCache(GetCurrentProcess(),at,5);return 1;
+}
+static void mpp_sched_uninstall(void) {
+    for(unsigned i=0;i<MPP_SCHED_SITES;i++)
+        if(mpp_sched_installed[i] && !memcmp(image+mpp_sched_site[i].site,mpp_sched_patched[i],5) &&
+           mpp_write5(image+mpp_sched_site[i].site,mpp_sched_original[i])) mpp_sched_installed[i]=0;
+}
+/* Kind 2's stub: jne +29; mov rcx,rsi; mov rax,<hook>; call rax; jmp [loop]; (+31) sub ecx,1; jmp [back]. */
+static void mpp_sched_branch_stub(unsigned char *at) {
+    const void *hook=(void*)mpp_sched_actions;
+    at[0]=0x75;at[1]=0x1d;
+    at[2]=0x48;at[3]=0x8b;at[4]=0xce;
+    at[5]=0x48;at[6]=0xb8;memcpy(at+7,&hook,8);
+    at[15]=0xff;at[16]=0xd0;
+    pview_abs_jump(at+17,image+MPP_SCHED_LOOP);
+    at[31]=0x83;at[32]=0xe9;at[33]=0x01;
+    pview_abs_jump(at+34,image+MPP_SCHED_BRANCH_BACK);
+}
+/* gate.mpp_sched(): after the MD modules armed. All three or none; the number that is in. */
+static int mpp_sched_arm(void) {
+    DWORD old,ignored;
+    if(mpp_sched_installed[0]) return (int)MPP_SCHED_SITES;
+    if(!mpp_armed || !mpp_page || GetCurrentThreadId()!=ui_thread || !mpp_sched_pins()) return 0;
+    if(!VirtualProtect(mpp_page,PVIEW_PAGE,PAGE_READWRITE,&old)) return 0;
+    memset(mpp_page+MPP_SCHED_STUBS,0xcc,64+32*2);
+    mpp_sched_branch_stub(mpp_page+MPP_SCHED_STUBS);
+    pview_abs_jump(mpp_page+MPP_SCHED_STUBS+64,(void*)mpp_sched_state);pview_abs_jump(mpp_page+MPP_SCHED_STUBS+96,(void*)mpp_sched_force);
+    if(!VirtualProtect(mpp_page,PVIEW_PAGE,PAGE_EXECUTE_READ,&ignored)) return 0;
+    FlushInstructionCache(GetCurrentProcess(),mpp_page,PVIEW_PAGE);
+    for(unsigned i=0;i<MPP_SCHED_SITES;i++) {
+        const unsigned char *stub=mpp_page+MPP_SCHED_STUBS+(i?32u+32u*i:0u);
+        const int32_t rel=(int32_t)((intptr_t)stub-(intptr_t)(image+mpp_sched_site[i].site+5));
+        memcpy(mpp_sched_original[i],image+mpp_sched_site[i].site,5);
+        mpp_sched_patched[i][0]=i?0xe8:0xe9;memcpy(mpp_sched_patched[i]+1,&rel,4);
+    }
+    for(unsigned i=0;i<MPP_SCHED_SITES;i++) {
+        if(!mpp_write5(image+mpp_sched_site[i].site,mpp_sched_patched[i])) {mpp_sched_uninstall();return 0;}
+        mpp_sched_installed[i]=1;
+    }
+    return (int)MPP_SCHED_SITES;
+}
 /* The constructor's head (its ID comes from 0xcaab00, called at +0x65) and the two calls with no parent (xor r8d,r8d). */
 static int mpp_create_pins(void) {
     static const unsigned char no_parent[3]={0x45,0x33,0xc0};
@@ -205,6 +302,7 @@ static int mpp_hook_install(void) {
 /* The session's end (uirep_restore): the two calls go back; the table stays for the last status row. */
 static void mpp_restore_hook(void) {
     if(!mpp_armed) return;
+    mpp_sched_uninstall();
     mpp_hook_restored=mpp_hook_uninstall();mpp_generating=0;mpp_depth=0;mpp_depth1=0;
 }
 /* gate.mpp_generate(k): slot k's generic offers are generated until gate.mpp_generate(0); only inside slot k's call scope. */
@@ -461,12 +559,13 @@ static int mpp_status(char *out,size_t cap) {
     return snprintf(out,cap,"armed=%d owners=%u hash=%016llx claims=%lld gone=%lld full=%lld frames=%lld entered=%lld inside=%lld "
         "conflicts=%lld refused=%lld calls=%lld call_refused=%lld leave_failed=%lld active=%llx/%llx/%llx swaps=%lld active_gone=%lld "
         "shown=%lld/%lld/%llx generations=%lld generated=%lld/%lld pruned=%lld depth=%u hook=%d/%s faction=%lld/%lld/%lld story=%lld/%lld "
-        "ai=%d/%lld/%lld/%lld/%lld/%lld",mpp_armed,mpp_count,(unsigned long long)mpp_owners_hash(),
+        "ai=%d/%lld/%lld/%lld/%lld/%lld sched=%d/%lld/%lld/%lld",mpp_armed,mpp_count,(unsigned long long)mpp_owners_hash(),
         (long long)mpp_claims,(long long)mpp_claim_gone,(long long)mpp_full,(long long)mpp_frames,(long long)mpp_entered,(long long)mpp_inside,
         (long long)mpp_conflicts,(long long)mpp_refused,(long long)mpp_calls,(long long)mpp_call_refused,(long long)mpp_leave_failed,
         (unsigned long long)mpp_active[2],(unsigned long long)mpp_active[3],(unsigned long long)mpp_active[4],(long long)mpp_active_swaps,
         (long long)mpp_active_gone,(long long)mpp_active_shown,(long long)mpp_active_shown_changed,(unsigned long long)mpp_active_shown_id,(long long)mpp_generations,(long long)mpp_generated,
         (long long)mpp_created,(long long)mpp_pruned,mpp_depth,mpp_site_installed[0]+mpp_site_installed[1],mpp_hook_why,
         (long long)mpp_faction_swaps,(long long)mpp_faction_same,(long long)mpp_faction_changed,(long long)mpp_story_asked,(long long)mpp_story_claimed,
-        mpp_ai_on,(long long)mpp_ai_frames,(long long)mpp_ai_entered,(long long)mpp_ai_inside,(long long)mpp_ai_conflicts,(long long)mpp_ai_refused);
+        mpp_ai_on,(long long)mpp_ai_frames,(long long)mpp_ai_entered,(long long)mpp_ai_inside,(long long)mpp_ai_conflicts,(long long)mpp_ai_refused,
+        mpp_sched_installed[0]+mpp_sched_installed[1]+mpp_sched_installed[2],(long long)mpp_sched_calls[0],(long long)mpp_sched_calls[1],(long long)mpp_sched_calls[2]);
 }

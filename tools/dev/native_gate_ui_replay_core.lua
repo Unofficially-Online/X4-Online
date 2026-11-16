@@ -764,7 +764,7 @@ end
 K.SCOPED={target_slot=true,target_none=true,target_home=true,dock_home=true,suit_home=true,guidance_slot=true,guidance_end=true,inv_read=true,inv_drop=true}
 -- A canonical op is the probe's own call, not a person's click: a test fixture that every client's plan holds at the same
 -- tick (MD runs it on every client alike, nothing is captured).
-K.CANONICAL={mis_fixture=true,gm_limit=true,slot_kill=true,slot_airlock=true,launch_stock=true,inv_seed=true,inv_look=true,inv_join_state=true,inv_join_give=true}
+K.CANONICAL={mis_fixture=true,mt_offer=true,gm_limit=true,slot_kill=true,slot_airlock=true,launch_stock=true,inv_seed=true,inv_look=true,inv_join_state=true,inv_join_give=true}
 -- Refused entries the stock HUD calls by itself, not on a person's action: logged, no info line. AddKnownItem: the
 -- encyclopedia entry the HUD adds for whatever comes into view (45 refusals and their info lines in a playtest of 9 Nov).
 K.GUARD_QUIET={AddKnownItem=true}
@@ -939,6 +939,14 @@ function K.script(plan,start,tools)
   -- Missions and conversations (lockstep_ui_missions.h). mis_fixture: the test offer (MD native_gate_ui_replay.xml), canonical;
   -- the rest as the briefing menu, the map's mission list and the dialog call the stock entries.
   elseif op=='mis_fixture' then call=function() tools.env.AddUITriggeredEvent('X4LAN_UiMissions','Fixture',{location=tools.slot_lua(e[3] or 1)});return 'lua' end
+  -- Mission type tests (MD MissionTest; tools/dev/mission_matrix.py writes the plans): mt_offer, canonical like
+  -- mis_fixture, makes the test offer of type e[3] for slot e[4]; mt_accept, in that slot's plan, accepts it as the
+  -- stock menus accept an offer.
+  elseif op=='mt_offer' then call=function()
+    tools.env.AddUITriggeredEvent('X4LAN_MissionTest','Offer',{type=tostring(e[3]),slot=tostring(e[4] or 1),location=tools.slot_lua(e[4] or 1)});return 'lua' end
+  elseif op=='mt_accept' then call=function()
+    local offer,actor=tools.missions.find_offer('X4LAN mt '..tostring(e[3])..' '..tostring(e[4] or 1))
+    tools.env.SignalObject(actor,'accept',tools.env.ConvertStringToLuaID(offer));return offer end
   -- Test only: the generic missions' limit per sector (MD GmLimit), canonical like mis_fixture.
   elseif op=='gm_limit' then call=function() tools.env.AddUITriggeredEvent('X4LAN_UiMissions','GmLimit',e[3]);return 'lua' end
   -- Test only: slot e[3]'s ship loses its hull (native_gate_pilot_respawn.xml Kill), in every present client's plan at the same tick.

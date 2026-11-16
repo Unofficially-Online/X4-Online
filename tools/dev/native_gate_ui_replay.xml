@@ -413,6 +413,240 @@
   <!-- Generic mission offers per slot (lockstep_mission_owners.h 'offers'): the probe signals the galaxy inside slot k's
        scope at the same tick on every client; X4's own selection (GenericMissions.Manager.EvaluateSectorMissions) then
        runs at once, in that scope, for the sector and the player of slot k. The row names the player it ran for. -->
+  <!-- Mission type tests (tools/dev/mission_matrix.py writes the plans and reads the rows; script ops mt_offer and
+       mt_accept of native_gate_ui_replay_core.lua). One instance per test: the offer is made from the probe's frame at the
+       same tick on every client, the slot under test accepts it (with missions per player the instance is then that
+       slot's and runs in its scope), and the accept starts ONE of X4's own mission libraries (md/rml_*.xml) with a
+       target this script made: an ownerless scout 3 km off the accepting player's ship. Five seconds later the test
+       itself does what a player would have to do for that library, through MD actions (no aim, no menu), and the
+       library's own end signal is the result: MT_RESULT value=<the library's feedback value>, or value=timeout. The
+       same test as slot 1 is the reference: a slot whose row differs from slot 1's fails. Rows only.
+       What MD cannot do stays out: no action names a killer (the destroy test ends with the library's "not by the
+       player" answer, -1, for every player alike), none repairs a hull as a repair laser does, none scans or docks. -->
+  <cue name="MissionTest" instantiate="true" namespace="this">
+   <conditions><event_ui_triggered screen="'X4LAN_MissionTest'" control="'Offer'"/></conditions>
+   <actions>
+    <set_value name="$Mission" exact="this"/>
+    <set_value name="$Type" exact="event.param3.$type"/>
+    <set_value name="$Slot" exact="event.param3.$slot"/>
+    <set_value name="$Name" exact="'X4LAN mt ' + $Type + ' ' + $Slot"/>
+    <create_cue_actor name="$Client" cue="this">
+     <select faction="faction.argon" race="race.argon"/>
+     <name name="'X4LAN Test Client'"/>
+     <owner exact="faction.argon"/>
+    </create_cue_actor>
+    <create_offer cue="$Mission" actor="$Client" location="event.param3.$location" name="$Name" description="'X4LAN mission type test'"
+                  difficulty="level.easy" faction="faction.argon" type="missiontype.fight" reward="1000Cr"/>
+    <debug_text text="'[X4LAN] MT_OFFER type=%s slot=%s time=%s'.[$Type, $Slot, player.age]"/>
+   </actions>
+   <cues>
+    <cue name="MtAccept">
+     <conditions><event_object_signalled object="$Client" param="'accept'"/></conditions>
+     <actions>
+      <create_mission cue="$Mission" offercue="$Mission" name="$Name" description="'X4LAN mission type test'"
+                      difficulty="level.easy" faction="faction.argon" type="missiontype.fight" reward="1000Cr"/>
+      <remove_offer cue="$Mission"/>
+      <set_value name="$Started" exact="player.age"/>
+      <create_ship name="$Dummy" macro="macro.ship_arg_s_scout_01_a_macro" zone="player.zone">
+       <owner exact="faction.ownerless"/>
+       <position object="player.ship" x="3km"/>
+      </create_ship>
+      <create_group groupname="$Targets"/>
+      <add_to_group groupname="$Targets" object="$Dummy"/>
+      <debug_text text="'[X4LAN] MT_START type=%s slot=%s player=%s ship=%s dummy=%s distance=%s time=%s'.[$Type, $Slot, player.entity, player.ship, $Dummy, $Dummy.distanceto.{player.entity}, player.age]"/>
+     </actions>
+     <cues>
+      <cue name="MtFlyto" onfail="cancel">
+       <conditions><check_value value="$Type == 'flyto'"/></conditions>
+       <actions>
+        <debug_text text="'[X4LAN] MT_SETUP type=%s slot=%s time=%s'.[$Type, $Slot, player.age]"/>
+       </actions>
+       <cues>
+        <cue name="MtFlyto_Ref" ref="md.RML_FlyTo.FlyTo">
+         <param name="MissionCue" value="$Mission"/>
+         <param name="EndSignalCue" value="MtEnd"/>
+         <param name="Target" value="$Dummy"/>
+         <param name="Distance" value="1km"/>
+        </cue>
+        <cue name="MtFlyto_Drive">
+         <delay exact="5s"/>
+         <actions>
+          <warp object="$Dummy" zone="player.zone">
+           <position object="player.ship" x="300m"/>
+          </warp>
+          <debug_text text="'[X4LAN] MT_DRIVE type=%s slot=%s player=%s dummy=%s distance=%s time=%s'.[$Type, $Slot, player.entity, @$Dummy, @$Dummy.distanceto.{player.entity}, player.age]"/>
+         </actions>
+        </cue>
+       </cues>
+      </cue>
+      <cue name="MtCollect" onfail="cancel">
+       <conditions><check_value value="$Type == 'collect'"/></conditions>
+       <actions>
+        <set_value name="$Wares" exact="table[{ware.inv_remotedetonator} = player.entity.inventory.{ware.inv_remotedetonator}.count + 2]"/>
+        <debug_text text="'[X4LAN] MT_SETUP type=%s slot=%s time=%s'.[$Type, $Slot, player.age]"/>
+       </actions>
+       <cues>
+        <cue name="MtCollect_Ref" ref="md.RML_Collect_Inventory.CollectInventory">
+         <param name="MissionCue" value="$Mission"/>
+         <param name="EndSignalCue" value="MtEnd"/>
+         <param name="WaresParam" value="$Wares"/>
+        </cue>
+        <cue name="MtCollect_Drive">
+         <delay exact="5s"/>
+         <actions>
+          <add_inventory entity="player.entity" ware="ware.inv_remotedetonator" exact="2"/>
+          <debug_text text="'[X4LAN] MT_DRIVE type=%s slot=%s player=%s dummy=%s distance=%s time=%s'.[$Type, $Slot, player.entity, @$Dummy, @$Dummy.distanceto.{player.entity}, player.age]"/>
+         </actions>
+        </cue>
+       </cues>
+      </cue>
+      <cue name="MtDestroy" onfail="cancel">
+       <conditions><check_value value="$Type == 'destroy'"/></conditions>
+       <actions>
+        <debug_text text="'[X4LAN] MT_SETUP type=%s slot=%s time=%s'.[$Type, $Slot, player.age]"/>
+       </actions>
+       <cues>
+        <cue name="MtDestroy_Ref" ref="md.RML_Destroy_Components.DestroyComponents">
+         <param name="MissionCue" value="$Mission"/>
+         <param name="EndSignalCue" value="MtEnd"/>
+         <param name="Targets_Param" value="$Targets"/>
+        </cue>
+        <cue name="MtDestroy_Drive">
+         <delay exact="5s"/>
+         <actions>
+          <destroy_object object="$Dummy" explosion="false"/>
+          <debug_text text="'[X4LAN] MT_DRIVE type=%s slot=%s player=%s dummy=%s distance=%s time=%s'.[$Type, $Slot, player.entity, @$Dummy, @$Dummy.distanceto.{player.entity}, player.age]"/>
+         </actions>
+        </cue>
+       </cues>
+      </cue>
+      <cue name="MtReputation" onfail="cancel">
+       <conditions><check_value value="$Type == 'reputation'"/></conditions>
+       <actions>
+        <set_value name="$Wanted" exact="faction.argon.relationto.{faction.player} + 0.002"/>
+        <debug_text text="'[X4LAN] MT_SETUP type=%s slot=%s time=%s'.[$Type, $Slot, player.age]"/>
+       </actions>
+       <cues>
+        <cue name="MtReputation_Ref" ref="md.RML_Reputation.Reputation">
+         <param name="MissionCue" value="$Mission"/>
+         <param name="EndSignalCue" value="MtEnd"/>
+         <param name="TargetFaction" value="faction.argon"/>
+         <param name="Reputation" value="$Wanted"/>
+        </cue>
+        <cue name="MtReputation_Drive">
+         <delay exact="5s"/>
+         <actions>
+          <add_faction_relation faction="faction.player" otherfaction="faction.argon" value="0.0064"/>
+          <debug_text text="'[X4LAN] MT_DRIVE type=%s slot=%s player=%s dummy=%s distance=%s time=%s'.[$Type, $Slot, player.entity, @$Dummy, @$Dummy.distanceto.{player.entity}, player.age]"/>
+         </actions>
+        </cue>
+       </cues>
+      </cue>
+      <cue name="MtCapture" onfail="cancel">
+       <conditions><check_value value="$Type == 'capture'"/></conditions>
+       <actions>
+        <debug_text text="'[X4LAN] MT_SETUP type=%s slot=%s time=%s'.[$Type, $Slot, player.age]"/>
+       </actions>
+       <cues>
+        <cue name="MtCapture_Ref" ref="md.RML_Capture.Capture">
+         <param name="MissionCue" value="$Mission"/>
+         <param name="EndSignalCue" value="MtEnd"/>
+         <param name="Target" value="$Dummy"/>
+        </cue>
+        <cue name="MtCapture_Drive">
+         <delay exact="5s"/>
+         <actions>
+          <warp object="$Dummy" zone="player.zone">
+           <position object="player.ship" x="300m"/>
+          </warp>
+          <debug_text text="'[X4LAN] MT_DRIVE type=%s slot=%s player=%s dummy=%s distance=%s time=%s'.[$Type, $Slot, player.entity, @$Dummy, @$Dummy.distanceto.{player.entity}, player.age]"/>
+         </actions>
+        </cue>
+        <!-- the library's first stage is over (the player is at the target): now the target changes hands -->
+        <cue name="MtCapture_Drive2">
+         <delay exact="9s"/>
+         <actions>
+          <set_owner object="$Dummy" faction="faction.player"/>
+          <debug_text text="'[X4LAN] MT_DRIVE2 type=%s slot=%s player=%s owner=%s time=%s'.[$Type, $Slot, player.entity, @$Dummy.owner, player.age]"/>
+         </actions>
+        </cue>
+       </cues>
+      </cue>
+      <!-- Deploy: no MD action here. The plan gives the ship a satellite (launch_stock) and the player under test launches
+           it with the call the stock menu makes (the script op 'launch'): the library counts what was launched. -->
+      <cue name="MtDeploy" onfail="cancel">
+       <conditions><check_value value="$Type == 'deploy'"/></conditions>
+       <actions>
+        <create_position name="$Spot" space="player.sector" object="player.ship"/>
+        <set_value name="$Sector" exact="player.sector"/>
+        <debug_text text="'[X4LAN] MT_SETUP type=%s slot=%s time=%s'.[$Type, $Slot, player.age]"/>
+       </actions>
+       <cues>
+        <cue name="MtDeploy_Ref" ref="md.RML_DeployInPlace.DeployInPlace">
+         <param name="MissionCue" value="$Mission"/>
+         <param name="EndSignalCue" value="MtEnd"/>
+         <param name="ObjectiveText" value="'X4LAN satellite'"/>
+         <param name="ObjectiveText_Plural" value="'X4LAN satellites'"/>
+         <param name="ObjectiveText_InRange" value="'X4LAN satellite here'"/>
+         <param name="ObjectiveText_InRange_Plural" value="'X4LAN satellites here'"/>
+         <param name="TargetSector" value="$Sector"/>
+         <param name="TargetOffset" value="$Spot"/>
+         <param name="TargetRadius" value="20km"/>
+         <param name="TargetCount" value="1"/>
+         <param name="DeployableCategory" value="deployablecategory.satellite"/>
+        </cue>
+       </cues>
+      </cue>
+      <cue name="MtTarget" onfail="cancel">
+       <conditions><check_value value="$Type == 'target'"/></conditions>
+       <actions>
+        <debug_text text="'[X4LAN] MT_SETUP type=%s slot=%s time=%s'.[$Type, $Slot, player.age]"/>
+       </actions>
+       <cues>
+        <cue name="MtTarget_Ref" ref="md.RML_Long_Range_Scan.LongRangeScan">
+         <param name="MissionCue" value="$Mission"/>
+         <param name="EndSignalCue" value="MtEnd"/>
+         <param name="ObjectToScan" value="$Dummy"/>
+         <param name="FeedbackValue" value="1"/>
+        </cue>
+        <cue name="MtTarget_Drive">
+         <delay exact="5s"/>
+         <actions>
+          <set_player_target object="$Dummy"/>
+          <debug_text text="'[X4LAN] MT_DRIVE type=%s slot=%s player=%s dummy=%s distance=%s time=%s'.[$Type, $Slot, player.entity, @$Dummy, @$Dummy.distanceto.{player.entity}, player.age]"/>
+         </actions>
+        </cue>
+       </cues>
+      </cue>
+      <!-- The library's end signal: its feedback value is the result (positive: X4 calls it a success). -->
+      <cue name="MtEnd">
+       <conditions><event_cue_signalled/></conditions>
+       <actions>
+        <debug_text text="'[X4LAN] MT_RESULT type=%s slot=%s player=%s value=%s took=%s time=%s text=%s'.[$Type, $Slot, player.entity, @this.$EndFeedbackValue, player.age - $Started, player.age, @this.$EndFeedbackText]"/>
+        <signal_cue cue="MtDone"/>
+       </actions>
+      </cue>
+      <cue name="MtTimeout">
+       <delay exact="25s"/>
+       <actions>
+        <debug_text text="'[X4LAN] MT_RESULT type=%s slot=%s player=%s value=timeout took=%s time=%s text=none'.[$Type, $Slot, player.entity, player.age - $Started, player.age]"/>
+        <signal_cue cue="MtDone"/>
+       </actions>
+      </cue>
+      <cue name="MtDone">
+       <conditions><event_cue_signalled/></conditions>
+       <actions>
+        <do_if value="@$Dummy.exists">
+         <destroy_object object="$Dummy" explosion="false"/>
+        </do_if>
+        <remove_mission cue="$Mission" type="completed"/>
+        <cancel_cue cue="$Mission"/>
+       </actions>
+      </cue>
+     </cues>
+    </cue>
+   </cues>
+  </cue>
   <!-- The audit's shared listener: a cue nobody owns, registered on the universe's player of the game's start. With
        native_gate_shared_listeners it also runs for what players 2..N do, and its row names that player. -->
   <cue name="AuditShared" instantiate="true">
