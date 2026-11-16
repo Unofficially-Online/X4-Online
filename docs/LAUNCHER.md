@@ -19,6 +19,8 @@ disposable profile.
 | `serve --overlay DIR --server-file server.json [--bind 0.0.0.0] [--runs DIR]` | The server of such a kit (Linux or Windows, Python only): admits the launchers that prove the kit's key, starts the relay when the overlay's player count has joined, stores the players' logs, then takes the next players |
 | `join --server-file server.json --overlay DIR --slot K \| --start GAMESTART` | Join the game that runs on a kit's server in an open slot (a drop-in game: `serve` with an overlay that has open slots); the server admits this PC and hands out the saver's join files |
 | `session ... --checkpoint-at T` | Every client saves the world right after tick T (`clientK/save_001.xml.gz`); the session ends there (outcome `checkpointed`) |
+| `play ... [--keep-saves 3]` | With an overlay that saves periodically (`tools/build_play_overlay.py --save-every MINUTES`, default 10): every client's saves are collected in `RUN/saves/c<K>-t<TICK>.xml.gz` (see Periodic saves below) |
+| `resume --save RUN/saves/c1-t<TICK>.xml.gz --spec SESSION/spec.json --overlay PLAY_OVERLAY --gate-dll DLL --out NEW [--minutes M] [--display N] [--no-focus]` | A new session from the world of a periodic save: prepares the save (one client), registers it and builds its play overlay in `NEW`; then `play --overlay NEW/overlay --snapshot NEW/session-save.xml.gz` |
 | `triage RUN [--steam-fix]` | Reruns a diverged session with diagnostic windows over the 300 ticks before its first mismatch and writes `RUN-triage.txt`; `--report-only RERUN` only reports |
 | `clean` | Stops processes and removes views left behind by a crashed session |
 | `steam-fix [--restore]` | See "Steam" below |
@@ -301,6 +303,34 @@ pilots). Switches: `--window`, `--play-mode`, `--no-pace`, `--long`, `--world-sc
   physical + 8 GB page file): its rustc processes crashed, the desktop compositor exited, and the campaign's
   next process start failed, ending seed 2222222's triage rerun and seed 3333333's overlay build. Run soaks
   when nothing else large is running, or raise the page file.
+- **Periodic saves.** A play overlay sets `native_gate_save_every` (`build_play_overlay.py --save-every MINUTES`,
+  default 10, `0` for none): every client's gate saves the world after each step T that is a multiple of the
+  interval, with the join save's routine at the frame boundary (`lockstep_periodic_save.h`), into
+  `<profile>/save/mpsave/s<T>.xml.gz`, and the session runs on. Each client stands still while it writes (2.8-3.0 s
+  for a 30 MB save, two clients on one PC, 16 Nov); all clients save at the same step, so nobody waits for
+  long. `x4ls play` moves its clients' saves to `RUN/saves`, checks each against the SHA-256 the gate announced,
+  lists them in `RUN/saves/saves.jsonl` and keeps the newest `--keep-saves` ticks (3); once the relay names a
+  first desync tick, the saves before it stay for good and of the later ones only the first. A client keeps
+  `--save-keep` (3) files in its own profile (a remote PC's are not collected). X4 refuses a save while a call or
+  cutscene of the simulation runs (`is_saving_possible`, seen 30 s into a cadet start on both clients alike): the
+  save is tried again 300 ticks later, five times. A save has effects on the world that made it; a save only some
+  clients made is therefore named (`PERIODIC SAVE UNEVEN` on the console, `PERIODIC_SAVE_FAILED` rows in
+  `errors.log`). Off by default with `--mixed-platform` (the Linux gate has no such save; its fork save
+  `native_gate_fork_save` does not stop the client but is Linux only) and with `--open` (not run with a join yet).
+  Live, two clients, a save every 30 s: 16 saves, 15,880 ticks, no desync; `tools/dev/checkpoint_diff.py` on the
+  two clients' saves of one tick shows view-local differences only (animation times near each player, listeners).
+- **Resume from a periodic save.** `x4ls resume` (`src/lockstep/launcher/resume.py`) makes a new session whose world
+  is such a save, so a split an hour into a session can be looked for from minutes before it. A periodic save is
+  not a session start as it is: (1) it holds a player object per slot and X4 without the gate refuses it
+  (`UniverseClass::Import(): Invalid number of players`), so the other slots' player objects are taken out of a
+  copy; (2) the twelve fixture ships have fought by then, so one client loads the copy, the MD cue `Respawn` puts
+  fresh ones beside the player's ship, and the per-player hulls are created again
+  (`native_gate_snapshot_from_save`); (3) the result is registered with the first session's spec, without its
+  stories, and the play overlay is built from the first overlay's recipe. It is the saved world on every client,
+  not the session continued: the gate's own state is not in a plain save, slots 2..N fly new hulls from their
+  start places with their kits applied again, and the prepare step runs the world a few seconds without the
+  gate. Live, 16 Nov: a save of minute 8.5 of a two-player session, prepared in about three minutes, then a
+  two-client session from it: 9,500 ticks in sync, no error row, its own periodic saves written (then stopped by hand).
 - **Checkpoints.** `--checkpoint-at T` makes every client save after tick T; 150 ticks before,
   the MD cue `Respawn` creates a fresh 12-ship fixture beside the player (the battle leaves
   wrecks, and a snapshot needs twelve live ships). X4 pauses while saving, so the gate stops

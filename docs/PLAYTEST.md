@@ -69,6 +69,9 @@ python tools/x4ls.py play --overlay .local/overlays/play-1 --snapshot <the same 
   load in a session"): in run inv1 the Pause key, which does not go through `Pause()`, stopped the pressing
   client and the session stood still for everyone; in run inv2 all three keys were refused on both clients and
   the session ran to its end in sync.
+- The session saves by itself: every ten minutes each client's game stands still for about three seconds while
+  its gate writes the world (`build_play_overlay.py --save-every`, docs/LAUNCHER.md Periodic saves). These saves
+  are for looking into desyncs (`x4ls resume`); they are not saves a player can load.
 - Why they are refused: X4's `Pause()` stops the gate on that client at once. In smoke play-sA (8 Nov), client 2
   paused at tick 900 and stopped with reason 3; the relay dropped it after 15 s and client 1 played on. A save
   pauses the same way. In smoke play-sB, with the refusal, the same `Pause()` left the game running and the session
@@ -534,6 +537,46 @@ steering, as in single player, and a gun turns as far as its mount allows.
 - Not yet: the mounts follow the aim point only, not the target's speed, so fast crossing targets may be tracked a
   little late; fixed guns and turrets are as before.
 - Host and joiners need the same kit: the input records changed.
+
+## Mission types, tested without a person (built 16 Nov; two clients on one PC)
+
+`tools/dev/mission_matrix.py` runs X4's own mission libraries (`md/rml_*.xml`) once per player, one after the
+other, and compares the players:
+
+```
+python tools/dev/mission_matrix.py list
+python tools/dev/mission_matrix.py run --snapshot SESSION/session-save.xml.gz --session SESSION/session.json        --gate-dll x4lan_gate_64.dll [--types flyto,collect] [--players 2] [--display N] [--low-priority]
+python tools/dev/mission_matrix.py report CLIENT1.log CLIENT2.log [--run RUNDIR]
+```
+
+- A test: an offer is made at one tick on every client, the player under test accepts it as the stock menus accept
+  an offer, the accept starts one stock library on a target the test made (an ownerless scout 3 km away), a few
+  seconds later the test does what a player would have to do, and the library's own end signal is the result
+  (`MT_RESULT ... value=`, the library's feedback value; `timeout` after 25 s). MD: cue `MissionTest` in
+  `tools/dev/native_gate_ui_replay.xml`; script ops `mt_offer` (every client's plan) and `mt_accept` (the player's).
+- The verdict: player 1 is X4's own player and so the reference. Player k passes when its value equals player 1's
+  and player 1's is the answer the library is known to give. Rows that differ between the clients, a desync or an
+  error row of the run fail it too. Exit code 0 all passed, 1 a failure, 2 the run itself did not work.
+- `run` starts its own windowed clients with disposable profiles (`x4ls play`), about a minute per type and two
+  players plus the start, and stops them. Beside another session on the same PC: `--first-profile N`, `--lanes DIR`,
+  `--beside`, `--display N`, `--tile-skip N`.
+- The types (16 Nov): fly to, collect inventory, destroy (MD cannot name a killer, so the test checks the library's
+  "destroyed, not by the player" answer), reputation, capture, target an object, deploy a satellite (the one type
+  driven through a replayed call of the stock UI, `launch`). Seven of seven for both players in two runs.
+- Not covered, because it needs a person's aim or a menu: shooting a target, repairing, scanning, docking, talking to
+  a person. A test that passes says the library heard that player; it does not say a person can fly the mission.
+- The stock offers (`mission_matrix.py offers ...`, the same options as `run`): the offers X4 itself made in the
+  session's world, the generic missions of the stations around the players, are accepted one after the other, by
+  player 1 in one session and by player 2 in the next (`--accept-as 1,2`), each aborted again after five seconds. The
+  table names for every offer whether a mission started and how many script errors came with it; an offer that does
+  worse for a player than for player 1 fails. 16 Nov, the two-player test session: 13 offers (deliver, drop, destroy,
+  board, intelligence, build, patrol, transport), a mission started for both players for each, no script error. It
+  completes none of them. Script ops `offers_list`, `offer_accept_next`, `mis_new`, `mis_abort_new`.
+- A new type: an `Mt<Name>` cue beside the others (its `_Ref` cue names the library), a row in `TYPES` and, when the
+  player has to act through the UI, a row in `OPS`.
+- What it found on its first run: every step behind a `<delay>` of player 2's mission ran as player 1 (the MD
+  scheduler's own calls were no frame of the mission's owner); fixed the same day (`lockstep_mission_owners.h`,
+  status `sched=`).
 
 ## Not yet
 

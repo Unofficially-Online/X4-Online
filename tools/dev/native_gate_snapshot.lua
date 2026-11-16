@@ -15,6 +15,13 @@ assert(gamestart==nil or (type(gamestart)=='string' and gamestart:match('^[A-Za-
 -- snapshot is a save file every client loads byte for byte, so the capture clock does not matter.
 -- Optional: hulls of per-player starts (tools/dev/native_gate_session_start.py). The overlay's generated MD
 -- X4LAN_SessionHulls creates them after the fixture check and before the save, so they get saved IDs.
+-- native_gate_snapshot_from_save=true (x4ls resume): the game is not a new one but a save a play session wrote while it
+-- ran (the launcher's autoload.lua loads it from save_009). Its twelve fixture ships have fought by then, so the MD cue
+-- Respawn puts a fresh fixture beside the player's ship (RestoreActors then answers Ready with the count); the hulls of
+-- the per-player starts are created again as in a new session; the result is saved as save_010.
+local from_save=cfg.native_gate_snapshot_from_save==true
+local slot=from_save and 'save_010' or 'save_009'
+local first,respawned
 local hulls=cfg.native_gate_snapshot_hulls
 assert(hulls==nil or (type(hulls)=='number' and hulls%1==0 and hulls>=1 and hulls<=15),'invalid snapshot hull count')
 local fixed=cfg.native_gate_snapshot_fixed~=false and assert(package.loadlib('./extensions/x4_lan_lab/native/x4lan_fixedtick_64.dll','luaopen_x4lan_fixedtick'))() or nil
@@ -29,7 +36,7 @@ end)
 RegisterEvent('gameSaved',function(_,success)
  if saving and not done then
   assert(success==true or success==1,'native snapshot save failed');done=true
-  log('SAVED slot=save_009 time='..string.format('%.17g',C.GetCurrentGameTime()))
+  log('SAVED slot='..slot..' time='..string.format('%.17g',C.GetCurrentGameTime()))
  end
 end)
 RegisterEvent('X4LAN_NativeGate.Attention',function(_,count) nearby=tonumber(count) end)
@@ -40,6 +47,21 @@ local function frame()
  -- Story starts may open with a fullscreen intro; spawn and inspect only outside it.
  if C.IsFullscreenCutsceneActive() then return end
  local time=C.GetCurrentGameTime()
+ first=first or time
+ if from_save then
+  if time<first+3 then return end   -- the loaded game's first seconds
+  if not spawned then
+   local started=ffi.string(C.GetGameStartName())
+   assert(gamestart==nil or started==gamestart,'snapshot gamestart mismatch '..started)
+   log('LOADED id='..started..' time='..string.format('%.17g',time))
+   spawned=time;AddUITriggeredEvent('X4LAN_NativeGate','Respawn',{});return
+  end
+  if not respawned then
+   if time<spawned+1 then return end
+   respawned=true;AddUITriggeredEvent('X4LAN_NativeGate','RestoreActors',{});return
+  end
+  assert(ready or time<spawned+30,'the loaded save gave no fixture (no player ship, or no X4LAN_NativeGate Spawn state)')
+ end
  if not spawned and time>=5 then
   local started=ffi.string(C.GetGameStartName())
   assert(gamestart==nil or started==gamestart,'snapshot gamestart mismatch '..started)
@@ -62,7 +84,7 @@ local function frame()
  end
  if not refreshed then C.ReloadSaveList();refreshed=true;return end
  if not C.IsSaveListLoadingComplete() then return end
- for _,entry in pairs(GetSaveList({save_009=true}) or {}) do assert(entry.filename~='save_009','snapshot slot occupied') end
+ for _,entry in pairs(GetSaveList({[slot]=true}) or {}) do assert(entry.filename~=slot,'snapshot slot occupied') end
  -- A story start can open with talk during which X4 refuses a save (the Terran cadet's wingmate speaks from second 6):
  -- wait for it to end, at most 180 s of game time.
  if not IsSavingPossible(false) then
@@ -72,7 +94,7 @@ local function frame()
  end
  if not C.IsGamePaused() then Pause() end
  saving=true;log('SAVE_REQUEST time='..string.format('%.17g',time))
- SaveGame('save_009','Native lockstep disposable starting fixture')
+ SaveGame(slot,'Native lockstep disposable starting fixture')
 end
 SetScript('onUpdate',function()
  local ok,why=pcall(frame)

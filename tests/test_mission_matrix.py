@@ -117,5 +117,48 @@ class Table(unittest.TestCase):
             self.assertEqual(self.verdicts(rows, rows, run=run)[0], 1)
 
 
+
+def op_row(tick, op, result, ok='true'):
+    return "[=ERROR=] 30.0 [X4LAN] NATIVE_GATE UI_REPLAY_SCRIPT tick=%d op=%s ok=%s result=%s\n" % (tick, op, ok, result)
+
+
+class Offers(unittest.TestCase):
+    def test_only_the_player_under_test_has_a_plan(self):
+        text, end = matrix.offers_script(2, 2, 2)
+        self.assertEqual(text, "{{},{{700,'offers_list'},{760,'offer_accept_next'},{910,'mis_new'},{940,'mis_abort_new'},"
+                               "{1060,'offer_accept_next'},{1210,'mis_new'},{1240,'mis_abort_new'}}}")
+        self.assertEqual(end, 760 + 2 * matrix.OFFER_SPACING)
+
+    def read(self, lines):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / 'c.log'
+            path.write_text(''.join(lines), encoding='latin-1')
+            return matrix.read_offers(path)
+
+    def test_an_offer_its_mission_and_the_errors_between(self):
+        got = self.read([op_row(700, 'offers_list', 'n=3 1:generic/destroy:argon'),
+                         "[=ERROR=] 1.0 Error in MD cue md.Before.The.First: not counted\n",
+                         op_row(760, 'offer_accept_next', 'accepted generic/destroy argon Shakedown'),
+                         "[=ERROR=] 31.0 Error in MD cue md.GM_Destroy.Start: something\n",
+                         op_row(910, 'mis_new', 'new=1 Shakedown'), op_row(940, 'mis_abort_new', 'aborted=1'),
+                         op_row(1060, 'offer_accept_next', 'accepted generic/patrol terran Peace'),
+                         op_row(1210, 'mis_new', 'new=0 '), op_row(1240, 'mis_abort_new', 'aborted=0'),
+                         op_row(1360, 'offer_accept_next', 'none'), op_row(1510, 'mis_new', 'new=0 '), op_row(1540, 'mis_abort_new', 'aborted=0')])
+        self.assertEqual([(e['offer'], e['started'], e['errors']) for e in got],
+                         [('generic/destroy argon Shakedown', 1, 1), ('generic/patrol terran Peace', 0, 0)])   # 'none' is no offer
+
+    def test_a_player_that_does_worse_than_the_first_fails(self):
+        def entry(name, started, errors=0):
+            return {'offer': name, 'started': started, 'errors': errors, 'refused': False, 'missions': ''}
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            same = matrix.offers_table({1: [entry('a', 1), entry('b', 1)], 2: [entry('a', 1), entry('b', 1)]})
+            worse = matrix.offers_table({1: [entry('a', 1), entry('b', 1)], 2: [entry('a', 0), entry('b', 1, 2)]})
+            other = matrix.offers_table({1: [entry('a', 0)], 2: [entry('a', 0), entry('c', 1)]})   # nothing to compare a new offer with
+        self.assertEqual((same, worse, other), (0, 2, 0), out.getvalue())
+        self.assertIn('NO MISSION', out.getvalue())
+        self.assertIn('not offered', out.getvalue())
+
+
 if __name__ == '__main__':
     unittest.main()

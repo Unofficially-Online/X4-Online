@@ -11,6 +11,11 @@
 
 Then: python tools/x4ls.py play --overlay DIR --snapshot SAVE (docs/PLAYTEST.md).
 
+Periodic saves (--save-every MINUTES, default 10; 0: none): every client saves the world at the same tick boundaries and
+plays on (native_gate_save_every, lockstep_periodic_save.h); x4ls play collects the files in RUN/saves, so a desync an hour
+in can be approached from a save minutes before it. The Windows gate only: off with --mixed-platform (a Linux client would
+not save, and a save has effects on the world that made it), and off unless asked for with --open (not yet run with a join).
+
 Hot join (--open K[,K...]): slots K start absent and a player can join one of them while the session runs (x4ls play
 --open K, x4ls join without --arm-at). The base gets the join stack (--world-identities, --join report|strict,
 --join-absent K) and the players the join keys every joiner needs (native_gate_join_precise, _refresh_builds, _ids and
@@ -36,6 +41,7 @@ TICK_MAX = 8388607    # pilot window bound (lockstep_pilot_inputs.h PILOT_TICK_M
 # that client (x4ls --checkpoint-at). The Lua guard refuses these globals while the session runs (an info line on the first
 # refusal); the menus then work unpaused. The pause test (native_gate_pause_test) shows what an unrefused Pause() does.
 PLAY_LUA_BLOCK = ('Pause', 'Unpause', 'SaveGame')
+SAVE_EVERY_MINUTES = 10   # --save-every's default (sessions of Windows clients without open slots)
 # Play mode keeps the world hash in every digest (desyncs are still found) but writes no per-object world pages: a capture
 # is about 120 MB of WORLD_OBJECT rows per client (smoke 8 Nov: 238 of 280 MB after 2 minutes). x4ls triage asks for
 # pages of its window again (native_gate_world_pages_window).
@@ -123,13 +129,28 @@ def read_recipe(overlay):
     return data
 
 
+def save_every_ticks(minutes, mixed_platform, opened):
+    """--save-every as native_gate_save_every ticks (0: no periodic saves). minutes None: the default for this session."""
+    if minutes is None:
+        minutes = 0 if mixed_platform or opened else SAVE_EVERY_MINUTES
+    if minutes < 0:
+        raise SystemExit('--save-every: minutes, 0 for none')
+    if minutes and mixed_platform:
+        raise SystemExit('--save-every with --mixed-platform: the Linux gate has no periodic save, only the Windows clients would save')
+    ticks = round(minutes * 60 * TICK_HZ)
+    if minutes and ticks < 300:
+        raise SystemExit('--save-every: at least 10 seconds (300 ticks)')
+    return ticks
+
+
 def joiner_command(recipe, snapshot, gate_dll, out, package, package_sha, session=None):
     """The build_play_overlay.py arguments of a joiner's overlay: the session's recipe with the join save and package
     (session: the recipe's session.json written on the joiner's PC, when the session has one)."""
     cmd = ['--snapshot', str(snapshot), '--gate-dll', str(gate_dll), '--out', str(out), '--players', str(recipe['players']),
            '--mode', recipe['mode'], '--minutes', repr(recipe['minutes']), '--lua-block', recipe['lua_block'],
            '--open', ','.join(map(str, recipe['open'])), '--join-mode', recipe['join_mode'],
-           '--join-package', str(package), '--join-package-sha', package_sha]
+           '--join-package', str(package), '--join-package-sha', package_sha,
+           '--save-every', repr(recipe.get('save_every', 0))]   # the session's own (an older recipe: none)
     if recipe['full_logs']:
         cmd.append('--full-logs')
     if recipe.get('mixed_platform'):
@@ -233,6 +254,11 @@ def main(argv=None):
     p.add_argument('--coverage-list', type=Path, help='with --coverage: X4.exe image RVAs, one per line')
     p.add_argument('--coverage-from', type=int, metavar='TICK', help='with --coverage: mark at tick TICK instead of tick 1')
     p.add_argument('--full-logs', action='store_true', help='keep the per-object world pages (no play mode; ~120 MB per capture)')
+    p.add_argument('--save-every', type=float, metavar='MINUTES',
+                   help=f'every client saves the world every MINUTES and plays on; x4ls play collects the saves in RUN/saves '
+                        f'(default {SAVE_EVERY_MINUTES}; 0: none; default none with --mixed-platform or --open)')
+    p.add_argument('--save-keep', type=int, default=3, metavar='N',
+                   help='periodic saves a client keeps in its own profile (x4ls play moves its clients\' saves to RUN/saves)')
     p.add_argument('--lua-block', default=','.join(PLAY_LUA_BLOCK), metavar='NAMES',
                    help='Lua globals the Lua guard refuses during the session (default: %(default)s; empty: none)')
     p.add_argument('--set', action='append', default=[], metavar='native_gate_KEY=LUA_VALUE',
@@ -267,6 +293,9 @@ def main(argv=None):
         if path.exists():
             raise SystemExit(f'exists: {path} (overlays are frozen; pick a new --out)')
     end = window_end(args.minutes)
+    save_ticks = save_every_ticks(args.save_every, args.mixed_platform, opened)
+    if args.save_keep < 1:
+        raise SystemExit('--save-keep: at least 1')
     coverage = ['--coverage', str(args.coverage), '--coverage-list', args.coverage_list.resolve()] if args.coverage else []
     if args.coverage and args.coverage_from:
         coverage += ['--coverage-from', str(args.coverage_from)]
@@ -320,6 +349,8 @@ def main(argv=None):
     if block:
         cmd += ['--set', "native_gate_ui_lua='block'",
                 '--set', 'native_gate_ui_lua_names={' + ','.join(f"'{name.strip()}'" for name in block) + '}']
+    if save_ticks and not any(item.replace(' ', '').startswith('native_gate_save_every=') for item in sets):
+        cmd += ['--set', f'native_gate_save_every={save_ticks}', '--set', f'native_gate_save_keep={args.save_keep}']
     if args.session:
         cmd += ['--session', args.session.resolve()] + (['--session-joiner'] if args.join_package else [])
     for item in sets:
@@ -332,13 +363,15 @@ def main(argv=None):
               'players': args.players, 'mode': args.mode, 'minutes': args.minutes, 'full_logs': args.full_logs,
               'lua_block': args.lua_block, 'set': list(args.set), 'open': opened, 'join_mode': args.join_mode,
               'window': [WINDOW_START, end], 'gate_dll_sha': sha256(out / 'native/x4lan_gate_64.dll'),
-              'snapshot_sha': sha256(args.snapshot), 'session': session_data, 'mixed_platform': args.mixed_platform}
+              'snapshot_sha': sha256(args.snapshot), 'session': session_data, 'mixed_platform': args.mixed_platform,
+              'save_every': save_ticks / (60 * TICK_HZ)}
     (out / RECIPE).write_text(json.dumps(recipe, indent=1, sort_keys=True) + NL, encoding='utf-8')
     sys.path.insert(0, str(DEV))
     import native_gate_scenarios
     native_gate_scenarios.write_manifest(out)   # the recipe is part of the overlay: x4ls verifies every file against the manifest
     print(f'play overlay: {out}\n  window {WINDOW_START}..{end} ({args.minutes:g} min at {TICK_HZ} Hz), {args.players} players, '
-          f'{args.mode}\n  run: python tools/x4ls.py play --overlay "{out}" --snapshot "{args.snapshot.resolve()}"')
+          f'{args.mode}' + (f', a save every {save_ticks} ticks ({save_ticks / (60 * TICK_HZ):g} min)' if save_ticks else ', no periodic saves') +
+          f'\n  run: python tools/x4ls.py play --overlay "{out}" --snapshot "{args.snapshot.resolve()}"')
     return 0
 
 

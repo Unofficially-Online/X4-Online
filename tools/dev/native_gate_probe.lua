@@ -1065,6 +1065,50 @@ do
   end
  end
 end
+-- Periodic save (native_gate_save_every = N ticks, native_gate_save_keep = K files, 3 when absent; play overlays set them:
+-- tools/build_play_overlay.py --save-every). Every client's gate saves the world after each step T that is a multiple of N
+-- (gate.save_arm, lockstep_periodic_save.h: <save folder>/mpsave/s<T>.xml.gz, the session runs on) and deletes the save K
+-- saves back. Armed up to 30 ticks ahead from the tick alone, so every client saves at the same boundaries. One
+-- PERIODIC_SAVE row per save, always written (x4ls play collects the files by it); a save that failed is an ERROR row.
+-- X4 refuses a save while its own conditions say so (IsSavingPossible: a call or cutscene of the simulation, seen 30 s
+-- into a cadet start on both clients alike): the save is then tried again 300 ticks later, up to five times. A save only
+-- some clients made is a difference between them (a save has effects on the world that made it); the rows name it.
+-- The Linux gate has no such save (one PERIODIC_SAVE unavailable row): a session of Windows and Linux PCs must not set
+-- the key, only some of its clients would save. On ticklog as the fork save is.
+do
+ local every,keep=cfg.native_gate_save_every,cfg.native_gate_save_keep or 3
+ assert(every==nil or (type(every)=='number' and every%1==0 and every>=300),'native_gate_save_every must be a whole number of ticks >= 300')
+ assert(type(keep)=='number' and keep%1==0 and keep>=1,'native_gate_save_keep must be a whole number >= 1')
+ local armed,said,again,tries,made=nil,nil,nil,0,{}
+ function ticklog.periodic_save(tick)
+  if not (gate.save_arm and gate.save_result) then
+   if not said then said=true;ticklog.write('PERIODIC_SAVE unavailable at='..tick..' (this gate has no periodic save)') end
+   return
+  end
+  if armed and tick>armed then
+   local state,t,bytes,sha,ms,why=tostring(gate.save_result()):match('^(%a+)|(%d+)|(%d+)|([^|]*)|(%d+)|(.*)$')
+   if state=='done' and tonumber(t)==armed then
+    made[#made+1]=armed;again,tries=nil,0
+    ticklog.write('PERIODIC_SAVE saved tick='..t..' file=mpsave/s'..t..'.xml.gz bytes='..bytes..' sha256='..sha..' ms='..ms..' at='..tick)
+   else
+    -- X4's own refusal: again 300 ticks on (every client that was refused alike arms the same tick), five times at most
+    tries=tries+1
+    again=(why=='is_saving_possible' or why=='engine_save_pending') and tries<=5 and armed+300 or nil
+    if not again then tries=0 end
+    ticklog.loud('PERIODIC_SAVE_FAILED','tick='..armed..' state='..tostring(state)..' why='..tostring(why)..' retry='..(again or 0)..' at='..tick,false)
+   end
+   armed=nil
+  end
+  if armed then return end
+  local T=(math.floor((tick+1)/every)+1)*every   -- the next multiple of N past tick+1
+  if again and again<=tick+1 then again=nil;tries=0 end
+  if again and again<T then T=again end
+  if T-tick>30 then return end
+  local drop=made[#made-keep+1] or 0   -- with this one, K files stay
+  if gate.save_arm(T,savepath,drop)==1 then armed=T;ticklog.write('PERIODIC_SAVE armed tick='..T..' at='..tick)
+  elseif said~=T then said=T;ticklog.loud('PERIODIC_SAVE_FAILED','tick='..T..' state=refused why=arm at='..tick,false) end
+ end
+end
 -- Probe profile (native_gate_probe_profile=true, default off): QPC microseconds per section of an
 -- admitted tick's frame(), averaged over 60 ticks, one PROBE_PROFILE line each (always written).
 -- Sections in order: drains (poll, trace drains, Gravidar trace), inputs, pilot, modules (statuses,
@@ -6470,6 +6514,7 @@ local function frame()
  end
  if cfg.native_gate_gravidar_key_all or cfg.native_gate_gravidar_time_sync then ticklog.status('GRAVIDAR_KEY',tick,gate.gravidar_key_status) end
  if cfg.native_gate_fork_save then ticklog.fork_save(tick) end
+ if cfg.native_gate_save_every then ticklog.periodic_save(tick) end
  drain_gravidar_watch()
  if cfg.native_gate_ai_schedule then
   ticklog.status('AI_SCHEDULE',tick,gate.ai_schedule_status,'AI schedule status unavailable')

@@ -1060,6 +1060,7 @@ static void gate_step(tick_fn original,void *frame,unsigned char loading,LARGE_I
 #define ADAPT_WITH_PILOT 1
 #include "lockstep_adaptive.h"
 #include "lockstep_join.h"   /* hot join: join save, side table and gate state (native_gate_join, default off) */
+#include "lockstep_periodic_save.h"   /* every client saves at the same tick boundaries (native_gate_save_every) */
 #include "lockstep_join_passes.h"   /* hot join: the joiner's pass of T at its admission (native_gate_join_passes_admit) */
 #include "lockstep_join_specdrop.h"   /* hot join: the load's one-shot view cache specifications (native_gate_join_specdrop) */
 #include "lockstep_join_pctl.h"   /* hot join: X4's own PlayerController's values at T (native_gate_join_pctl) */
@@ -1263,6 +1264,7 @@ static void gate_tick(void *frame,unsigned char loading) {
     if(rc_installed && !rc_join_point(stats.completed)) {finish(rc_stop_reason());gate_original_once(original,frame,loading);return;}
     /* Hot join (default off): the join save, side table and package after step T, before its report. Never stops. */
     join_boundary(stats.completed);
+    psave_boundary(stats.completed);   /* periodic save (native_gate_save_every): never stops */
     {LARGE_INTEGER now;QueryPerformanceCounter(&now);ft_join=ft_us(ft_mark,now);}
     if(!rotation_native_frame_ready() || !portable_native_capture(stats.completed,frame,loading)) {finish(74);gate_original_once(original,frame,loading);return;}
     /* Wire crypto covers the protocol 3/4 relay path only; the portable and GetUp transports are refused. */
@@ -3970,6 +3972,18 @@ static int lua_world_watch(lua_State *L) {
 #include "lockstep_virtual_players_lua.h"
 #include "lockstep_hit_native_lua.h"
 #include "lockstep_join_lua.h"       /* hot join (lockstep_join.h) */
+/* gate.save_arm(T, save_folder[, drop]) / gate.save_result(): lockstep_periodic_save.h (native_gate_save_every). */
+static int lua_save_arm(lua_State *L) {
+    const double tick=p_lua_tonumber(L,1),drop=p_lua_tonumber(L,3);const char *folder=p_lua_tolstring(L,2,NULL);int ok=0;
+    if(isfinite(tick) && floor(tick)==tick && tick>0 && tick<=4294967295.0 && (!isfinite(drop) || (floor(drop)==drop && drop>=0 && drop<tick)))
+        ok=psave_arm((uint64_t)tick,folder,isfinite(drop)?(uint64_t)drop:0);
+    p_lua_pushnumber(L,ok);return 1;
+}
+static int lua_save_result(lua_State *L) {
+    char out[256];size_t n=accept_ui()?psave_result(out,sizeof(out)):0;
+    if(n) p_lua_pushlstring(L,out,n);else p_lua_pushnil(L);
+    return 1;
+}
 /* gate.join_passes_admit(1) / gate.join_passes_status(): lockstep_join_passes.h (diagnostic native_gate_join_passes_admit). */
 static int lua_join_passes_admit(lua_State *L) {
     const double on=p_lua_tonumber(L,1);
@@ -4714,6 +4728,7 @@ __declspec(dllexport) int luaopen_x4lan_gate(lua_State *L) {
     METHOD(body);METHOD(body1_mass_census);
     METHOD(shape);METHOD(bullet);METHOD(bullet_clear);METHOD(death);METHOD(death_clear);METHOD(mass);METHOD(mass_clear);METHOD(attention);
     METHOD(shape_lifetime);METHOD(shape_lifetime_clear);
+    METHOD(save_arm);METHOD(save_result);
     METHOD(join_t1_row);METHOD(join_arm);METHOD(join_result);METHOD(join_load);METHOD(join_handover);METHOD(join_base);METHOD(join_lua);METHOD(join_lua_state);METHOD(join_status);METHOD(join_evq_dump);METHOD(join_watch);METHOD(join_watch_span);METHOD(join_refwatch);METHOD(join_refwatch_from);METHOD(join_refwatch_peek);METHOD(join_refwatch_at);METHOD(join_shape_at);METHOD(join_hold_boot_events);METHOD(join_precise);METHOD(join_ids);METHOD(join_buildp);METHOD(join_view_skip);METHOD(join_viewf_write);METHOD(join_viewf_bits);METHOD(join_pend);METHOD(join_viewl);METHOD(join_rcnt);METHOD(join_ecos);METHOD(join_shpw);METHOD(join_shpw_words);METHOD(join_trdn);METHOD(join_npca);METHOD(join_jobg);METHOD(join_jobw);METHOD(join_code);METHOD(join_engr);METHOD(join_shgr);METHOD(join_resv);METHOD(join_pcsv);METHOD(join_conn);METHOD(join_warp);METHOD(join_gravn_extra);METHOD(join_attn_set);METHOD(join_attn_states);METHOD(join_attn_leave);METHOD(join_attn_arrive);METHOD(join_shape_hold);METHOD(join_shoot_far);METHOD(join_bootev_session);METHOD(join_mute_load_npcs);METHOD(join_hold_fire);METHOD(join_hold_bullets);METHOD(join_keep_stamps);METHOD(join_grav_dead);METHOD(join_body_make);METHOD(join_anis);METHOD(join_anis_state);METHOD(join_cue_ids);METHOD(join_ares);METHOD(join_undk);METHOD(join_bp);METHOD(join_porders);METHOD(join_gravp_settled);METHOD(join_lstn);METHOD(join_fobj);METHOD(join_srcs);METHOD(join_agcb_nav);METHOD(join_rprt);METHOD(join_bnds);METHOD(join_omgs);METHOD(join_jobdump);METHOD(join_jobcnt_at);METHOD(join_unpaired);
 #undef METHOD
     return 1;

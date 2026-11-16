@@ -607,6 +607,40 @@ class CaptureScriptTests(unittest.TestCase):
         self.assertIn('NATIVE_SNAPSHOT HULLS_READY count=2', logs)
         self.assertLess(logs.index('HULLS_READY'), logs.index('SAVE_REQUEST'))
 
+    def test_from_a_save_the_fixture_is_respawned_and_the_result_is_another_slot(self):
+        """native_gate_snapshot_from_save (x4ls resume): no Spawn (the game is a loaded one): three seconds after the first
+        frame the MD cue Respawn, a second later RestoreActors (which answers Ready), then the attention check, the hulls and
+        the save as in a capture, into save_010 (save_009 is the save that was loaded). Synthetic: a stand-in UI."""
+        lua = LuaRuntime(unpack_returned_tuples=True)
+        lua.execute(CAPTURE_HARNESS)
+        lua.execute('X4LAN_CONFIG.native_gate_snapshot_from_save=true;X4LAN_CONFIG.native_gate_snapshot_hulls=1;now=517')
+        lua.execute(CAPTURE)
+        g = lua.globals()
+        lua.execute('update();now=519;update()')
+        self.assertEqual(list(g.raised.values()), [])   # the loaded game's first seconds
+        lua.execute('now=520.5;update();update()')
+        self.assertEqual(list(g.raised.values()), ['X4LAN_NativeGate/Respawn'])   # RestoreActors a second later
+        lua.execute('now=521.6;update()')
+        self.assertEqual(list(g.raised.values()), ['X4LAN_NativeGate/Respawn', 'X4LAN_NativeGate/RestoreActors'])
+        lua.execute("callbacks['X4LAN_NativeGate.Ready'](nil,12);now=524;update()")
+        lua.execute("callbacks['X4LAN_NativeGate.Attention'](nil,12);update()")
+        lua.execute("callbacks['X4LAN_SessionHulls.Ready'](nil,1);update();update();update()")
+        self.assertEqual(list(g.raised.values()), ['X4LAN_NativeGate/Respawn', 'X4LAN_NativeGate/RestoreActors',
+                                                   'X4LAN_NativeGate/InspectAttention', 'X4LAN_SessionHulls/Create#1'])
+        self.assertEqual(g.saved, 'save_010')
+        lua.execute("callbacks['gameSaved'](nil,true)")
+        logs = '\n'.join(g.logs.values())
+        self.assertIn('NATIVE_SNAPSHOT LOADED id=war_start', logs)
+        self.assertIn('NATIVE_SNAPSHOT SAVED slot=save_010', logs)
+        self.assertNotIn('NATIVE_SNAPSHOT ERROR', logs)
+        # A loaded save without a player ship or the fixture's MD state: no answer, the capture stops loudly after 30 s.
+        lua = LuaRuntime(unpack_returned_tuples=True)
+        lua.execute(CAPTURE_HARNESS)
+        lua.execute('X4LAN_CONFIG.native_gate_snapshot_from_save=true;now=517')
+        lua.execute(CAPTURE)
+        lua.execute('update();now=521;update();now=523;update();now=552;update()')
+        self.assertTrue(any('NATIVE_SNAPSHOT ERROR' in line and 'gave no fixture' in line for line in lua.globals().logs.values()))
+
     def test_the_save_waits_while_x4_allows_none(self):
         # The Terran cadet start: its wingmate speaks from second 6 and X4 allows no save until the line is over.
         lua = self.capture()

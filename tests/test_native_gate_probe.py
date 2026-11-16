@@ -3675,6 +3675,81 @@ class SnapshotProbeTests(unittest.TestCase):
         with self.assertRaisesRegex(LuaError,'native_gate_fork_save needs the Linux gate'):
             self.lua.execute(SOURCE)
 
+    def test_periodic_save_arms_each_multiple_ahead_and_reports_each_save(self):
+        """native_gate_save_every: gate.save_arm for the next multiple of N at most 30 ticks ahead (with the profile's save
+        folder and the save to drop, K saves back), one PERIODIC_SAVE row per save, an ERROR row for a failed one, and one
+        row on a gate without the save (synthetic: a stand-in gate)."""
+        self.lua.execute('''
+          X4LAN_CONFIG.native_gate_save_every=300;X4LAN_CONFIG.native_gate_save_keep=2
+          local gate=package.loadlib('gate')();calls={};save_text='idle|0|0|-|0|-'
+          gate.save_arm=function(tick,folder,drop) calls[#calls+1]=table.concat({tick,folder,drop},',');save_text='armed|'..tick..'|0|-|0|-';return 1 end
+          gate.save_result=function() return save_text end
+        ''')
+        self.lua.execute(SOURCE);self.lua.execute('update();update();update()')
+        self.lua.execute('state.boot_phase=3;state.issued=1;is_menu=false')
+        self.lua.execute(SOURCE);self.lua.execute('update()')
+        self.lua.execute('state.issued=269;update()')
+        self.assertEqual(list(self.lua.globals().calls.values()),[])   # 31 ticks ahead: not yet
+        self.lua.execute('state.issued=270;update();state.issued=271;update()')
+        self.assertEqual(list(self.lua.globals().calls.values()),['300,fake/45841/save,0'])   # once, nothing to drop yet
+        self.lua.execute('state.issued=300;update()')   # step 300 issued: its boundary has not run
+        self.lua.execute("save_text='done|300|1234|"+'ab'*32+"|2500|-';state.issued=301;update()")
+        self.lua.execute('state.issued=575;update()')
+        self.lua.execute("save_text='done|600|1234|"+'cd'*32+"|2500|-';state.issued=601;update()")
+        self.lua.execute('state.issued=880;update()')   # the third save: with it two stay, the first goes
+        # X4 refuses 900 (a call of the simulation): again at 1200 - which is the next multiple here - and at 1500 it is made
+        self.lua.execute("save_text='failed|900|0|-|0|is_saving_possible';state.issued=901;update()")
+        self.lua.execute('state.issued=1175;update()')
+        self.lua.execute("save_text='done|1200|1234|"+'ef'*32+"|2500|-';state.issued=1201;update()")
+        self.lua.execute('state.issued=1480;update()')
+        self.assertEqual(list(self.lua.globals().calls.values()),
+                         ['300,fake/45841/save,0','600,fake/45841/save,0','900,fake/45841/save,300','1200,fake/45841/save,300',
+                          '1500,fake/45841/save,600'])
+        lines=[line for line in self.lua.globals().logs.values() if 'PERIODIC_SAVE' in line]
+        self.assertTrue(any('PERIODIC_SAVE armed tick=300 at=270' in line for line in lines))
+        self.assertTrue(any('PERIODIC_SAVE saved tick=300 file=mpsave/s300.xml.gz bytes=1234 sha256='+'ab'*32+' ms=2500 at=301' in line for line in lines))
+        self.assertTrue(any('ERROR PERIODIC_SAVE_FAILED tick=900 state=failed why=is_saving_possible retry=1200 at=901' in line for line in lines))
+        self.assertEqual(sum('PERIODIC_SAVE saved' in line for line in lines),3)
+        # With a long interval the retry comes 300 ticks after the refusal, between two multiples; another reason: no retry.
+        self.setUp()
+        self.lua.execute('''
+          X4LAN_CONFIG.native_gate_save_every=18000
+          local gate=package.loadlib('gate')();calls={};save_text='idle|0|0|-|0|-'
+          gate.save_arm=function(tick,folder,drop) calls[#calls+1]=tick;return 1 end
+          gate.save_result=function() return save_text end
+        ''')
+        self.lua.execute(SOURCE);self.lua.execute('update();update();update()')
+        self.lua.execute('state.boot_phase=3;state.issued=1;is_menu=false')
+        self.lua.execute(SOURCE);self.lua.execute('update();state.issued=17980;update()')
+        self.lua.execute("save_text='failed|18000|0|-|0|is_saving_possible';state.issued=18001;update();state.issued=18275;update()")
+        self.lua.execute("save_text='failed|18300|0|-|0|engine_save';state.issued=18301;update();state.issued=18580;update()")
+        self.assertEqual(list(self.lua.globals().calls.values()),[18000,18300])
+        # An arming the gate refuses is tried again each tick and named once.
+        self.setUp()
+        self.lua.execute('''
+          X4LAN_CONFIG.native_gate_save_every=300
+          local gate=package.loadlib('gate')();calls=0
+          gate.save_arm=function() calls=calls+1;return 0 end
+          gate.save_result=function() return 'idle|0|0|-|0|-' end
+        ''')
+        self.lua.execute(SOURCE);self.lua.execute('update();update();update()')
+        self.lua.execute('state.boot_phase=3;state.issued=1;is_menu=false')
+        self.lua.execute(SOURCE);self.lua.execute('update();state.issued=280;update();state.issued=281;update()')
+        self.assertEqual(self.lua.globals().calls,2)
+        self.assertEqual(sum('PERIODIC_SAVE_FAILED tick=300 state=refused' in line for line in self.lua.globals().logs.values()),1)
+        # A gate without the save (the Linux gate): one row, the session runs on.
+        self.setUp()
+        self.lua.execute('X4LAN_CONFIG.native_gate_save_every=300')
+        self.lua.execute(SOURCE);self.lua.execute('update();update();update()')
+        self.lua.execute('state.boot_phase=3;state.issued=1;is_menu=false')
+        self.lua.execute(SOURCE);self.lua.execute('update();state.issued=280;update()')
+        self.assertEqual(sum('PERIODIC_SAVE unavailable' in line for line in self.lua.globals().logs.values()),1)
+        # The interval is a whole number of ticks, at least 300.
+        self.setUp()
+        self.lua.execute('X4LAN_CONFIG.native_gate_save_every=120')
+        with self.assertRaisesRegex(LuaError,'native_gate_save_every must be'):
+            self.lua.execute(SOURCE)
+
     def test_mass_traffic_arms_before_loading_and_logs_every_admitted_tick(self):
         for value,mode in (('true','sync'),("'observe'",'observe')):
             self.setUp()

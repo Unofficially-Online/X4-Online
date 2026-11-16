@@ -788,6 +788,32 @@ function K.mission_tools(C,env)
   end
   error('ui replay script: no mission offer named '..name)
  end
+ -- Every offer this client's menus list, in the lists' order: {id, name, type, faction, actor}.
+ function T.offers()
+  local out={}
+  for _,bbs in ipairs({true,false}) do
+   local n=tonumber(C.GetNumCurrentMissionOffers(bbs)) or 0
+   if n>0 then
+    local list=ffi.new('uint64_t[?]',n)
+    n=tonumber(C.GetCurrentMissionOffers(list,n,bbs))
+    for i=0,n-1 do
+     local id=(tostring(list[i]):gsub('ULL$',''))
+     local d={env.GetMissionOfferDetails(env.ConvertStringToLuaID(id))}
+     out[#out+1]={id=id,name=tostring(d[1]),kind=tostring(d[5])..'/'..tostring(d[6]),faction=tostring(d[8]),actor=d[22]}
+    end
+   end
+  end
+  return out
+ end
+ -- Every mission this client's menus list: {id, name}.
+ function T.missions_now()
+  local out={}
+  for i=1,tonumber(env.GetNumMissions()) or 0 do
+   local id,name=env.GetMissionDetails(i)
+   out[#out+1]={id=tostring(id),name=tostring(name)}
+  end
+  return out
+ end
  function T.find_mission(name)
   for i=1,tonumber(env.GetNumMissions()) or 0 do
    local id,mission=env.GetMissionDetails(i)
@@ -947,6 +973,49 @@ function K.script(plan,start,tools)
   elseif op=='mt_accept' then call=function()
     local offer,actor=tools.missions.find_offer('X4LAN mt '..tostring(e[3])..' '..tostring(e[4] or 1))
     tools.env.SignalObject(actor,'accept',tools.env.ConvertStringToLuaID(offer));return offer end
+  -- The stock offers as this client's menus list them (tools/dev/mission_matrix.py offers): offers_list names them
+  -- (type, faction; the row is the result), offer_accept_n accepts the e[3]-th as the menus accept an offer (an offer
+  -- that is taken through a talk has no actor to signal: refused here), mis_list names the missions, mis_abort_new
+  -- aborts those that were not there at the last offers_list (a start's own story stays).
+  elseif op=='offers_list' then call=function()
+    local offers,parts=tools.missions.offers(),{}
+    tools.missions.before={}
+    for _,m in ipairs(tools.missions.missions_now()) do tools.missions.before[m.id]=true end
+    for i,o in ipairs(offers) do parts[#parts+1]=i..':'..o.kind..':'..o.faction..(o.actor and '' or ':talk') end
+    return 'n='..#offers..' '..table.concat(parts,' ') end
+  elseif op=='offer_accept_n' then call=function()
+    local o=tools.missions.offers()[e[3]]
+    if not o then return 'none' end
+    if not o.actor then return 'talk '..o.kind end
+    tools.env.SignalObject(o.actor,'accept',tools.env.ConvertStringToLuaID(o.id));return 'accepted '..o.kind..' '..o.name:gsub('%s+','_') end
+  -- offer_accept_next: the first stock offer (no tutorial, one with a client to signal) this plan has not tried yet;
+  -- mis_new: the missions that were not there at the last offers_list.
+  elseif op=='offer_accept_next' then call=function()
+    tools.missions.tried=tools.missions.tried or {}
+    for i,o in ipairs(tools.missions.offers()) do
+     if o.actor and not o.kind:find('^tutorial') and not tools.missions.tried[o.id] then
+      tools.missions.tried[o.id]=true
+      tools.env.SignalObject(o.actor,'accept',tools.env.ConvertStringToLuaID(o.id))
+      return 'accepted '..o.kind..' '..o.faction..' '..(o.name:gsub('%s+','_'))
+     end
+    end
+    return 'none' end
+  elseif op=='mis_new' then call=function()
+    local parts={}
+    for _,m in ipairs(tools.missions.missions_now()) do
+     if not (tools.missions.before or {})[m.id] then parts[#parts+1]=(m.name:gsub('%s+','_')) end
+    end
+    return 'new='..#parts..' '..table.concat(parts,' ') end
+  elseif op=='mis_list' then call=function()
+    local parts={}
+    for _,m in ipairs(tools.missions.missions_now()) do parts[#parts+1]=(m.name:gsub('%s+','_')) end
+    return 'n='..#parts..' '..table.concat(parts,' ') end
+  elseif op=='mis_abort_new' then call=function()
+    local n=0
+    for _,m in ipairs(tools.missions.missions_now()) do
+     if not (tools.missions.before or {})[m.id] then tools.C.AbortMission(tools.env.ConvertStringTo64Bit(m.id));n=n+1 end
+    end
+    return 'aborted='..n end
   -- Test only: the generic missions' limit per sector (MD GmLimit), canonical like mis_fixture.
   elseif op=='gm_limit' then call=function() tools.env.AddUITriggeredEvent('X4LAN_UiMissions','GmLimit',e[3]);return 'lua' end
   -- Test only: slot e[3]'s ship loses its hull (native_gate_pilot_respawn.xml Kill), in every present client's plan at the same tick.

@@ -1,4 +1,4 @@
-"""x4ls command line: doctor, session, play, join, starts, new-session, snapshot, triage, clean, steam-fix."""
+"""x4ls command line: doctor, session, play, join, starts, new-session, resume, snapshot, triage, clean, steam-fix."""
 import argparse
 import json
 from pathlib import Path
@@ -59,6 +59,9 @@ def main(argv=None):
     pl.add_argument('--stall-drop', type=float, default=session.PLAY_STALL_DROP_S, metavar='SECONDS',
                     help='drop a client the others waited for this long (its gate stopped, it froze or it exited)')
     pl.add_argument('--timeout', type=int, default=0, help='seconds (default 0: none; the session ends with its window)')
+    pl.add_argument('--keep-saves', type=int, default=3, metavar='N',
+                    help="periodic saves (the overlay's --save-every): how many save ticks stay in RUN/saves while the session is "
+                         'in sync (default 3); after a desync the last N before it stay for good')
     pl.add_argument('--close-when-over', action='store_true',
                     help='close the X4 windows and collect once the session is over (unattended runs)')
     pl.add_argument('--size', default='1280x720', help='client window size, WIDTHxHEIGHT')
@@ -194,6 +197,24 @@ def main(argv=None):
     ns.add_argument('--timeout', type=int, default=900, help='seconds for the capture')
     ns.add_argument('--steam-fix', action='store_true')
 
+    rs = sub.add_parser('resume', help='a new session from the world of a periodic save (RUN/saves; src/lockstep/launcher/resume.py)')
+    rs.add_argument('--save', type=Path, required=True, help='a periodic save of a play session (RUN/saves/c<K>-t<TICK>.xml.gz)')
+    rs.add_argument('--spec', type=Path, required=True, help="that session's spec.json (x4ls new-session OUT/spec.json)")
+    rs.add_argument('--overlay', type=Path, required=True, help='the play overlay that session ran with (its recipe is used again)')
+    rs.add_argument('--gate-dll', type=Path, required=True)
+    rs.add_argument('--out', type=Path, required=True, help='new session folder (capture overlay, save, session.json, overlay)')
+    rs.add_argument('--minutes', type=float, help="length of the new session (default: the first session's)")
+    rs.add_argument('--story', action='store_true', help="start the slots' stories again (default: the saved world keeps their state)")
+    rs.add_argument('--save-every', type=float, metavar='MINUTES', help="periodic saves of the new session (default: the first session's)")
+    rs.add_argument('--set', action='append', default=[], metavar='native_gate_KEY=LUA_VALUE', help='further settings')
+    rs.add_argument('--keep-player', metavar='ID', help="the saved ID of X4's own player object, when the save holds several named ones")
+    rs.add_argument('--display', type=int, help="the prepare client's window on this monitor (1 = primary)")
+    rs.add_argument('--no-focus', action='store_true', help="the prepare client's window never keeps the keyboard focus or the cursor")
+    rs.add_argument('--game', type=Path)
+    rs.add_argument('--lanes', type=Path)
+    rs.add_argument('--timeout', type=int, default=900, help='seconds for the prepare step')
+    rs.add_argument('--steam-fix', action='store_true')
+
     n = sub.add_parser('snapshot', help='capture a starting snapshot (new game + 12-ship gate fixture)')
     n.add_argument('--out', type=Path, required=True, help='new .xml.gz file')
     n.add_argument('--gamestart', default='custom_creative')
@@ -224,6 +245,14 @@ def main(argv=None):
         from . import newsession
         newsession.starts(args.game, show_all=args.all)
         return 0
+    if args.command == 'resume':
+        from . import resume
+        result = resume.resume(resume.ResumeOptions(save=args.save, spec=args.spec, overlay=args.overlay, gate_dll=args.gate_dll,
+                                                    out=args.out, minutes=args.minutes, story=args.story, sets=args.set,
+                                                    save_every=args.save_every, keep_player=args.keep_player, display=args.display,
+                                                    focus=not args.no_focus, game=args.game, lanes=args.lanes,
+                                                    timeout=args.timeout, steam_fix=args.steam_fix))
+        return 0 if result['outcome'] == 'ready' else 1
     if args.command == 'new-session':
         from . import newsession
         def slots(texts, what):
@@ -342,6 +371,7 @@ def main(argv=None):
                                   lanes=args.lanes, startup=args.startup, steam_fix=args.steam_fix, play=True,
                                   stall_drop_ms=1000 * args.stall_drop if lookahead else 0, relay_args=args.relay_args,
                                   close_when_over=args.close_when_over, borderless=args.borderless, display=args.display, focus=not (args.no_focus or args.never_focus), never_focus=args.never_focus, tile_skip=args.tile_skip,
+                                  keep_saves=args.keep_saves,
                                   remote_slots=tuple(int(v) for v in args.remote_slots.split(',') if v.strip()),
                                   bind=args.bind, allow_from=tuple(a for a in args.allow_from.split(',') if a.strip()),
                                   port=args.port, join_wait=args.join_wait, public_host=args.public_host,

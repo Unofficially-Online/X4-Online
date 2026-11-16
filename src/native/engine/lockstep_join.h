@@ -2330,9 +2330,9 @@ static unsigned char *join_tls_block(void) {
 }
 #include "lockstep_join_precise.h"   /* the join save at full precision (native_gate_join_precise) */
 #include "lockstep_join_ids.h"       /* the joiner's saved objects at the session's runtime IDs (native_gate_join_ids) */
-/* The engine save with the MoveWorker's clock, view and RNG word on this thread; 1 saved. */
-static int join_save_with_worker_tls(const char *file,const char *name) {
-    unsigned char *mine=join_tls_block(),*worker=(unsigned char *)join_cap.mw_tls,saved_time[8],saved_view[4],saved_rng[8];
+/* The engine save with the MoveWorker's clock, view and RNG word (worker: its TLS block) on this thread; 1 saved. */
+static int join_save_with_tls(const char *file,const char *name,uintptr_t worker_tls) {
+    unsigned char *mine=join_tls_block(),*worker=(unsigned char *)worker_tls,saved_time[8],saved_view[4],saved_rng[8];
     int swap=mine && worker && mine!=worker;
     if(swap) {
         memcpy(saved_time,mine+0x300,8);memcpy(saved_view,mine+0x314,4);memcpy(saved_rng,mine+0x318,8);
@@ -2348,6 +2348,7 @@ static int join_save_with_worker_tls(const char *file,const char *name) {
     }
     return ok!=0;
 }
+static int join_save_with_worker_tls(const char *file,const char *name) {return join_save_with_tls(file,name,join_cap.mw_tls);}
 
 /* ---- module audit ---- */
 typedef struct {const char *name;int armed;const char *status;} join_module;

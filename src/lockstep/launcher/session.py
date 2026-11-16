@@ -16,6 +16,7 @@ import sys
 import time
 
 from . import extension, game, instance, profile, steam
+from . import saves as periodic
 
 ROOT = Path(__file__).resolve().parents[3]
 RELAY = ROOT / 'tools/dev/native_gate_relay.py'
@@ -61,6 +62,7 @@ class Options:
     borderless: bool = False  # X4's borderless window instead of a sizable one (no tiling: the windows stay where X4 puts them)
     focus: bool = True  # False: while the clients start (two minutes) a client window that takes the keyboard focus gives it back
     tile_skip: int = 0  # the first client's cell on the tiling grid (another local session's windows hold the cells before it)
+    keep_saves: int = 3  # x4ls play: how many periodic saves (ticks) stay in RUN/saves while the session is in sync (saves.py)
     never_focus: bool = False  # with focus False: for the whole session, not only while the clients start (scripted clients)
     display: int | None = None  # tile the client windows on this monitor only (Windows' number, \.\DISPLAY<n>)
     startup: int = 70  # seconds budgeted per client to reach the start menu; snapshot clients then arm together
@@ -700,11 +702,14 @@ CAPTURE_FAIL = ('NATIVE_SNAPSHOT ERROR', 'SESSION_HULL_FAILED', 'Error in MD cue
 
 def capture_snapshot(out, gamestart='custom_creative', game_dir=None, lanes=None, timeout=900,
                      runs=ROOT / '.local/runs', state_dir=ROOT / '.local/x4ls', log=print, seed=SESSION_SEED, steam_fix=False,
-                     overlay=None):
+                     overlay=None, from_save=None, display=None, focus=True):
     """One client starts `gamestart` with session seed `seed`, spawns the 12-ship gate fixture and saves
     save_009; copied to `out`. The save header carries the seed, so sessions from it use the same one.
     overlay: a capture overlay built elsewhere (x4ls new-session: native_gate_session_start.build_capture, with the
-    per-player start hulls); its hull failures end the capture too."""
+    per-player start hulls); its hull failures end the capture too.
+    from_save (x4ls resume): the client loads this save instead of starting a new game (the overlay's capture script in its
+    from-save mode: a fresh fixture and hulls in the loaded world) and the result is its save_010.
+    display, focus: the capture window on that monitor, and (focus False) never with the keyboard focus or the cursor."""
     sys.path.insert(0, str(ROOT / 'tools/dev'))
     from native_gate_scenarios import build_capture_overlay
     out = Path(out)
@@ -731,20 +736,35 @@ def capture_snapshot(out, gamestart='custom_creative', game_dir=None, lanes=None
         game.create_view(install, view)
         state['views'].append(str(view))
         save_state(o, state)
-        extension.compose(overlay, view / 'extensions', 1, 0, '0' * 32, 1,
-                          extra={'ui/x4ls_autostart.lua': Path(__file__).with_name('autostart.lua')},
-                          config_tail=f'X4LAN_CONFIG.x4ls_autostart = "{gamestart}"\n')
-        profile.prepare(profile.CAPTURE_PROFILE, [*game.dlc_ids(view), extension.EXTENSION_ID], o.width, o.height)
+        if from_save:
+            extension.compose(overlay, view / 'extensions', 1, 0, '0' * 32, 1,
+                              extra={'ui/x4ls_autoload.lua': Path(__file__).with_name('autoload.lua')},
+                              config_tail='X4LAN_CONFIG.x4ls_autoload = true\n')
+        else:
+            extension.compose(overlay, view / 'extensions', 1, 0, '0' * 32, 1,
+                              extra={'ui/x4ls_autostart.lua': Path(__file__).with_name('autostart.lua')},
+                              config_tail=f'X4LAN_CONFIG.x4ls_autostart = "{gamestart}"\n')
+        profile.prepare(profile.CAPTURE_PROFILE, [*game.dlc_ids(view), extension.EXTENSION_ID], o.width, o.height,
+                        snapshot=from_save)
         if steam_fix:
             steam.fix(Path(state_dir) / 'steam-fix.json')
         args = client_command(view, profile.CAPTURE_PROFILE, 1, seed)[:-1] + [log_name]
-        proc = subprocess.Popen(args, cwd=view, env=steam.client_environment())
+        proc = subprocess.Popen(args, cwd=view, env=steam.client_environment(), startupinfo=None if focus else no_activate_startup())
         state['pids'].append(proc.pid)
         save_state(o, state)
-        log(f'capture client pid {proc.pid}: starting {gamestart}, waiting for the fixture save')
+        log(f'capture client pid {proc.pid}: ' + (f'loading {Path(from_save).name}' if from_save else f'starting {gamestart}') +
+            ', waiting for the fixture save')
         started, outcome = time.time(), 'timeout'
         while time.time() - started < timeout:
-            time.sleep(2)
+            for _ in range(20):   # 2 s; the window kept on its monitor and without the focus meanwhile
+                time.sleep(0.1)
+                try:
+                    if display:
+                        tile([proc.pid], o.width, o.height, 2, display)
+                    if not focus:
+                        yield_focus({proc.pid})
+                except Exception:   # the window went away between two calls
+                    pass
             path = profile.profile_dir(profile.CAPTURE_PROFILE) / log_name
             text = path.read_text(errors='replace') if path.is_file() else ''
             if 'NATIVE_SNAPSHOT SAVED' in text:
@@ -756,7 +776,8 @@ def capture_snapshot(out, gamestart='custom_creative', game_dir=None, lanes=None
                 break
         if outcome == 'saved':
             out.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(profile.profile_dir(profile.CAPTURE_PROFILE) / 'save' / profile.SNAPSHOT_SLOT, out)
+            shutil.copyfile(profile.profile_dir(profile.CAPTURE_PROFILE) / 'save' /
+                            ('save_010.xml.gz' if from_save else profile.SNAPSHOT_SLOT), out)
     finally:
         if proc and proc.poll() is None:
             kill(proc.pid)
@@ -815,6 +836,15 @@ def monitor_play(o, run_dir, relay, clients, log):
     tails = {k: LogTail(profile.profile_dir(profile_id) / f'x4ls-c{k}.log') for k, profile_id, _ in clients}
     relay_tail = LogTail(run_dir / 'relay.log')
     counts, seen, stopped, exited, over, armed = {}, set(), {}, {}, False, set()
+    # Periodic saves (the overlay's native_gate_save_every): each client's saves go from its profile to RUN/saves.
+    save_folders = {k: profile.profile_dir(profile_id) / 'save' for k, profile_id, _ in clients}
+    keeper = periodic.Collector(run_dir / 'saves', o.keep_saves, tick_hz or 30, log)
+
+    def first_desync():
+        try:
+            return json.loads((run_dir / 'desync-status.json').read_text()).get('first_mismatch')
+        except (OSError, ValueError):
+            return None
 
     def count(kind):
         counts[kind] = counts.get(kind, 0) + 1
@@ -824,7 +854,9 @@ def monitor_play(o, run_dir, relay, clients, log):
             status = json.loads((run_dir / 'desync-status.json').read_text())
         except (OSError, ValueError):
             status = {}
+        keeper.poll(status.get('first_mismatch'))
         return {'outcome': 'played', 'ended': ended, 'seconds': round(time.time() - started), 'tick': status.get('tick'),
+                'saves': keeper.summary(),
                 'first_desync': status.get('first_mismatch'), 'desync_ticks': status.get('mismatches'),
                 'clock_splits': status.get('clock_splits'), 'errors': counts.get('error', 0), 'drops': counts.get('drop', 0),
                 'stopped': {f'client{k}': reason for k, reason in sorted(stopped.items())},
@@ -863,6 +895,7 @@ def monitor_play(o, run_dir, relay, clients, log):
                     tiled = tile([proc.pid for _, _, proc in clients], o.width, o.height, 2, o.display, o.tile_skip) == len(clients)
                 for k, _, proc in clients:
                     for line in tails[k].lines():
+                        keeper.line(k, line, save_folders[k])
                         if FAIL.search(line):
                             errors.write(f'{stamp} client{k} {line}\n')
                             errors.flush()
@@ -890,6 +923,8 @@ def monitor_play(o, run_dir, relay, clients, log):
                         errors.write(f'{stamp} client{k} X4 exited with {proc.returncode}\n')
                         errors.flush()
                         log(f'client {k}: X4 exited ({proc.returncode})' + ('' if over else '; the others play on'))
+                if keeper.pending or (counts.get('desync') and keeper.frozen_before is None and keeper.kept):
+                    keeper.poll(first_desync())
                 if len(exited) == len(clients):
                     return result('every X4 window closed')
                 if not over and all(k in stopped or k in exited for k, _, _ in clients):

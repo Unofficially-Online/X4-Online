@@ -509,6 +509,8 @@ D.EXCLUDED={
  {'native_gate_virtual_players','virtual players spikes (observe/construct)'},
  {'native_gate_player_orders','scripted player orders (wire runs; the UI replay orders family carries orders)'},
  {'native_gate_fork_save','non-blocking save (Linux gate only)'},
+ {'native_gate_save_every','every client saves the world every N ticks and plays on (Windows gate; set by build_play_overlay.py --save-every)'},
+ {'native_gate_save_keep','periodic save: how many saves a client keeps in its profile (probe: 3)'},
  {'native_gate_join','hot join (lockstep_join.h): not live-tested yet (J1-J3, reports/LOCKSTEP-HOTJOIN-20261101.txt); set by the join tooling'},
  {'native_gate_play_mode','perf mode without observer rows and world pages: the census rows the live comparison reads go too'},
  {'native_gate_ui_cargo','fix not in the people stack (Play42P); not validated with it'},

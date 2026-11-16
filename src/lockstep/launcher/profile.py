@@ -2,9 +2,12 @@
 
 Only the ids in PROFILES are ever written; anything else, including the player's
 own Steam-id profile, is refused. A client profile is wiped before each session
-so no world, autosave or setting carries over.
+so no world, autosave or setting carries over. A profile that a running X4 was
+started with is never wiped: it belongs to another session on this PC.
 """
 import os
+import re
+import subprocess
 from pathlib import Path
 import shutil
 
@@ -52,9 +55,51 @@ def content_xml(extension_ids):
     return f'<?xml version="1.0"?><content>{rows}</content>\n'
 
 
+PROFILE_ARGUMENT = re.compile(r'-personalfolderid\s+(\d+)')
+X4_COMMAND = re.compile(r'(?i)\bX4(\.exe)?\b')
+
+
+def running_profiles():
+    """{profile id: pid} of every running X4 that was started with -personalfolderid (this PC's launcher clients, of
+    any session and any checkout). An X4 without it is a person's own game and has no profile of ours."""
+    found = {}
+    try:
+        if os.name == 'nt':
+            out = subprocess.run(['powershell', '-NoProfile', '-Command',
+                                  "Get-CimInstance Win32_Process -Filter \"Name='X4.exe'\" | ForEach-Object { '{0}|{1}' -f $_.ProcessId, $_.CommandLine }"],
+                                 capture_output=True, text=True, timeout=60).stdout
+            rows = [line.partition('|')[::2] for line in out.splitlines()]
+        else:
+            rows = []
+            for entry in Path('/proc').iterdir():
+                if entry.name.isdigit():
+                    try:
+                        rows.append((entry.name, (entry / 'cmdline').read_bytes().replace(bytes(1), b' ').decode('utf-8', 'replace')))
+                    except OSError:
+                        pass
+    except (OSError, subprocess.SubprocessError):
+        return found
+    for pid, command in rows:
+        match = PROFILE_ARGUMENT.search(command)
+        if match and pid.strip().isdigit() and X4_COMMAND.search(command):
+            found[int(match.group(1))] = int(pid)
+    return found
+
+
+def refuse_in_use(profile):
+    """Wiping the profile of a running client took its config, its arm file and its staged save away under it (two
+    sessions on one PC that picked the same pair, 16 Nov). The session that comes second stops here instead."""
+    pid = running_profiles().get(int(profile))
+    if pid:
+        raise SystemExit(f'profile {profile} is in use by a running X4 (pid {pid}): another session on this PC has it; '
+                         'take other profiles (X4LS_FIRST_PROFILE) or end that session first')
+
+
 def prepare(profile, extension_ids, width=1280, height=720, snapshot=None, root=None, fast=False, borderless=False):
     """Fresh profile: windowed config, autosave and protected UI off, optional snapshot."""
     path = profile_dir(profile, root)
+    if root is None:
+        refuse_in_use(profile)   # the real profiles only: a test's own folder has no X4 on it
     if path.exists():
         shutil.rmtree(path)
     (path / 'save').mkdir(parents=True)
