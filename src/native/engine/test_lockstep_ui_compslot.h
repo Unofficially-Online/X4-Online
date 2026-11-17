@@ -198,7 +198,7 @@ static void test_ui_compslot(void) {
                uics_slot_terminal(1,UICS_CLASS_TRANSPORTER,room) && uics_slot_terminal(1,UICS_CLASS_TRANSPORTER,other) &&   /* slot 1: X4's own tests */
                !uics_slot_terminal(1,UICS_CLASS_CONTROL,room));
         /* slot 1's command is its own class: slot 1 only, never the action's class as an event */
-        assert(uics_verdict(1,UICS_CLASS_TRANSPORT) && !uics_verdict(2,UICS_CLASS_TRANSPORT) && !uics_verdict(1,UICS_CLASS_TRANSPORTER) &&
+        assert(uics_verdict(1,UICS_CLASS_TRANSPORT) && uics_verdict(2,UICS_CLASS_TRANSPORT) && !uics_verdict(1,UICS_CLASS_TRANSPORTER) &&
                !uics_verdict(2,UICS_CLASS_TRANSPORTER));
         pfslots[2].walking=0;assert(!uics_slot_terminal(2,UICS_CLASS_TRANSPORTER,room));
         pslots[2].ship=sship;pfslot_armed=farmed;pfslots[2].walking=fwalking;pstk_capturing=capturing;pstk_capture_slot=slot;

@@ -116,7 +116,7 @@ typedef struct {uint32_t klass;unsigned slots;const char *name;} uics_verdict_ro
 static const uics_verdict_row uics_verdicts[]={
     {UICS_CLASS_AIRLOCK,UICS_SLOT_ONE|UICS_SLOT_OTHERS,"CycleAirlockAction"},
     {UICS_CLASS_CONTROL,UICS_SLOT_ONE,"ControlPositionAction"},
-    {UICS_CLASS_TRANSPORT,UICS_SLOT_ONE,"TransportPlayerToTargetAction"}};
+    {UICS_CLASS_TRANSPORT,UICS_SLOT_ONE|UICS_SLOT_OTHERS,"TransportPlayerToTargetAction"}};   /* a slot 2..N: a place only (uics_run) */
 #define UICS_VERDICTS (sizeof(uics_verdicts)/sizeof(*uics_verdicts))
 typedef struct {uint64_t component;const char *connection;} uics_slot_arg;
 typedef unsigned char (*uics_export_fn)(const uics_slot_arg *,uint32_t);
@@ -253,7 +253,8 @@ static int uics_capture(unsigned index,uint64_t *ret,uint64_t ok,uint64_t compon
         InterlockedIncrement64(&uics_seat_clicks);*ret=ok;return 1;
     }
     if(!uics_verdict(pstk_capture_slot,klass)) return uics_refuse(index,ret);
-    if(pstk_capture_slot>=2 && !uics_slot_airlock(pstk_capture_slot,klass,uirep_component(component_id))) return uics_refuse(index,ret);
+    /* A slot 2..N: its ship's airlock class, or the transporter's command to a place (uics_transport_decide). */
+    if(pstk_capture_slot>=2 && klass!=UICS_CLASS_TRANSPORT && !uics_slot_airlock(pstk_capture_slot,klass,uirep_component(component_id))) return uics_refuse(index,ret);
     if(!length || length>UICS_NAME_MAX || action>255u) return uics_refuse(index,ret);
     unsigned char data[UIREP_REF+1+4+1+UICS_NAME_MAX];unsigned n=0;
     uirep_put_ref(data,component_id);n=UIREP_REF;
@@ -346,6 +347,14 @@ static int uics_transport_decide(unsigned index,const uint64_t *frame,uint64_t *
         InterlockedIncrement64(&uics_transports);
         return uics_capture(index,ret,0,target.component,UICS_TRANSPORT_NAME,sizeof(UICS_TRANSPORT_NAME)-1,0,UICS_CLASS_TRANSPORT);
     }
+    /* A walking slot 2..N and a place: the same command as slot 1's, with the transporter connection's name
+     * (17 Nov; lockstep_pilot_foot_transport.h carries the slot's player at the apply). */
+    if(k>=2 && k<=PILOT_SLOTS && pftr_installed && pfslot_own_walking() && !uics_is_zone(uirep_component(target.component))) {
+        char name[UICS_NAME_MAX+1];const size_t length=target.connection?uics_name(target.connection,name):0;
+        if(!length || length>UICS_NAME_MAX) return uics_refuse(index,ret);
+        InterlockedIncrement64(&uics_transports);InterlockedIncrement64(&uics_travels);
+        return uics_capture(index,ret,0,target.component,name,length,0,UICS_CLASS_TRANSPORT);
+    }
     if(k<2 || k>PILOT_SLOTS || !pfslot_own_walking() || !pvehk_may(k) || !pslots[k].runtime || !uics_is_zone(uirep_component(target.component)))
         return uics_refuse(index,ret);
     InterlockedIncrement64(&uics_transports);
@@ -393,6 +402,21 @@ static int uics_run(unsigned slot,const unsigned char *data,const char **why) {
     for(unsigned i=0;i<4;i++) klass|=(uint32_t)data[UIREP_REF+1+i]<<(8*i);
     const unsigned length=data[UIREP_REF+5];
     memcpy(name,data+UIREP_REF+6,length);name[length]=0;
+    if(slot>=2 && klass==UICS_CLASS_TRANSPORT) {
+        /* A walking slot's travel to a place: X4's own export in the slot's scope (its player is X4's player there),
+         * the event it posts is noted as the slot's (lockstep_pilot_foot_transport.h). Never a zone: a slot's
+         * spacesuit is the airlock class below. */
+        void (*transport)(const void *)=uics_transport_test?uics_transport_test:
+            (uics_transport_index<UIGUARD_MAX?(void(*)(const void *))uiguard_tramp[uics_transport_index]:NULL);
+        const uics_slot_arg target={runtime,name};int fault=0;
+        if(!transport || !pftr_installed || uics_is_zone(component) || !pfslot_walking_fpc(slot) || pstk_scope_slot!=slot) {InterlockedIncrement64(&uics_stale);return 1;}
+        pftr_note(slot,runtime);
+        __try {transport(&target);}
+        __except(GetExceptionCode()==EXCEPTION_ACCESS_VIOLATION?EXCEPTION_EXECUTE_HANDLER:EXCEPTION_CONTINUE_SEARCH) {fault=1;}
+        if(fault) {InterlockedIncrement64(&uics_faults);*why="ui_compslot_fault";return 0;}
+        InterlockedIncrement64(&uics_applied);
+        return 1;
+    }
     if(slot>=2) {   /* never X4's action for another player than its own: the slot's way out is the death module's */
         InterlockedIncrement64(uics_slot_airlock(slot,klass,component) && pvehk_ask(slot,stats.issued)?&uics_applied:&uics_stale);
         return 1;
@@ -403,6 +427,7 @@ static int uics_run(unsigned slot,const unsigned char *data,const char **why) {
         const int zone=uics_is_zone(component);
         const uics_slot_arg target={runtime,zone?"":name};int fault=0;   /* a place: its transporter connection's name */
         if(!transport) {InterlockedIncrement64(&uics_stale);return 1;}
+        if(!zone) pftr_note(1,runtime);   /* slot 1's own travel: its event is not a slot's (lockstep_pilot_foot_transport.h) */
         __try {transport(&target);}
         __except(GetExceptionCode()==EXCEPTION_ACCESS_VIOLATION?EXCEPTION_EXECUTE_HANDLER:EXCEPTION_CONTINUE_SEARCH) {fault=1;}
         if(fault) {InterlockedIncrement64(&uics_faults);*why="ui_compslot_fault";return 0;}

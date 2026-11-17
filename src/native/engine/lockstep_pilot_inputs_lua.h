@@ -398,6 +398,29 @@ static int lua_pilot_death_suit(lua_State *L) {
 /* gate.pilot_foot_walking(slot): 1 while that slot's player is on foot (slot 1: X4's own player off its seat with no
  * PlayerController and not docked in it; slots 2..N: the slot walks), else 0. Simulation state: the same answer on
  * every client at the same tick (the probe starts and ends the players' stand-in figures by it). */
+/* gate.pilot_foot_floor(slot): the name of the connection of the part that slot's walking player stands on (its
+ * FirstPersonController's floor part +0x398, the connection +0x170, its name a string at +0x10), or nil. Read only,
+ * for the test ops: X4's transporter menu is opened for a transporter's component and this name, and
+ * TransportPlayerToTarget starts from it. */
+static int lua_pilot_foot_floor(lua_State *L) {
+    double slot=p_lua_tonumber(L,1);char name[64];size_t length=0;
+    if(accept_ui() && isfinite(slot) && floor(slot)==slot && slot>=1 && slot<=PILOT_SLOTS) {
+        const unsigned k=(unsigned)slot;unsigned char *fpc=NULL,*part=NULL,*connection=NULL,*text=NULL;uint64_t size=0,capacity=0;
+        if(k>=2) fpc=pfslot_walking_fpc(k);
+        else if(pslot_p1 && pfoot_armed && pfoot_state==PFOOT_WALKING) {
+            __try {fpc=pfslot_fpc_of(pslot_p1);}
+            __except(GetExceptionCode()==EXCEPTION_ACCESS_VIOLATION?EXCEPTION_EXECUTE_HANDLER:EXCEPTION_CONTINUE_SEARCH) {fpc=NULL;}
+        }
+        if(fpc && read_local(fpc+0x398,&part,8) && part && read_local(part+0x170,&connection,8) && connection &&
+           read_local(connection+0x20,&size,8) && read_local(connection+0x28,&capacity,8) && size && size<sizeof(name)) {
+            text=connection+0x10;
+            if(capacity>0xf && !read_local(connection+0x10,&text,8)) text=NULL;
+            if(text && read_local(text,name,(size_t)size)) length=(size_t)size;
+        }
+    }
+    if(length) p_lua_pushlstring(L,name,length);else p_lua_pushnil(L);
+    return 1;
+}
 static int lua_pilot_foot_walking(lua_State *L) {
     double slot=p_lua_tonumber(L,1);int walking=0;
     if(accept_ui() && isfinite(slot) && floor(slot)==slot && slot>=1 && slot<=PILOT_SLOTS) {

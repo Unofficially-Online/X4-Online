@@ -372,6 +372,9 @@ if cfg.native_gate_join then
  if cfg.native_gate_join_resv then   -- a joiner takes the session's zones' space reservation boxes and expiries (RESV)
   assert(gate.join_resv and gate.join_resv(1)==1,'join resv refused')
  end
+ if cfg.native_gate_join_zref then   -- a joiner's zone reference table (what a temporary zone's kill check asks) is the session's (ZREF)
+  assert(gate.join_zref and gate.join_zref(1)==1,'join zref refused')
+ end
  if cfg.native_gate_join_pcsv then   -- a joiner takes the session's PlayerControllers' own motion solvers (PCSV)
   assert(gate.join_pcsv and gate.join_pcsv(1)==1,'join pcsv refused')
  end
@@ -2978,6 +2981,10 @@ function pilot_view.arm_ui_replay(slot,window)
   pcall(ffi.cdef,'UniverseID GetContextByClass(UniverseID,const char*,bool);')
   local names=cfg.native_gate_transport_connection or {''}
   if type(names)~='table' then names={names} end
+  -- The connection under this client's own walking player, as the gate reads it from X4 (what the terminal's action
+  -- hands the stock menu): asked first.
+  local floor=gate.pilot_foot_floor and gate.pilot_foot_floor(slot)
+  if floor and floor~='' then local list={floor};for _,name in ipairs(names) do list[#list+1]=name end;names=list end
   -- What the menu is opened for: the transporter's component. Asked for the ship and for the player's room, with every
   -- connection name; the list with the most targets is the answer (tried= says what each one gave).
   local player=C.GetPlayerID()

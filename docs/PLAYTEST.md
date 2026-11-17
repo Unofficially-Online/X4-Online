@@ -464,6 +464,22 @@ python tools/x4ls.py new-session --base-start x4ep1_gamestart_discover --players
   likely cause is that X4 drops such zones when a save is loaded and keeps them until their check when it plays
   on; it is not fixed, and whether the two early joins above are the same thing is not known (a station made at
   a safe position gets a temporary zone).
+- What it is (17 Nov evening, runs hq29 to hq32): not the load itself. An empty temporary zone is removed at its
+  kill check unless a table of zone references holds a count for it or a recent time. That table is in no save: a
+  load builds its own from what it loads. Read from a live pair, the session held 1,346 entries with their own
+  times and the joiner 622, all stamped with its load; at their checks the session kept two zones the joiner
+  removed, and from then on the two worlds made and numbered zones differently. The join package now carries the
+  table (section ZREF), and with `native_gate_join_zref=true` a joiner takes the session's. Run hq32 with it: at
+  tick 7200 the host's and the joiner's saves hold the same components (only local effect objects differ; before,
+  the joiner lacked zones), and the runtime IDs agree through the handover and for about 190 ticks after it,
+  where in hq29 the two had numbered new zones differently before tick 7200.
+- Not solved by it, so the option is off unless asked for: the runtime IDs still part later (tick 9173 in hq32).
+  The two tables were read again after that: 24 of 1,153 common zones differ, most of them by one count more on
+  the joiner with the time of its load, so something on the joiner takes those references again in its first
+  step after the load, as the session did after its own load at the start. And the world part of the digest
+  differs from the joiner's first tick as before: the session's table holds 16 more created rows than the
+  joiner's (the saves do not differ in them), which the session reports as a desync at the handover. Both are
+  open.
 - A joiner started on the same PC beside freshly started clients of other sessions twice stayed at 90 MB without
   a log (hq20, the first control run). `x4ls join --same-pc` now frees X4's instance lock in the other launcher
   clients before it starts its client, as `x4ls play` does; in the second control run it freed one and the joiner
@@ -769,8 +785,16 @@ In the integration branch since 17 Nov. Run with scripted input, not by people.
 - **Known faults.**
   - Rooms (17 Nov). A player 2..N who walks out of its ship is now in the station's rooms as player 1 is: X4's
     scripts see it there and hear the change of room and of ship/station. Before, it stayed counted in its cockpit.
-    Still missing for a player 2..N: X4's transporter between rooms (the request is dropped), and sitting down is
-    still the get-up key from anywhere on the dock (the player is put back in its seat).
+    Sitting down is still the get-up key from anywhere on the dock (the player is put back in its seat).
+  - The transporter for a player 2..N (17 Nov): built, not yet seen moving anyone. The menu's "Travel to" of a
+    walking player 2..N is taken like player 1's, and the gate puts that player at the target with X4's own
+    routines. The only place the test can reach is a docked small ship's own cockpit, and from there X4 carries
+    nobody (player 1 stays where it stands too); the test checks that a player 2..N is treated the same. A travel
+    between a station's rooms, or in a ship with a transporter room, has not been run.
+  - Fixed 17 Nov: when player 1 had docked and stood up while player 2 was still flying in on its autopilot, player
+    2's ship stopped 2.5 km out and never docked, and the clients' world check differed five minutes later. While
+    anyone is on foot the other players' player objects are held outside X4's room tree, and X4 then ran them as
+    something nobody is near; they keep their seat's attention now. Scenario `early` of the test.
   - Pointing at a figure still shows "Talk"; it starts no conversation (the figure is titled "Player N").
   - Near a station the clients' checks disagreed (play mode goes on silently). Four causes, fixed on 17 Nov:
     the station people's animation choices moved the simulation's random numbers (a traffic ship's pilot got a
@@ -802,7 +826,7 @@ In the integration branch since 17 Nov. Run with scripted input, not by people.
 
       python tools/dev/station_walk_test.py run --snapshot SAVE.xml.gz --gate-dll x4lan_gate_64.dll --scenario meet
 
-  All three scenarios passed on 17 Nov (two scripted clients on one PC).
+  The scenarios `meet`, `walk`, `undock`, `transport` and `early` passed on 17 Nov (two scripted clients on one PC).
   `meet`: both dock, get up, walk out, and player 2 walks 40 m across the dock up to player 1; the pictures show, on
   each client, the other player's figure three metres away. `walk`: get up, a few steps, player 2 sits down and
   undocks. `undock`: both undock from their seats and fly off. The snapshot is the two-player one (both ships side by

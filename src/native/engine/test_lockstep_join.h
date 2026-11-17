@@ -5,7 +5,7 @@
  * into a differently loaded synthetic world (other addresses, list orders, tree order, vectors, heap, counter), the
  * refusal diagnostics, the identity mapping, the stand-in proposal rule, and the pins and layouts on the X4 9.00 image.
  * No engine code runs: the tree's insert and erase are a plain binary search tree with the engine's node layout. */
-#define TJ_GOLDEN "1342d2e10d82e8cb99d84a86c458b3008f65277fd2371af1b34efbe5aa80c5aa"   /* version 13 (JOBE .. ANIL; 12: SPLM .. GRAVQ) */
+#define TJ_GOLDEN "500019bde1567e2d607d54cbe59981509b974911d3c085246e3454c9ea335d9d"   /* version 13 (JOBE .. ZREF; 12: SPLM .. GRAVQ) */
 static uint64_t tj_bits(double v) {uint64_t b;memcpy(&b,&v,8);return b;}
 static uint32_t tj_f32(float v) {uint32_t b;memcpy(&b,&v,4);return b;}
 /* ---- a synthetic AI director ---- */
@@ -478,6 +478,8 @@ static void test_join_golden(void) {
     anis[0].sig=0x12345678u;anis[0].start=0x40857c0000000000ull;anis[0].w78=anis[0].w80=0xbff0000000000000ull;anis[0].keys[0]=anis[0].state=0x1111ull;anis[0].next=0x2222ull;t.anis=anis;t.nanis=1;
     static join_anil_rec anil[1];memset(anil,0,sizeof(anil));anil[0].portable=0x2001ull;anil[0].part=3;anil[0].flag=1;anil[0].cls=0x2c78290u;anil[0].target=0x2003ull;
     t.anil=anil;t.nanil=1;
+    static join_zref_rec zref[2];memset(zref,0,sizeof(zref));zref[0].zone=0x2001ull;zref[0].count=3;zref[0].time=41.5;zref[1].zone=0x2004ull;zref[1].time=7.25;
+    t.zref=zref;t.nzref=2;
     join_buf b={0};assert(!join_package_build(&t,&b));free(b.data);memset(&b,0,sizeof(b));   /* a version 1 table: no package of this build */
     t.version=JOIN_PACKAGE_VERSION;assert(join_package_build(&t,&b));
     unsigned char sha[32];char hex[65];lockstep_sha256(b.data,b.size,sha);hex32(sha,hex);
@@ -533,7 +535,7 @@ static void test_join_golden(void) {
            r.nomgs==1 && !memcmp(r.omgs,omgs,sizeof(omgs)) &&
            r.nresv==1 && !memcmp(r.resv,resv,sizeof(resv)) &&
            r.npcsv==1 && !memcmp(r.pcsv,pcsv,sizeof(pcsv)) && r.nconn==1 && !memcmp(r.conn,conn,sizeof(conn)) && r.nwarp==1 && !memcmp(r.warp,warp,sizeof(warp)) && r.nares==1 && !memcmp(r.ares,ares,sizeof(ares)) && r.nlstn==1 && !memcmp(r.lstn,lstn,sizeof(lstn)) && r.nundk==1 && !memcmp(r.undk,undk,sizeof(undk)) && r.nsrcs==1 && !memcmp(r.srcs,srcs,sizeof(srcs)) && r.nfobj==1 && !memcmp(r.fobj,fobj,sizeof(fobj)) &&
-           r.ncuei==1 && !memcmp(r.cuei,cuei,sizeof(cuei)) && r.nanis==1 && !memcmp(r.anis,anis,sizeof(anis)) && r.nanil==1 && !memcmp(r.anil,anil,sizeof(anil)));
+           r.ncuei==1 && !memcmp(r.cuei,cuei,sizeof(cuei)) && r.nanis==1 && !memcmp(r.anis,anis,sizeof(anis)) && r.nanil==1 && !memcmp(r.anil,anil,sizeof(anil)) && r.nzref==2 && !memcmp(r.zref,zref,sizeof(zref)));
     assert(r.version==13 && r.nhealth==2 && r.npose==1 && !memcmp(r.health,health,sizeof(health)) && !memcmp(r.pose,pose,sizeof(pose)));
     assert(r.npath==9 && r.nregion==2 && !memcmp(r.path,path,sizeof(path)) && !memcmp(r.region,region,sizeof(region)));
     assert(r.nshield==2 && r.nnav==1 && r.nattn==2 && r.nkeys==2 && !memcmp(r.shield,shield,sizeof(shield)) && !memcmp(r.nav,nav,sizeof(nav)) &&
@@ -567,7 +569,7 @@ static void test_join_golden(void) {
     /* The world side table: a changed record (its section hash and the trailer resealed) changes the portable digest; records out of
      * portable order refuse; a version 1 header may not carry the world sections. */
     /* the HEALTH payload: before POSE (head + 1 record), SHIELD (2), NAV (1), ATTN (2), KEYS (2), PATH (9), REGION (2), the trailer */
-    const size_t v13_tail=48+sizeof(join_jobe_rec)+48+3*sizeof(join_evqt_rec)+48+2*sizeof(join_gravd_rec)+48+2*sizeof(join_viewk_rec)+48+2*sizeof(join_viewkc_rec)+48+2*sizeof(join_viewf_rec)+48+sizeof(join_viewp_rec)+48+sizeof(join_shoot_rec)+48+sizeof(join_attk_rec)+48+sizeof(join_livef_rec)+48+2*sizeof(join_spec_rec)+48+sizeof(join_navc_rec)+48+sizeof(join_jobs_rec)+48+2*sizeof(join_gone_rec)+48+sizeof(join_body_rec)+48+2*sizeof(join_bupd_rec)+48+sizeof(join_ldc_rec)+48+sizeof(join_navt_rec)+48+4*sizeof(join_nmesh_rec)+48+4*sizeof(join_noct_rec)+48+2*sizeof(join_agtt_rec)+48+sizeof(join_agcb_rec)+48+sizeof(join_pbnk_rec)+48+2*sizeof(join_pend_rec)+48+2*sizeof(join_gravb_rec)+48+2*sizeof(join_viewl_rec)+48+2*sizeof(join_ikv_rec)+48+sizeof(join_rcnt_rec)+48+sizeof(join_ecos_rec)+48+sizeof(join_shpw_rec)+48+sizeof(join_trdn_rec)+48+sizeof(join_npca_rec)+48+sizeof(join_jobg_rec)+48+sizeof(join_code_rec)+48+sizeof(join_engr_rec)+48+sizeof(join_shgr_rec)+48+sizeof(join_bnds_rec)+48+sizeof(join_omgs_rec)+48+sizeof(join_resv_rec)+48+sizeof(join_solver_rec)+48+sizeof(join_conn_rec)+48+sizeof(join_warp_rec)+48+sizeof(join_ares_rec)+48+sizeof(join_lstn_rec)+48+sizeof(join_undk_rec)+48+sizeof(join_srcs_rec)+48+sizeof(join_fobj_rec)+48+sizeof(join_cuei_rec)+48+sizeof(join_anis_rec)+48+sizeof(join_anil_rec),v12_tail=(48+sizeof(join_splm_rec))+(48+sizeof(join_splme_rec))+(48+4*sizeof(join_spline_rec))+(48+3*sizeof(join_gravn_rec))+(48+3*sizeof(join_gravp_rec))+(48+3*sizeof(join_gravq_rec))+v13_tail,
+    const size_t v13_tail=48+sizeof(join_jobe_rec)+48+3*sizeof(join_evqt_rec)+48+2*sizeof(join_gravd_rec)+48+2*sizeof(join_viewk_rec)+48+2*sizeof(join_viewkc_rec)+48+2*sizeof(join_viewf_rec)+48+sizeof(join_viewp_rec)+48+sizeof(join_shoot_rec)+48+sizeof(join_attk_rec)+48+sizeof(join_livef_rec)+48+2*sizeof(join_spec_rec)+48+sizeof(join_navc_rec)+48+sizeof(join_jobs_rec)+48+2*sizeof(join_gone_rec)+48+sizeof(join_body_rec)+48+2*sizeof(join_bupd_rec)+48+sizeof(join_ldc_rec)+48+sizeof(join_navt_rec)+48+4*sizeof(join_nmesh_rec)+48+4*sizeof(join_noct_rec)+48+2*sizeof(join_agtt_rec)+48+sizeof(join_agcb_rec)+48+sizeof(join_pbnk_rec)+48+2*sizeof(join_pend_rec)+48+2*sizeof(join_gravb_rec)+48+2*sizeof(join_viewl_rec)+48+2*sizeof(join_ikv_rec)+48+sizeof(join_rcnt_rec)+48+sizeof(join_ecos_rec)+48+sizeof(join_shpw_rec)+48+sizeof(join_trdn_rec)+48+sizeof(join_npca_rec)+48+sizeof(join_jobg_rec)+48+sizeof(join_code_rec)+48+sizeof(join_engr_rec)+48+sizeof(join_shgr_rec)+48+sizeof(join_bnds_rec)+48+sizeof(join_omgs_rec)+48+sizeof(join_resv_rec)+48+sizeof(join_solver_rec)+48+sizeof(join_conn_rec)+48+sizeof(join_warp_rec)+48+sizeof(join_ares_rec)+48+sizeof(join_lstn_rec)+48+sizeof(join_undk_rec)+48+sizeof(join_srcs_rec)+48+sizeof(join_fobj_rec)+48+sizeof(join_cuei_rec)+48+sizeof(join_anis_rec)+48+sizeof(join_anil_rec)+48+2*sizeof(join_zref_rec),v12_tail=(48+sizeof(join_splm_rec))+(48+sizeof(join_splme_rec))+(48+4*sizeof(join_spline_rec))+(48+3*sizeof(join_gravn_rec))+(48+3*sizeof(join_gravp_rec))+(48+3*sizeof(join_gravq_rec))+v13_tail,
                  v11_tail=(48+2*sizeof(join_grav_rec))+(48+3*sizeof(join_gravc_rec))+(48+4*sizeof(join_gravs_rec))+v12_tail,
                  v10_tail=(48+sizeof(join_solver_rec))+(48+2*sizeof(join_bullet_rec))+v11_tail,v9_tail=(48+832)+(48+232)+v10_tail,v8_tail=(48+2*1168)+(48+200)+v9_tail,v7_tail=48+3*232+v8_tail,v6_tail=48+2*104+v7_tail,v5_tail=(48+2*232)+(48+2*176)+v6_tail,v4_tail=(48+9*32)+(48+2*32);
     size_t health_payload=b.size-32-v5_tail-v4_tail-(48+64)-(48+2*40)-(48+280)-(48+2*24)-(48+2*16)-2*48;
@@ -3567,6 +3569,86 @@ static void test_join_resv(void) {
     join_resv_on=0;join_key=key;join_world_find=find;join_world_map=map;
     printf("join RESV: the reservation tree in order (count checked), the capture by zone/owner/index, the admission's box and expiry writes, missing and extra PASS\n");
 }
+/* ZREF (lockstep_join_world.h): the zone reference table walked in order and found by a zone's ID; the capture by the zones'
+ * portable keys (a zone without one left out); the admission makes the joiner's table the session's: other counts and times
+ * written, an entry it lacks made by the game's own call and set, an entry no record names cleared, a zone the joiner does
+ * not have counted missing; off, or with a package without the table, nothing is touched. */
+static _Alignas(16) unsigned char tzref_head[0x30],tzref_node[5][0x38],tzref_zone[4][0x20];
+static unsigned tzref_adds,tzref_locks,tzref_depth;
+static void tzref_lock(int enter) {++tzref_locks;if(enter) ++tzref_depth;else {assert(tzref_depth);--tzref_depth;}}
+static uint64_t tzref_key(uint64_t runtime,unsigned *klass) {*klass=0;return runtime==0x99ull?0:runtime?runtime|0x100000ull:0;}
+static void *tzref_find(void *map,uint64_t runtime,unsigned mode) {
+    (void)map;(void)mode;
+    for(unsigned i=0;i<4;i++) {uint64_t id=0;memcpy(&id,tzref_zone[i]+8,8);if(id==runtime) return tzref_zone[i];}
+    return NULL;
+}
+static void tzref_set(unsigned char *n,uint64_t key,int32_t count,double time) {memcpy(n+JOIN_ZREF_KEY,&key,8);memcpy(n+JOIN_ZREF_COUNT,&count,4);memcpy(n+JOIN_ZREF_TIME,&time,8);}
+static void tzref_get(const unsigned char *n,int32_t *count,double *time) {memcpy(count,n+JOIN_ZREF_COUNT,4);memcpy(time,n+JOIN_ZREF_TIME,8);}
+/* the game's "take a reference" for the one zone the test adds: a new rightmost node (count 1, a time of now) */
+static void tzref_add(unsigned char *zone) {
+    uint64_t id=0,size=0;memcpy(&id,zone+8,8);assert(id==0x70ull && tzref_depth);
+    unsigned char *n=tzref_node[3],*parent=tzref_node[2];
+    tresv_link(n,parent,NULL,NULL);memcpy(parent+0x10,&n,8);tzref_set(n,id,1,300.0);
+    memcpy(&size,tzref_head+JOIN_ZREF_SIZE,8);++size;memcpy(tzref_head+JOIN_ZREF_SIZE,&size,8);++tzref_adds;
+}
+static void tzref_build(void) {
+    memset(tzref_head,0,sizeof(tzref_head));memset(tzref_node,0,sizeof(tzref_node));memset(tzref_zone,0,sizeof(tzref_zone));
+    unsigned char *h=tzref_head,*a=tzref_node[0],*b=tzref_node[1],*c=tzref_node[2];
+    /* root b (zone 0x40), its left a (0x30), its right c (0x50); the header's +8 the root, +0x20 the leftmost, +0x28 the size */
+    tresv_link(b,h,a,c);tresv_link(a,b,NULL,NULL);tresv_link(c,b,NULL,NULL);memcpy(h+8,&b,8);memcpy(h+JOIN_ZREF_BEGIN,&a,8);
+    {uint64_t size=3;memcpy(h+JOIN_ZREF_SIZE,&size,8);}
+    tzref_set(a,0x30ull,2,10.5);tzref_set(b,0x40ull,0,20.25);tzref_set(c,0x50ull,7,0.0);
+    const uint64_t ids[4]={0x30ull,0x40ull,0x50ull,0x70ull};
+    for(unsigned i=0;i<4;i++) memcpy(tzref_zone[i]+8,&ids[i],8);
+}
+static int tzref_visit(unsigned char *node,void *p) {uint64_t *seen=(uint64_t*)p,key=0;memcpy(&key,node+JOIN_ZREF_KEY,8);seen[++seen[0]]=key;return 1;}
+static void test_join_zref(void) {
+    void (*lock)(int)=join_zref_lock;void (*add)(unsigned char *)=join_zref_add;
+    uint64_t (*key)(uint64_t,unsigned *)=join_key;join_find_fn find=join_world_find;void *map=join_world_map;
+    join_zref_lock=tzref_lock;join_zref_add=tzref_add;join_key=tzref_key;join_world_find=tzref_find;join_world_map=tzref_zone;
+    join_zref_head_test=tzref_head;tzref_adds=tzref_locks=tzref_depth=0;
+    /* an empty table (X4 before the first reference: no root, no leftmost) walks to nothing */
+    memset(tzref_head,0,sizeof(tzref_head));assert(join_zref_walk(NULL,NULL)==0 && !join_zref_find(0x30ull));
+    tzref_build();
+    uint64_t seen[8]={0};assert(join_zref_walk(tzref_visit,seen)==3 && seen[0]==3 && seen[1]==0x30ull && seen[2]==0x40ull && seen[3]==0x50ull);
+    {uint64_t two=2;memcpy(tzref_head+JOIN_ZREF_SIZE,&two,8);assert(join_zref_walk(NULL,NULL)==-1);two=3;memcpy(tzref_head+JOIN_ZREF_SIZE,&two,8);}
+    assert(join_zref_find(0x30ull)==tzref_node[0] && join_zref_find(0x40ull)==tzref_node[1] && join_zref_find(0x50ull)==tzref_node[2] &&
+           !join_zref_find(0x35ull) && !join_zref_find(0x60ull) && !join_zref_find(0x10ull) && !join_zref_find(0));
+    /* the capture: by the zones' portable keys, inside the lock; a zone without a key is left out */
+    tzref_set(tzref_node[2],0x99ull,7,0.0);   /* the rightmost: a zone no client names (keys stay in order for the walk) */
+    join_tables t;memset(&t,0,sizeof(t));
+    join_capture_zref(&t);
+    assert(t.nzref==2 && t.zref[0].zone==(0x30ull|0x100000ull) && t.zref[0].count==2 && t.zref[0].time==10.5 && !t.zref[0].pad &&
+           t.zref[1].zone==(0x40ull|0x100000ull) && t.zref[1].count==0 && t.zref[1].time==20.25 && tzref_locks==2 && !tzref_depth);
+    free(t.zref);
+    /* the admission. The session: zone 0x30 with another count and time, 0x40 as the joiner has it, 0x70 the joiner has no entry
+     * for, and a zone the joiner does not have; the joiner's entry of 0x50 is in no record */
+    tzref_build();
+    static join_zref_rec recs[4];memset(recs,0,sizeof(recs));
+    recs[0].zone=0x100030ull;recs[0].count=5;recs[0].time=99.5;recs[1].zone=0x100040ull;recs[1].count=0;recs[1].time=20.25;
+    recs[2].zone=0x100070ull;recs[2].count=4;recs[2].time=12.0;recs[3].zone=0x100080ull;recs[3].count=1;recs[3].time=1.0;
+    join_tables s,mine;memset(&s,0,sizeof(s));memset(&mine,0,sizeof(mine));s.version=JOIN_PACKAGE_VERSION;s.zref=recs;s.nzref=4;
+    join_id_rec mine_ids[5]={{0x30ull,0x100030ull,0,0},{0x40ull,0x100040ull,0,0},{0x50ull,0x100050ull,0,0},{0x70ull,0x100070ull,0,0},{0x80ull,0x100080ull,0,0}};
+    mine.ids=mine_ids;mine.nids=5;   /* sorted by portable; 0x80 has a key and no object */
+    int32_t count;double time;
+    join_zref_on=0;join_admit_zref(&s,&mine);
+    assert(!join_zref_written && !join_zref_equal && !join_zref_made && !join_zref_missing && !join_zref_cleared && !tzref_adds);
+    tzref_get(tzref_node[0],&count,&time);assert(count==2 && time==10.5);   /* off: nothing touched */
+    join_zref_on=1;
+    {join_tables none;memset(&none,0,sizeof(none));none.version=JOIN_PACKAGE_VERSION;join_admit_zref(&none,&mine);}   /* a package without the table */
+    tzref_get(tzref_node[2],&count,&time);assert(count==7 && time==0.0 && !join_zref_cleared);
+    join_admit_zref(&s,&mine);
+    assert(join_zref_written==2 && join_zref_equal==1 && join_zref_made==1 && join_zref_missing==1 && join_zref_cleared==1 && tzref_adds==1 && !tzref_depth);
+    tzref_get(tzref_node[0],&count,&time);assert(count==5 && time==99.5);
+    tzref_get(tzref_node[1],&count,&time);assert(count==0 && time==20.25);
+    tzref_get(tzref_node[3],&count,&time);assert(count==4 && time==12.0);                 /* made by the game's call, then set */
+    tzref_get(tzref_node[2],&count,&time);assert(count==0 && time==JOIN_ZREF_PAST);       /* in no record: as good as absent */
+    join_admit_zref(&s,&mine);                                                           /* again: nothing left to do */
+    assert(!join_zref_written && join_zref_equal==3 && !join_zref_made && join_zref_missing==1 && !join_zref_cleared && tzref_adds==1);
+    {char status[8192];assert(join_status(status,sizeof(status)) && strstr(status," zref=1:0:3:0:1:0 zref_cap="));}
+    join_zref_on=0;join_zref_head_test=NULL;join_zref_lock=lock;join_zref_add=add;join_key=key;join_world_find=find;join_world_map=map;
+    printf("join ZREF: the zone reference table in order and by ID, the capture by portable keys inside the lock, the admission's writes, made, missing and cleared entries PASS\n");
+}
 /* OMGS admission write (lockstep_join_world.h join_omgs_write): the raw runs land, the masked words and the vector triples are not
  * written raw; an empty session vector empties the joiner's own (its begin and capacity kept), a non-empty one leaves it. */
 static void test_join_omgs_write(void) {
@@ -4118,5 +4200,5 @@ static void test_join_warp(void) {
 }
 static void test_join(void) {
     test_join_precise();test_join_golden();test_join_capture_restore();test_join_refusals();test_join_static_keys();test_join_activation_rows();
-    test_join_keep_stamps();test_join_rcnt_kept();test_join_config_refused();test_join_identities_and_wire();test_join_world();test_join_path_region();test_join_omgs_write();test_join_resv();test_join_pcsv();test_join_code_hold();test_join_gravp_restore();test_join_gravp_settled();test_join_lstn();test_join_fobj();test_join_anis();test_join_conn();test_join_bnds_layout();test_join_warp();test_join_attn_set();test_join_ares();test_join_undk();test_join_srcs();test_join_bp_late();test_join_agcb_nav();test_join_rprt();
+    test_join_keep_stamps();test_join_rcnt_kept();test_join_config_refused();test_join_identities_and_wire();test_join_world();test_join_path_region();test_join_omgs_write();test_join_resv();test_join_zref();test_join_pcsv();test_join_code_hold();test_join_gravp_restore();test_join_gravp_settled();test_join_lstn();test_join_fobj();test_join_anis();test_join_conn();test_join_bnds_layout();test_join_warp();test_join_attn_set();test_join_ares();test_join_undk();test_join_srcs();test_join_bp_late();test_join_agcb_nav();test_join_rprt();
 }

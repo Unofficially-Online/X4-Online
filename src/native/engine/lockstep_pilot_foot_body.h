@@ -195,12 +195,37 @@ static int pfbody_connect_slot(unsigned k) {
     pfbody_mask|=1u<<(k-1);InterlockedIncrement64(&pfbody_connects);
     return 1;
 }
+/* A parked player's attention (17 Nov). Off the tree X4 leaves a component at the lowest attention; the player's own
+ * Move still runs (pfbody_move_parked), but what hangs on it runs as for something nobody is near: with player 1 on
+ * foot, player 2's autopilot to its assigned dock was started and the ship never moved (the scripted transport test:
+ * player 1 up at 2191, player 2 2545 m from its dock for the next 10,000 ticks; with player 1 in its seat the same
+ * approach docks at 2590). So right after a park X4's own attention routine (0x3d5660(component, 1), the one
+ * ConnectTo ends with) runs on P_k in its scope, with its upward pointer back in place: its level is then what its
+ * seat's room gives it. Its entry is called as it stands (lockstep_attention.h hooks it when it is armed).
+ * Status park_attn=<in the tree>/<parked>/<after the routine>/<runs>. */
+#define PFBODY_ATTENTION_FN 0x3d5660u
+typedef void (*pfbody_attention_fn)(void *,int);
+static pfbody_attention_fn pfbody_attention;   /* the image's at the arming, a test's */
+static int pfbody_park_levels[3]={-1,-1,-1};
+static volatile LONG64 pfbody_park_attentions;
+static void pfbody_park_attention(pslot_slot *s,int level_in) {
+    int parked=-1,after=-1,fault=0;
+    (void)read_local(s->player+0x1ec,&parked,4);
+    pfbody_park_levels[0]=level_in;pfbody_park_levels[1]=parked;pfbody_park_levels[2]=parked;
+    if(!pfbody_attention) return;
+    __try {pfbody_attention(s->player,1);}
+    __except(GetExceptionCode()==EXCEPTION_ACCESS_VIOLATION?EXCEPTION_EXECUTE_HANDLER:EXCEPTION_CONTINUE_SEARCH) {fault=1;}
+    if(fault) {pnat_async_fail("body_attention_fault");return;}
+    (void)read_local(s->player+0x1ec,&after,4);pfbody_park_levels[2]=after;
+    InterlockedIncrement64(&pfbody_park_attentions);
+}
 /* P_k off its room again, in its scope; the seat's upward pointer back for its release. place: the seat goes on (a
  * park), so P_k keeps the mark of its room (above). */
 static int pfbody_disconnect_slot_as(unsigned k,int place) {
     pslot_slot *s=&pslots[k];int fault=0;
     if(!(pfbody_mask>>(k-1)&1u)) return 1;
     if(!pslot_enter(k)) return pfbody_fail("body_scope");
+    int level_in=-1;(void)read_local(s->player+0x1ec,&level_in,4);
     const char *why=pfbody_call(s,NULL,&fault);
     unsigned char *parent=pfbody_parent(s);
     if(!fault && !parent) {
@@ -209,6 +234,8 @@ static int pfbody_disconnect_slot_as(unsigned k,int place) {
         if(place && !why && pfbody_mark && s->room && read_local(s->room+PFBODY_PLACED,&in,1) && in) {
             pfbody_mark(s->player,1);InterlockedIncrement64(&pfbody_marks);
         }
+        /* A parked player keeps the attention it has in its seat (header of pfbody_park_attention). */
+        if(place && !why) pfbody_park_attention(s,level_in);
     }
     int left=pslot_leave(k);
     if(fault) return pfbody_fail("body_disconnect_fault");
@@ -453,8 +480,9 @@ static unsigned pfbody_move_parked(void *self,void **out,unsigned capacity) {
  * STOPGAPS, named as such:
  *   - 553660's notices to the rooms, the zone and the other ancestors are not posted (no stock base script listens
  *     to them for a player);
- *   - a room change with an offset (X4's transporter: the same handler, room and place) is still dropped for a
- *     slot's player, and so is one for a slot that is not walking or whose body is in the tree (counted held);
+ *   - a room change with an offset that X4 itself posts for a slot's player is still dropped (a slot's travel by
+ *     the transporter is made by lockstep_pilot_foot_transport.h, which never posts one), and so is one for a slot
+ *     that is not walking or whose body is in the tree (counted held);
  *   - the Universe's set +0x240 is not asked.
  * Without the wrapper (pin mismatch) step (1) is not run either: X4's handler would connect a slot's player into a
  * room with no guard.
@@ -571,9 +599,14 @@ static void pfbody_room_install(int on) {
         if(script_rng_slot_swap(PFBODY_ROOM_ENTRY,(void*)pfbody_room,image+PFBODY_ROOM_HANDLER)) pfbody_room_installed=0;
     }
 }
+/* lockstep_pilot_foot_transport.h: a slot's travel by X4's transporter (a room change with a place). */
+static int pftr_installed;
+static volatile LONG64 pftr_notes,pftr_carried,pftr_skipped,pftr_idle;
+static void pftr_install(int on);
 static void pfbody_moves_install(int on) {
     pt_slot_enter=on?pfbody_move_enter:NULL;pt_slot_leave=on?pfbody_move_leave:NULL;pt_slot_parked=on?pfbody_move_parked:NULL;
     pfbody_room_install(on);pt_slot_drive=on && pfbody_room_installed?pfbody_move_drive:NULL;
+    pftr_install(on);
 }
 static void pfbody_restore(void) {
     pfbody_moves_install(0);
@@ -625,16 +658,19 @@ static int pfbody_arm(void) {
             return pstk_arm_refuse("bodies_filter");
         pfbody_connect=(pfbody_connect_fn)(image+PFBODY_CONNECT);pfbody_filter=pnat_base+PFBODY_FILTER;
         pfbody_mark=(pfbody_mark_fn)(image+PFBODY_MARK);pslot_unplace=pfbody_unplace;
+        pfbody_attention=(pfbody_attention_fn)(image+PFBODY_ATTENTION_FN);   /* its entry may be the attention module's hook: called as it is */
     }
     return pfbody_arm_using();
 }
 static int pfbody_status(char *out,size_t capacity) {
-    int n=snprintf(out,capacity," bodies=%s bodies_why=%s bodies_mask=%x connects=%lld/%lld body_checks=%lld parks=%lld/%lld returns=%lld kill=%d/%lld/%lld/%lld roomless=%lld held=%lld placed=%lld/%lld moves=%lld/%lld/%lld drive=%d/%lld/%lld room=%lld/%lld/%lld/%lld/%lld attn=%d",
+    int n=snprintf(out,capacity," bodies=%s bodies_why=%s bodies_mask=%x connects=%lld/%lld body_checks=%lld parks=%lld/%lld returns=%lld kill=%d/%lld/%lld/%lld roomless=%lld held=%lld placed=%lld/%lld moves=%lld/%lld/%lld drive=%d/%lld/%lld room=%lld/%lld/%lld/%lld/%lld attn=%d travel=%d/%lld/%lld/%lld/%lld park_attn=%d/%d/%d/%lld",
         pfbody_stage,pfbody_why,pfbody_mask,(long long)pfbody_connects,(long long)pfbody_disconnects,(long long)pfbody_checks,(long long)pfbody_parks,
         (long long)pfbody_unparks,(long long)pfbody_returns,pfbody_kill_installed,(long long)pfbody_kill_off,(long long)pfbody_kill_spared,(long long)pfbody_kill_late,(long long)pfbody_roomless,
         (long long)pfbody_held,(long long)pfbody_marks,(long long)pfbody_unmarks,
         (long long)pfbody_moves_scoped,(long long)pfbody_moves_parked,(long long)pfbody_moves_plain,
         pfbody_room_installed,(long long)pfbody_drives,(long long)pfbody_drive_skips,(long long)pfbody_rooms_held,(long long)pfbody_rooms_passed,
-        (long long)pfbody_rooms_moved,(long long)pfbody_rooms_home,(long long)pfbody_room_notices,pfbody_drive_attention);
+        (long long)pfbody_rooms_moved,(long long)pfbody_rooms_home,(long long)pfbody_room_notices,pfbody_drive_attention,
+        pftr_installed,(long long)pftr_notes,(long long)pftr_carried,(long long)pftr_skipped,(long long)pftr_idle,
+        pfbody_park_levels[0],pfbody_park_levels[1],pfbody_park_levels[2],(long long)pfbody_park_attentions);
     return n>0 && (size_t)n<capacity?n:0;
 }

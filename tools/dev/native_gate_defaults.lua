@@ -361,6 +361,7 @@ D.DIAGNOSTIC={
  {'native_gate_join_omgs','hot join: a joiner takes the session steering ships OmegaSwitched controllers (OMGS)'},
  {'native_gate_join_bnds','hot join: a joiner takes the session stations bounding structs (BNDS)'},
  {'native_gate_join_resv','hot join: a joiner takes the session zones space reservation boxes and expiries its load re-derives (RESV)'},
+ {'native_gate_join_zref','hot join: a joiner takes the session zone reference table, which no save holds and a temporary zone kill check asks (ZREF)'},
  {'native_gate_join_pcsv','hot join: a joiner takes the session PlayerControllers own motion solvers its load rebuilds (PCSV)'},
  {'native_gate_join_conn','hot join: a joiner connects the NPC connections a waiting ship load leaves without a partner (CONN)'},
  {'native_gate_join_warp','hot join: a joiner takes the session pending warps destinations its load rebuilds from angles (WARP)'},

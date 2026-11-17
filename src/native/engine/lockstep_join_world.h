@@ -4971,6 +4971,123 @@ static void join_admit_resv(const join_tables *s,const join_tables *mine) {
     }
     join_resv_extra=nodes>matched?nodes-matched:0;
 }
+/* ZREF (v13, section 86; the admission opt-in, native_gate_join_zref) [runs hq18 .. hq30 and a control on the integration
+ * build, 17 Nov: a join about 100 s into the discover test world differs from the session in the census's world part from
+ * its first tick, and at the handover in the runtime IDs. At tick 7200 the session's save still holds two or three empty
+ * temporary zones of the join save that the joiner's does not: at their kill checks the session kept them and the joiner
+ * removed them.] A temporary zone's kill check (0x839de0) keeps an empty zone while the zone reference table holds a count
+ * for it, or a time less than a hold ago. The table is one tree for the process (header image+0x2f5e400: +8 the root, +0x20
+ * the leftmost node, +0x28 the size; a node: +0 parent, +8 left, +0x10 right, +0x20 the zone's ID, +0x28 the count, +0x30
+ * the time), under the critical section image+0x3949be8. 0x843810 takes a reference (find or insert, count + 1, time =
+ * now), 0x843930 gives one back (count - 1, time = now; nothing for a zone without a node). No save holds it: a load builds
+ * its own from what it imports (read from a live pair: the session 1346 entries with their own times, the joiner 622, all
+ * stamped with its load; after the handover 25 of 891 common zones with other counts, up to 228 against 148), and the
+ * states the other sections write into the joiner's objects bring no references with them, though their holders give
+ * them back later.
+ * The capture takes every entry of a zone with a session key: count and time. With the opt-in the admission makes the
+ * joiner's table the session's: an entry it lacks is made by X4's own 0x843810 and then set, an entry no record names is
+ * set to no count and a time long past (as good as absent to the kill check; the tree is not cut). Status
+ * zref=on:written:equal:made:missing:cleared (missing: a zone the joiner does not have). */
+#define JOIN_ZREF_HEAD 0x2f5e400u
+#define JOIN_ZREF_LOCK 0x3949be8u
+#define JOIN_ZREF_ENTER 0x1bc1408u         /* the image's import cells: EnterCriticalSection, LeaveCriticalSection */
+#define JOIN_ZREF_LEAVE 0x1bc1410u
+#define JOIN_ZREF_ADD 0x843810u
+#define JOIN_ZREF_BEGIN 0x20u
+#define JOIN_ZREF_SIZE 0x28u
+#define JOIN_ZREF_KEY 0x20u
+#define JOIN_ZREF_COUNT 0x28u
+#define JOIN_ZREF_TIME 0x30u
+#define JOIN_ZREF_MAX 1000000u
+#define JOIN_ZREF_PAST (-1.0e9)
+static int join_u64_cmp(const void *a,const void *b);   /* below */
+static int join_zref_on;
+static uint64_t join_zref_written,join_zref_equal,join_zref_made,join_zref_missing,join_zref_cleared;
+static unsigned char *join_zref_head_test;   /* tests: the table's header */
+static unsigned char *join_zref_head(void) {return join_zref_head_test?join_zref_head_test:image+JOIN_ZREF_HEAD;}
+static void join_zref_lock_native(int enter) {
+    void (*fn)(void *)=NULL;
+    if(join_read(image+(enter?JOIN_ZREF_ENTER:JOIN_ZREF_LEAVE),&fn,8) && fn) fn(image+JOIN_ZREF_LOCK);
+}
+static void join_zref_add_native(unsigned char *zone) {((void(*)(void *,unsigned char))(void *)(image+JOIN_ZREF_ADD))(zone,0);}
+static void (*join_zref_lock)(int)=join_zref_lock_native;           /* tests replace both */
+static void (*join_zref_add)(unsigned char *)=join_zref_add_native;
+/* Each entry in order: visit(node, ctx) returns 0 to stop; the entry count, or -1 on a broken walk. The lock is the caller's. */
+static long join_zref_walk(int (*visit)(unsigned char *,void *),void *ctx) {
+    unsigned char *header=join_zref_head(),*node=NULL;uint64_t count=0;long seen=0;
+    if(!join_read(header+JOIN_ZREF_BEGIN,&node,8) || !join_read(header+JOIN_ZREF_SIZE,&count,8) || count>JOIN_ZREF_MAX) return -1;
+    if(!count) return 0;
+    while(node && node!=header) {
+        if((uint64_t)seen>=count) return -1;
+        ++seen;if(visit && !visit(node,ctx)) return seen;
+        node=join_resv_next(node);
+    }
+    return node==header && (uint64_t)seen==count?seen:-1;
+}
+/* The entry of a zone's runtime ID, as 0x843930 finds it; NULL when it has none. */
+static unsigned char *join_zref_find(uint64_t runtime) {
+    unsigned char *header=join_zref_head(),*at=NULL,*best=header;uint64_t key=0;
+    if(!runtime || !join_read(header+8,&at,8)) return NULL;
+    for(unsigned d=0;at && d<128u;d++) {
+        unsigned char *next=NULL;
+        if(!join_read(at+JOIN_ZREF_KEY,&key,8)) return NULL;
+        if(key<runtime) {if(!join_read(at+0x10,&next,8)) return NULL;}
+        else {best=at;if(!join_read(at+8,&next,8)) return NULL;}
+        at=next;
+    }
+    return best!=header && join_read(best+JOIN_ZREF_KEY,&key,8) && key==runtime?best:NULL;
+}
+typedef struct {join_tables *t;uint32_t *cap;int failed;} join_zref_capture_ctx;
+static int join_zref_capture_visit(unsigned char *node,void *p) {
+    join_zref_capture_ctx *c=(join_zref_capture_ctx*)p;uint64_t runtime=0;join_zref_rec r;memset(&r,0,sizeof(r));
+    if(!join_read(node+JOIN_ZREF_KEY,&runtime,8) || !join_read(node+JOIN_ZREF_COUNT,&r.count,4) || !join_read(node+JOIN_ZREF_TIME,&r.time,8)) return 1;
+    r.zone=join_nav_key(runtime);
+    if(!r.zone) return 1;   /* no session key: not a zone every client names the same way */
+    if(!JOIN_PUSH(c->t->zref,c->t->nzref,*c->cap,r)) {c->failed=1;return 0;}
+    return 1;
+}
+static int join_zref_cmp(const void *a,const void *b) {const join_zref_rec *x=a,*y=b;return x->zone<y->zone?-1:x->zone>y->zone;}
+static void join_capture_zref(join_tables *t) {
+    uint32_t cap=0;join_zref_capture_ctx c={t,&cap,0};
+    join_zref_lock(1);(void)join_zref_walk(join_zref_capture_visit,&c);join_zref_lock(0);
+    if(t->nzref>1) qsort(t->zref,t->nzref,sizeof(*t->zref),join_zref_cmp);
+    {uint32_t k=0;for(uint32_t i=0;i<t->nzref;i++) {if(k && t->zref[k-1].zone==t->zref[i].zone) continue;t->zref[k++]=t->zref[i];}t->nzref=k;}
+}
+typedef struct {const uint64_t *kept;uint32_t nkept;} join_zref_clear_ctx;
+static int join_zref_clear_visit(unsigned char *node,void *p) {
+    const join_zref_clear_ctx *c=(const join_zref_clear_ctx*)p;uint64_t runtime=0;const int32_t none=0;const double past=JOIN_ZREF_PAST;
+    if(!join_read(node+JOIN_ZREF_KEY,&runtime,8)) return 1;
+    if(c->nkept && bsearch(&runtime,c->kept,c->nkept,8,join_u64_cmp)) return 1;
+    int changed=join_poke((uintptr_t)(node+JOIN_ZREF_COUNT),&none,4);
+    changed|=join_poke((uintptr_t)(node+JOIN_ZREF_TIME),&past,8);
+    if(changed) ++join_zref_cleared;
+    return 1;
+}
+static void join_admit_zref(const join_tables *s,const join_tables *mine) {
+    join_zref_written=join_zref_equal=join_zref_made=join_zref_missing=join_zref_cleared=0;
+    if(!join_zref_on || !s->nzref) return;   /* a package without the table: the joiner keeps its own */
+    uint64_t *kept=malloc((size_t)s->nzref*8u);uint32_t nkept=0;
+    if(!kept) return;
+    join_zref_lock(1);   /* a critical section: X4's own 0x843810 below enters it again on this thread */
+    for(uint32_t i=0;i<s->nzref;i++) {
+        const join_zref_rec *r=&s->zref[i];const uint64_t runtime=join_runtime_of(mine,r->zone);unsigned char *zone=join_object(runtime);
+        if(!zone) {++join_zref_missing;continue;}
+        unsigned char *node=join_zref_find(runtime);
+        if(!node) {
+            join_zref_add(zone);node=join_zref_find(runtime);
+            if(!node) {++join_zref_missing;continue;}
+            ++join_zref_made;
+        }
+        int changed=join_poke((uintptr_t)(node+JOIN_ZREF_COUNT),&r->count,4);
+        changed|=join_poke((uintptr_t)(node+JOIN_ZREF_TIME),&r->time,8);
+        if(changed) ++join_zref_written; else ++join_zref_equal;
+        kept[nkept++]=runtime;
+    }
+    if(nkept>1) qsort(kept,nkept,8,join_u64_cmp);
+    {join_zref_clear_ctx c={kept,nkept};(void)join_zref_walk(join_zref_clear_visit,&c);}
+    join_zref_lock(0);
+    free(kept);
+}
 /* CONN (v13, section 76; the admission opt-in, native_gate_join_conn) [j1-341 .. j1-349: three minelayers that wait in their
  * jobs' <waiting> lists at T launch 44 ticks late on the joiner. NPC_State_Machines' ENTER_ai_pilot walks a pilot to its post unless
  * $NPC.controlled, and the NPC's test behind it (vt+0x1c50(1), 0x6c71f0) wants the NPC's connection of kind 2 (the save's
@@ -6420,6 +6537,7 @@ static int join_capture_world(join_tables *t,double now) {
     join_capture_shgr(t);            /* version 13 */
     join_capture_bnds(t);            /* version 13 */
     join_capture_resv(t);            /* version 13: the zones' space reservations */
+    join_capture_zref(t);            /* version 13: the zone reference table */
     join_capture_conn(t);            /* version 13: the NPCs' connected connections */
     join_capture_warp(t);            /* version 13: the pending warps' destinations */
     join_capture_lstn(t);            /* version 13: the script listeners' order per event source and type */
@@ -8405,6 +8523,7 @@ static int join_admit_world(void) {
     if(s->version>=13) join_admit_shgr(s,&mine);    /* the containers' shield recharge groups (opt-in) */
     if(s->version>=13) join_admit_bnds(s,&mine);    /* the stations' bounding structs (opt-in) */
     if(s->version>=13) join_admit_resv(s,&mine);    /* the zones' space reservations' boxes and expiries (opt-in) */
+    if(s->version>=13) join_admit_zref(s,&mine);    /* the zone reference table the kill checks ask (opt-in) */
     if(s->version>=13) join_admit_pcsv(s,&mine);    /* the PlayerControllers' own motion solvers (opt-in) */
     if(s->version>=13) join_admit_conn(s,&mine);    /* the NPCs' connections' partners a waiting ship's load leaves null (opt-in) */
     if(s->version>=13) join_admit_warp(s,&mine);    /* the pending warps' destinations a load rebuilds from angles (opt-in) */

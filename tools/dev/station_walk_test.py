@@ -16,6 +16,8 @@ STATION about 118 km away):
           player 1 (the script op foot_meet steers by where the figures are). The pictures at the end show, on each
           client, the other player's figure three metres away.
   undock  both dock, stay in their seats, undock one after the other and fly off by hand.
+  transport  both get up in their ships and take the ship's transporter ("Travel to" its first target).
+  early   player 1 docks and stands up while player 2 is still on its approach; runs past the census of tick 7200.
 
 What it checks, from each client's own log and the relay's:
   docked    each player's ship reports docked (the script op dock_station on that player's client)
@@ -27,6 +29,9 @@ What it checks, from each client's own log and the relay's:
   walked    a walking player's place changed after its walk keys
   room      a walking player left its cockpit for a room of the station, as X4's scripts are told (player.room in
             the figure rows); (meet) both players then stand in the same room
+  travel    (transport) each player's "Travel to" was taken by X4's transporter command
+  carried   (transport) the gate took every player 2..N's travel (its counters, the same on both clients)
+  alike     (transport) a player 2..N ends as X4's own player does: both moved by the transporter, or both stayed
   met       (meet) each player stopped as near the other as asked, with the other ahead of it
   undocked  a ship that undocked is no longer docked and moved after its thrust key
   in sync   the world, the players' records and their inputs agree at every tick (the clients' digest parts);
@@ -75,6 +80,23 @@ SCENARIOS = {
         2: [(60, 'foot_where'), (150, 'input', 'action', GET_UP, 0), (300, 'input', 'state', BACK, 1), (500, 'input', 'state', BACK, 0),
             (520, 'foot_where'), (540, 'foot_meet', 1, 3, 720), (1000, 'foot_where'), (1270, 'foot_where')],
         'up': {1: (1090, 1810), 2: (520, 1270)}, 'undocks': {}, 'last': {1: 1810, 2: 1270}, 'meets': {1: 34, 2: 3},
+    },
+    # Both get up inside their ships and take the transporter (the keypad at the back of a small ship's cockpit, the
+    # stock menu's "Travel to" on the first target it offers): a room change with a place, not by walking.
+    'transport': {
+        1: [(60, 'foot_where'), (150, 'input', 'action', GET_UP, 0), (300, 'foot_where'), (320, 'transport_list'),
+            (400, 'transport_to', 1), (700, 'foot_where'), (720, 'transport_list')],
+        2: [(60, 'foot_where'), (200, 'input', 'action', GET_UP, 0), (340, 'foot_where'), (380, 'transport_list'),
+            (460, 'transport_to', 1), (760, 'foot_where'), (780, 'transport_list')],
+        'up': {1: (300, 700), 2: (340, 760)}, 'undocks': {}, 'last': {1: 720, 2: 780}, 'transports': {1: (300, 700), 2: (340, 760)},
+        'same_room': True,
+    },
+    # Player 1 docks first and stands up while player 2 is still flying in: player 2's approach must go on and dock
+    # (17 Nov: it stopped 2.5 km out for good), and the session must still agree at the census of tick 7200.
+    'early': {
+        1: [(60, 'foot_where'), (150, 'input', 'action', GET_UP, 0), (300, 'foot_where'), (5400, 'foot_where')],
+        2: [(60, 'foot_where'), (4900, 'foot_where')],
+        'up': {1: (300, 5400)}, 'undocks': {}, 'last': {1: 5400, 2: 4900}, 'same_room': True,
     },
     'undock': {
         1: [(60, 'foot_where'), (300, 'undock'), (700, 'input', 'state', ACCELERATE, 1), (790, 'input', 'state', ACCELERATE, 0),
@@ -196,14 +218,15 @@ def report(logs, run_dir, scenario):
         up = bool(a) and field(a, 'occupied') == '0' and field(a, 'station') not in (None, '0')
         check('on foot', up, 'player %d: %s' % (k, a or 'no row'))
         places = {v[1] for v in clients[k]['figures'].get(k, {}).values()}
-        check('walked', bool(b) and len(places) > 1, 'player %d: %d places in its room after its walk keys (%s)' % (k, len(places), '; '.join(sorted(places)[:3])))
+        if not s.get('same_room'):
+            check('walked', bool(b) and len(places) > 1, 'player %d: %d places in its room after its walk keys (%s)' % (k, len(places), '; '.join(sorted(places)[:3])))
     for k in sorted(s['up']):
         rows = [clients[c]['figures'].get(k, {}) for c in (1, 2)]
         # The logs are read while the clients run: one of them may hold a row or two more. The rows both have must agree.
         common = sorted(set(rows[0]) & set(rows[1]))
         same = bool(common) and all(rows[0][n] == rows[1][n] for n in common) and abs(len(rows[0]) - len(rows[1])) <= 2
         places = len({rows[0][n][1] for n in common})
-        check('figures', same and places > 1, "player %d's figure: %d rows on client 1, %d on client 2, the %d both have are %s, %d places" %
+        check('figures', same and (places > 1 or bool(s.get('same_room'))), "player %d's figure: %d rows on client 1, %d on client 2, the %d both have are %s, %d places" %
               (k, len(rows[0]), len(rows[1]), len(common), 'the same' if same else 'DIFFERENT', places))
     # The room each walker is in, as X4's scripts are told (the figure rows carry player.room): out of its ship it is
     # a room of the station, for a player 2..N as for player 1 (until 17 Nov a player 2..N stayed a child of its cockpit).
@@ -213,11 +236,40 @@ def report(logs, run_dir, scenario):
         rooms = [rows[n][0] for n in sorted(rows)]
         changed = len(rooms) > 1 and rooms[-1] != rooms[0]
         last_rooms[k] = rooms[-1] if rooms else None
+        if s.get('same_room'):
+            continue        # nobody leaves its cockpit in this scenario
         check('room', changed, 'player %d: %s' % (k, 'from room %s into room %s' % (rooms[0], rooms[-1]) if changed else
                                                  'stayed in room %s' % (rooms[0] if rooms else '?')))
     if s.get('meets') and len(last_rooms) == 2:
         a, b = (last_rooms[k] for k in sorted(last_rooms))
         check('room', a is not None and a == b, 'both players stand in room %s' % a if a == b else 'player rooms differ: %s and %s' % (a, b))
+    for k, (before, after) in sorted(s.get('transports', {}).items()):
+        a, b = where(clients[k], before), where(clients[k], after)
+        went = [text for steps in clients[k]['after'].values() for op, ok, text in steps if op == 'transport_to' and ok]
+        check('travel', bool(went), 'player %d: %s' % (k, ('travel to ' + went[0][:60]) if went else 'no travel'))
+    if s.get('transports'):
+        # What the gate did with each travel is in its counters (the same on every client): noted (every player's),
+        # carried (a player 2..N put at the target by the gate), skipped (a carry that failed), idle (the player did
+        # not stand on the source transporter, so X4 carries nobody: from a small ship's cockpit the only target is
+        # that cockpit). And a player 2..N must end as X4's own player does: both moved, or both stayed.
+        counts = []
+        for path in logs:
+            last = None
+            for line in read_lines(path):
+                m = re.search(r' travel=(\d+)/(\d+)/(\d+)/(\d+)/(\d+)', line)
+                if m:
+                    last = tuple(int(x) for x in m.groups())
+            counts.append(last)
+        others = sum(1 for k in s['transports'] if k >= 2)
+        ok = bool(counts[0]) and counts[0] == counts[1] and counts[0][0] == 1 and counts[0][1] == len(s['transports']) and             counts[0][2] + counts[0][4] == others and counts[0][3] == 0
+        check('carried', ok, 'gate counters installed/noted/carried/skipped/idle: client 1 %s, client 2 %s (wanted 1/%d, carried + idle = %d, skipped 0)' %
+              (counts[0], counts[1], len(s['transports']), others))
+        moved = {}
+        for k in sorted(s['transports']):
+            rows = clients[k]['figures'].get(k, {})
+            places = [rows[n][1] for n in sorted(rows)]
+            moved[k] = len(places) > 1 and places[0] != places[-1]
+        check('alike', len(set(moved.values())) == 1, 'after the travel: ' + ', '.join('player %d %s' % (k, 'moved' if v else 'stayed') for k, v in sorted(moved.items())))
     for k, wanted in sorted(s.get('meets', {}).items()):
         there = [text for steps in clients[k]['after'].values() for op, ok, text in steps if op == 'foot_meet' and ok and text.startswith('there')]
         distance = float(field(there[0], 'distance')) if there else None

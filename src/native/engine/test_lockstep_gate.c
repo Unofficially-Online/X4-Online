@@ -33,6 +33,7 @@
 #include "test_lockstep_ship_sound.h"
 #include "test_lockstep_move_rng.h"
 #include "test_lockstep_ui_holds.h"
+#include "test_lockstep_pilot_foot_transport.h"
 #include "test_lockstep_draw_watch.h"
 #include "test_lockstep_player_timer.h"
 #include "test_lockstep_warp_rng.h"
@@ -1219,6 +1220,7 @@ int main(int argc,char **argv) {
     test_ship_sound();
     test_move_rng();
     test_ui_holds();
+    test_pilot_foot_transport();
     test_draw_watch();
     test_draw_watch_frame();
     test_player_timer();

@@ -92,6 +92,8 @@ static int lua_join_code(lua_State *L) {join_code_on=p_lua_tonumber(L,1)!=0.0;p_
 static int lua_join_engr(lua_State *L) {join_engr_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
 /* gate.join_resv(on): a joiner takes the session's zones' space reservation boxes and expiries (RESV, default off). */
 static int lua_join_resv(lua_State *L) {join_resv_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
+/* gate.join_zref(on): a joiner's zone reference table is made the session's (ZREF, default off). */
+static int lua_join_zref(lua_State *L) {join_zref_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
 /* gate.join_pcsv(on): a joiner takes the session's PlayerControllers' own motion solvers (PCSV, default off). */
 static int lua_join_pcsv(lua_State *L) {join_pcsv_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
 /* gate.join_conn(on): a joiner connects the NPC connections the session has connected and its load left without a partner
