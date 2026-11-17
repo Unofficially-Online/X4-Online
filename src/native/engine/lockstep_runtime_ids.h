@@ -232,6 +232,11 @@ static const rid_site_t rid_sites[]={
      * 915, one ID on client 1 and none on client 2 on the stack 350ecb,7c7f9e,7da1c1,ad97a5,b3f810,1135ea6; the digest
      * part rid apart from 916 on. */
     RID_BODY(0xad96d0u,0xad9882u,RID_ROUTE_VIEW,0),
+    /* The sixth and last caller of the container's slot (component vtable +0x1338; read from the image, 17 Nov: 0xad86f1,
+     * 0xad979f, 0xad9aa5, 0xada8cf and no other): UI::ICom::MissionObjectiveScanner::AddMessage 0xad9960, when a mission
+     * names an object for the scanner. Not seen to part a run; it is here because it asks the same first-time question
+     * as the five above from a script's call. */
+    RID_BODY(0xad9960u,0xad9e0cu,RID_ROUTE_VIEW,0),
     /* EffectObject, FogVolume, LensFlare, Stardust: the two constructors' Positional calls; EffectObjectCreator. */
     RID_CALL(0x8e1b44u,0x7429c0u,RID_ROUTE_VIEW),RID_CALL(0x8e48a6u,0x7426d0u,RID_ROUTE_VIEW),RID_CALL(0xd9d312u,0x7429c0u,RID_ROUTE_VIEW),RID_CALL(0x8e4bbeu,0x7426d0u,RID_ROUTE_VIEW),
     RID_CALL(0xe233feu,0x7429c0u,RID_ROUTE_VIEW),RID_CALL(0xe233aeu,0x7426d0u,RID_ROUTE_VIEW),RID_CALL(0xe417aeu,0x7429c0u,RID_ROUTE_VIEW),RID_CALL(0xe4175eu,0x7426d0u,RID_ROUTE_VIEW),
@@ -254,6 +259,7 @@ static const struct {unsigned rva,size;const char *sha;} rid_local_bodies[]={
     {0xadacb0u,0x35bu,"09cf2c62308b1447c09b0d5ba608f9793dc80ee230941592027cfb9e2f9a13e8"},
     {0xad8610u,0x203u,"35a8a4b8e80566ec602b3a2f6b13e1b5ea93d05d1ca84685ccdfceff2cda0d6d"},
     {0xad96d0u,0x1b2u,"8d8bb816cd9a7d6912cd7f7a74bfd4ac3c0d584da5ff9b4a6b53265e844da81b"},
+    {0xad9960u,0x4acu,"6c1c64ff427dba202da69181342c946ece5cb281bac29dde0b8461e1c2da4dda"},
     {0xae9050u,0x518u,"e82ea5ab07935a100dfdd738182a37ee5ddb73468bd31f570bab71657831c59b"},
     {0xb3bad0u,0xceu,"87a23ed23ef4be0fdf493a983342282860054eb3eb14f2388e134abc88762261"},
     {0x121c1f0u,0x6au,"5d20ad384ae9ce74bb15625b923fd33638ad20d3f9e553c5d9cb7d264b20ed6f"},
