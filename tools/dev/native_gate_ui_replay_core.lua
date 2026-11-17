@@ -764,7 +764,7 @@ end
 K.SCOPED={target_slot=true,target_none=true,target_home=true,dock_home=true,suit_home=true,guidance_slot=true,guidance_end=true,inv_read=true,inv_drop=true}
 -- A canonical op is the probe's own call, not a person's click: a test fixture that every client's plan holds at the same
 -- tick (MD runs it on every client alike, nothing is captured).
-K.CANONICAL={mis_fixture=true,mt_offer=true,gm_limit=true,slot_kill=true,slot_airlock=true,launch_stock=true,inv_seed=true,inv_look=true,inv_join_state=true,inv_join_give=true}
+K.CANONICAL={mis_fixture=true,mt_offer=true,gm_limit=true,slot_kill=true,slot_airlock=true,launch_stock=true,probe_far=true,inv_seed=true,inv_look=true,inv_join_state=true,inv_join_give=true}
 -- Refused entries the stock HUD calls by itself, not on a person's action: logged, no info line. AddKnownItem: the
 -- encyclopedia entry the HUD adds for whatever comes into view (45 refusals and their info lines in a playtest of 9 Nov).
 K.GUARD_QUIET={AddKnownItem=true}
@@ -961,6 +961,8 @@ function K.script(plan,start,tools)
   -- Test only (MD Stock, canonical: in every client's plan at the same tick): a slot's ship gets deployables to launch.
   elseif op=='launch_stock' then call=function()
     tools.env.AddUITriggeredEvent('X4LAN_UiReplay','Stock',{ship=tools.slot_lua(e[3]),macro=e[4],amount=e[5] or 1});return 'lua' end
+  -- Test only (MD ProbeFar, canonical): a resource probe launched at the first ore the galaxy's sectors have.
+  elseif op=='probe_far' then call=function() tools.env.AddUITriggeredEvent('X4LAN_UiReplay','ProbeFar',{});return 'lua' end
   elseif op=='comm' then call=function() return tools.env.StartConversationFromMenu('default',tools.slot_lua(e[3])) end
   -- Missions and conversations (lockstep_ui_missions.h). mis_fixture: the test offer (MD native_gate_ui_replay.xml), canonical;
   -- the rest as the briefing menu, the map's mission list and the dialog call the stock entries.

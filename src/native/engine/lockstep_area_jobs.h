@@ -34,12 +34,23 @@
  * session ran its 100 minutes in sync (82 area jobs and 25 construction jobs on each client; the saves of minute 90
  * equal but for the listing order of the economy log's removed stations, whose IDs agree).
  *
- * Any other job through these calls, or a payload that is not that site's job, is queued as X4 queues it. Each site
- * is pinned (the asking block, the thunk, the body) and goes in alone; a build that differs keeps X4's call.
- * Status installed=<sites>/2 why= inlined=<area>/<construction> forwarded= failed=. */
+ * The third job (found by reading every QueueJob call of the image, not seen in a session): a resource probe's scan.
+ * The probe asks through 0x76af50, which queues at 0x76b288 (thunk 0x7bb5d0, body 0x76ae40); the body measures how
+ * much of a resource area the probe covers and posts U::SetDetectedResourceAreaOverlapFractionEvent (vtable
+ * 0x2ba5ca0) on the sector with the job thread's game time, 0, the same way as the first job: the area's detected
+ * fraction changes in whichever tick the job finished before. It runs at the request as well. (The image's other
+ * QueueJob calls are physics, pathing - lockstep_travel_determinism.h - graphics, XML output and the save list's
+ * directory scan 0x9e5fc0; none of those post into the simulation this way.) Run live with the script op probe_far
+ * (a probe at the first ore of the galaxy; a probe in a sector without resource areas asks for nothing): each probe
+ * asked for four scans, and both clients ran them at the request (inlined=../../8 after two probes).
+ *
+ * Any other job through these calls, or a payload that is not that site's job, is queued as X4 queues it, and so is
+ * a job asked by a thread without the game's thread context. Each site is pinned (the asking block, the thunk, the
+ * body) and goes in alone; a build that differs keeps X4's call.
+ * Status installed=<sites>/3 why= inlined=<area>/<construction>/<probe> forwarded= failed=. */
 #define AREAJ_QUEUE 0x14bc2d0u
 #define AREAJ_DOMAIN 0x58344c415245414aULL /* "X4LAREAJ" */
-#define AREAJ_SITES 2u
+#define AREAJ_SITES 3u
 typedef int (*areaj_queue_fn)(void *,void *,void *,unsigned,unsigned);
 typedef void (*areaj_job_fn)(void *,void *);
 typedef struct {
@@ -59,7 +70,13 @@ static areaj_site areaj_sites[AREAJ_SITES]={
      0xc24fb0u,0x60u,"e51b5a71d9ebaf72477cb7ca5af0277b0e7a7594e3c79cb5c4134e51d6732037",
      0xe77630u,0x61u,"3f98153845f025bf797323d26b2e1aa47a04ceba99cf5c2a90fe77449a0ce65b",
      0xd5c6f0u,0x3080u,"f12d5b8271f1b47c01266fadca61322e98b50a08f66ce361ac1f0329327169bc",0,{0},0},
+    {"probe",0x76b288u,0x4e0u,
+     0x76af50u,0x3ebu,"a0fdd6338defd38262a1e52276e5c351116f7d5339870d09f9570ef4bef3bcfe",
+     0x7bb5d0u,0x7bu,"3a40f020fab2bafd1e44bbfa831a7ddf3ff5f40641391bca5f990c5f5597e2e7",
+     0x76ae40u,0x10du,"655a4bcee772c939282bf480f614ff31e329ab0deadf939f78fc9d59d731a944",0,{0},0},
 };
+static const char *const areaj_pin_why[AREAJ_SITES]={"pin_area","pin_construction","pin_probe"};
+static const char *const areaj_site_why[AREAJ_SITES]={"site_area","site_construction","site_probe"};
 static const char *areaj_why="-";
 static volatile LONG64 areaj_forwarded,areaj_failed;
 static volatile LONG areaj_ordinal;
@@ -93,7 +110,7 @@ static int areaj_run(areaj_job_fn job,void *payload,unsigned char *tls) {
     return ok;
 }
 static int areaj_queue_impl(areaj_queue_fn queue,unsigned char *tls,void *mgr,void *cb,void *payload,unsigned cat,unsigned prio) {
-    areaj_site *s=areaj_site_of(cb,payload);
+    areaj_site *s=tls?areaj_site_of(cb,payload):NULL;
     if(!s) {InterlockedIncrement64(&areaj_forwarded);return queue(mgr,cb,payload,cat,prio);}
     /* A job that broke off has run in part: it is not queued a second time, only counted. */
     if(areaj_run(areaj_job_test?areaj_job_test:(areaj_job_fn)cb,payload,tls)) InterlockedIncrement64(&s->inlined);
@@ -116,9 +133,9 @@ static int areaj_arm(void) {
         areaj_site *s=&areaj_sites[i];
         if(s->installed) continue;
         if(!hash_ok(image+s->ask,s->ask_size,s->ask_sha) || !hash_ok(image+s->thunk,s->thunk_size,s->thunk_sha) ||
-           !hash_ok(image+s->body,s->body_size,s->body_sha)) {areaj_why=i?"pin_construction":"pin_area";continue;}
+           !hash_ok(image+s->body,s->body_size,s->body_sha)) {areaj_why=areaj_pin_why[i];continue;}
         if(pres_site_install(s->site,AREAJ_QUEUE,s->stub,(void*)areaj_queue,s->patched)) s->installed=1;
-        else areaj_why=i?"site_construction":"site_area";
+        else areaj_why=areaj_site_why[i];
     }
     return areaj_installed_count()==(int)AREAJ_SITES;
 }
@@ -127,6 +144,7 @@ static void areaj_restore(void) {
         if(areaj_sites[i].installed && pres_site_uninstall(areaj_sites[i].site,AREAJ_QUEUE,areaj_sites[i].patched)) areaj_sites[i].installed=0;
 }
 static int areaj_status(char *out,size_t capacity) {
-    return snprintf(out,capacity,"installed=%d/%u why=%s inlined=%lld/%lld forwarded=%lld failed=%lld",areaj_installed_count(),AREAJ_SITES,areaj_why,
-                    (long long)areaj_sites[0].inlined,(long long)areaj_sites[1].inlined,(long long)areaj_forwarded,(long long)areaj_failed);
+    return snprintf(out,capacity,"installed=%d/%u why=%s inlined=%lld/%lld/%lld forwarded=%lld failed=%lld",areaj_installed_count(),AREAJ_SITES,areaj_why,
+                    (long long)areaj_sites[0].inlined,(long long)areaj_sites[1].inlined,(long long)areaj_sites[2].inlined,
+                    (long long)areaj_forwarded,(long long)areaj_failed);
 }

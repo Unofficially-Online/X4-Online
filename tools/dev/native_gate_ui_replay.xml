@@ -58,6 +58,37 @@
     </do_else>
    </actions>
   </cue>
+  <!-- Test only (script op probe_far, in every client's plan at the same tick): a resource probe where there is something
+       to measure. A probe launched in a sector without resource areas asks for no scan, and the slot ships of the test
+       snapshots sit in such sectors. This takes the first sector of the galaxy with ore (the search looks in its
+       reference object's sector only), puts a scout at the resource and has it launch a probe, so the probe's scan
+       job runs (lockstep_area_jobs.h: AREA_JOBS inlined=../../<probe>). -->
+  <cue name="ProbeFar" instantiate="true">
+   <conditions><event_ui_triggered screen="'X4LAN_UiReplay'" control="'ProbeFar'"/></conditions>
+   <actions>
+    <find_sector name="$sectors" space="player.galaxy" multiple="true"/>
+    <do_all exact="$sectors.count" counter="$i">
+     <find_closest_resource refobject="$sectors.{$i}" sector="$sector" ware="ware.ore" position="$pos" distance="$dist">
+      <refposition value="$sectors.{$i}.coreposition" object="$sectors.{$i}"/>
+     </find_closest_resource>
+     <do_if value="@$sector.exists">
+      <break/>
+     </do_if>
+    </do_all>
+    <do_if value="@$sector.exists">
+     <create_ship name="$carrier" macro="macro.ship_arg_s_scout_01_a_macro" sector="$sector">
+      <owner exact="faction.player"/>
+      <position value="$pos"/>
+     </create_ship>
+     <add_ammo object="$carrier" macro="macro.eq_arg_resourceprobe_01_macro" amount="1"/>
+     <launch_resourceprobe name="$probe" object="$carrier" macro="macro.eq_arg_resourceprobe_01_macro"/>
+     <debug_text text="'[X4LAN] UI_REPLAY_PROBE_FAR sector=%s of=%s distance=%s carrier=%s probe=%s time=%s'.[$sector, $sectors.count, @$dist, $carrier.idcode, @$probe, player.age]"/>
+    </do_if>
+    <do_else>
+     <debug_text text="'[X4LAN] UI_REPLAY_PROBE_FAR_REFUSED sectors=%s time=%s'.[$sectors.count, player.age]"/>
+    </do_else>
+   </actions>
+  </cue>
   <!-- Missions and conversations (native_gate_ui_replay missions, conversation; reports/LOCKSTEP-UI-MISSIONS-20261101.txt):
        a test offer whose client is a cue actor, made from the probe's frame at the same tick on every client (script op
        mis_fixture, in every client's plan). Slot 1's accept, briefing, active mission, abort and talk then arrive here on

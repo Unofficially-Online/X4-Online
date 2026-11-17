@@ -11,6 +11,7 @@
 #include "test_lockstep_npc_deadline.h"
 #include "test_lockstep_path_determinism.h"
 #include "test_lockstep_travel_determinism.h"
+#include "test_lockstep_area_jobs.h"
 #include "test_lockstep_travel_snapshot.h"
 #include "test_lockstep_path_perf.h"
 #include "test_lockstep_ai_schedule.h"
@@ -1175,6 +1176,7 @@ int main(int argc,char **argv) {
     test_world_action();
     test_path_determinism();
     test_travel_determinism();
+    test_area_jobs();
     test_travel_snapshot();
     test_path_transforms();
     test_body_pose();
