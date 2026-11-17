@@ -225,6 +225,13 @@ static const rid_site_t rid_sites[]={
      * none on client 1 on the stack 350ecb,7c7f9e,7da1c1,ad86f7,ad8872,ad8a83,99c5b0; the digest part rid apart from
      * that tick on. */
     RID_BODY(0xad8610u,0xad8813u,RID_ROUTE_VIEW,0),
+    /* A fifth way: 0xad96d0, from UI::CUIController::vfunc72 0xb3f7c0 when a script sets a player's target (MD's
+     * set_player_target 0x1135bc0). The container is made the first time anything asks for it, so the script's call made
+     * it on the client whose own UI had not looked at that ship yet. Scripted, two clients, 17 Nov (the mission matrix's
+     * spot type; the same on the gate of the day before): a ship 40 km above player 2 became player 2's target at tick
+     * 915, one ID on client 1 and none on client 2 on the stack 350ecb,7c7f9e,7da1c1,ad97a5,b3f810,1135ea6; the digest
+     * part rid apart from 916 on. */
+    RID_BODY(0xad96d0u,0xad9882u,RID_ROUTE_VIEW,0),
     /* EffectObject, FogVolume, LensFlare, Stardust: the two constructors' Positional calls; EffectObjectCreator. */
     RID_CALL(0x8e1b44u,0x7429c0u,RID_ROUTE_VIEW),RID_CALL(0x8e48a6u,0x7426d0u,RID_ROUTE_VIEW),RID_CALL(0xd9d312u,0x7429c0u,RID_ROUTE_VIEW),RID_CALL(0x8e4bbeu,0x7426d0u,RID_ROUTE_VIEW),
     RID_CALL(0xe233feu,0x7429c0u,RID_ROUTE_VIEW),RID_CALL(0xe233aeu,0x7426d0u,RID_ROUTE_VIEW),RID_CALL(0xe417aeu,0x7429c0u,RID_ROUTE_VIEW),RID_CALL(0xe4175eu,0x7426d0u,RID_ROUTE_VIEW),
@@ -246,6 +253,7 @@ static const struct {unsigned rva,size;const char *sha;} rid_local_bodies[]={
     {0xada7a0u,0x248u,"cc73ccaee5d464051845bbf7d696ff7d5b3afc2622e4e19b78d465dd9c729d39"},
     {0xadacb0u,0x35bu,"09cf2c62308b1447c09b0d5ba608f9793dc80ee230941592027cfb9e2f9a13e8"},
     {0xad8610u,0x203u,"35a8a4b8e80566ec602b3a2f6b13e1b5ea93d05d1ca84685ccdfceff2cda0d6d"},
+    {0xad96d0u,0x1b2u,"8d8bb816cd9a7d6912cd7f7a74bfd4ac3c0d584da5ff9b4a6b53265e844da81b"},
     {0xae9050u,0x518u,"e82ea5ab07935a100dfdd738182a37ee5ddb73468bd31f570bab71657831c59b"},
     {0xb3bad0u,0xceu,"87a23ed23ef4be0fdf493a983342282860054eb3eb14f2388e134abc88762261"},
     {0x121c1f0u,0x6au,"5d20ad384ae9ce74bb15625b923fd33638ad20d3f9e553c5d9cb7d264b20ed6f"},
