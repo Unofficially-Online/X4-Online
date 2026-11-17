@@ -233,7 +233,7 @@ static void test_ui_replay(void) {
      test_uirep_enter_ok=0;assert(!uirep_frame(123,&why) && !strcmp(why,"ui_scope"));test_uirep_enter_ok=1;uirep_failed=0;uirep_why="-";
      test_uirep_leave_ok=0;assert(!uirep_frame(123,&why) && !strcmp(why,"ui_scope_leave"));test_uirep_leave_ok=1;uirep_failed=0;uirep_why="-";}
     /* The soft target's blocks: the UI half goes on, the simulation half becomes an event. */
-    {uint64_t id=0x7001;memset(test_uirep_target,0,sizeof(test_uirep_target));memcpy(test_uirep_target+UIREP_ID,&id,8);}
+    {uint64_t id=0x7001;memset(test_uirep_target,0,sizeof(test_uirep_target));memcpy(test_uirep_target+UIREP_ID,&id,8);test_uirep_target[0xd1]=1;}   /* in the world */
     for(unsigned i=0;i<UIREP_OFFSET;i++) test_uirep_element[UIREP_ELEMENT_OFFSET+i]=(unsigned char)(0x40+i);
     test_uirep_element[UIREP_ELEMENT_FLAG]=1;
     stats.slot=2;stats.issued=200;uirep_queue_head=uirep_queue_count=0;memset(uirep_ring,0,sizeof(uirep_ring));test_uirep_call_count=0;
@@ -287,7 +287,25 @@ static void test_ui_replay(void) {
     assert(!strcmp(receipt[0],receipt[1]) && !strncmp(receipt[0],"PUIREP_1:203:2:",15));
     /* The receipt holds every slot's activity and soft target: what took on one client only shows. */
     {char text[192];memcpy(test_uirep_player+UIREP_PLAYER_ACTIVITY,(int[]){1},4);*(uint64_t*)(test_uirep_player+PRES_TARGET)=0x7001;
+     const unsigned char alive_was=test_uirep_target[0xd1];test_uirep_target[0xd1]=1;
      assert(uirep_frame_text(text,sizeof(text)) && strstr(text,"|0/0,1/7001"));
+     /* out of the world (destroyed, still in the ID table for a client-dependent moment): no target */
+     test_uirep_target[0xd1]=0;assert(uirep_frame_text(text,sizeof(text)) && strstr(text,"|0/0,1/0"));
+     /* and the slot's replay of the tick clears it with X4's own function, once (a live target and no target stay) */
+     {const LONG64 swept=uirep_target_swept;const unsigned logged=test_uirep_call_count;const uint64_t hint=uirep_get_hint();
+      test_uirep_target[0xd1]=1;uirep_target_sweep(test_uirep_player);assert(uirep_target_swept==swept && test_uirep_call_count==logged);
+      test_uirep_target[0xd1]=0;uirep_target_sweep(test_uirep_player);
+      assert(uirep_target_swept==swept+1 && test_uirep_call_count==logged+1 && test_uirep_calls[logged].what=='C' &&
+             test_uirep_calls[logged].a==(void*)(test_uirep_target+UIREP_ASSOCIATION) && uirep_get_hint()==hint);
+      *(uint64_t*)(test_uirep_player+PRES_TARGET)=0;uirep_target_sweep(test_uirep_player);assert(uirep_target_swept==swept+1);
+      *(uint64_t*)(test_uirep_player+PRES_TARGET)=0x7001;}
+     /* a replayed target event for a component out of the world is stale, as for one that is gone */
+     {unsigned char dead[UIREP_HEAD+2+UIREP_REF]={UIREP_VERSION,211&0xff,0,1,UIREP_OP_TARGET_CLEAR,UIREP_REF};const char *why=NULL;
+      uirep_staged e;memset(&e,0,sizeof(e));const LONG64 stale=uirep_stale;const unsigned logged=test_uirep_call_count;
+      uirep_put_ref(dead+UIREP_HEAD+2,0x7001);memcpy(e.bytes,dead,sizeof(dead));e.length=sizeof(dead);
+      test_uirep_target[0xd1]=0;assert(uirep_run_section(1,&e,&why) && uirep_stale==stale+1 && test_uirep_call_count==logged);
+      test_uirep_target[0xd1]=1;assert(uirep_run_section(1,&e,&why) && uirep_stale==stale+1 && test_uirep_call_count==logged+1);}
+     test_uirep_target[0xd1]=alive_was;
      memset(test_uirep_player+UIREP_PLAYER_ACTIVITY,0,4);*(uint64_t*)(test_uirep_player+PRES_TARGET)=0;}
     /* A dead slot's event is consumed and hashed, not applied. */
     {const char *w="";memset(uirep_ring,0,sizeof(uirep_ring));assert(uirep_stage(2,section,length,201,&w));LONG64 stale=uirep_stale;test_uirep_call_count=0;

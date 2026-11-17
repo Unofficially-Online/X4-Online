@@ -1151,7 +1151,8 @@ static int pslot_replay(uint64_t tick) {
         __try {
             replayed=pstk_slot_replay(k,now);
             if(replayed && scl_armed) scl_frame_slot(k,now);
-            if(replayed && scm_armed) scm_frame_slot(k);
+            if(replayed && scm_armed) scm_frame_slot(k,now);
+            if(replayed) uirep_target_sweep(s->player);
         } __finally {left=pslot_leave(k);}
         if(!left) return pslot_fail("replay_leave");
         if(!replayed) return pslot_fail("replay_refused");

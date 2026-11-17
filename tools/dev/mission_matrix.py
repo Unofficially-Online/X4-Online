@@ -22,7 +22,7 @@ it names whether a mission started and how many script errors came with it. It c
 sessions when X4LS_FIRST_PROFILE / --first-profile, --lanes and --display keep them apart, waits for the rows, prints
 the table and stops the clients it started. Exit code: 0 all passed, 1 a test failed or the clients split, 2 the run
 itself did not work. A mocked or scripted completion is not a person playing the mission: the actions that need a
-person or a menu (a ship's deep scan, docking, talking) are not covered by these tests.
+person or a menu (docking, talking) are not covered by these tests.
 """
 import argparse
 import math
@@ -37,8 +37,9 @@ ROOT = Path(__file__).resolve().parents[2]
 
 # type -> (the stock library, what the test does in place of the player, the library's answer for X4's own player).
 # The MD cues of the same names start them. destroy: the target destroyed by nobody (the library's "destroyed, but
-# not by the player" answer); kill: by the player's own guns; scan: a station's modules revealed by being close.
-# Not here because MD has no action for it: a hull repair, a ship's deep scan, a dock, a talk.
+# not by the player" answer); kill: by the player's own guns; scan: a station's modules revealed by being close;
+# deepscan: a ship scanned by the player's ship. Not here because MD has no action for it: a hull repair, a dock, a
+# talk.
 TYPES = {
     'flyto': ('RML_FlyTo.FlyTo', 'the target is moved to 300 m from the player (arrival is a distance to that player)', '1'),
     'collect': ('RML_Collect_Inventory.CollectInventory', 'two inventory items are added to the player', '1'),
@@ -48,6 +49,7 @@ TYPES = {
     'target': ('RML_Long_Range_Scan.LongRangeScan', 'the player targets the object it was sent to find', '1'),
     'deploy': ('RML_DeployInPlace.DeployInPlace', 'the player launches a satellite with the call the stock menu makes', '1'),
     'kill': ('RML_Destroy_Components.DestroyComponents', "the player's own guns destroy targets ahead: the library must count a kill by the player", '1'),
+    'deepscan': ('RML_Scan.Scan', "the player's ship scans a ship ahead of it (scan mode, the scan's start, two seconds on target): the library must hear the scan finish", '1'),
     # last: it leaves the player's ship at a station
     'scan': ('RML_Scan.Scan', "the player's ship is put close to a station module, looking at it: the library must see the station revealed", '1'),
 }
@@ -60,6 +62,8 @@ OPS = {
     # the aim assist on the player's target and the trigger, from 2 s after the accept for 7 s (an input state is a key
     # press and counts only in the window with the focus)
     'kill': (('own', 120, 'aim_fire', 1), ('own', 330, 'aim_fire', 0)),
+    # the scan mode 1 s after the accept, the scan's start 2 s later, the mode off again at the test's end
+    'deepscan': (('own', 90, 'scan_key'), ('own', 150, 'scan_start'), ('own', 180, 'scan_diag'), ('own', 480, 'scan_key')),
 }
 START = 60          # window-relative tick of the first offer
 SPACING = 600       # ticks per test (20 s at 30 Hz): offer, accept after 2 s, the test's action 5 s later

@@ -566,18 +566,25 @@ python tools/dev/mission_matrix.py report CLIENT1.log CLIENT2.log [--run RUNDIR]
   seconds (script op `aim_fire`: the aim assist on the player's target and the trigger), and the library must
   count a kill by the player; and scan (17 Nov): the player's ship is put close to a module of the nearest
   station, looking at it, and the library must see the station's revealed share grow (a module is revealed by being
-  close and looked at; the scan mode is not needed for it). Nine of nine for both players.
+  close and looked at; the scan mode is not needed for it); and deepscan (17 Nov): the player's ship scans a ship
+  300 m ahead (scan mode on, the scan started, two seconds on target) and the library must hear the scan finish.
+  Ten of ten for both players.
 - A plan's trigger goes through `aim_fire`. A trigger injected as an input state (`{tick,'input','state',24,1}`) is
   a key press, and a key press counts only in the window that has the Windows focus (two clients on one PC share
   one keyboard): it fires in one run and not in the next.
-- Not covered, because it needs a menu or a tool MD cannot drive: repairing, a ship's deep scan, docking, talking to a
+- Not covered, because it needs a menu or a tool MD cannot drive: repairing, docking, talking to a
   person. A test that passes says the library heard that player; it does not say a person can fly the mission.
 - Scan mode (17 Nov, `native_gate_scan_mode`, on by default): the mode's key works for every player. Before, the
   key was refused for everybody in a session. Scripted run, two X4 on one PC: each player switched the mode on and
   off through the stock call and through the key; every client showed the same mode for each player at the same
-  ticks; a player whose ship was destroyed lost the mode. Not there yet: the mode's cockpit tint and sounds for
-  players 2 and up, and the ship's deep scan (the scan key on a target) for anybody. Things to try as player 2:
-  switch the scan mode on near a station and look for signal leaks; say what you see and hear.
+  ticks; a player whose ship was destroyed lost the mode. The ship's deep scan works for every player too (the
+  scan key on a target while the mode is on; two seconds with the target in range): scripted, each player's scan
+  of a ship finished and X4's own scan mission step counted it. The scripted run starts the scan through the
+  call the scan key ends in; the key itself, and the scan bar on the screen, need a person. The range rule is
+  simpler than X4's: the target must stay in scan range, it need not stay ahead of the ship, and choosing
+  another target does not stop the scan. Not there yet: the mode's cockpit tint and sounds for players 2 and up.
+  Things to try as player 2: switch the scan mode on, target a ship within about a kilometre, press the scan key
+  and keep close for two seconds; near a station, look for signal leaks. Say what you see and hear.
 - The stock offers (`mission_matrix.py offers ...`, the same options as `run`): the offers X4 itself made in the
   session's world, the generic missions of the stations around the players, are accepted one after the other, by
   player 1 in one session and by player 2 in the next (`--accept-as 1,2`), each aborted again after five seconds. The

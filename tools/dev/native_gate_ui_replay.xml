@@ -795,6 +795,54 @@
         </cue>
        </cues>
       </cue>
+      <!-- Deep scan: the stock "scan this ship" step (RML_Scan with a ship and the explicit scan: it waits for a
+           finished scan by one of the players' ships). An ownerless scout 300 m ahead of the player's ship is that
+           player's target; the plan switches the scan mode on and starts the scan (script ops scan_key and
+           scan_start). Two seconds on target finish it. The rows name the scan's start, end and what was scanned. -->
+      <cue name="MtDeepscan" onfail="cancel">
+       <conditions><check_value value="$Type == 'deepscan'"/></conditions>
+       <actions>
+        <transform_position name="$At" refposition="player.ship.position" refrotation="player.ship.rotation">
+         <position z="300m"/>
+        </transform_position>
+        <create_ship name="$Scanned" macro="macro.ship_arg_s_scout_01_a_macro" zone="player.zone">
+         <owner exact="faction.ownerless"/>
+         <position value="$At"/>
+        </create_ship>
+        <set_object_name object="$Scanned" name="'X4LAN scan target'"/>
+        <set_player_target object="$Scanned"/>
+        <debug_text text="'[X4LAN] MT_SETUP type=%s slot=%s scanned=%s distance=%s revealed=%s time=%s'.[$Type, $Slot, $Scanned, $Scanned.distanceto.{player.ship}, $Scanned.revealedpercentage, player.age]"/>
+       </actions>
+       <cues>
+        <cue name="MtDeepscan_Ref" ref="md.RML_Scan.Scan">
+         <param name="MissionCue" value="$Mission"/>
+         <param name="EndSignalCue" value="MtEnd"/>
+         <param name="ScanObjective" value="objective.scan"/>
+         <param name="ObjectiveText" value="'X4LAN scan'"/>
+         <param name="TargetShip" value="$Scanned"/>
+         <param name="ScanType" value="1"/>
+         <param name="ScanPercentage" value="1"/>
+        </cue>
+        <cue name="MtDeepscan_Started" instantiate="true">
+         <conditions><event_scan_started scanned="$Scanned"/></conditions>
+         <actions>
+          <debug_text text="'[X4LAN] MT_DEEPSCAN started slot=%s player=%s scanner=%s activity=%s time=%s'.[$Slot, player.entity, event.object, player.activity, player.age]"/>
+         </actions>
+        </cue>
+        <cue name="MtDeepscan_Aborted" instantiate="true">
+         <conditions><event_scan_aborted scanned="$Scanned"/></conditions>
+         <actions>
+          <debug_text text="'[X4LAN] MT_DEEPSCAN aborted slot=%s player=%s scanner=%s time=%s'.[$Slot, player.entity, event.object, player.age]"/>
+         </actions>
+        </cue>
+        <cue name="MtDeepscan_Finished" instantiate="true">
+         <conditions><event_scan_finished scanned="$Scanned"/></conditions>
+         <actions>
+          <debug_text text="'[X4LAN] MT_DEEPSCAN finished slot=%s player=%s scanner=%s in_group=%s revealed=%s time=%s'.[$Slot, player.entity, event.object, global.$PlayerControlledGroup.indexof.{event.object}, $Scanned.revealedpercentage, player.age]"/>
+         </actions>
+        </cue>
+       </cues>
+      </cue>
       <!-- The library's end signal: its feedback value is the result (positive: X4 calls it a success). -->
       <cue name="MtEnd">
        <conditions><event_cue_signalled/></conditions>
@@ -815,6 +863,9 @@
        <actions>
         <do_if value="@$Dummy.exists">
          <destroy_object object="$Dummy" explosion="false"/>
+        </do_if>
+        <do_if value="@$Scanned.exists">
+         <destroy_object object="$Scanned" explosion="false"/>
         </do_if>
         <remove_mission cue="$Mission" type="completed"/>
         <cancel_cue cue="$Mission"/>

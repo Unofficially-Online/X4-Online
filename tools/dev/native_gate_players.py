@@ -136,7 +136,7 @@ UI_REPLAY_MISSIONS_DEMO = {1: ((60, 'mis_fixture', 1), (120, 'briefing', 'offer'
 UI_REPLAY_MPP_DEMO = {1: ((60, 'mis_fixture', 1), (90, 'mis_fixture', 1), (150, 'offer_accept')),
                       2: ((60, 'mis_fixture', 1), (90, 'mis_fixture', 1), (200, 'offer_accept'), (400, 'mis_none'), (450, 'mis_active'),
                           (600, 'mis_abort'))}
-UI_REPLAY_OP_FAMILY = {'missile': 'missiles', 'travel': 'travel', 'travel_stop': 'travel', 'travel_key': 'travel', 'scan_mode': 'travel', 'scan_key': 'travel', 'target_slot': 'target', 'target_none': 'target',
+UI_REPLAY_OP_FAMILY = {'missile': 'missiles', 'travel': 'travel', 'travel_stop': 'travel', 'travel_key': 'travel', 'scan_mode': 'travel', 'scan_key': 'travel', 'scan_start': 'flight', 'scan_diag': 'flight', 'scan_trace': 'flight', 'target_slot': 'target', 'target_none': 'target',
                        'match': 'target', 'input': 'target', 'ap_to': 'autopilot', 'ap_obj': 'autopilot', 'ap_stop': 'autopilot', 'ap_toggle': 'autopilot',
                        'quickdock': 'dock', 'dock_at': 'dock', 'undock': 'dock', 'wgroup': 'weapons', 'wkey': 'weapons', 'aim_fire': 'weapons',
                        'flight_assist': 'flight', 'turret_mode': 'flight', 'turret_missile': 'flight', 'drones': 'flight', 'drone_mode': 'flight', 'launch': 'flight', 'launch_stock': 'flight', 'probe_far': 'flight', 'groups_look': 'flight', 'turrets_mode': 'flight', 'turrets_armed': 'flight', 'drones_armed': 'flight',

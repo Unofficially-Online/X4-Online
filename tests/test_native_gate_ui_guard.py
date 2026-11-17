@@ -92,7 +92,8 @@ class TableTests(unittest.TestCase):
                                   'SetAllMissileTurretModes': 0x223b60, 'SetAllMissileTurretsArmed': 0x223c40,
                                   'SetAllNonMissileTurretModes': 0x223cd0, 'SetAllNonMissileTurretsArmed': 0x223e90,
                                   'SetDroneMode': 0x2244c0, 'SetDroneTypeArmed': 0x2245e0, 'SetAllDronesArmed': 0x223aa0,
-                                  'ActivateObject': 0x175930, 'SelfDestructComponent': 0x1b6f70, 'DropCargo': 0x1df990})
+                                  'ActivateObject': 0x175930, 'SelfDestructComponent': 0x1b6f70, 'DropCargo': 0x1df990,
+                                  'StartScan': 0x735000})
         covered = {name for (kind, name), (_, _, cov) in inv.INVENTORY.items() if cov & inv.FLIGHT}
         self.assertEqual(covered, {'ToggleFlightAssist', 'CycleTurretMode', 'CycleTurretMissile', 'ToggleDrones', 'CycleNextDroneMode',
                                    'LaunchMine', 'LaunchNavBeacon', 'LaunchResourceProbe', 'LaunchSatellite', 'LaunchLaserTower',

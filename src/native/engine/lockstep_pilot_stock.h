@@ -159,9 +159,11 @@ static void phud_edge(unsigned slot,unsigned char active,double now);   /* locks
 static int pvehk_home_key(unsigned k,unsigned id);   /* lockstep_pilot_death.h: in its suit GET_UP is void (1), the dock keys are X4's (0) */
 /* lockstep_scan_mode.h (native_gate_scan_mode): the scan mode for every slot; scm_ship: the ship a slot's mode was
  * started in (its runtime ID). */
-static int scm_armed;
+static int scm_armed,scm_scan_on;   /* scm_scan_on: X4's own per-frame scan progress is switched off, the gate steps it */
 static uint64_t scm_starts,scm_stops,scm_unavailable,scm_left,scm_ship[PILOT_SLOTS+1];
-static int scm_frame_slot(unsigned k);
+static int scm_frame_slot(unsigned k,double now);
+static int scm_scan_step(unsigned char *player,double now);
+static void uirep_target_sweep(const unsigned char *player);   /* lockstep_ui_replay.h: a soft target that left the world */
 static const uint16_t pstk_replay_actions[]={0x7b,0x12f,0x131,0xe1,0xdd,0x105,0x148};
 static const uint16_t pstk_replay_states[]={2,3,4,5,6,7,8,9,0xd,0xe,0xf,0x10,0x11,0x12,0x13,0x5a,0x70,0x71,0x72,0x73,0x74,0x75,0x76,0x77,0x50,0x85};
 static const uint16_t pstk_replay_ranges[]={1,2,3,4,5,6,0xa};
@@ -228,6 +230,8 @@ static unsigned pstk_verdict(unsigned kind,int id) {
     if(kind==PSTK_ACTION && (uirep_families&UIREP_FAMILY_AUTOPILOT) && id==0xb3) return PSTK_LOCAL;
     /* The scan mode's key (lockstep_scan_mode.h): it rides the record into X4's mode handler like the travel key. */
     if(kind==PSTK_ACTION && id==0x130 && scm_armed && (uirep_families&UIREP_FAMILY_TRAVEL)) return PSTK_REPLAY;
+    /* The scan key on a target: the client's own UI action handles it; its start of the scan is captured (StartScan). */
+    if(kind==PSTK_ACTION && id==0x147 && scm_scan_on && (uirep_families&UIREP_FAMILY_FLIGHT)) return PSTK_LOCAL;
     if(kind==PSTK_ACTION) return pstk_listed(pstk_replay_actions,PSTK_COUNT(pstk_replay_actions),id)?PSTK_REPLAY:
         pstk_listed(pstk_refuse_actions,PSTK_COUNT(pstk_refuse_actions),id)?PSTK_REFUSE:PSTK_LOCAL;
     if(kind==PSTK_STATE) return pstk_listed(pstk_replay_states,PSTK_COUNT(pstk_replay_states),id)?PSTK_REPLAY:

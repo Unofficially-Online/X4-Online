@@ -132,7 +132,7 @@ enum {UIREP_H_UI=0,UIREP_H_START,UIREP_H_STOP,UIREP_H_CLEAR,UIREP_H_CLEAR2,UIREP
     UIREP_H_LAUNCH_LASERTOWER,UIREP_H_LAUNCH_MINE,UIREP_H_LAUNCH_NAVBEACON,UIREP_H_LAUNCH_PROBE,UIREP_H_LAUNCH_SATELLITE,
     UIREP_H_WEAPON_ARMED,UIREP_H_WEAPON_AMMO,UIREP_H_TGROUP_MODE,UIREP_H_TGROUP_ARMED,UIREP_H_TURRETS_MODE,UIREP_H_TURRETS_ARMED,UIREP_H_MTURRETS_MODE,UIREP_H_MTURRETS_ARMED,
     UIREP_H_NTURRETS_MODE,UIREP_H_NTURRETS_ARMED,UIREP_H_DRONE_SET_MODE,UIREP_H_DRONE_TYPE_ARMED,UIREP_H_DRONES_ARMED,UIREP_H_ACTIVATE,UIREP_H_SELF_DESTRUCT,UIREP_H_DROP_CARGO,
-    UIREP_H_CS_SINGLE,UIREP_H_CS_MULTI,UIREP_HOOKS};
+    UIREP_H_CS_SINGLE,UIREP_H_CS_MULTI,UIREP_H_SCAN_START,UIREP_HOOKS};
 #define UIREP_ARGS 8u
 #define UIREP_STRING_MAX 48u
 #define UIREP_AUTOPILOT 0x2f4b7d8u        /* the input bank's autopilot target (SIM, per slot) */
@@ -223,6 +223,7 @@ UIREP_CALL(drones_armed,UIREP_H_DRONES_ARMED)
 UIREP_CALL(activate,UIREP_H_ACTIVATE)
 UIREP_CALL(self_destruct,UIREP_H_SELF_DESTRUCT)
 UIREP_CALL(drop_cargo,UIREP_H_DROP_CARGO)
+UIREP_CALL(scan_start,UIREP_H_SCAN_START)
 static int uirep_local_phase(void);
 static void uirep_guard_refuse(unsigned slot);
 static uint64_t uirep_queue_call(unsigned hook,uint64_t a[UIREP_ARGS]);
@@ -318,6 +319,9 @@ static const struct {const char *name;unsigned rva,prefix,family;unsigned char b
      * pass outside its calls */
     {"SingleActionPerform",0x3508e0u,5,0,UIREP_ENTRY5,(void*)uics_perform_single,0x5d,"3a48fd72ded5585551dcaa1396bc9c0400b3e5083bb99ce7b370a70b75c104fc"},
     {"MultiActionPerform",0x350d60u,5,0,UIREP_ENTRY5,(void*)uics_perform_multi,0x63,"1cec820bfc25fb70dd61961933c29c1bd980e08778606aae86042857f04fb741"},
+    /* the player's scan of a target (lockstep_scan_mode.h): U::Player's start 0x735000(player, target, the action's data, force),
+     * called by the scan action of the client's UI (ScanAction::Perform 0x3581f0) */
+    {"StartScan",0x735000u,8,UIREP_FAMILY_FLIGHT,{0x40,0x53,0x56,0x57,0x48,0x83,0xec,0x60},(void*)uirep_call_scan_start,0x323,"77d7e5ae354ab8fb3d1bc5eaa87ab1d43ee81a1686ed3e1801f4341887c9069a"},
 };
 /* The generic calls: argument spec (P the player, C a component pointer, I a UniverseID, b a byte, w a word, V a
  * pointer to 16 bytes, s a string, k the check-only flag: set, the call is a query and passes; - passed through as 0),
@@ -359,7 +363,8 @@ static const uirep_call_spec uirep_call_specs[]={
     {UIREP_H_DRONES_ARMED,"Ib",UIREP_RET_ONE},
     {UIREP_H_ACTIVATE,"Ib",UIREP_RET_ONE},
     {UIREP_H_SELF_DESTRUCT,"I",UIREP_RET_ONE},
-    {UIREP_H_DROP_CARGO,"Isw",UIREP_RET_ONE}};
+    {UIREP_H_DROP_CARGO,"Isw",UIREP_RET_ONE},
+    {UIREP_H_SCAN_START,"PC--",UIREP_RET_ONE}};       /* the player, the target; the action's data and the force flag go as 0 */
 #define UIREP_CALL_SPECS (sizeof(uirep_call_specs)/sizeof(*uirep_call_specs))
 /* The queue editor (family queue), Lua-run events in call order, applied in the probe's frame: q is an order index
  * (as the capturing menu saw the queue), the create's answer is predicted (UIREP_RET_ORDER), void returns nothing. */
@@ -902,6 +907,10 @@ static int uirep_run_native(unsigned slot,unsigned op,const unsigned char *data,
         int resolved=uirep_resolve(data,&runtime,&component);
         if(resolved<0) {*why="ui_ref_mismatch";return 0;}
         if(!resolved) {InterlockedIncrement64(&uirep_stale);break;}
+        /* Out of the world counts as gone: a destroyed component stays in the ID table for a moment that is not the
+         * same on every client (uirep_target_sweep's note; live, a target set captured from the scanning player's UI
+         * found the scanned ship gone on one client and took on the other). */
+        {unsigned char alive=0;if(!read_local(component+0xd1,&alive,1) || !alive) {InterlockedIncrement64(&uirep_stale);break;}}
         /* The stock functions also write the cycling hint: it stays what this client's UI left. */
         uint64_t hint=uirep_get_hint();
         if(op==UIREP_OP_TARGET_SET) {
@@ -1166,13 +1175,57 @@ static int uirep_store_read(const pslot_slot *s,unsigned rva,void *out,unsigned 
     }
     return 0;
 }
+/* A soft target that left the world, at the slot's replay of the tick (slot 1 canonical, slot k inside its scope).
+ * X4 keeps a destroyed component as the player's target until the component is deleted; the deletion then tells the
+ * player (the Player Changed Target event, which scripts hear). When a component is deleted is not simulation: live,
+ * 17 Nov, a ship destroyed two ticks after its deep scan finished was deleted a tick later on one client than on the
+ * other (and noticed there by the simulation, here by the UI), and one client's scripts heard the event. So the
+ * target is cleared here as soon as the component is out of the world (+0xd1 = 0), with X4's own clear, at the same
+ * tick on every client; nothing is left for the deletion to tell. */
+static volatile LONG64 uirep_target_swept;
+static void uirep_target_sweep(const unsigned char *player) {
+    uint64_t target=0;unsigned char alive=1,*component=NULL;
+    if(!uirep_armed || !(uirep_families&UIREP_FAMILY_TARGET) || !uirep_fn.target_clear || !player) return;
+    if(!read_local(player+PRES_TARGET,&target,8) || !target || !(component=uirep_component(target))) return;
+    if(!read_local(component+0xd1,&alive,1) || alive) return;
+    const uint64_t hint=uirep_get_hint();   /* the stock function also writes the cycling hint: this client's UI's */
+    uirep_fn.target_clear(component+UIREP_ASSOCIATION);
+    uirep_set_hint(hint);
+    InterlockedIncrement64(&uirep_target_swept);
+}
+/* Diagnosis (gate.scan_trace): slot 1's soft target as each tick's receipt met it, when it changed: the raw field,
+ * whether the ID resolved, the component's in-the-world byte. */
+typedef struct {uint64_t tick,raw;unsigned char found,alive;} uirep_target_trace_t;
+static uirep_target_trace_t uirep_target_trace[24];
+static unsigned uirep_target_traced;
+static void uirep_target_trace_note(uint64_t tick,uint64_t raw) {
+    const unsigned char *component=raw?uirep_component(raw):NULL;unsigned char alive=0;
+    if(component) read_local(component+0xd1,&alive,1);
+    const uirep_target_trace_t *last=uirep_target_traced?&uirep_target_trace[(uirep_target_traced-1)%24u]:NULL;
+    if(last && last->raw==raw && last->found==(component!=NULL) && last->alive==alive) return;
+    uirep_target_trace[uirep_target_traced++%24u]=(uirep_target_trace_t){tick,raw,component!=NULL,alive};
+}
+static int uirep_target_trace_text(char *out,size_t capacity) {
+    int n=0;const unsigned first=uirep_target_traced>24u?uirep_target_traced-24u:0;
+    for(unsigned i=first;i<uirep_target_traced && n>=0 && (size_t)n<capacity;i++) {
+        const uirep_target_trace_t *t=&uirep_target_trace[i%24u];
+        n+=snprintf(out+n,capacity-(size_t)n,"%s%llu:%llx/%d/%d",i>first?",":"",(unsigned long long)t->tick,(unsigned long long)t->raw,t->found,t->alive);
+    }
+    return n>0 && (size_t)n<capacity?n:0;
+}
 static int uirep_frame_text(char *out,size_t capacity) {
     int n=snprintf(out,capacity,"PUIREP_1:%llu:%u:%016llx:%016llx",(unsigned long long)uirep_frame_tick,uirep_frame_events,(unsigned long long)uirep_frame_hash,
         (unsigned long long)(uirep_results_tick==uirep_frame_tick?uirep_results_hash:0));
     for(unsigned k=1;n>0 && (size_t)n<capacity && k<=pilot_slot_count && k<=PILOT_SLOTS;k++) {
         const unsigned char *player=k==1?pnat_player():pslots[k].player;int activity=0;uint64_t target=0;
         if(player) {read_local(player+UIREP_PLAYER_ACTIVITY,&activity,4);read_local(player+PRES_TARGET,&target,8);}
-        if(target && !uirep_component(target)) target=0;   /* dead: 9fcd70 clears it when someone asks, which is not simulation */
+        if(k==1) uirep_target_trace_note(uirep_frame_tick,target);
+        /* Dead: 9fcd70 clears the field when someone asks, which is not simulation. And a destroyed component leaves the
+         * ID table at a moment that is not simulation either (live 17 Nov: a ship destroyed two ticks after its deep scan
+         * finished was out of the world, +0xd1 = 0, at the same tick on both clients and out of the table a tick later on
+         * one of them), so out of the world counts as no target. */
+        if(target) {const unsigned char *component=uirep_component(target);unsigned char alive=0;
+            if(!component || !read_local(component+0xd1,&alive,1) || !alive) target=0;}
         int more=snprintf(out+n,capacity-(size_t)n,"%s%d/%llx",k==1?"|":",",activity,(unsigned long long)target);
         if(more<0 || (size_t)more>=capacity-(size_t)n) return 0;
         n+=more;

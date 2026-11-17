@@ -936,6 +936,8 @@ static int pnat_pass(uint64_t tick,unsigned char *controller,pilot_refresh_fn re
             /* Bodies (lockstep_pilot_foot_body.h): off the tree before any get-up of this tick reaches X4 or a slot's scope. */
             if(pfbody_armed && !pfbody_guard(tick)) return pnat_fail(pfbody_why);
             if(scl_armed && tick>=pstk_first_apply) {double scan_now=0;if(pnat_fn.time(&scan_now)) scl_frame_slot(1,scan_now);}   /* slot 1's scan */
+            if(scm_scan_on && tick>=pstk_first_apply) {double scan_now=0;if(pnat_fn.time(&scan_now)) scm_scan_step(pnat_player(),scan_now);}   /* slot 1's deep scan */
+            if(tick>=pstk_first_apply) uirep_target_sweep(pnat_player());   /* slot 1's target that left the world */
             if((pstk_slot_mask&~1u) && tick>=pstk_first_apply && !pslot_replay(tick)) return pnat_fail(pfoot_failed?pfoot_why:pslot_why);
             if(pfslot_armed) pfslot_frame();   /* slots 2..N on foot: this tick's receipt part */
             if(uirep_armed && !uirep_frame(tick,&why)) return pnat_fail(why);
