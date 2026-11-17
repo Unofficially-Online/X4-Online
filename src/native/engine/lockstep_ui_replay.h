@@ -1379,9 +1379,11 @@ static int uirep_pass(uint64_t tick) {
     return uirep_guard_pass(tick);
 }
 static void pss_restore(void);   /* lockstep_player_settings.h (through lockstep_ui_faction.h, included at the end) */
+static void rsch_restore(void);   /* lockstep_research_owner.h */
 static void uirep_restore(void) {
     if(!uirep_armed) return;
     uirep_stopped=1;
+    rsch_restore();
     mpp_restore_hook();
     uiguard_restore();
     uitrade_restore();

@@ -37,6 +37,10 @@ static void test_ui_lazy(void) {
     /* units blocked: the cached total. */
     assert(ul_units(station,NULL,0)==17 && ul_lua[UL_UNITS]==1);
     static unsigned char ship[0x40];memset(ship,0,sizeof(ship));*(uint64_t*)(ship+8)=0x9999;assert(ul_ui_query(UL_CARGO,ship,0,0) && ul_unmapped==1);
+    /* A replayed call that forces the cargo update is the simulation's step on every client: it runs, uncounted as a UI query. */
+    {   const uint64_t lua0=ul_lua[UL_CARGO],blocked0=ul_blocked,replayed0=ul_replayed;const LONG replaying=InterlockedExchange(&uirep_replaying,1);
+        assert(!ul_ui_query(UL_CARGO,station,0,1) && ul_replayed==replayed0+1 && ul_lua[UL_CARGO]==lua0 && ul_blocked==blocked0);
+        InterlockedExchange(&uirep_replaying,replaying);}
     assert(ul_status(out,sizeof(out))>0 && strstr(out,"mode=block frame=1077 lua=2/1/1 sim=0/1/0 other=0/0/1 blocked=3 unmapped=1 "));
     /* Row window: simulation calls in it are rows with their arguments and state. */
     {

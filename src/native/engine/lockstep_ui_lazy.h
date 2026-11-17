@@ -75,6 +75,7 @@ static unsigned char *ul_page; /* per target: trampoline at +0, entry stub at +0
 static ul_row_t *ul_ring;
 static volatile LONG64 ul_rows,ul_failures,ul_other[UL_TARGETS];
 static uint64_t ul_lua[UL_TARGETS],ul_sim[UL_TARGETS],ul_blocked,ul_unmapped,ul_keyed[UL_TARGETS],ul_unkeyed;
+static uint64_t ul_replayed;   /* forced updates of replayed calls: run, not blocked */
 static uint64_t *(*ul_tls_word_fn)(void); /* tests substitute */
 static uintptr_t ul_lua_base,ul_lua_end;
 static const char *ul_stage="idle";
@@ -157,6 +158,16 @@ static int ul_ui_query(unsigned target,const void *container,uint64_t a1,uint64_
     if(!lua) {
         ++ul_sim[target];ul_caller_count(target,chain);
         if(window) ul_record(target,container,chain,0,0,a1,a2,ul_state_of(target,container));
+        return 0;
+    }
+    /* A replayed call (lockstep_ui_replay.h: every client runs it at the same tick, in the same order) that FORCES the
+     * update is the simulation's own step, not a query of one client's UI: X4's StartResearch ends with
+     * 0x41a910(station, now, 1), which starts the queued item. Blocked, a research module that nothing else brings up
+     * never starts (hq7, 16 Nov: the headquarters of slot 2's faction kept its queue for good; X4's own player's started
+     * only because a story script asked that station for something). It runs keyed like a simulation call. */
+    if(target==UL_CARGO && (a2&0xff) && InterlockedCompareExchange(&uirep_replaying,0,0)) {
+        ++ul_replayed;
+        if(window) ul_record(target,container,chain,0,1,a1,a2,ul_state_of(target,container));
         return 0;
     }
     ++ul_lua[target];int block=ul_mode>=UL_BLOCK;if(block) ++ul_blocked;

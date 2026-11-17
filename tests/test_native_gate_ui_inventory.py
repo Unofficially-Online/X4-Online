@@ -172,7 +172,7 @@ WORLD = r'''
     S=X4LAN_UI_REPLAY_CORE.session({gate=gate,C=C,env=env,log=log,mask=extra.mask or 524288,slot_ships=function() return SLOT_SHIPS end,
       own_slot=slot,slots=2,script=extra.script})
     I=X4LAN_UI_INVENTORY_CORE.session({gate=gate,C=C,ffi=ffi,env=env,log=log,replay=S,own_slot=slot,factions=extra.factions,trade=extra.trade,
-      mpp=extra.mpp~=false,notify=function(text) notices[#notices+1]=text end,menus=function() return Menus end})
+      mpp=extra.mpp~=false,research_own=extra.research_own,notify=function(text) notices[#notices+1]=text end,menus=function() return Menus end})
     S.inventory=I
     return S
   end
@@ -767,6 +767,75 @@ class ExportTests(unittest.TestCase):
         self.assertIn('research:skipped:factions', apply(lua, g, 2, events, factions=True, trade=True))   # sent as slot 2's anyway
         self.assertIn('research:ran:research_x', apply(lua, g, 1, events, factions=True, trade=True))
 
+    def test_a_faction_of_its_own_researches_for_itself_when_research_belongs_to_a_faction(self):
+        """native_gate_research_per_faction (research_own): slot 2, with its own faction, starts and cancels research at
+        its faction's module in its faction scope; the other player-faction kinds stay slot 1's."""
+        own = dict(factions=True, trade=True, research_own=True)
+        lua, g = client(factions=True)
+        events = click(lua, g, 2, "menu('ResearchMenu').buttonStartResearch('research_x')", **own)
+        self.assertEqual(len(events), 1)
+        self.assertEqual(values(g.exports), [])                                   # the click itself ran nothing
+        self.assertIn('research:ran:research_x', apply(lua, g, 2, events, **own))
+        self.assertEqual(values(g.exports), ['StartResearch:research_x:500@x4lan_player2'])   # in slot 2's faction scope
+        cancel = click(lua, g, 2, "menu('ResearchMenu').buttonCancelResearch('research_x')", **own)
+        self.assertIn('research_cancel:ran:cancelled', apply(lua, g, 2, cancel, **own))
+        lua, g = client(factions=True)
+        self.assertEqual(click(lua, g, 2, "menu('TerraformingMenu').buttonStartProject('p')", **own), [])   # still slot 1's
+        # without the trade family there is no faction scope: refused before the click runs, skipped by an apply
+        lua, g = client(factions=True)
+        self.assertEqual(click(lua, g, 2, "menu('ResearchMenu').buttonStartResearch('research_x')", factions=True, research_own=True), [])
+        self.assertTrue(any('why=needs_trade_family' in row for row in values(g.logs)))
+        self.assertIn('research:skipped:factions', apply(lua, g, 2, events, factions=True, research_own=True))
+
+    def test_the_research_lists_join_the_receipt_once_the_gate_has_a_part(self):
+        lua, g = client(factions=True)
+        lua.execute("inv_session(1,{factions=true,trade=true,research_own=true});RECEIPT=S.frame(50)")
+        self.assertNotIn('RSCH_1', g.RECEIPT)                                     # a gate without a part: nothing
+        lua.execute("gate.research_receipt=function() return 'RSCH_1:1=2.aa;2=1.bb' end;RECEIPT=S.frame(51)")
+        self.assertIn('|RSCH_1:1=2.aa;2=1.bb', g.RECEIPT)
+        lua.execute("inv_session(1,{factions=true,trade=true});RECEIPT=S.frame(52)")
+        self.assertNotIn('RSCH_1', g.RECEIPT)                                     # the feature off: never asked
+
+    def test_the_scripts_hq_names_the_own_factions_first_research_module(self):
+        lua, g = client(factions=True)
+        lua.execute('''
+          C.GetNumHQs=function(f) return ffi.string(f)=='x4lan_player2' and 1 or 0 end
+          C.GetHQs=function(buf,n,f) buf[0]=900ULL;return 1 end
+          C.GetNumResearchModules=function(hq) return tonumber(hq)==900 and MODULES or 0 end
+          C.GetResearchModules=function(buf,n,hq) buf[0]=901ULL;return 1 end
+          local tools={ffi=ffi,C=C}
+          MODULES=1;FOUND=tostring(X4LAN_UI_INVENTORY_CORE.hq_research_module(tools,'x4lan_player2'))
+          local m,why=X4LAN_UI_INVENTORY_CORE.hq_research_module(tools,'player');NO_HQ=tostring(m)..':'..tostring(why)
+          MODULES=0;m,why=X4LAN_UI_INVENTORY_CORE.hq_research_module(tools,'x4lan_player2');NO_MODULE=tostring(m)..':'..tostring(why)
+          inv_session(2,{factions=true,trade=true});OWN2=I.own_faction()
+          inv_session(1,{factions=true,trade=true});OWN1=I.own_faction()''')
+        self.assertEqual((g.FOUND, g.NO_HQ, g.NO_MODULE), ('901ULL', 'nil:no_headquarters', 'nil:no_research_module'))
+        self.assertEqual((g.OWN2, g.OWN1), ('x4lan_player2', 'player'))
+
+    def test_the_research_menu_of_a_faction_of_its_own_lists_its_own_headquarters(self):
+        """The stock menu asks Helper.ffiVLA(list, type, C.GetNumHQs, C.GetHQs, "player"): client 2, with its own faction and
+        research per faction, gets its own faction's, asked inside its faction view; other lists and other clients as stock."""
+        setup = '''
+          VIEWS=0;gate.ui_faction_view=function(on) if on==1 then VIEWS=VIEWS+1;return 1 end;return 1 end
+          C.GetNumHQs=function(f) return 1 end;C.GetHQs=function() return 1 end;C.GetNumOther=function() return 1 end
+          ASKED={}
+          env.Helper.ffiVLA=function(result,t,sizefn,listfn,...) ASKED[#ASKED+1]=tostring(select(select('#',...),...))..'/'..VIEWS end
+        '''
+        lua, g = client(factions=True)
+        lua.execute(setup + """inv_session(2,{factions=true,trade=true,research_own=true});S.frame(41);LOCAL=1
+          env.Helper.ffiVLA({},'UniverseID',C.GetNumHQs,C.GetHQs,'player')
+          env.Helper.ffiVLA({},'UniverseID',C.GetNumOther,C.GetHQs,'player')
+          env.Helper.ffiVLA({},'UniverseID',C.GetNumHQs,C.GetHQs,'argon')
+          LOCAL=0;env.Helper.ffiVLA({},'UniverseID',C.GetNumHQs,C.GetHQs,'player')""")
+        self.assertEqual(values(g.ASKED), ['x4lan_player2/1', 'player/1', 'argon/1', 'player/1'])   # only the first: own faction, in the view
+        for options in ('{factions=true,trade=true}', '{trade=true,research_own=true}'):   # the feature off; coop
+            lua, g = client(factions='factions' in options)
+            lua.execute(setup + f"inv_session(2,{options});S.frame(41);LOCAL=1;env.Helper.ffiVLA({{}},'UniverseID',C.GetNumHQs,C.GetHQs,'player')")
+            self.assertEqual(values(g.ASKED), ['player/0'])
+        lua, g = client(factions=True)                                                     # slot 1 is the player faction
+        lua.execute(setup + "inv_session(1,{factions=true,trade=true,research_own=true});S.frame(41);LOCAL=1;env.Helper.ffiVLA({},'UniverseID',C.GetNumHQs,C.GetHQs,'player')")
+        self.assertEqual(values(g.ASKED), ['player/0'])
+
     def test_a_record_the_native_half_lost_refuses_the_click(self):
         lua, g = client()
         lua.execute('EXPORT_LOST=true')
@@ -929,6 +998,56 @@ PROBE_GUARD = uirep.PROBE_MOCK + r"""
   gate.ui_inventory_scope=function(on) return on==1 and 1 or '' end
 """
 PROBE_INVENTORY = PROBE_GUARD + CORE
+
+
+class KitLibraryTests(unittest.TestCase):
+    """A start's blueprints and research for a player with a faction of its own (factions mode): the probe's step."""
+    PROBE = KitInventoryTests.PROBE
+
+    def client(self, mode='factions'):
+        from lupa.luajit21 import LuaRuntime
+        lua = LuaRuntime(unpack_returned_tuples=True)
+        block = self.PROBE[self.PROBE.index('function pilot_view.kit_library(tick,slot,why)'):
+                           self.PROBE.index("-- A start's story for the player who took that start")]
+        lua.execute('''
+          given={};loud={}
+          pilot_view={ui_replay={slot_library=function(tick,k,why,kit)
+            given[#given+1]=tick..':'..k..':'..why..':'..#(kit.blueprints or {})..'/'..#(kit.research or {});return RESULT or 'given' end}}
+          ticklog={loud=function(kind,text,notice) loud[#loud+1]=kind..' '..text..' / '..tostring(notice) end}
+          cfg={native_gate_player_identity_plan={mode='%s',kits={
+            {slot=2,gamestart='a',money=5,omitted={},blueprints={'module_a','module_b'},research={'research_x'}},
+            {slot=3,gamestart='b',money=5,omitted={'blueprints','research'}}}}}
+        ''' % mode + block)
+        return lua, lua.globals()
+
+    def test_a_factions_kit_goes_to_the_slots_own_library(self):
+        lua, g = self.client()
+        lua.execute("pilot_view.kit_library(50,2,'window')")
+        self.assertEqual((values(g.given), values(g.loud)), (['50:2:window:2/1'], []))
+
+    def test_coop_a_kit_without_wares_and_a_slot_without_a_kit_do_nothing(self):
+        lua, g = self.client()
+        lua.execute("pilot_view.kit_library(50,3,'window');pilot_view.kit_library(50,4,'window')")
+        self.assertEqual(values(g.given), [])
+        lua, g = self.client(mode='coop')                      # coop: the identity steps gave them to the one shared library
+        lua.execute("pilot_view.kit_library(50,2,'window')")
+        self.assertEqual((values(g.given), values(g.loud)), ([], []))
+
+    def test_a_refusal_is_loud(self):
+        lua, g = self.client()
+        lua.execute("RESULT='no_library_per_faction';pilot_view.kit_library(664,2,'handover')")
+        self.assertEqual(len(values(g.loud)), 1)
+        self.assertIn('KIT_LIBRARY_REFUSED KIT_LIBRARY tick=664 slot=2 why=handover refused=no_library_per_faction', values(g.loud)[0])
+        lua.execute("loud={};pilot_view.ui_replay=nil;pilot_view.kit_library(664,2,'handover')")
+        self.assertIn('refused=no_ui_replay', values(g.loud)[0])
+
+    def test_when_the_step_runs(self):
+        self.assertIn("if type(w)=='table' and tick==w[1]+10 then", self.PROBE)                      # slots there from the start
+        self.assertIn("for k=2,PILOT_SLOTS_MAX do if not open[k] then pilot_view.kit_library(tick,k,'window') end end", self.PROBE)
+        self.assertIn('kit_library_at[h+14]=k', self.PROBE)                                              # a slot that joins
+        self.assertIn("pilot_view.kit_library(tick,k,'handover')", self.PROBE)
+        # the stock script of a plot that slots run as copies is named to the gate as player 1's own
+        self.assertIn("assert(type(name)=='string' and gate.mpp_first and gate.mpp_first(name)==1,'native_gate_plot_first refused: '..tostring(name))", self.PROBE)
 
 
 class ProbeTests(unittest.TestCase):

@@ -40,6 +40,7 @@ import xml.etree.ElementTree as ET
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import native_gate_gamestarts as gamestarts   # noqa: E402
 import native_gate_player_identity as identity  # noqa: E402
+import native_gate_plot_copies as plot_copies  # noqa: E402
 import native_gate_scenarios as scenarios     # noqa: E402
 
 SPEC_FORMAT = 'X4LAN_SESSION_START_SPEC_1'
@@ -200,6 +201,42 @@ def story_slots(slots):
     return dict(sorted(found.items()))
 
 
+def add_plots(spec, plots, root):
+    """Give slots their own copies of stock plots (native_gate_plot_copies.py; x4ls new-session --plot K=hq): plots is
+    {slot: [plot id, ...]}, root this PC's unpacked game data. A slot's entries are its 'plots' in the spec and the session.
+    Factions mode only: there a slot's copy names its own faction (x4lan_player<k>), so what its plot makes is its faction's;
+    in coop the players are one faction and share what the first plot gives (user decision, 16 Nov).
+    Slot 1 has no copy: its plot is the stock script. A plot with a form for it (hq_ready: the session begins with
+    player 1's headquarters; in coop the one the players share) is the spec's and the session's 'first_plots'."""
+    for k, ids in sorted((plots or {}).items()):
+        if int(k) == 1:
+            try:
+                spec['first_plots'] = [plot_copies.first_entry(plot_id, root) for plot_id in ids]
+                plot_copies.first_plots(spec)
+            except plot_copies.PlotError as error:
+                raise SessionError(f'--plot 1: {error}') from None
+            continue
+        if spec.get('mode') != 'factions':
+            raise SessionError('--plot is for factions mode: in coop the players are one faction and share the headquarters '
+                               '(--plot 1=hq_ready begins a session with it)')
+        slot = spec['slots'].get(str(k))
+        if slot is None:
+            raise SessionError(f'--plot {k}: slot {k} has no per-player start')
+        if len(set(ids)) != len(ids):
+            raise SessionError(f'--plot {k}: a plot named twice')
+        try:
+            slot['plots'] = [plot_copies.entry(plot_id, int(k), root, identity.pool(int(k))) for plot_id in ids]
+        except plot_copies.PlotError as error:
+            raise SessionError(f'--plot {k}: {error}') from None
+    return spec
+
+
+def story_code(slot, index=0):
+    """What X4LAN_Story.Begin is signalled with (event.param2): the slot for its start's story, the slot plus 100 times
+    i for its i-th plot copy (i from 1). The probe's S.slot_story computes the same."""
+    return int(slot) + 100 * int(index)
+
+
 def story_patch(story):
     """The diff patch of one stock start script for a per-player story (X4's own patch format for extensions; selectors
     and our own lines only, generated on this PC and never in git). The script's root cue Start runs only when the GAME
@@ -219,8 +256,10 @@ def story_patch(story):
             '</diff>\n')
 
 
-def story_md(stories):
-    """The generated MD that begins slot k's story: the probe signals the galaxy inside slot k's scope at the same tick
+def story_md(stories, plots=None, first=None):
+    """plots ({slot: [plot copy entries]}): each copy's root cue is begun the same way, under its own code (story_code).
+    first (player 1's plots begun with their result, plot_copies.first_plots): the cue PlotReady, see there.
+    The generated MD that begins slot k's story: the probe signals the galaxy inside slot k's scope at the same tick
     on every client (native_gate_story; tools/dev/native_gate_ui_replay_core.lua slot_story), this cue signals the
     start script's cue at once, so its first frame runs in that scope, where the gate claims it for slot k. A slot's
     story begins once (md.$X4LAN_StoryBegun is in every save, a join save too)."""
@@ -241,32 +280,96 @@ def story_md(stories):
         ET.SubElement(branch, 'debug_text', {'text': f"'[X4LAN] STORY_MD slot=%s script={story['script']} player=%s ship=%s sector=%s "
                                                      "time=%s'.[$slot, player.entity, player.ship, player.sector, player.age]"})
         ET.SubElement(branch, 'signal_cue_instantly', {'cue': f"md.{story['script']}.{story['cue']}"})
+    for k, entries in sorted((plots or {}).items()):
+        for i, e in enumerate(entries, 1):
+            branch = ET.SubElement(actions, 'do_elseif', {'value': f'$slot == {story_code(k, i)}'})
+            ET.SubElement(branch, 'append_to_list', {'name': 'md.$X4LAN_StoryBegun', 'exact': '$slot'})
+            ET.SubElement(branch, 'debug_text', {'text': f"'[X4LAN] STORY_MD slot={int(k)} plot={e['id']} script={e['copy']} player=%s "
+                                                         "ship=%s sector=%s time=%s'.[player.entity, player.ship, player.sector, player.age]"})
+            ET.SubElement(branch, 'signal_cue_instantly', {'cue': f"md.{e['copy']}.{e['cue']}"})
     none = ET.SubElement(actions, 'do_else')
     ET.SubElement(none, 'debug_text', {'text': "'[X4LAN] STORY_MD slot=%s begun=no_story time=%s'.[$slot, player.age]"})
+    # Diagnostic (native_gate_plot_debug = {{tick, code}, ...}; nothing signals it otherwise): a plot's own debug cue, in
+    # the stock script (code 1+100*j, j the plot's place among the session's plot ids) and in a slot's copy (story_code);
+    # a plot's d-th debug cue (from 1) has 1000*(d-1) more.
+    # The copy's cue is under the root cue the slot owns, so its frame runs as that slot's player.
+    debug = []
+    ids = sorted({e['id'] for entries in (plots or {}).values() for e in entries} | {e['id'] for e in first or ()})
+    for j, plot_id in enumerate(ids, 1):
+        plot = plot_copies.PLOTS[plot_id]
+        for d, name in enumerate(plot.get('debug') or ()):
+            debug.append((story_code(1, j) + 1000 * d, f"md.{plot['script']}.{name}", 1, plot_id))
+    for k, entries in sorted((plots or {}).items()):
+        for i, e in enumerate(entries, 1):
+            for d, name in enumerate(plot_copies.PLOTS[e['id']].get('debug') or ()):
+                debug.append((story_code(k, i) + 1000 * d, f"md.{e['copy']}.{name}", int(k), e['id']))
+    if debug:
+        cue = ET.SubElement(root.find('cues'), 'cue', {'name': 'PlotDebug', 'instantiate': 'true'})
+        ET.SubElement(ET.SubElement(cue, 'conditions'), 'event_object_signalled',
+                      {'object': 'player.galaxy', 'param': "'x4lan_plot_debug'"})
+        actions = ET.SubElement(cue, 'actions')
+        for n, (code, path, k, plot_id) in enumerate(debug):
+            branch = ET.SubElement(actions, 'do_if' if n == 0 else 'do_elseif', {'value': f'event.param2 == {code}'})
+            ET.SubElement(branch, 'debug_text', {'text': f"'[X4LAN] PLOT_DEBUG slot={k} plot={plot_id} cue={path} time=%s'.[player.age]"})
+            # signal_cue, not ..._instantly: the debug cue then runs as its own frame at the next MD update, as a plot's
+            # steps do (hq3, 16 Nov: signalled instantly it ran inside this unowned cue's frame and the copy's station was
+            # the plain player faction's instead of its slot's)
+            ET.SubElement(branch, 'signal_cue', {'cue': path})
+    # Player 1's plots begun with their result (x4ls new-session --plot 1=hq_ready): the probe signals the galaxy once, at
+    # the same tick on every client and outside any slot's scope (native_gate_plot_ready, S.plot_ready), with the plot's
+    # place in the list. The stock script's own cues do the work: the first ones run inside this frame, the next ones as
+    # their own frames after it, and the phase that is over is cancelled (the script handles that itself). Once per
+    # game: what was done is in every save (a resumed session, a join save), and a player faction that already has a
+    # headquarters keeps it.
+    if first:
+        cue = ET.SubElement(root.find('cues'), 'cue', {'name': 'PlotReady', 'instantiate': 'true'})
+        ET.SubElement(ET.SubElement(cue, 'conditions'), 'event_object_signalled',
+                      {'object': 'player.galaxy', 'param': "'x4lan_plot_ready'"})
+        actions = ET.SubElement(cue, 'actions')
+        new = ET.SubElement(actions, 'do_if', {'value': 'not md.$X4LAN_PlotReady?'})
+        ET.SubElement(new, 'set_value', {'name': 'md.$X4LAN_PlotReady', 'exact': '[]'})
+        again = ET.SubElement(actions, 'do_if', {'value': 'md.$X4LAN_PlotReady.indexof.{event.param2}'})
+        ET.SubElement(again, 'debug_text', {'text': "'[X4LAN] PLOT_READY plot=%s done=before time=%s'.[event.param2, player.age]"})
+        for j, e in enumerate(first, 1):
+            branch = ET.SubElement(actions, 'do_elseif', {'value': f'event.param2 == {j}'})
+            ET.SubElement(branch, 'append_to_list', {'name': 'md.$X4LAN_PlotReady', 'exact': 'event.param2'})
+            has = ET.SubElement(branch, 'do_if', {'value': 'player.headquarters'})
+            ET.SubElement(has, 'debug_text', {'text': f"'[X4LAN] PLOT_READY plot={e['id']} done=has_headquarters time=%s'.[player.age]"})
+            do = ET.SubElement(branch, 'do_else')
+            ET.SubElement(do, 'debug_text', {'text': f"'[X4LAN] PLOT_READY plot={e['id']} script={e['script']} done=signalled "
+                                                     "time=%s'.[player.age]"})
+            for name in e['instantly']:
+                ET.SubElement(do, 'signal_cue_instantly', {'cue': f"md.{e['script']}.{name}"})
+            for name in e['signal']:
+                ET.SubElement(do, 'signal_cue', {'cue': f"md.{e['script']}.{name}"})
+            for name in e['cancel']:
+                ET.SubElement(do, 'cancel_cue', {'cue': f"md.{e['script']}.{name}"})
     ET.indent(root, ' ')
     return ('<?xml version="1.0" encoding="utf-8"?>\n'
             '<!-- Generated by tools/dev/native_gate_session_start.py for one session (overlay only, never in git). -->\n'
             + ET.tostring(root, encoding='unicode') + '\n')
 
 
-def story_files(stories):
+def story_files(stories, plots=None, first=None):
     """{path inside the extension: text} of a session's stories: the patch of each start script (X4 reads a patch of
     another extension's file under extensions/<that extension>/ of ours; a base file at its own path) and the MD that
     begins them. The same files go into the capture overlay and every play overlay, so the session save is made with
     them and every client loads it with them."""
-    if not stories:
+    if not stories and not plots and not first:
         return {}
-    files = {f'md/{STORY_MD}': story_md(stories)}
+    files = {f'md/{STORY_MD}': story_md(stories, plots, first)}
+    if plots:   # the recipe of the slots' plot copies: every PC's launcher makes the copies from its own game
+        files[plot_copies.RECIPE] = plot_copies.recipe_text(plots)
     for story in stories.values():
         where = '' if story['extension'] == 'base' else f"extensions/{story['extension']}/"
         files[f"{where}md/{story['file']}"] = story_patch(story)
     return files
 
 
-def write_story_files(out, stories):
+def write_story_files(out, stories, plots=None, first=None):
     """Write story_files into an overlay folder (refuses to replace a file); returns the paths written."""
     written = []
-    for name, text in sorted(story_files(stories).items()):
+    for name, text in sorted(story_files(stories, plots, first).items()):
         path = Path(out) / name
         if path.exists():
             raise SessionError(f'{path} exists; a story file never replaces an overlay file')
@@ -370,7 +473,8 @@ def build_capture(spec, fixedtick_dll, out):
     extra = [f'X4LAN_CONFIG.native_gate_snapshot_hulls = {hulls}'] if hulls else []
     out = scenarios.build_capture_overlay(spec['base_start'], fixedtick_dll, out, allowed={spec['base_start']},
                                           extra_md=extra_md, extra_config=extra)
-    if write_story_files(out, story_slots(spec['slots'])):   # the save is made with the patched start scripts
+    if write_story_files(out, story_slots(spec['slots']), plot_copies.slot_plots(spec['slots']),
+                         plot_copies.first_plots(spec)):   # the save is made with the patched start scripts
         scenarios.write_manifest(out)
     if spec['mode'] == 'factions' and hulls:
         # The kits' wallet steps set x4lan_player<k>'s own account: the new game is made with the pool library that
@@ -493,7 +597,9 @@ def register(spec, snapshot):
             'player_macro': header['player']['macro'], 'player_sector': header['player']['sector'], 'fixture': fixture,
             'hulls': hulls, 'slots': {k: {'gamestart': v['gamestart'], 'class': v['class'], 'sector': v['hull']['sector'],
                                           'ship': v['hull']['macro'], 'world_omitted': v.get('world_omitted', []),
-                                          'story': v.get('story'), 'kit': v['kit']} for k, v in spec['slots'].items()},
+                                          'story': v.get('story'), 'plots': v.get('plots') or [], 'kit': v['kit']}
+                                      for k, v in spec['slots'].items()},
+            'first_plots': plot_copies.first_plots(spec),
             'spec_sha256': hashlib.sha256(json.dumps(spec, sort_keys=True).encode()).hexdigest()}
 
 

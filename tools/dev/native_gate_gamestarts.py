@@ -80,7 +80,10 @@ SPACESUIT = re.compile(r'_spacesuit_')
 #               k's scope, native_gate_probe.lua pilot_view.kit_inventory; needs missions per player, the scope's owner)
 #   ship, place a hull with the start's macro and loadout, created at its start position in the session save
 #               (the capture), because pilot slots need saved IDs fixed before the load
-APPLIES = {'factions': {'reputation', 'inventory'}, 'coop': {'blueprints', 'research', 'known', 'inventory', 'reputation'}}
+# Factions: blueprints and research go to slot k's faction's own library (the gate's library per faction, a session
+# default); map knowledge stays the one shared map and cannot be a slot's own.
+APPLIES = {'factions': {'blueprints', 'research', 'reputation', 'inventory'},
+           'coop': {'blueprints', 'research', 'known', 'inventory', 'reputation'}}
 OMITTABLE = ('blueprints', 'inventory', 'known', 'reputation', 'research')
 NEAR_KINDS = ('docked', 'on_foot')   # ship-only: the player's ship goes into open space near the start's zone
 SAME_START_OFFSET = 300   # metres along x between hulls of slots that take the same start

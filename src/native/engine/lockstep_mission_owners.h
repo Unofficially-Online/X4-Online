@@ -79,8 +79,11 @@ static unsigned mpp_owner_of(uint64_t cue_id) {
     for(unsigned i=0;i<mpp_count;i++) if(mpp_owners[i].cue==cue_id) return mpp_owners[i].slot;
     return 0;
 }
+static unsigned mpp_first_count;
+static int mpp_script_is_first(const unsigned char *cue);
 /* The slot owning this MD cue (the cue or its nearest owned ancestor), 0 = none, not a cue or unreadable. The frames' path:
- * guarded copies (sample_read), no system call per parent. */
+ * guarded copies (sample_read), no system call per parent. A cue of a plot the other slots run as copies of their own is
+ * slot 1's (mpp_script_is_first below). */
 static unsigned mpp_slot_of(const unsigned char *cue) {
     uintptr_t vt=0,at=(uintptr_t)cue;
     if(!cue || !sample_read(cue,&vt,8) || vt!=(uintptr_t)(image+SCRIPT_RNG_CUE_VT)) return 0;
@@ -92,6 +95,48 @@ static unsigned mpp_slot_of(const unsigned char *cue) {
         if(!sample_read((void *)(at+MPP_CUE_PARENT),&parent,8)) return 0;
         at=parent;
     }
+    return mpp_first_count && mpp_script_is_first(cue)?1u:0u;
+}
+/* A plot that other slots run as copies of their own (tools/dev/native_gate_plot_copies.py) is player 1's own in that
+ * session. gate.mpp_first("<Script>") names the stock script before the first tick; the scripts nobody owns hear every
+ * player (lockstep_pilot_death.h pvehk_forward), and this one would too: player 2's scan, docking or research would
+ * advance player 2's copy and player 1's plot. Its cues are left out there.
+ * More than that (17 Nov, run hq26: the stock plot's mission stood in player 2's mission list too, as every mission
+ * nobody owns does): the script is player 1's as a claimed cue is. mpp_slot_of answers 1 for its cues, so its frames
+ * are slot 1's (what they show and say is client 1's), its missions are in client 1's lists only and its listeners
+ * hear player 1 only. The answer is asked at every MD frame: a script object found to be named, or not, is remembered
+ * by its address (scripts live as long as the game). */
+#define MPP_FIRST 8u
+#define MPP_FIRST_SEEN 1024u
+static uint64_t mpp_first[MPP_FIRST];
+static uintptr_t mpp_first_scripts[MPP_FIRST],mpp_first_not[MPP_FIRST_SEEN];
+static volatile LONG64 mpp_first_kept;
+static int mpp_first_add(const char *script) {
+    const size_t n=script?strlen(script):0;
+    if(!n || n>=CUE_PATH_NAME_MAX) return 0;
+    const uint64_t key=cue_fnv(CUE_FNV_BASIS,script,n);
+    for(unsigned i=0;i<mpp_first_count;i++) if(mpp_first[i]==key) return 1;
+    if(mpp_first_count==MPP_FIRST) return 0;
+    memset(mpp_first_not,0,sizeof(mpp_first_not));   /* a script seen before it was named is asked again */
+    mpp_first[mpp_first_count++]=key;return 1;
+}
+/* 1: this cue (an instance or a static cue) is of a script named so. */
+static int mpp_script_is_first(const unsigned char *cue) {
+    uintptr_t def=0,script=0;char name[CUE_PATH_NAME_MAX];uint64_t size=0;
+    if(!mpp_first_count || !cue) return 0;
+    if(!sample_read(cue+CUE_PATH_DEF,&def,8) || !def) def=(uintptr_t)cue;
+    if(!sample_read((const void *)(def+CUE_PATH_SCRIPT),&script,8) || !script) return 0;
+    for(unsigned i=0;i<MPP_FIRST;i++) if(mpp_first_scripts[i]==script) {InterlockedIncrement64(&mpp_first_kept);return 1;}
+    const unsigned seen=(unsigned)((script>>4)%MPP_FIRST_SEEN);
+    if(mpp_first_not[seen]==script) return 0;
+    const int n=cue_string_with(read_local,script+CUE_PATH_SCRIPT_NAME,name,sizeof(name),&size);
+    if(n<=0) return 0;
+    const uint64_t key=cue_fnv(CUE_FNV_BASIS,name,(size_t)n);
+    for(unsigned i=0;i<mpp_first_count;i++) if(mpp_first[i]==key) {
+        for(unsigned j=0;j<MPP_FIRST;j++) if(!mpp_first_scripts[j]) {mpp_first_scripts[j]=script;break;}
+        InterlockedIncrement64(&mpp_first_kept);return 1;
+    }
+    mpp_first_not[seen]=script;
     return 0;
 }
 /* A full table: the claims of cues that are gone leave it, the others keep their order (the same on every client: the cues
@@ -552,7 +597,8 @@ static int mpp_arm(void) {
     if(stats.issued) return 0;   /* before the first tick, as every module the probe arms */
     if(!mpp_hook_install()) return 0;
     mpp_count=0;memset(mpp_active,0,sizeof(mpp_active));mpp_active_open=0;mpp_depth=0;mpp_depth1=0;mpp_generating=0;
-    mpp_story_slot=0;mpp_story_key=0;mpp_story_missed=0;
+    mpp_story_slot=0;mpp_story_key=0;mpp_story_missed=0;mpp_first_count=0;
+    memset(mpp_first_scripts,0,sizeof(mpp_first_scripts));memset(mpp_first_not,0,sizeof(mpp_first_not));
     mpp_ai_frames=mpp_ai_entered=mpp_ai_inside=mpp_ai_conflicts=mpp_ai_refused=0;mpp_armed=1;return 1;
 }
 static int mpp_status(char *out,size_t cap) {

@@ -639,25 +639,79 @@ function K.session(p)
  -- session): every client, the same tick, names the start script's static cue to the gate and signals the galaxy inside
  -- slot k's scope with the generation open; the MD signals that cue at once, the gate claims it for slot k at its first
  -- frame (gate.mpp_story) and everything below it and every root instance it makes is slot k's.
+ -- Diagnostic (native_gate_plot_debug): the generated story MD's PlotDebug cue signals a plot's own debug cue; every
+ -- client, the same tick, outside any slot's scope (a copy's cue is the owning slot's by its root cue).
+ local function plot_signal(tick,signal,row,code)
+  local galaxy=p.galaxy or (p.offers and p.offers.galaxy)
+  local done='no_galaxy'
+  if galaxy then
+   S.replaying=true;gate.ui_replay_bypass(1)
+   local ok,why_not=pcall(function() stock.SignalObject(galaxy(),signal,code) end)
+   gate.ui_replay_bypass(0);S.replaying=false
+   done=ok and 'signalled' or 'error:'..tostring(why_not)
+  end
+  log(row..' tick='..tick..' code='..tostring(code)..' '..done)
+  return done
+ end
+ function S.plot_debug(tick,code) return plot_signal(tick,'x4lan_plot_debug','PLOT_DEBUG',code) end
+ -- Player 1's plot begun with its result (native_gate_plot_ready; the story MD's PlotReady): the same way, once.
+ function S.plot_ready(tick,code) return plot_signal(tick,'x4lan_plot_ready','PLOT_READY',code) end
+ -- A start's blueprints and research for a slot with a faction of its own (factions mode; the gate's library per faction,
+ -- lockstep_research_owner.h): every client, the same tick, inside slot k's scope, where the universe's player is slot k's
+ -- with its own library, X4's own LearnBlueprint and AddResearch add to it (as an add_blueprints of its own mission would).
+ -- kit = {blueprints={ware, ...}, research={ware, ...}}. The row names what the slot's library holds afterwards.
+ function S.slot_library(tick,k,why,kit)
+  local blueprints,research=kit.blueprints or {},kit.research or {}
+  local done='no_scope'
+  if not (p.mpp and gate.mpp_scope and gate.research_list and p.library) then done='no_library_per_faction'
+  elseif gate.mpp_scope(k)==1 then
+   S.replaying=true;gate.ui_replay_bypass(1)
+   local ok,why_not=pcall(function()
+    for _,ware in ipairs(blueprints) do C.LearnBlueprint(ware) end
+    for _,ware in ipairs(research) do C.AddResearch(ware) end
+   end)
+   gate.ui_replay_bypass(0);S.replaying=false
+   if gate.mpp_unscope(k)~=1 then gate.ui_replay_fail('mpp_leave') end
+   done=ok and 'given' or 'error:'..tostring(why_not)
+  end
+  local has,count=nil,nil
+  if gate.research_list then has,count=gate.research_list(k) end
+  log('KIT_LIBRARY tick='..tick..' slot='..k..' why='..tostring(why)..' blueprints='..#blueprints..' research='..#research..' '..done..
+   ' now=blueprints:'..tostring(count)..' research:'..tostring(has and select(2,has:gsub('[^,]+','')) or nil))
+  return done
+ end
+ -- A slot's own copies of stock plots (tools/dev/native_gate_plot_copies.py) begin the same way in the same scope: the
+ -- slot's entry is then a list {<story path or false>, '<Copy>.<Cue>', ...}; the i-th copy's signal carries k+100*i.
  function S.slot_story(tick,k,why)
   local galaxy=p.galaxy or (p.offers and p.offers.galaxy)
-  local path=type(p.story)=='table' and p.story[k] or nil
+  local entry=type(p.story)=='table' and p.story[k] or nil
+  local list=type(entry)=='table' and entry or {entry}
+  local path=nil
+  for i=1,8 do if type(list[i])=='string' then path=list[i];break end end
   local done,before='no_scope',gate.ui_missions_state and gate.ui_missions_state() or '-'
   if type(path)~='string' then done='no_story'
   elseif not (p.mpp and galaxy and gate.mpp_generate) then done='no_missions_per_player'
   elseif not gate.mpp_story then done='gate_without_story'
   elseif gate.mpp_scope(k)==1 then
    S.replaying=true;gate.ui_replay_bypass(1)
+   local claimed,asked=true,0
    local ok,why_not=pcall(function()
     assert(gate.mpp_generate(k)==1,'generate refused')
-    assert(gate.mpp_story(k,path)==1,'story refused')
-    stock.SignalObject(galaxy(),'x4lan_story',k)
+    for i=1,8 do
+     local one=list[i]
+     if type(one)=='string' then   -- one cue per ask: named, signalled, claimed at its first frame
+      asked=asked+1
+      assert(gate.mpp_story(k,one)==1,'story refused '..one)
+      stock.SignalObject(galaxy(),'x4lan_story',k+100*(i-1))
+      if gate.mpp_story(0)~=1 then claimed=false;log('MPP_STORY tick='..tick..' slot='..k..' not_claimed='..one) end
+     end
+    end
    end)
-   local claimed=gate.mpp_story(0)==1
+   if not ok then gate.mpp_story(0);claimed=false end
    gate.mpp_generate(0)
    gate.ui_replay_bypass(0);S.replaying=false
    if gate.mpp_unscope(k)~=1 then gate.ui_replay_fail('mpp_leave') end
-   done=not ok and 'error:'..tostring(why_not) or claimed and 'signalled' or 'not_claimed'
+   done=(not ok and 'error:'..tostring(why_not) or claimed and 'signalled' or 'not_claimed')..' cues='..asked
   end
   log('MPP_STORY tick='..tick..' slot='..k..' why='..tostring(why)..' '..done..' before=['..tostring(before)..'] after=['..
    tostring(gate.ui_missions_state and gate.ui_missions_state() or '-')..'] '..tostring(gate.mpp_status and gate.mpp_status() or '-'))
@@ -830,7 +884,7 @@ end
 -- ship the player controls (ui/core/messageconfigurationgraph.xml: untargetableconditions is_playercontrolled), and in
 -- the probe's canonical frame that is slot 1's ship on every client, so slot k could not target it. The other ops keep
 -- the canonical frame their live runs (U5, U7) passed with. Guidance is set and ended where the map's click runs too.
-K.SCOPED={foot_where=true,transport_list=true,transport_to=true,transport_named=true,target_slot=true,target_none=true,target_home=true,dock_home=true,suit_home=true,guidance_slot=true,guidance_end=true,inv_read=true,inv_drop=true}
+K.SCOPED={foot_where=true,transport_list=true,transport_to=true,transport_named=true,target_slot=true,target_none=true,target_home=true,dock_home=true,suit_home=true,guidance_slot=true,guidance_end=true,inv_read=true,inv_drop=true,inv_research_seen=true,inv_research_hqs=true}
 -- A canonical op is the probe's own call, not a person's click: a test fixture that every client's plan holds at the same
 -- tick (MD runs it on every client alike, nothing is captured).
 K.CANONICAL={mis_fixture=true,mt_offer=true,gm_limit=true,slot_kill=true,slot_airlock=true,launch_stock=true,dock_kit=true,probe_far=true,groups_look=true,inv_seed=true,inv_look=true,inv_join_state=true,inv_join_give=true}
@@ -1284,6 +1338,9 @@ function K.script(plan,start,tools)
   --    objective, looking at it (MD MtGoto, a signal on the galaxy made by this client: every client replays it in
   --    this player's scope. Not a UI event: one made in slot k's scope is posted on slot k's player, where no cue
   --    that nobody owns listens; seen live, 17 Nov);
+  --  {tick,'mis_goto_at',x,y,z[,name]}: the same flight to a spot given in metres relative to that target, in the
+  --    target's own frame (a plot's "fly to this part of the station"); with a name the mission whose name holds
+  --    that text (blanks as _), new or not;
   --  {tick,'mis_target'}: that target becomes this player's target, as a click on it would make it;
   --  {tick,'account'}: the account this client's menus show (read only).
   elseif op=='offer_accept_named' then call=function()
@@ -1301,13 +1358,22 @@ function K.script(plan,start,tools)
   elseif op=='goto_slot' then call=function()
     tools.env.SignalObject(tools.env.ConvertStringTo64Bit(tostring(tools.C.GetPlayerGalaxyID())),'x4lan_goto',tools.slot_lua(e[3]),tonumber(e[4]) or 300)
     return 'goto slot '..tostring(e[3]) end
-  elseif op=='mis_goto' or op=='mis_target' then call=function()
+  elseif op=='mis_goto' or op=='mis_target' or op=='mis_goto_at' then call=function()
     for i=1,tonumber(tools.env.GetNumMissions()) or 0 do
-     local id=tostring((tools.env.GetMissionDetails(i)))
-     if not (tools.missions.before or {})[id] then
+     local id,name=tools.env.GetMissionDetails(i)
+     id=tostring(id)
+     local wanted
+     if op=='mis_goto_at' and e[6] then wanted=tostring(name):gsub('%s+','_'):find(tostring(e[6]),1,true)~=nil
+     else wanted=not (tools.missions.before or {})[id] end
+     if wanted then
       local target=(tostring(tools.C.GetMissionIDObjectiveTarget(tools.env.ConvertStringTo64Bit(id),1)):gsub('ULL$',''))
       if target=='0' then return 'no_target' end
       if op=='mis_target' then return tostring(tools.C.SetSofttarget(tools.env.ConvertStringTo64Bit(target),''))..' '..target end
+      if op=='mis_goto_at' then
+       tools.env.SignalObject(tools.env.ConvertStringTo64Bit(tostring(tools.C.GetPlayerGalaxyID())),'x4lan_goto',
+        tools.env.ConvertStringToLuaID(target),{tonumber(e[3]) or 0,tonumber(e[4]) or 0,tonumber(e[5]) or 0})
+       return 'goto_at '..target
+      end
       tools.env.SignalObject(tools.env.ConvertStringTo64Bit(tostring(tools.C.GetPlayerGalaxyID())),'x4lan_goto',
        tools.env.ConvertStringToLuaID(target),tonumber(e[3]) or 500)
       return 'goto '..target

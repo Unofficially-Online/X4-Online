@@ -303,6 +303,7 @@ local hud_refresh_at={}   -- ticks at which every client raises the HUD's ship-c
 local join_money_at={}    -- tick -> slot whose held start money goes back to the coop wallet (pilot_view.join_money)
 local story_at={}         -- tick -> slot whose start story begins (pilot_view.story): 30 ticks after its handover
 local kit_inventory_at={} -- tick -> slot whose start inventory goes to its own player (pilot_view.kit_inventory): 12 ticks after its handover
+local kit_library_at={}   -- tick -> slot whose start blueprints and research go to its own faction (pilot_view.kit_library): 14 ticks after
 if cfg.native_gate_join then
  local j=cfg.native_gate_join==true and {} or cfg.native_gate_join
  assert(type(j)=='table' and wire3 and cfg.native_gate_lookahead~='adaptive' and not cfg.native_gate_wire_crypto and not cfg.native_gate_peer_window,
@@ -589,6 +590,7 @@ if cfg.native_gate_join then
     hud_refresh_at[h+10]=true   -- the joiner presents its slot from H: its HUD takes its ship (every client, the same tick)
     join_money_at[h+10]=k       -- ...and in coop its start's money reaches the shared wallet now (pilot_view.join_money)
     kit_inventory_at[h+12]=k    -- ...and its start's inventory its own player (pilot_view.kit_inventory)
+    kit_library_at[h+14]=k      -- ...and its start's blueprints and research its own faction (pilot_view.kit_library)
     if type(cfg.native_gate_story)=='table' and cfg.native_gate_story[k] then story_at[h+30]=k end   -- ...and its start's story begins
     if cfg.native_gate_pilot_dump_handover then pilot_handover_dump.k,pilot_handover_dump.h=k,h end
     -- native_gate_nav_refresh_watch_handover = N: the watch's window to H-N..H+N, now that H is known
@@ -3114,6 +3116,9 @@ function pilot_view.arm_ui_replay(slot,window)
       end
      end
     end} or nil,
+  -- a start's blueprints and research go to a slot's own faction's library (S.slot_library): the gate keeps one per faction
+  library=cfg.native_gate_research_per_faction==true and cfg.native_gate_missions_per_player==true and
+   (pcall(ffi.cdef,'void LearnBlueprint(const char* wareid);') or true) and (pcall(ffi.cdef,'void AddResearch(const char* wareid);') or true) or nil,
   notify=function(text) ffi.C.ShowInfoLine(text,4) end,   -- every refusal of the families shows its info line (also without the guard)
   active_mission=missions_on and function() return (tostring(ffi.C.GetActiveMissionID()):gsub('ULL$','')) end or nil,
   menus=function() return type(Menus)=='table' and Menus or {} end}
@@ -3132,6 +3137,23 @@ function pilot_view.arm_ui_replay(slot,window)
     'native_gate_missions_per_player_ai_frames must be true and needs a gate that has it')
   end
   log('MISSIONS_PER_PLAYER_ARMED slot='..slot..' '..tostring(gate.mpp_status()))
+  -- Research per faction (lockstep_research_owner.h; native_gate_research_per_faction, a session default): what a player
+  -- faction researched is that faction's (coop: the one shared list also inside a slot's own scope; factions mode: each
+  -- slot's own list in its menus and calls, and a research module that finishes credits its owner's list).
+  if cfg.native_gate_research_per_faction~=nil and cfg.native_gate_research_per_faction~=false then
+   assert(cfg.native_gate_research_per_faction==true and gate.research_per_faction and gate.research_per_faction(1)==1,
+    'research per faction refused: '..tostring(gate.research_status and gate.research_status() or 'a gate without it'))
+   log('RESEARCH_PER_FACTION_ARMED slot='..slot..' '..tostring(gate.research_status()))
+  end
+  -- A plot that slots run as their own copies (native_gate_plot_first = {'<Script>', ...}, written by the session with
+  -- its plot copies): the stock script is player 1's own, the events of the other players do not reach it
+  -- (lockstep_mission_owners.h mpp_first; without it native_gate_shared_listeners hands them over).
+  if type(cfg.native_gate_plot_first)=='table' and #cfg.native_gate_plot_first>0 then
+   for _,name in ipairs(cfg.native_gate_plot_first) do
+    assert(type(name)=='string' and gate.mpp_first and gate.mpp_first(name)==1,'native_gate_plot_first refused: '..tostring(name))
+   end
+   log('PLOT_FIRST_ARMED slot='..slot..' scripts='..table.concat(cfg.native_gate_plot_first,',')..' '..tostring(gate.mpp_first()))
+  end
   -- The MD scheduler's own calls (a cue's delayed actions, pending states, forced cues) run in the cue's owner's scope
   -- too (lockstep_mission_owners.h). Here: after the arming above and after the MD modules that pin the scheduler
   -- routine as X4 has it (the timed checks, armed earlier in this frame). A gate that cannot (another build's bytes)
@@ -3179,6 +3201,7 @@ function pilot_view.arm_ui_replay(slot,window)
   local factions=type(plan_cfg)=='table' and plan_cfg.mode~=nil and plan_cfg.mode~='coop'
   S.inventory=icore.session{gate=gate,C=ffi.C,ffi=ffi,env=_G,log=ticklog.write,replay=S,own_slot=slot,factions=factions,
    trade=math.floor(mask/core.FAMILY.trade)%2==1,mpp=cfg.native_gate_missions_per_player==true,
+   research_own=cfg.native_gate_research_per_faction==true and cfg.native_gate_missions_per_player==true,
    notify=function(text) ffi.C.ShowInfoLine(text,4) end,menus=function() return type(Menus)=='table' and Menus or {} end,
    loud=function(kind,text) ticklog.loud(kind,text,'another player\'s inventory could not be brought over at the join') end}
   log('UI_INVENTORY_ARMED slot='..slot..' factions='..tostring(factions)..' mpp='..tostring(cfg.native_gate_missions_per_player==true))
@@ -3286,6 +3309,26 @@ function pilot_view.kit_inventory(tick,slot,why)
  assert(gate.mpp_unscope(slot)==1,'kit inventory: the scope of slot '..slot..' did not close')
  log(head..' applied='..(ok and 1 or 0)..' now='..table.concat(rows,',')..(ok and '' or ' error='..tostring(err)))
 end
+-- A start's blueprints and research for a player with a faction of its own (factions mode: the identity plan's
+-- kit.blueprints and kit.research; in coop the identity steps give them to the one shared library). Every client, the same
+-- tick: ten ticks into the pilot window for a slot that is there from the start, fourteen ticks after its handover for a
+-- slot that joins. They go to slot k's faction's own library (native_gate_research_per_faction, a session default): X4's
+-- LearnBlueprint and AddResearch inside slot k's scope (S.slot_library). Without the library per faction the start's
+-- wares would be player 1's: nothing is given and the row says so.
+function pilot_view.kit_library(tick,slot,why)
+ local plan=cfg.native_gate_player_identity_plan
+ if type(plan)~='table' or plan.mode~='factions' or type(plan.kits)~='table' then return end
+ local kit
+ for _,k in ipairs(plan.kits) do if k.slot==slot then kit=k end end
+ local n=kit and (#(type(kit.blueprints)=='table' and kit.blueprints or {})+#(type(kit.research)=='table' and kit.research or {})) or 0
+ if n==0 then return end
+ local S=pilot_view.ui_replay
+ local done=S and S.slot_library and S.slot_library(tick,slot,why,kit) or 'no_ui_replay'
+ if done~='given' then
+  ticklog.loud('KIT_LIBRARY_REFUSED','KIT_LIBRARY tick='..tick..' slot='..slot..' why='..tostring(why)..' refused='..tostring(done),
+   'start blueprints and research of player '..slot..' could not be given ('..tostring(done)..')')
+ end
+end
 -- A start's story for the player who took that start (native_gate_story = {[k]='<Script>.<Cue>'}, written by the session
 -- overlay for every slot 2..N whose start has a story; the session start tool's story_files). Every client,
 -- the same tick: 60 ticks into the pilot window for a slot that is there from the start, 30 ticks after its handover for
@@ -3308,6 +3351,21 @@ local function pilot_frame(s,tick)
    end
    if story_at[tick] then local k=story_at[tick];story_at[tick]=nil;pilot_view.story(tick,k,'handover') end
   end
+  -- Diagnostic native_gate_plot_debug = {{tick, code}, ...}: a plot's own debug cue at that tick (S.plot_debug).
+  if type(cfg.native_gate_plot_debug)=='table' then
+   for _,row in ipairs(cfg.native_gate_plot_debug) do
+    if type(row)=='table' and row[1]==tick and pilot_view.ui_replay and pilot_view.ui_replay.plot_debug then pilot_view.ui_replay.plot_debug(tick,row[2]) end
+   end
+  end
+  -- Player 1's plots begun with their result (native_gate_plot_ready = {place, ...}, written by the session for
+  -- x4ls new-session --plot 1=hq_ready): the story MD's PlotReady gets its signal once, 90 ticks into the pilot window,
+  -- on every client (a joiner is past that tick; the MD keeps what it did in every save).
+  if type(cfg.native_gate_plot_ready)=='table' and type(cfg.native_gate_pilot_window)=='table' and tick==cfg.native_gate_pilot_window[1]+90 then
+   for _,code in ipairs(cfg.native_gate_plot_ready) do
+    if pilot_view.ui_replay and pilot_view.ui_replay.plot_ready then pilot_view.ui_replay.plot_ready(tick,code)
+    else log('PLOT_READY tick='..tick..' code='..tostring(code)..' refused=no_ui_replay') end
+   end
+  end
  end
  do
   local w,join=cfg.native_gate_pilot_window,cfg.native_gate_join
@@ -3321,6 +3379,12 @@ local function pilot_frame(s,tick)
    for k=2,PILOT_SLOTS_MAX do if not open[k] then pilot_view.kit_inventory(tick,k,'window') end end
   end
   if kit_inventory_at[tick] then local k=kit_inventory_at[tick];kit_inventory_at[tick]=nil;pilot_view.kit_inventory(tick,k,'handover') end
+  if type(w)=='table' and tick==w[1]+10 then
+   local open={}
+   for _,k in ipairs(type(join)=='table' and type(join.absent)=='table' and join.absent or {}) do open[k]=true end
+   for k=2,PILOT_SLOTS_MAX do if not open[k] then pilot_view.kit_library(tick,k,'window') end end
+  end
+  if kit_library_at[tick] then local k=kit_library_at[tick];kit_library_at[tick]=nil;pilot_view.kit_library(tick,k,'handover') end
  end
  -- ten ticks into the pilot window (every client presents its slot by then) and ten ticks after a hot join's handover
  do

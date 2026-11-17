@@ -497,6 +497,24 @@ class MissionsPerPlayerProbeTests(ProbeTests):
                                                     'generate:0', 'unscope:2'])
             self.assertEqual(calls.count('signal:x4lan_story:2'), 1)
             self.assertTrue(any(f'MPP_STORY tick={start + 60} slot=2 why=window signalled' in line for line in c.values('logs')))
+        # A slot with its own copies of stock plots (the list form): the story, then each copy, one cue per ask in one scope;
+        # the i-th copy's signal carries k+100*i. A slot with copies only has false in the story's place.
+        for value, expected in (({2: ['GS_Terran1.Start', 'X4Ep1_Mentor_Subscriptions_P2.Start']},
+                                 ['scope:2', 'generate:2', 'story:2:GS_Terran1.Start', 'signal:x4lan_story:2', 'story:0',
+                                  'story:2:X4Ep1_Mentor_Subscriptions_P2.Start', 'signal:x4lan_story:102', 'story:0', 'generate:0', 'unscope:2']),
+                                ({2: [False, 'X4Ep1_Mentor_Subscriptions_P2.Start']},
+                                 ['scope:2', 'generate:2', 'story:2:X4Ep1_Mentor_Subscriptions_P2.Start', 'signal:x4lan_story:102', 'story:0',
+                                  'generate:0', 'unscope:2'])):
+            listed = dict(cfg, native_gate_story=value)
+            clients = [self.client(k, prelude=story, **listed) for k in (1, 2)]
+            run(clients, 1, start + 62)
+            for c in clients:
+                self.assertEqual(c.errors(), [], c.values('logs')[-3:])
+                calls = [call for call in c.values('story_calls') if not call.startswith('bypass')]
+                at = calls.index('scope:2')
+                self.assertEqual(calls[at:at + len(expected)], expected)
+                self.assertTrue(any(f'MPP_STORY tick={start + 60} slot=2 why=window signalled cues={len(expected) // 3 - 1}' in line
+                                    for line in c.values('logs')))
         # A slot whose scope cannot be entered: nothing is signalled, the row says so.
         clients = [self.client(k, prelude=story + 'STORY_NO_SCOPE=true', **cfg) for k in (1, 2)]
         run(clients, 1, start + 60)

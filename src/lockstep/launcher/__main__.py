@@ -123,6 +123,11 @@ def main(argv=None):
     j.add_argument('--startup', type=int, default=70)
     j.add_argument('--steam-fix', action='store_true')
     j.add_argument('--same-pc', action='store_true', help='test: the host runs on this PC too (own state file, its X4 tolerated)')
+    j.add_argument('--display', type=int, help='keep the client window on this monitor only (as x4ls play --display)')
+    j.add_argument('--no-focus', action='store_true', help='while the client starts its window gives the keyboard focus back')
+    j.add_argument('--never-focus', action='store_true',
+                   help='--no-focus for the whole session (a scripted test client beside a person at work)')
+    j.add_argument('--tile-skip', type=int, default=0, help="the window's cell on the tiling grid (as x4ls play --tile-skip)")
 
     sv = sub.add_parser('serve', help='the server of a kit made with make_playtest_kit.py --server: admits the players who '
                                       'choose Join and runs the relay (no X4 needed; Linux or Windows)')
@@ -187,6 +192,11 @@ def main(argv=None):
                     help="slots whose start ship keeps an NPC pilot. The default is none, as a stock start's own ship: with one, "
                          'that pilot appears in the seat when the player gets up')
     ns.add_argument('--unpiloted', default='', metavar='K[,K...]', help='the default for every slot now; accepted for older scripts')
+    ns.add_argument('--plot', action='append', default=[], metavar='K=PLOT[,PLOT]',
+                    help="slot K runs its own copy of a stock plot, as its own player (hq: the player headquarters plot; "
+                         "hq_ready: the same begun with the headquarters there, the mentor in it and research unlocked, as a "
+                         "start that comes with one; each PC makes the copy from its own game files). Factions mode. "
+                         "1=hq_ready: player 1 begins with the headquarters (in coop the one the players share)")
     ns.add_argument('--gate-dll', type=Path, required=True)
     ns.add_argument('--out', type=Path, required=True, help='new session folder (spec, save, session.json, overlay)')
     ns.add_argument('--minutes', type=float, default=40)
@@ -195,6 +205,8 @@ def main(argv=None):
     ns.add_argument('--game', type=Path)
     ns.add_argument('--lanes', type=Path)
     ns.add_argument('--timeout', type=int, default=900, help='seconds for the capture')
+    ns.add_argument('--display', type=int, help="the capture client's window on this monitor (1 = primary)")
+    ns.add_argument('--no-focus', action='store_true', help="the capture client's window never keeps the keyboard focus or the cursor")
     ns.add_argument('--steam-fix', action='store_true')
 
     rs = sub.add_parser('resume', help='a new session from the world of a periodic save (RUN/saves; src/lockstep/launcher/resume.py)')
@@ -267,9 +279,11 @@ def main(argv=None):
             base_start=args.base_start, players=args.players, mode=args.mode, out=args.out, gate_dll=args.gate_dll,
             starts=slots(args.start, '--start'), omit=slots(args.omit, '--omit'), minutes=args.minutes, open=args.open,
             story=tuple(int(k) for k in args.story.split(',') if k.strip()),
+            plots={k: [p for p in v.split(',') if p] for k, v in slots(args.plot, '--plot').items()},
             unpiloted=tuple(int(k) for k in args.unpiloted.split(',') if k.strip()),
             piloted=tuple(int(k) for k in args.piloted.split(',') if k.strip()),
-            sets=args.set, game=args.game, lanes=args.lanes, timeout=args.timeout, steam_fix=args.steam_fix))
+            sets=args.set, game=args.game, lanes=args.lanes, timeout=args.timeout, steam_fix=args.steam_fix,
+            display=args.display, focus=not args.no_focus))
         print(json.dumps(result, indent=2))
         return 0
     if args.command == 'snapshot':
@@ -343,7 +357,9 @@ def main(argv=None):
                                                          wait=args.wait, nonce=args.nonce, width=width, height=height, game=args.game,
                                                          lanes=args.lanes, startup=args.startup, steam_fix=args.steam_fix,
                                                          timeout=args.timeout, close_when_over=args.close_when_over,
-                                                         same_pc=args.same_pc,
+                                                         same_pc=args.same_pc, display=args.display,
+                                                         focus=not (args.no_focus or args.never_focus), never_focus=args.never_focus,
+                                                         tile_skip=args.tile_skip,
                                                          **({'state': session.ROOT / '.local/x4ls-join'} if args.same_pc else {})))
         print(json.dumps(result, indent=2))
         return 0 if result['outcome'] == 'played' else 1

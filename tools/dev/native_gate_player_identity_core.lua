@@ -162,7 +162,6 @@ local function wares(r,key,factions)
  local ok,n=pcall(list,w,'kit_wares')
  if not ok then refuse('kit_wares') end
  if n>K.KIT_ITEMS then refuse('kit_wares') end
- if n>0 and factions then refuse('kit_library_mode') end   -- one blueprint/research library: the player faction's
  local out={}
  for i=1,n do
   if not ident(w[i]) then refuse('kit_ware') end
@@ -328,8 +327,12 @@ function K.steps(P,digest)
    s=add({step=factions and 'reputation' or 'reputation_raise',slot=k.slot,faction=faction,other=r.faction,value=r.value/K.VALUE_SCALE})
    head(s,string.format('faction=%s other=%s value=%d',faction,r.faction,r.value))
   end
-  for _,w in ipairs(k.blueprints) do s=add({step='blueprint',slot=k.slot,ware=w});head(s,'ware='..w) end
-  for _,w in ipairs(k.research) do s=add({step='research',slot=k.slot,ware=w});head(s,'ware='..w) end
+  -- Coop: the one player library, here. Factions: slot k's faction has a library of its own and the probe gives the
+  -- start's wares inside slot k's scope (pilot_view.kit_library), as it gives the start's inventory: no step here.
+  if not factions then
+   for _,w in ipairs(k.blueprints) do s=add({step='blueprint',slot=k.slot,ware=w});head(s,'ware='..w) end
+   for _,w in ipairs(k.research) do s=add({step='research',slot=k.slot,ware=w});head(s,'ware='..w) end
+  end
   if k.known then
    for i,sector in ipairs(k.known.sectors) do
     s=add({step='known_sector',slot=k.slot,knownsector=sector})

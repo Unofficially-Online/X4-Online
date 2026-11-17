@@ -174,6 +174,10 @@ class HotJoinOptions:
     timeout: int = 0
     close_when_over: bool = False
     same_pc: bool = False  # test: the host runs on this PC too (session.JoinOptions.same_pc)
+    display: int | None = None   # the joiner's window: as session.JoinOptions
+    focus: bool = True
+    never_focus: bool = False
+    tile_skip: int = 0
 
 
 def request(host, port, token, slot, wait_s=600, log=print, sock=None, interval=1.0, nonce=None):
@@ -335,4 +339,5 @@ def hot_join(o, log=print):
                                             arm_at=None, overlay=overlay, snapshot=save, width=o.width, height=o.height,
                                             game=o.game, lanes=o.lanes, runs=o.runs, state=o.state, startup=o.startup,
                                             steam_fix=o.steam_fix, timeout=o.timeout, close_when_over=o.close_when_over,
-                                            tick_hz=None, run_dir=folder, same_pc=o.same_pc), log)
+                                            tick_hz=None, run_dir=folder, same_pc=o.same_pc, display=o.display, focus=o.focus,
+                                            never_focus=o.never_focus, tile_skip=o.tile_skip), log)

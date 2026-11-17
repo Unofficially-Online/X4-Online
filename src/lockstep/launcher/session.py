@@ -111,6 +111,10 @@ class JoinOptions:
     tick_hz: int | None = None
     run_dir: Path | None = None  # default: .local/runs/<time>-join<slot> (a hot join brings its own, with the join files)
     same_pc: bool = False  # test: the host's X4 runs on this PC too (no "X4 is running" refusal; own state file)
+    display: int | None = None   # the client window on this monitor only (as Options.display)
+    focus: bool = True           # False: the window gives the keyboard focus back while the client starts
+    never_focus: bool = False    # with focus False: for the whole session (a scripted client beside a person at work)
+    tile_skip: int = 0           # the window's cell on the tiling grid (other sessions' windows hold the cells before it)
 
 
 def free_udp_port(tcp_bind=None):
@@ -660,7 +664,12 @@ def join(o: JoinOptions, log=print):
     save_state(o, state)
     view, profile_id, proc, result = lanes / f'c{o.slot}', profile.PROFILES[o.slot - 1], None, {'outcome': 'failed'}
     play = Options(clients=o.clients, overlay=o.overlay, snapshot=o.snapshot, tick_hz=o.tick_hz, width=o.width,
-                   height=o.height, timeout=o.timeout, play=True, close_when_over=o.close_when_over)
+                   height=o.height, timeout=o.timeout, play=True, close_when_over=o.close_when_over,
+                   display=o.display, focus=o.focus, never_focus=o.never_focus and not o.focus, tile_skip=o.tile_skip)
+    import threading
+    placed, started = threading.Event(), []
+    if play.display or not play.focus:
+        start_placer(play, started, placed)   # the window goes to its monitor as soon as it exists, without the focus
     try:
         game.create_view(install, view)
         state['views'].append(str(view))
@@ -673,14 +682,22 @@ def join(o: JoinOptions, log=print):
         profile.prepare(profile_id, [*game.dlc_ids(view), extension.EXTENSION_ID], o.width, o.height, o.snapshot)
         if o.steam_fix:
             steam.fix(o.state / 'steam-fix.json')
+        if o.same_pc:
+            # The host's client and other sessions' clients run on this PC: one that started a moment ago may hold X4's
+            # instance mutex, as before a play client's start. Twice a joiner started beside freshly started clients
+            # of other sessions stayed at 90 MB with no CPU time and no log until it was killed (17 Nov); the mutex is
+            # the likely cause, not a proven one.
+            release_beside(set(), log)
         proc = subprocess.Popen(client_command(view, profile_id, o.slot, snapshot_seed(o.snapshot)), cwd=view,
                                 env=steam.client_environment())
         state['pids'].append(proc.pid)
+        started.append((o.slot, profile_id, proc))
         save_state(o, state)
         log(f'client {o.slot}: pid {proc.pid}, profile {profile_id}, relay {host}:{port}, '
             + (f'loads in {round(o.arm_at - time.time())} s' if o.arm_at is not None else 'loads the join save at the start menu'))
         result = monitor_play(play, run_dir, None, [(o.slot, profile_id, proc)], log)
     finally:
+        placed.set()
         if proc and proc.poll() is None:
             kill(proc.pid)
         time.sleep(2)
@@ -749,6 +766,7 @@ def capture_snapshot(out, gamestart='custom_creative', game_dir=None, lanes=None
         if steam_fix:
             steam.fix(Path(state_dir) / 'steam-fix.json')
         args = client_command(view, profile.CAPTURE_PROFILE, 1, seed)[:-1] + [log_name]
+        release_beside(set(), log)   # beside other sessions' clients: one of them may hold X4's instance mutex right now
         proc = subprocess.Popen(args, cwd=view, env=steam.client_environment(), startupinfo=None if focus else no_activate_startup())
         state['pids'].append(proc.pid)
         save_state(o, state)

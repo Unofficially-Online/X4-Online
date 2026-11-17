@@ -267,6 +267,7 @@ static void pres_use_image(void) {
 }
 /* ---- the presentation scope ---- */
 static int pres_enter(void);static void pres_leave(void);
+static void rsch_view_enter(unsigned k);static void rsch_view_leave(unsigned k);   /* lockstep_research_owner.h */
 static unsigned char *pres_plan_presenter(unsigned char *flag) {
     unsigned char *manager=NULL,*presenter=NULL;
     if(!read_local(pnat_base+PRES_UI_MANAGER,&manager,8) || !manager || !read_local(manager+8,&presenter,8) || !presenter ||
@@ -411,6 +412,7 @@ static int pres_enter(void) {
     pres_foot_enter(p1,s,pres_slot);   /* a walking slot: its interactables and its floor (the terminal, header above) */
     InterlockedExchange(&pres_open,1);InterlockedIncrement64(&pres_scopes);
     mpp_active_enter(pres_slot);   /* this client's own active mission on its HUD and in its menus */
+    rsch_view_enter(pres_slot);    /* and its own faction's research, when it has its own faction */
     if(pres_settings_hook) pres_settings_hook(1);
     return 1;
 }
@@ -418,6 +420,7 @@ static void pres_leave(void) {
     pslot_slot *s=&pslots[pres_slot];unsigned char *p1=pslot_p1;unsigned n=0,p=0;
     if(!pres_open) return;
     if(pres_settings_hook) pres_settings_hook(0);
+    rsch_view_leave(pres_slot);
     mpp_active_leave(pres_slot,0);
     pres_foot_leave(p1,s);
     peye_leave();

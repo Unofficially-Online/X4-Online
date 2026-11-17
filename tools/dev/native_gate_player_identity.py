@@ -214,8 +214,6 @@ def _wares(r, key, factions):
     wares = r.get(key, [])
     if not isinstance(wares, list) or len(wares) > KIT_ITEMS:
         raise Refused('kit_wares')
-    if wares and factions:
-        raise Refused('kit_library_mode')   # one blueprint/research library: the player faction's
     if not all(_ident(w) for w in wares):
         raise Refused('kit_ware')
     if not _ascending(wares):
@@ -369,9 +367,12 @@ def steps(P, plan_digest=None):
         # Factions: slot k's faction takes the start's value. Coop: the shared faction only ever gains (reputation_raise).
         for r in k['reputation']:
             add('reputation' if factions else 'reputation_raise', slot, f"faction={faction} other={r['faction']} value={r['value']}")
-        for w in k['blueprints']:
+        # Coop: the one player library, here. Factions: slot k's faction has a library of its own (the gate's
+        # lockstep_research_owner.h), and the probe gives the start's wares inside slot k's scope (pilot_view.kit_library),
+        # as it gives the start's inventory: no step here.
+        for w in k['blueprints'] if not factions else ():
             add('blueprint', slot, f'ware={w}')
-        for w in k['research']:
+        for w in k['research'] if not factions else ():
             add('research', slot, f'ware={w}')
         if k['known']:
             for i, s in enumerate(k['known']['sectors'], 1):

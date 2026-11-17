@@ -470,6 +470,7 @@ static void pslot_post_leave(unsigned k,pslot_slot *s) {
     *cell=pslot_post_saved[k];
 }
 static void mpp_active_enter(unsigned k);static void mpp_active_leave(unsigned k,int keep);   /* lockstep_mission_owners.h */
+static void rsch_slot_enter(unsigned k);static void rsch_slot_leave(unsigned k);   /* lockstep_research_owner.h */
 static int pslot_enter(unsigned k) {
     pslot_slot *s=k>=2 && k<=PILOT_SLOTS?&pslots[k]:NULL;unsigned char *universe=NULL,*now=NULL;
     if(!s || !s->player || !s->length || pstk_scope_slot || pres_open || !pslot_frame_thread() || !vpl_reentry_clear(pnat_base) ||
@@ -493,6 +494,7 @@ static int pslot_enter(unsigned k) {
     pstk_scope_slot=k;InterlockedExchange(&pslot_in_scope,1);
     pslot_post_enter(k,s); /* ship k's pilot post answers P_k inside the scope */
     mpp_active_enter(k);   /* slot k's active mission (lockstep_mission_owners.h) */
+    rsch_slot_enter(k);    /* a slot of X4's player faction reads and adds to the one shared research list */
     if(s->controller) pslot_set_routes(s,1);
     InterlockedIncrement64(&s->scopes);
     return 1;
@@ -507,6 +509,7 @@ static int pslot_leave(unsigned k) {
                        pslot_set_routes(s,0);}
     pslot_post_leave(k,s);
     mpp_active_leave(k,1);
+    rsch_slot_leave(k);
     if(universe) *(unsigned char *volatile*)(universe+VPS_SINGLETON)=pslot_p1;
     if(pslot_exchange(s->store,s->length)<0) ok=0;
     if(pfslot_armed) {pfslot_bank_exchange(k);if(pfslot_bank_hash_live()!=pslot_bank_hash) ok=0;}   /* the canonical walking bank back */

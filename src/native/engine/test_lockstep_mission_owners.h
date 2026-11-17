@@ -238,6 +238,36 @@ static void test_mission_owners(void) {
         mpp_count=0;assert(mpp_restore("v2||",4) && !mpp_count);
         assert(mpp_restore("v2||2:5",7) && mpp_active[2]==5);memset(mpp_active,0,sizeof(mpp_active));
         mpp_armed=0;assert(!mpp_restore("v2||",4));}
+    /* a plot the others run as copies is player 1's own: its cues (a static cue, an instance through its static cue) are
+     * named by their script; other scripts and an unreadable cue are not */
+    {   static unsigned char script[0x80],other[0x80],cue[0x200],instance[0x200],foreign[0x200];
+        const char *name="Plot_Script",*other_name="Another";uint64_t size=strlen(name),capacity=15;uintptr_t at;
+        memcpy(script+CUE_PATH_SCRIPT_NAME,name,size);memcpy(script+CUE_PATH_SCRIPT_NAME+0x10,&size,8);memcpy(script+CUE_PATH_SCRIPT_NAME+0x18,&capacity,8);
+        size=strlen(other_name);
+        memcpy(other+CUE_PATH_SCRIPT_NAME,other_name,size);memcpy(other+CUE_PATH_SCRIPT_NAME+0x10,&size,8);memcpy(other+CUE_PATH_SCRIPT_NAME+0x18,&capacity,8);
+        at=(uintptr_t)cue;memcpy(cue+CUE_PATH_DEF,&at,8);memcpy(instance+CUE_PATH_DEF,&at,8);
+        at=(uintptr_t)script;memcpy(cue+CUE_PATH_SCRIPT,&at,8);
+        at=(uintptr_t)foreign;memcpy(foreign+CUE_PATH_DEF,&at,8);at=(uintptr_t)other;memcpy(foreign+CUE_PATH_SCRIPT,&at,8);
+        const uintptr_t cue_vt=(uintptr_t)image+SCRIPT_RNG_CUE_VT;const unsigned owners=mpp_count;
+        memcpy(cue,&cue_vt,8);memcpy(instance,&cue_vt,8);memcpy(foreign,&cue_vt,8);
+        mpp_count=0;mpp_first_count=0;mpp_first_kept=0;
+        memset(mpp_first_scripts,0,sizeof(mpp_first_scripts));memset(mpp_first_not,0,sizeof(mpp_first_not));
+        assert(!mpp_script_is_first(cue) && !mpp_slot_of(cue));              /* nothing named: nothing kept, nobody's */
+        assert(!mpp_first_add("") && !mpp_first_add(NULL) && mpp_first_add("Plot_Script") && mpp_first_add("Plot_Script") && mpp_first_count==1);
+        assert(mpp_script_is_first(cue) && mpp_script_is_first(instance) && !mpp_script_is_first(foreign) && !mpp_script_is_first(NULL) &&
+               mpp_first_kept==2);
+        /* ...and its cues are slot 1's: frames, mission lists and listeners ask mpp_slot_of; another script's stay nobody's.
+         * The script object is remembered, the other one too (asked again, the same answers) */
+        assert(mpp_slot_of(cue)==1 && mpp_slot_of(instance)==1 && !mpp_slot_of(foreign) && mpp_first_scripts[0]==(uintptr_t)script);
+        assert(mpp_slot_of(cue)==1 && !mpp_slot_of(foreign) && !mpp_script_is_first(foreign));
+        /* a script named after it was seen is asked again */
+        assert(mpp_first_add("Another") && mpp_slot_of(foreign)==1);
+        mpp_first_count=1;memset(mpp_first_scripts,0,sizeof(mpp_first_scripts));memset(mpp_first_not,0,sizeof(mpp_first_not));
+        mpp_count=owners;
+        for(unsigned i=0;i<MPP_FIRST-1;i++) {char more[16];snprintf(more,sizeof(more),"S%u",i);assert(mpp_first_add(more));}
+        assert(!mpp_first_add("One_Too_Many") && mpp_first_count==MPP_FIRST);
+        mpp_first_count=0;mpp_first_kept=0;
+        memset(mpp_first_scripts,0,sizeof(mpp_first_scripts));memset(mpp_first_not,0,sizeof(mpp_first_not));}
     pstk_scope_slot=scope;pslots[2].player=player;mpp_armed=0;mpp_count=0;
     mpp_claims=mpp_claim_gone=mpp_full=mpp_frames=mpp_entered=mpp_inside=mpp_conflicts=mpp_refused=mpp_leave_failed=mpp_calls=mpp_call_refused=0;
     mpp_active_swaps=mpp_active_gone=mpp_active_shown=mpp_active_shown_changed=0;memset(mpp_active,0,sizeof(mpp_active));mpp_active_open=0;

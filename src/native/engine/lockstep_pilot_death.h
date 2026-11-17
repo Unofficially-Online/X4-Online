@@ -490,7 +490,10 @@ static void pvehk_deliver_leave(int scope) {if(scope>=2 && scope<=(int)PILOT_SLO
  * still registered, 0x999dc0, gets vtable[4](listener, source, time, type, event); here once with player 1's object
  * as the source and once with slot k's, see the call), with these limits:
  *   - only listeners that are MD cues (vtable 0x2c75170) owned by no slot (lockstep_mission_owners.h): a mission
- *     player 1 accepted keeps hearing player 1 only, and the engine's own listeners (mission manager, UI) too;
+ *     player 1 accepted keeps hearing player 1 only, and the engine's own listeners (mission manager, UI) too; nor a
+ *     plot the other players run as copies of their own (lockstep_mission_owners.h mpp_script_is_first);
+ *   - not the notices about a library that is slot k's faction's alone (research, blueprints, its production:
+ *     lockstep_research_owner.h rsch_event_private): the world's scripts take those as the one player faction's;
  *   - inside slot k's scope, so the script's player.entity, player.ship and player.sector are slot k's and what it
  *     starts is seen from that player (an instance it makes stays everybody's unless a claim is on the stack).
  * A one-time script goes to whoever triggers it first. Status shared=on/events/calls/owned/over. */
@@ -504,6 +507,8 @@ static void pvehk_deliver_leave(int scope) {if(scope>=2 && scope<=(int)PILOT_SLO
 static int pvehk_forward_on;
 static volatile LONG64 pvehk_forward_events,pvehk_forward_calls,pvehk_forward_owned,pvehk_forward_over;
 static unsigned mpp_slot_of(const unsigned char *cue);   /* lockstep_mission_owners.h */
+static int mpp_script_is_first(const unsigned char *cue);   /* ...a plot the others have copies of: player 1's own */
+static int rsch_event_private(unsigned k,unsigned type);    /* lockstep_research_owner.h: a notice about slot k's faction's own library */
 /* tests: in place of X4's lookup (then no registration check) and of the cue's owner */
 static unsigned char *(*pvehk_forward_lookup_test)(void *source,unsigned type);
 static unsigned (*pvehk_forward_owner_test)(const unsigned char *cue);
@@ -520,8 +525,9 @@ static void pvehk_forward(unsigned k,unsigned char *event,double now) {
         void **vtable=NULL;unsigned char *entry=NULL;void **at=NULL,**end=NULL;
         if(read_local(event,&vtable,8) && vtable) {
             type=((unsigned(*)(void*))vtable[1])(event);
-            entry=pvehk_forward_lookup_test?pvehk_forward_lookup_test(first,type):
-                  ((unsigned char*(*)(void*,unsigned,unsigned char))(void*)(pnat_base+PVEHK_FWD_LOOKUP))(first,type,0);
+            if(!rsch_event_private(k,type))
+                entry=pvehk_forward_lookup_test?pvehk_forward_lookup_test(first,type):
+                      ((unsigned char*(*)(void*,unsigned,unsigned char))(void*)(pnat_base+PVEHK_FWD_LOOKUP))(first,type,0);
         }
         if(entry && read_local(entry+8,&at,8) && read_local(entry+0x10,&end,8) && at && end>at) {
             for(;at<end;at++) {
@@ -537,7 +543,9 @@ static void pvehk_forward(unsigned k,unsigned char *event,double now) {
             if(!cue || (!pvehk_forward_lookup_test &&
                         !((unsigned char(*)(void*,void*,unsigned))(void*)(pnat_base+PVEHK_FWD_LISTENS))(first,cue,type))) continue;
             if(!read_local(cue,&cv,8) || cv!=(void**)(void*)(pnat_base+SCRIPT_RNG_CUE_VT)) continue;   /* the engine's own listeners stay player 1's */
-            if(pvehk_forward_owner_test?pvehk_forward_owner_test(cue):mpp_slot_of(cue)) {InterlockedIncrement64(&pvehk_forward_owned);continue;}
+            if(pvehk_forward_owner_test?pvehk_forward_owner_test(cue):mpp_slot_of(cue) || mpp_script_is_first(cue)) {
+                InterlockedIncrement64(&pvehk_forward_owned);continue;
+            }
             InterlockedIncrement64(&pvehk_forward_calls);
             /* Twice, for the two forms a script's condition has. An object condition (event_object_... object=
              * "player.entity") holds player 1's object and takes the event from that source; a player condition

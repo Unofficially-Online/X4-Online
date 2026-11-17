@@ -187,6 +187,8 @@ static int uitrade_account_ensure(unsigned slot) {
 
 /* ---- the faction scope ---- */
 static void *volatile *uitrade_player_faction(void) {return (void*volatile*)(pnat_base+UITRADE_PLAYER_FACTION);}
+static unsigned uitrade_scope_slot;
+static void rsch_view_enter(unsigned k);static void rsch_view_leave(unsigned k);   /* lockstep_research_owner.h */
 /* 1 opened (g_PlayerFaction = slot k's faction), 0 nothing to do (it is already), -1 refused: not inside an apply on the frame
  * thread, a scope open, no faction (no ship). */
 static int uitrade_scope_enter(unsigned slot) {
@@ -197,12 +199,14 @@ static int uitrade_scope_enter(unsigned slot) {
     if(!faction || !now) {InterlockedIncrement64(&uitrade_scope_refused);return -1;}
     if(faction==now) {InterlockedIncrement64(&uitrade_scope_same);return 0;}
     uitrade_scope_saved=now;uitrade_scope_faction=faction;*uitrade_player_faction()=faction;uitrade_scope_open=1;
+    uitrade_scope_slot=slot;rsch_view_enter(slot);   /* the call reads and changes that faction's research */
     InterlockedIncrement64(&uitrade_scopes);return 1;
 }
 /* 1 the scope closed as it was opened; 0 something changed g_PlayerFaction inside it (it is put back all the same). */
 static int uitrade_scope_leave(void) {
     if(!uitrade_scope_open) return 1;
     int ok=*uitrade_player_faction()==uitrade_scope_faction;
+    rsch_view_leave(uitrade_scope_slot);uitrade_scope_slot=0;
     *uitrade_player_faction()=uitrade_scope_saved;uitrade_scope_open=0;uitrade_scope_saved=uitrade_scope_faction=NULL;
     return ok;
 }

@@ -92,6 +92,7 @@
 #include "test_lockstep_virtual_players.h"
 #include "test_lockstep_join.h"
 #include "test_lockstep_periodic_save.h"
+#include "test_lockstep_research_owner.h"
 #include "test_lockstep_world_nav_hash.h"
 static uint64_t test_rng;
 static unsigned test_calls,test_cheap,test_action_throw,test_action_stop;
@@ -1192,6 +1193,7 @@ int main(int argc,char **argv) {
     test_world_created();
     test_join();
     test_periodic_save();
+    test_research_owner();
     test_world_nav_hash();
     test_join_body();
     test_runtime_ids();

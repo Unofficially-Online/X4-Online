@@ -765,8 +765,23 @@ def build_overlay(args):
     lines, plan, orders = config_block(args)
     # A session's start stories (native_gate_session_start.py story_files): slot k's start script runs for slot k.
     stories = session_start.story_slots((getattr(args, 'session_data', None) or {}).get('slots'))
-    if stories:
-        lines.append('X4LAN_CONFIG.native_gate_story = {' + ','.join(f"[{k}]='{s['script']}.{s['cue']}'" for k, s in stories.items()) + '}')
+    # ...and its own copies of stock plots (native_gate_plot_copies.py): {[k]={<story or false>, '<Copy>.<Cue>', ...}}.
+    plots = session_start.plot_copies.slot_plots((getattr(args, 'session_data', None) or {}).get('slots'))
+    ready = session_start.plot_copies.first_plots(getattr(args, 'session_data', None))
+    if ready:   # player 1's plots begun with their result: the story MD's PlotReady, signalled once by the probe
+        lines.append('X4LAN_CONFIG.native_gate_plot_ready = {' + ','.join(str(j) for j in range(1, len(ready) + 1)) + '}')
+    if stories or plots:
+        def story_value(k):
+            story = f"'{stories[k]['script']}.{stories[k]['cue']}'" if k in stories else 'false'
+            if k not in plots:
+                return story
+            return '{' + ','.join([story] + [f"'{e['copy']}.{e['cue']}'" for e in plots[k]]) + '}'
+        lines.append('X4LAN_CONFIG.native_gate_story = {' + ','.join(f'[{k}]={story_value(k)}' for k in sorted(set(stories) | set(plots))) + '}')
+    if plots:
+        # The stock script of a plot that slots run as copies is player 1's own (lockstep_mission_owners.h mpp_first):
+        # the scripts nobody owns hear every player, and without this player 2's steps would also advance player 1's plot.
+        first = sorted({session_start.plot_copies.PLOTS[e['id']]['script'] for entries in plots.values() for e in entries})
+        lines.append('X4LAN_CONFIG.native_gate_plot_first = {' + ','.join(f"'{name}'" for name in first) + '}')
     stripped = strip_own(config.read_text())
     # A session base (native_gate_test, slot, port, token) runs the session defaults (native_gate_defaults.lua): its checks
     # read the effective base, and the overlay writes only the lines that differ from the defaults.
@@ -813,7 +828,7 @@ def build_overlay(args):
     if 'X4LAN_NATIVE_PLAYER_IDENTITY' not in probe.read_text(encoding='utf-8'):
         raise ValueError(f'{probe} has no player identity hook; pass --probe tools/dev/native_gate_probe.lua')
     shutil.copytree(base, out, ignore=shutil.ignore_patterns('x4lane-manifest.json'))
-    session_start.write_story_files(out, stories)
+    session_start.write_story_files(out, stories, plots, ready)
     if args.gate_dll:
         shutil.copy2(args.gate_dll, out/'native/x4lan_gate_64.dll')
     if args.probe:

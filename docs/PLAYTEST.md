@@ -389,6 +389,136 @@ Smoke ns1/ns2 (8 Nov): `--base-start x4ep1_gamestart_discover --players 2 --mode
 (0 desyncs, 0 errors): slot 1 in the discover start's ship, slot 2 in its own fight hull at that start's position,
 with the fight start's money (added to the shared wallet) and blueprints applied at tick 20 on both.
 
+### A headquarters and research per player faction (built 16 Nov; two clients on one PC, no person at the controls)
+
+In coop the players are one faction: they share the one headquarters the first plot gives, and what it researched.
+In factions mode each player's faction gets its own:
+
+```
+python tools/x4ls.py new-session --base-start x4ep1_gamestart_discover --players 2 --mode factions \
+    --start 2=x4ep1_gamestart_discover --omit 2=known --plot 2=hq ...
+```
+
+- `--plot K=hq` gives player K an own copy of the stock headquarters plot. The copy is generated on each PC from its
+  own game files (the overlay and a kit carry a recipe with hashes, never the game's script); it runs as player K and
+  names player K's faction where the stock script names the player faction, so the station it makes is that
+  faction's: a second, separate station object, placed by the game's own safe position (about 20 km from the first in
+  the test). Refused in coop.
+- Research belongs to a faction (`native_gate_research_per_faction`, on by default). A player with an own faction
+  starts and cancels research at its own headquarters; when the research module finishes, the research is credited to
+  that faction only, and each client's menus see only its own faction's research. In coop every player's missions read
+  and add to the one shared list.
+- Run hq11 (16 Nov): both headquarters made by the plot's own debug step, player 1 and player 2 each started a
+  10-second research by script at their own headquarters. Both finished; player 1's list gained its ware, player 2's
+  list holds only player 2's; client 1's menus answer "researched" for player 1's ware only, client 2's for player 2's
+  only; 5,891 ticks in sync, 0 errors, and both clients' session saves hold each player's list.
+- Two things this needed, which matter in coop too: a research start replayed on every client now starts the queued
+  item (the game ends that call with a forced update of the station, which the lockstep's "menus do not update
+  stations" rule had swallowed), and a small session script asks every player headquarters for its production every
+  two seconds, because the game only advances a station's production when something asks and in lockstep the menus
+  never do.
+- The stock research menu lists "the player's" headquarters; on the client of a player with an own faction that
+  list is answered with its own faction's (run hq12: the menu's own list call, made by script on both clients, gives
+  client 2 player 2's headquarters and its research module, client 1 player 1's). Nobody has clicked through the
+  menu as player K yet.
+- Blueprints go with research (17 Nov): a faction's library is both lists. The game's own research step also gives
+  the blueprints a research unlocks, so they have one owner. In factions mode a blueprint player K buys or unlocks
+  is player K's faction's alone, and each client's menus show its own faction's blueprints.
+- A start's blueprints and research are given in factions mode too (17 Nov; before, `--omit K=blueprints,research`
+  was required): they go to player K's faction's own library, ten ticks into the session or fourteen ticks after a
+  join. Only a start's map knowledge still has to be left out by name in factions mode (the map is shared).
+- The game's notices about a faction's production go to the player whose faction it is (17 Nov): "production
+  started", "finished", "cancelled" and "research unlocked" are what the headquarters plot waits for, and the game
+  sends them only for player 1's faction. Now player K's own missions and plot hear player K's, and nobody else's.
+  (The first form of 16 Nov credited the research to the right list but announced it as player 1's.)
+- With `--plot K=hq` the stock headquarters plot is player 1's own: what the other players do no longer also
+  advances it (scripts that belong to nobody hear every player, and the stock plot counted as one).
+- Run hq13 (17 Nov, two clients, 6,538 ticks in sync, 0 errors): player 2's start gave its faction 18 blueprints and
+  3 researches (player 1 keeps its own 26 and 4); both players researched by script at their own headquarters;
+  a test mission of each player heard exactly its own player's three notices, on both clients; both clients' saves
+  hold each player's own research and blueprints.
+- Run hq14 (17 Nov, 6,091 ticks in sync, 0 errors): the same, plus a research player 2 started and cancelled (its
+  mission alone heard "cancelled"), and both plots put into their research phase by the stock script's own debug
+  step (`native_gate_plot_debug` codes 1101 and 1102): player 2's copy reached the same state as player 1's plot,
+  cue for cue, read from the save.
+- `x4ls resume` gives players 2..N their start's blueprints and research again, not what they researched in the
+  first session (a resumed world keeps only player 1's player object, as before).
+- A player who joins a running game gets the same (run hq17, 17 Nov: a hot join 12 s into the session, then 33,139
+  ticks in sync, 0 errors): the joiner's start blueprints and research go to its faction's library fourteen ticks
+  after it takes over, its own copy of the plot begins, and later its own headquarters, research and notices work
+  as for a player who was there from the start. `x4ls join` takes `--display`, `--no-focus`, `--never-focus` and
+  `--tile-skip` like `x4ls play` (the joiner's window used to open on the primary monitor with the focus).
+- Seen in the join tests and not part of this feature: a join about 100 s into that test world (the join save at
+  tick 6050) does not match the session from its first tick on, also in a plain session without a plot, scripted
+  steps or the library per faction (runs hq18 to hq20; the joiner of hq20, started late and far behind, crashed
+  while catching up); and two joins at ticks 698 and 724, each just after player 1's headquarters had been made,
+  came apart about 50 s after the joiner took over, in the world part only (hq15, hq16), where the join at tick
+  734 into a world without a headquarters did not (hq17).
+- The late join was run again on the integration code without any of this work (17 Nov afternoon, a second
+  worktree at the integration head with the integration's gate build, join save at tick 6080): the same result. From the
+  joiner's first tick only the world part of the digest differs (sample, pilot, identity, runtime IDs, nav mesh
+  and input agree), and at the handover (tick 8844) the runtime IDs differ too and the session reports a
+  desync. What differs: the join save holds 1400 temporary zones; at tick 7200 the host's own save holds 1399 and
+  the joiner's 1396. Three empty temporary zones, each with a kill check scheduled about two minutes later, are
+  in the join save and still in the host's world, and gone from the joiner's after it loaded the save. So the
+  likely cause is that X4 drops such zones when a save is loaded and keeps them until their check when it plays
+  on; it is not fixed, and whether the two early joins above are the same thing is not known (a station made at
+  a safe position gets a temporary zone).
+- A joiner started on the same PC beside freshly started clients of other sessions twice stayed at 90 MB without
+  a log (hq20, the first control run). `x4ls join --same-pc` now frees X4's instance lock in the other launcher
+  clients before it starts its client, as `x4ls play` does; in the second control run it freed one and the joiner
+  started.
+- A player can begin with a headquarters, as the stock starts that come with one (17 Nov):
+  `--plot K=hq_ready` gives player K the copy of the plot begun the way the game's own custom starts with the
+  headquarters story done begin it: the copy's first step makes player K's faction's headquarters at a safe
+  position in Grand Exchange, with the mentor in it and research unlocked, and the signal leak never begins.
+  `--plot 1=hq_ready` does it for player 1, whose plot is the stock script: 90 ticks into the session the script's
+  own cues make the station with the mentor and open research, and its signal-leak phase is cancelled (the script
+  handles that itself). That form is allowed in coop: the session begins with the one headquarters the players
+  share. Once per game (a resumed session and a joiner do not repeat it), and a faction that has a headquarters
+  keeps it. The stock starts that come with a headquarters (their player begins on foot inside it) are still not
+  selectable as a player's start; any other start can be combined with this.
+- Run hq22 (17 Nov, coop, two clients, 4,415 ticks in sync, 0 errors): the session began with the shared
+  headquarters; player 1 and then player 2 started a research at it by script; both went onto the one shared list
+  (4, 5, then 6 wares on both clients) and both clients' menus see both.
+- Run hq23 (17 Nov, factions mode, `--plot 1=hq_ready --plot 2=hq_ready`, 5,637 ticks): two headquarters from the
+  start, player 2's faction's and player 1's, about 17 km apart, the same in both clients' saves; each player
+  researched at its own, each list holds only its own, each test mission heard only its own notices; read from
+  the save, player 1's plot has its signal-leak phase cancelled and research open, player 2's copy never began
+  the signal leak and has research open. One thing to watch: the clients' digests differed for 36 ticks (1870 to
+  1905) and then agreed again by themselves; the repeat run hq24 with the digest parts logged did not show it
+  (7,679 ticks without a mismatch), nor did hq25 to hq27, so its cause is not known.
+- A faction's library notices stay with that faction (17 Nov). The scripts that belong to nobody hear every
+  player, and they took player K's "research unlocked", "production started, finished, cancelled" and
+  "blueprint added" as the one player faction's: the stock research stories, the diplomacy script, the
+  notifications and the tutorials would have acted on player 1's headquarters and list. Those five notices of a
+  player with an own faction now go to that player's own missions and plot only (run hq25: six kept on both
+  clients, each player's test mission still heard its own). Coop is unchanged.
+- With `--plot K=...` the stock plot is player 1's own in every respect (17 Nov; before, it only no longer heard
+  the others): its missions are in player 1's mission list only, and what it shows and says goes to player 1's
+  client. Run hq26 had shown player 1's research mission in player 2's list too; in hq27 it is in player 1's only.
+- Player 2's own plot by script, as far as a script can take it (run hq27, 17 Nov, 16,167 ticks in sync, 0
+  errors): the copy was put into its claiming phase by the stock script's own shortcut. The mission is in player
+  2's list only; the mentor's lines end for player 2's plot; player 2's ship, put at the three spots near the
+  station by a test step, passed all three checks; the station changed to player 2's faction by the plot's own
+  step (it already was that faction's in this test, because the shortcut makes it so); the plot went on to its
+  "build a dock" tutorial and gave the wares for it. Read from the save, cue for cue. From there a person is
+  needed: the dock is built in the station menu, then the plot wants a landing and the lift.
+- What the game does outside the menus with "the player's" blueprints (read from the code, not run): the
+  question "what can this shipyard, wharf or equipment dock build for faction F" uses the player's blueprints
+  only when F is X4's own player faction. For player K's faction it answers as for an NPC faction: the wares of
+  the customer's faction, by licence. The menus are right, because they ask inside player K's faction view. So a
+  shipyard of player K would build for NPC customers without regard to player K's blueprints, and automatic
+  orders of player K's own ships there may find nothing to build. Not changed; it needs a player-owned yard to
+  show itself.
+- Also seen: "Acquire a manager", the upkeep mission for a station without one, stood in both players' lists
+  when each had a headquarters. Whether that is one mission shown to both or one per station was not looked at.
+- Open: the plot played by a person as player K from the signal leak on (the leak, the anomaly, the dock built in
+  the menu, the landing); the Terran headquarters story (it hands over the one station the galaxy has for it, so a
+  copy for a second player needs its own station and its own copy of the main plot; not built); other stock
+  stories keep reading player 1's plot (they are player 1's or the group's); `x4ls resume` still gives players
+  2..N their start's library again.
+
 ### A joiner picks a start (built 10 Nov; not in lockstep yet)
 
 A player who joins a running game takes one of the session's open slots, and each open slot plays the start the host
@@ -781,8 +911,9 @@ In the integration branch since 17 Nov. Run with scripted input, not by people.
     does not answer the stick as it does in the stock game; the computer pilot still takes the seat when a player gets
     up, the start's relation changes are announced one by one, and the cockpit HUD stays while walking (all three are
     built and wait for their runs).
-- **Not built yet:** stories other scripts run for the whole game (the HQ, faction plots) per player; they stay the
-  session's (player 1's).
+- **Not built yet:** stories other scripts run for the whole game (faction plots) per player; they stay the
+  session's (player 1's). The headquarters plot has a first form per player in factions mode (`--plot K=hq`,
+  "A headquarters and research per player faction" above).
   - Personal missions per player, first form (9 Nov, on by default; `--set native_gate_missions_per_player=false`
     turns it off): a mission player 2 accepts is player 2's on every client. Its script sees player 2, their ship and their sector
     (mpp1: 900 ticks, 0 desyncs).

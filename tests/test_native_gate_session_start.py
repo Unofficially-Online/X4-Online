@@ -216,7 +216,10 @@ class CatalogTests(unittest.TestCase):
             self.assertEqual(t['presentation'], ['cutscene', 'info', 'player encyclopedia', 'player theme'])
             with self.assertRaises(gamestarts.CatalogError) as caught:
                 gamestarts.slot_kit(t, 'factions', 2)
-            self.assertIn('parts blueprints, known, research cannot be applied for slot 2 in factions mode', str(caught.exception))
+            # Factions: blueprints and research are the slot's faction's own (a library per faction); the one map is not.
+            self.assertIn('parts known cannot be applied for slot 2 in factions mode', str(caught.exception))
+            kit = gamestarts.slot_kit(t, 'factions', 2, ['known'])
+            self.assertEqual((kit['blueprints'], kit['research']), (['module_tst_a', 'module_tst_b'], ['research_tst']))
             # Coop takes a start's reputation too (the shared faction only gains: reputation_raise in the identity plan).
             self.assertEqual(gamestarts.slot_kit(t, 'coop', 3)['reputation'], [{'faction': 'argon', 'value': 3200}, {'faction': 'split', 'value': -32000}])
             # The start's inventory goes to the slot's own player in both modes, unless it is left out by name.
@@ -886,7 +889,18 @@ class KitPlanTests(unittest.TestCase):
                 identity.build_plan(2, 'coop', kits=[{'slot': 2, 'gamestart': 'beta_start', 'money': 0}]),
                 identity.build_plan(2, 'coop', kits=[dict(KIT_C, omitted=['reputation'], inventory=KIT_INVENTORY)]),
                 identity.build_plan(2, 'factions', kits=[dict(KIT_F, omitted=['blueprints', 'known', 'research'], inventory=KIT_INVENTORY)]),
-                identity.build_plan(2, 'coop', kits=[dict(KIT_C, omitted=['inventory'], reputation=KIT_F['reputation'])])]   # coop takes a start's reputation
+                identity.build_plan(2, 'coop', kits=[dict(KIT_C, omitted=['inventory'], reputation=KIT_F['reputation'])]),   # coop takes a start's reputation
+                # factions: a start's blueprints and research are the slot's faction's own
+                identity.build_plan(2, 'factions', kits=[dict(KIT_F, omitted=['inventory', 'known'], blueprints=['module_tst_a'], research=['research_tst'])])]
+
+    def test_a_factions_kit_carries_its_library_without_identity_steps(self):
+        """Coop gives a start's blueprints and research to the one shared library by identity steps; in factions mode the
+        plan carries them for the probe (given inside the slot's scope, to its faction's own library): no step."""
+        P = identity.validate(self.plans()[8])
+        self.assertIn(':bp=module_tst_a:rs=research_tst:', identity.canonical(P))
+        self.assertEqual([s['step'] for s in identity.steps(P) if s['step'] in ('blueprint', 'research')], [])
+        coop = identity.steps(identity.validate(self.plans()[2]))
+        self.assertEqual([s['step'] for s in coop if s['step'] in ('blueprint', 'research')], ['blueprint', 'blueprint', 'research'])
 
     def test_lua_and_python_agree_on_kit_text_digest_and_steps(self):
         lua, K = lua_core()
@@ -962,7 +976,7 @@ class KitPlanTests(unittest.TestCase):
                (kit(f, reputation=[{'faction': 'argon', 'value': 1000001}]), 'kit_value'),
                (kit(f, reputation=[{'faction': 'split', 'value': 1}, {'faction': 'argon', 'value': 1}]), 'kit_order'),
                (kit(f, reputation=[{'faction': 'argon', 'value': 1, 'x': 2}]), 'key_unknown'),
-               (kit(f, blueprints=['a'], omitted=['inventory']), 'kit_library_mode'), (kit(c, blueprints=['b', 'a']), 'kit_order'),
+               (kit(f, blueprints=['b', 'a'], omitted=['inventory']), 'kit_order'), (kit(c, blueprints=['b', 'a']), 'kit_order'),
                (kit(c, research=['A']), 'kit_ware'), (kit(c, blueprints=['w'] * 65), 'kit_wares'),
                (kit(f, known={'sectors': ['cluster_01_sector001_macro'], 'shipyards': True}, omitted=['inventory']), 'kit_known_mode'),
                (kit(c, known={'sectors': [], 'shipyards': True}), 'kit_known'), (kit(c, known={'sectors': ['x'], 'shipyards': True}), 'kit_known'),

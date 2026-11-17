@@ -2,7 +2,8 @@
 <!-- Test fixtures of the UI replay (native_gate_ui_replay_fleet, native_gate_ui_replay_min_hull, default off; driven
      only by native_gate_ui_replay_core.lua): the stock UI only orders `player` ships, the save has none with a pilot
      near the players, so the listed ships change owner at the same tick on every client; the missile run protects the
-     slot ships' hull. Nothing else lives here: the orders themselves run through X4's own functions. -->
+     slot ships' hull. Nothing else lives here: the orders themselves run through X4's own functions. One cue is no
+     fixture but part of every session: ResearchClock (research reaches its end in lockstep). -->
 <mdscript name="X4LAN_UiReplay" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="md.xsd">
  <cues>
   <cue name="Own" instantiate="true">
@@ -25,6 +26,24 @@
    <conditions><event_ui_triggered screen="'X4LAN_UiGuard'"/></conditions>
    <actions>
     <debug_text text="'[X4LAN] UI_GUARD_MD_EVENT control=%s value=%s time=%s'.[event.param2, event.param3, player.age]"/>
+   </actions>
+  </cue>
+  <!-- Research reaches its end (native_gate_research_per_faction; hq10, 16 Nov). X4 evaluates a station's production
+       lazily, at whatever game time something asks for it; in the stock game the menus ask, in lockstep a client's menus
+       never bring a station up (native_gate_ui_lazy), so a research that was started stayed at "producing" past its end
+       unless a script happened to look at that station. This asks every player headquarters' production modules, on
+       every client at the same game time, whoever's headquarters it is: a research ends within two seconds of its time. -->
+  <cue name="ResearchClock" instantiate="true" checkinterval="2s">
+   <conditions><check_value value="true"/></conditions>
+   <actions>
+    <find_station name="$hqs" space="player.galaxy" macro="macro.station_pla_headquarters_base_01_macro" multiple="true"/>
+    <do_all exact="$hqs.count" counter="$i">
+     <find_object_component name="$modules" object="$hqs.{$i}" class="class.production" multiple="true"/>
+     <do_all exact="$modules.count" counter="$j">
+      <set_value name="$busy" exact="$modules.{$j}.isproducing"/>
+      <set_value name="$wares" exact="$modules.{$j}.research.count"/>
+     </do_all>
+    </do_all>
    </actions>
   </cue>
   <!-- native_gate_ui_replay_min_hull: the slot ships keep at least that hull percentage (the missile run's target is the
@@ -452,6 +471,26 @@
       <cue name="Audit_Player_owned_attacked_object" instantiate="true">
        <conditions><event_player_owned_attacked_object/></conditions>
        <actions><debug_text text="'[X4LAN] MPP_AUDIT event=player_owned_attacked_object player=%s ship=%s on=%s p=%s time=%s'.[player.entity, @player.occupiedship, @event.object, @event.param, player.age]"/></actions>
+      </cue>
+      <cue name="Audit_Player_research_unlocked" instantiate="true">
+       <conditions><event_player_research_unlocked/></conditions>
+       <actions><debug_text text="'[X4LAN] MPP_AUDIT event=player_research_unlocked player=%s ship=%s on=%s p=%s time=%s'.[player.entity, @player.occupiedship, @event.object, @event.param, player.age]"/></actions>
+      </cue>
+      <cue name="Audit_Player_production_started" instantiate="true">
+       <conditions><event_player_production_started research="true"/></conditions>
+       <actions><debug_text text="'[X4LAN] MPP_AUDIT event=player_production_started player=%s ship=%s on=%s p=%s time=%s'.[player.entity, @player.occupiedship, @event.object, @event.param, player.age]"/></actions>
+      </cue>
+      <cue name="Audit_Player_production_finished" instantiate="true">
+       <conditions><event_player_production_finished research="true"/></conditions>
+       <actions><debug_text text="'[X4LAN] MPP_AUDIT event=player_production_finished player=%s ship=%s on=%s p=%s time=%s'.[player.entity, @player.occupiedship, @event.object, @event.param, player.age]"/></actions>
+      </cue>
+      <cue name="Audit_Player_production_cancelled" instantiate="true">
+       <conditions><event_player_production_cancelled research="true"/></conditions>
+       <actions><debug_text text="'[X4LAN] MPP_AUDIT event=player_production_cancelled player=%s ship=%s on=%s p=%s time=%s'.[player.entity, @player.occupiedship, @event.object, @event.param, player.age]"/></actions>
+      </cue>
+      <cue name="Audit_Player_blueprint_added" instantiate="true">
+       <conditions><event_player_blueprint_added/></conditions>
+       <actions><debug_text text="'[X4LAN] MPP_AUDIT event=player_blueprint_added player=%s ship=%s on=%s p=%s time=%s'.[player.entity, @player.occupiedship, @event.object, @event.param, player.age]"/></actions>
       </cue>
       <cue name="Audit_Player_signal_unlock_started" instantiate="true">
        <conditions><event_player_signal_unlock_started/></conditions>
@@ -1004,8 +1043,15 @@
     <set_value name="$Target" exact="event.param2"/>
     <do_if value="@$Ship.exists and @$Target.exists">
      <create_position name="$TPos" space="$Target.zone" object="$Target"/>
-     <set_value name="$Metres" exact="if event.param3 lt 0 then 0 - event.param3 else event.param3"/>
-     <set_value name="$Spot" exact="position.[$TPos.x, $TPos.y, $TPos.z - $Metres * 1m]"/>
+     <do_if value="typeof event.param3 == datatype.list">
+      <!-- mis_goto_at: a spot relative to the target, in the target's own frame -->
+      <create_position name="$Spot" space="$Target.zone" object="$Target"
+                       value="position.[event.param3.{1} * 1m, event.param3.{2} * 1m, event.param3.{3} * 1m]"/>
+     </do_if>
+     <do_else>
+      <set_value name="$Metres" exact="if event.param3 lt 0 then 0 - event.param3 else event.param3"/>
+      <set_value name="$Spot" exact="position.[$TPos.x, $TPos.y, $TPos.z - $Metres * 1m]"/>
+     </do_else>
      <create_orientation name="$Look" orientation="look_at" refposition="$TPos">
       <position value="$Spot"/>
      </create_orientation>
@@ -1021,7 +1067,7 @@
     <set_value name="$Hits" exact="0"/>
     <!-- a negative distance (a diagnosis): an ownerless scout with next to no hull stands on the line of fire, a
          third of the way from the object to the ship -->
-    <do_if value="event.param3 lt 0 and @$Ship.exists and @$Target.exists">
+    <do_if value="typeof event.param3 != datatype.list and event.param3 lt 0 and @$Ship.exists and @$Target.exists">
      <create_ship name="$Decoy" macro="macro.ship_arg_s_scout_01_a_macro" zone="$Target.zone">
       <owner exact="faction.ownerless"/>
       <position x="$TPos.x" y="$TPos.y" z="$TPos.z - $Metres * 1m / 3"/>

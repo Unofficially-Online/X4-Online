@@ -67,6 +67,7 @@ class NewSessionOptions:
     starts: dict = field(default_factory=dict)   # slot -> gamestart id (slots 2..players)
     omit: dict = field(default_factory=dict)     # slot -> kit parts left out (money, reputation, ...)
     story: tuple = ()                            # slots whose start's story script runs for that slot's player
+    plots: dict = field(default_factory=dict)    # slot -> [plot ids] it runs as its own copy (native_gate_plot_copies.py: hq)
     unpiloted: tuple = ()                        # every slot's start ship has no NPC pilot now; kept for older scripts
     piloted: tuple = ()                          # slots whose start ship keeps an NPC pilot (the form before)
     minutes: float = 40
@@ -77,6 +78,8 @@ class NewSessionOptions:
     timeout: int = 900
     steam_fix: bool = False
     cache: Path | None = None
+    display: int | None = None                   # the capture client's window on this monitor (1 = primary)
+    focus: bool = True                           # False: that window never keeps the keyboard focus or the cursor
 
 
 def new_session(o, log=print):
@@ -89,19 +92,25 @@ def new_session(o, log=print):
     try:
         spec = session_start.build_spec(catalog(o.game, o.cache, log), o.base_start, o.players, o.mode, o.starts, o.omit,
                                         story=o.story, unpiloted=o.unpiloted, piloted=o.piloted)
+        if o.plots:
+            install = Path(o.game) if o.game else game.find_install()
+            session_start.add_plots(spec, o.plots, gamedata.unpack(install, o.cache or gamedata.default_cache(), log))
     except session_start.SessionError as error:
         raise SystemExit(f'refused: {error}') from None
     out.mkdir(parents=True)
     (out / 'spec.json').write_text(json.dumps(spec, indent=1, sort_keys=True) + '\n', encoding='utf-8')
+    for e in spec.get('first_plots') or []:
+        log(f"slot 1: begins with the result of plot {e['id']}")
     for k, slot in sorted(spec['slots'].items(), key=lambda kv: int(kv[0])):
         log(f"slot {k}: start {slot['gamestart']} (class {slot['class']}) in {slot['hull']['sector']}, kit "
             + ', '.join(sorted(slot['kit']))
             + (f"; its story runs for this player ({slot['story']['script']}.{slot['story']['cue']})" if slot.get('story') else '')
+            + (f"; its own copy of: {', '.join(e['id'] for e in slot['plots'])}" if slot.get('plots') else '')
             + (f"; left out: {'; '.join(slot['world_omitted'])}"[:400] if slot.get('world_omitted') else ''))
     capture = session_start.build_capture(spec, None, out / 'capture-overlay')
     save = out / 'session-save.xml.gz'
     outcome = session.capture_snapshot(save, o.base_start, o.game, o.lanes, o.timeout, log=log, steam_fix=o.steam_fix,
-                                       overlay=capture)
+                                       overlay=capture, display=o.display, focus=o.focus)
     if outcome != 'saved':
         raise SystemExit(f'the capture of {o.base_start} ended {outcome}; nothing registered')
     try:

@@ -69,6 +69,28 @@ def config_text(overlay, slot, port, token, clients, profile_id=None, config_tai
     return 'X4LAN_CONFIG = {enabled = false}\n' + config + config_tail
 
 
+def plot_copies(overlay, target, game, cache=None):
+    """A session whose slots run their own copies of stock plots (tools/dev/native_gate_plot_copies.py; the overlay's
+    md-copies.json): the copies are made here, on this PC, from its own installed game (game: the client's view, which
+    holds the catalogs), and written into the composed extension. The overlay and a kit carry the recipe only. A game
+    file or a result that is not the session's (another game version or set of DLCs, a mod that changes the plot)
+    refuses the client. Returns the files written."""
+    import sys
+    dev = Path(__file__).resolve().parents[3] / 'tools/dev'
+    if str(dev) not in sys.path:
+        sys.path.insert(0, str(dev))
+    import native_gate_plot_copies as copies
+    try:
+        entries = copies.read_recipe(overlay)
+        if not entries:
+            return []
+        from . import gamedata
+        root = gamedata.unpack(game, cache or gamedata.default_cache(), log=lambda *_: None)
+        return copies.write(copies.generate(entries, root), target)
+    except copies.PlotError as error:
+        raise SystemExit(f'plot copies: {error}') from None
+
+
 def compose(overlay, extensions, slot, port, token, clients, extra=None, config_tail='', profile_id=None):
     """Write <extensions>/x4_lan_lab for client `slot` (1-based).
 
@@ -88,6 +110,7 @@ def compose(overlay, extensions, slot, port, token, clients, extra=None, config_
     missing = [name for name in files if not (target / name).is_file()]
     if missing:
         raise SystemExit(f'overlay lists missing ui files: {missing}')
+    plot_copies(overlay, target, Path(extensions).parent)
     config = config_text(overlay, slot, port, token, clients, profile_id=profile_id, config_tail=config_tail)
     for name, source in (extra or {}).items():
         shutil.copyfile(source, target / name)

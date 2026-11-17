@@ -21,7 +21,10 @@
 --            answers the calls); outside a scope the guard refuses them as before. So the blueprint and licence
 --            trader's Confirm, the research menu's start and cancel and the terraforming menu's start and abort are one
 --            event each; they change the player faction's library, research and money: every slot in coop, slot 1 in
---            factions mode.
+--            factions mode. Research is the exception when research belongs to a faction (p.research_own:
+--            lockstep_research_owner.h, native_gate_research_per_faction): a slot with its own faction starts and
+--            cancels research at its own faction's research module, in its faction scope, where the gate puts that
+--            faction's research list in place.
 --   deals    a station's ware reservations have a Cancel button (Helper.buttonCancelTrade, the station configuration's
 --            own): CancelPlayerInvolvedTradeDeal(container, deal, false). A deal's ID is this client's own, so the
 --            event names the deal by what every client sees of it: the container, the ship that reserved, the ware, the
@@ -82,6 +85,8 @@ K.HELPER_SCOPES={buttonCancelTrade='cancel_deal'}
 -- These change what X4 keeps for the player faction alone (the blueprint library, licences, research, terraforming): in
 -- factions mode slots 2+ are refused before the click runs.
 K.PLAYER_FACTION={purchase=true,research=true,research_cancel=true,terraform=true,terraform_abort=true,cancel_deal=true}
+-- ...except these when research belongs to a faction (p.research_own): each player faction has its own.
+K.RESEARCH={research=true,research_cancel=true}
 -- The FFI exports the native half records inside a scope, with their arguments (lockstep_ui_inventory.h uiinv_calls: I a
 -- UniverseID, s a string, q an int64, Q a 64-bit ID that is no component (kept as its decimal text), b a bool).
 K.FFI={AddPlayerMoney='q',LearnBlueprint='s',StartResearch='sI',ClearProductionItems='I',StartTerraformingProject='Is',
@@ -329,7 +334,10 @@ function K.session(p)
    local why=trade_refusal(menu)
    if why then return refuse(what,why) end
   end
-  if K.PLAYER_FACTION[kind] and p.factions and own_slot~=1 then return refuse(what,'factions') end
+  if K.PLAYER_FACTION[kind] and p.factions and own_slot~=1 then
+   if not (p.research_own and K.RESEARCH[kind]) then return refuse(what,'factions') end
+   if not p.trade then return refuse(what,'needs_trade_family') end   -- the faction scope is the trade family's
+  end
   scope={kind=kind,calls={}}
   S.scopes=S.scopes+1
   local saved={}
@@ -381,6 +389,28 @@ function K.session(p)
     if type(orig)=='function' then
      helper.x4lan_inventory_stock[name]=orig
      helper[name]=function(...) return S.with_scope(nil,kind,'Helper.'..name,orig,...) end
+     count=count+1
+    end
+   end
+   -- Research per faction: the stock research menu lists "the player's" headquarters, Helper.ffiVLA(list, type,
+   -- C.GetNumHQs, C.GetHQs, "player"), and takes its research modules from them. A client with its own faction asks for
+   -- its own faction's, inside its faction view (S.own_view: X4 lists a faction's headquarters of the player kind only
+   -- for the player faction of the moment). Every other list of the helper is as it was.
+   if p.research_own and p.factions and own_slot~=1 then
+    local orig=helper.x4lan_inventory_stock.ffiVLA or helper.ffiVLA
+    if type(orig)=='function' then
+     helper.x4lan_inventory_stock.ffiVLA=orig
+     pcall(p.ffi.cdef,'uint32_t GetNumHQs(const char* factionid);')
+     helper.ffiVLA=function(result,vlatype,sizefn,listfn,...)
+      local n=select('#',...)
+      local hqs=n>=1 and select(n,...)=='player' and local_phase()
+      if hqs then local ok,same=pcall(function() return sizefn==C.GetNumHQs end);hqs=ok and same end
+      if not hqs then return orig(result,vlatype,sizefn,listfn,...) end
+      local args={...};args[n]=S.own_faction()
+      S.hq_lists=S.hq_lists+1
+      if S.hq_lists==1 then log('UI_INVENTORY_HQ_LIST faction='..args[n]) end
+      return S.own_view(function() return orig(result,vlatype,sizefn,listfn,unpack(args,1,n)) end)
+     end
      count=count+1
     end
    end
@@ -567,8 +597,9 @@ function K.session(p)
   end)
  end
  -- What follows changes the player faction's own things: canonical (no slot scope), the slot's faction scope for money.
- local function player_faction(slot,fn)
-  if p.factions and slot~=1 then return false,'factions' end
+ -- own: the call is one a slot with its own faction makes for that faction (research, p.research_own).
+ local function player_faction(slot,fn,own)
+  if p.factions and slot~=1 and not (own and p.trade) then return false,'factions' end
   local opened=p.trade and gate.ui_trade_scope(slot) or 0
   if opened<0 then return false,'no_faction' end
   local results=pack(pcall(fn))
@@ -600,7 +631,7 @@ function K.session(p)
    if not owned(args[2]) then return false,'not_owner' end
    C.StartResearch(args[1],args[2])
    return true,args[1]
-  end)
+  end,p.research_own)
  end
  local function run_research_cancel(slot,args,n)
   if n~=1 or args[1]==nil then return false,'arguments' end
@@ -608,7 +639,7 @@ function K.session(p)
    if not owned(args[1]) then return false,'not_owner' end
    C.ClearProductionItems(args[1])
    return true,'cancelled'
-  end)
+  end,p.research_own)
  end
  local function run_terraform(slot,args,n)
   if n~=2 or args[1]==nil or type(args[2])~='string' then return false,'arguments' end
@@ -684,13 +715,40 @@ function K.session(p)
    log('UI_INVENTORY_STATUS tick='..tick..' captured='..S.captured..' applied='..S.applied..' skipped='..S.skipped..' refused='..S.refused..' scopes='..S.scopes..' reads='..S.reads..'/'..S.read_failures..' known='..S.known..'/'..S.known_applied..' virtual='..S.virtual..
     ' '..tostring(gate.ui_inventory_status and gate.ui_inventory_status() or '-'))
   end
-  if #S.rows==0 then return '' end
-  local text='|UIINV_1:'..table.concat(S.rows,';')
+  -- Research per faction: the lists' part, once a slot from 2 on has one (the gate answers nil before).
+  local research=p.research_own and gate.research_receipt and gate.research_receipt() or nil
+  if p.research_own and gate.research_status and tick%600==0 then
+   local lists={}
+   local blueprints={}
+   for k=1,8 do
+    local l,b=gate.research_list(k)
+    if l then
+     lists[#lists+1]=k..':'..(k==1 and select(2,l:gsub('[^,]+',''))..'_wares' or (l=='' and '-' or l))
+     blueprints[#blueprints+1]=k..':'..tostring(b)
+    end
+   end
+   log('RESEARCH_STATUS tick='..tick..' '..tostring(gate.research_status())..' lists='..table.concat(lists,' ')..
+    ' blueprints='..table.concat(blueprints,' '))
+  end
+  if #S.rows==0 then return research and '|'..research or '' end
+  local text='|UIINV_1:'..table.concat(S.rows,';')..(research and '|'..research or '')
   S.rows={}
   return text
  end
  -- Scripted clicks for runs without people (native_gate_ui_replay_script): the same capture as a button's scope.
  function S.script_scope(kind,fn) return S.with_scope(nil,kind,'script.'..kind,fn) end
+ S.hq_lists=0   -- lists of the own faction's headquarters given to this client's menus (wrap_menus)
+ -- This client's own faction, as X4 names it: the player faction, or the slot's own in factions mode.
+ function S.own_faction() return p.factions and own_slot~=1 and 'x4lan_player'..own_slot or 'player' end
+ -- fn inside this client's faction view (lockstep_ui_faction.h: X4's player faction is this client's own for the call, as
+ -- for its wrapped menus); without the faction family, or for the player faction itself, fn as it is.
+ function S.own_view(fn)
+  local opened=gate.ui_faction_view and gate.ui_faction_view(1)
+  local results=pack(pcall(fn))
+  if opened==1 then gate.ui_faction_view(0) end
+  if not results[1] then error(results[2],0) end
+  return unpack(results,2,results.n)
+ end
  return S
 end
 -- Scripted use (native_gate_ui_replay_script), as the stock buttons call the globals:
@@ -700,6 +758,10 @@ end
 --   {tick,'inv_trade',saved trader,money,{ware,amount,...}}  a trader's Confirm: positive amounts come to the player
 --   {tick,'inv_blueprints',saved representative,price,{ware,...}}  the blueprint trader's Confirm (the export, then the price)
 --   {tick,'inv_research',ware,saved research module} / {tick,'inv_research_cancel',saved research module}
+--                                     ('hq' for the module: the first research module of this client's own faction's
+--                                     headquarters, as the research menu finds it)
+--   {tick,'inv_research_seen',ware,...}  logs what this client's menus see as researched (HasResearched per ware)
+--   {tick,'inv_research_hqs'}            logs the headquarters and research modules the stock research menu's list call gives
 --   {tick,'vcargo',slot,ware,amount}  a trade slider's planning call on slot's ship: AddCargo(ship, ware, amount, true),
 --                                     negative: RemoveCargo; answers what X4 answered (this client only)
 --   {tick,'vcargo_mode',slot,on}      the trade menu's open (true) or close (false) for slot's ship: SetVirtualCargoMode, the
@@ -707,8 +769,27 @@ end
 --   {tick,'inv_join_state',slots} / {tick,'inv_join_give',text}  test only, canonical (every client's plan, the same tick):
 --                                     the saver's join state as it would ride a package, and a joiner's catch-up from
 --                                     such a text (what the slots' players lack of it is added, on every client alike)
-K.SCRIPT_OPS={inv_craft=true,inv_trade=true,inv_drop=true,inv_blueprints=true,inv_research=true,inv_research_cancel=true,vcargo=true,
+K.SCRIPT_OPS={inv_craft=true,inv_trade=true,inv_drop=true,inv_blueprints=true,inv_research=true,inv_research_cancel=true,inv_research_seen=true,inv_research_hqs=true,vcargo=true,
  vcargo_mode=true,inv_join_state=true,inv_join_give=true}
+-- The first research module of a faction's headquarters, as the stock research menu finds its own (GetHQs, then
+-- GetResearchModules); nil and the reason without one. The declarations are the stock menu's (the same text again is no error).
+-- [F 9.00] GetNumHQs 0x19b700 counts a faction's headquarters of the player kind only when that faction is g_PlayerFaction
+-- (another faction's are of the faction kind): a slot's own faction is asked inside its faction view (S.own_view).
+function K.hq_research_module(tools,faction)
+ for _,line in ipairs{'uint32_t GetNumHQs(const char* factionid);','uint32_t GetHQs(UniverseID* result, uint32_t resultlen, const char* factionid);',
+   'uint32_t GetNumResearchModules(UniverseID containerid);','uint32_t GetResearchModules(UniverseID* result, uint32_t resultlen, UniverseID containerid);'} do
+  pcall(tools.ffi.cdef,line)
+ end
+ local n=tonumber(tools.C.GetNumHQs(faction)) or 0
+ if n==0 then return nil,'no_headquarters' end
+ local hqs=tools.ffi.new('UniverseID[?]',n)
+ if (tonumber(tools.C.GetHQs(hqs,n,faction)) or 0)==0 then return nil,'no_headquarters' end
+ local m=tonumber(tools.C.GetNumResearchModules(hqs[0])) or 0
+ if m==0 then return nil,'no_research_module' end
+ local modules=tools.ffi.new('UniverseID[?]',m)
+ if (tonumber(tools.C.GetResearchModules(modules,m,hqs[0])) or 0)==0 then return nil,'no_research_module' end
+ return modules[0]
+end
 function K.script_call(e,tools)
  local op=e[2]
  if op=='inv_craft' then return function(S)
@@ -760,12 +841,18 @@ function K.script_call(e,tools)
  end
  if op=='inv_research' then return function(S)
    local I=assert(S.inventory,'ui replay script: the inventory family is off')
-   I.script_scope('research',function() tools.C.StartResearch(e[3],tools.saved_id(e[4])) end)
-   return 'research '..tostring(e[3]) end
+   local module,why_not
+   if e[4]=='hq' then module,why_not=I.own_view(function() return K.hq_research_module(tools,I.own_faction()) end) else module=tools.saved_id(e[4]) end
+   if not module then return 'research '..tostring(e[3])..' refused='..tostring(why_not) end
+   I.script_scope('research',function() tools.C.StartResearch(e[3],module) end)
+   return 'research '..tostring(e[3])..' module='..tostring(module) end
  end
  if op=='inv_research_cancel' then return function(S)
    local I=assert(S.inventory,'ui replay script: the inventory family is off')
-   I.script_scope('research_cancel',function() tools.C.ClearProductionItems(tools.saved_id(e[3])) end)
+   local module,why_not
+   if e[3]=='hq' then module,why_not=I.own_view(function() return K.hq_research_module(tools,I.own_faction()) end) else module=tools.saved_id(e[3]) end
+   if not module then return 'research cancel refused='..tostring(why_not) end
+   I.script_scope('research_cancel',function() tools.C.ClearProductionItems(module) end)
    return 'research cancel' end
  end
  if op=='inv_drop' then return function()
@@ -773,6 +860,25 @@ function K.script_call(e,tools)
    local wares=tools.ffi.new('UIWareAmount[?]',count)
    for i=1,count do wares[i-1].wareid=e[4][2*i-1];wares[i-1].amount=e[4][2*i] end
    return 'drop wares='..count..' answer='..tostring(tools.C.DropInventory(tools.C.GetPlayerID(),e[3] or nil,wares,count)) end
+ end
+ -- {tick,'inv_research_hqs'}: the stock research menu's own list call as this client's menus make it (Helper.ffiVLA with
+ -- GetNumHQs / GetHQs and "player"), and the research modules of the first headquarters (K.SCOPED).
+ if op=='inv_research_hqs' then return function()
+   for _,line in ipairs{'uint32_t GetNumHQs(const char* factionid);','uint32_t GetHQs(UniverseID* result, uint32_t resultlen, const char* factionid);',
+     'uint32_t GetNumResearchModules(UniverseID containerid);','uint32_t GetResearchModules(UniverseID* result, uint32_t resultlen, UniverseID containerid);'} do
+    pcall(tools.ffi.cdef,line)
+   end
+   local hqs,modules={},{}
+   tools.env.Helper.ffiVLA(hqs,'UniverseID',tools.C.GetNumHQs,tools.C.GetHQs,'player')
+   if hqs[1] then tools.env.Helper.ffiVLA(modules,'UniverseID',tools.C.GetNumResearchModules,tools.C.GetResearchModules,hqs[1]) end
+   return 'research_hqs hqs='..#hqs..' first='..tostring(hqs[1])..' modules='..#modules..' module='..tostring(modules[1]) end
+ end
+ -- {tick,'inv_research_seen',ware,...}: what this client's menus see as researched (the presentation scope: K.SCOPED).
+ if op=='inv_research_seen' then return function()
+   pcall(tools.ffi.cdef,'bool HasResearched(const char* wareid);')
+   local out={}
+   for i=3,#e do out[#out+1]=tostring(e[i])..'='..tostring(tools.C.HasResearched(e[i])) end
+   return 'research_seen '..table.concat(out,' ') end
  end
  error('unknown ui inventory script op '..tostring(op))
 end

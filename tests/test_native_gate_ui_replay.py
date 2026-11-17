@@ -458,7 +458,7 @@ class SessionTests(unittest.TestCase):
                                 'UI_REPLAY_SCRIPT tick=43 op=target_slot ok=true result=false scope=0',
                                 'UI_REPLAY_SCRIPT tick=50 op=target_slot ok=true result=false scope=0'])
         self.assertEqual(dict(g.X4LAN_UI_REPLAY_CORE.SCOPED), {'target_slot': True, 'target_none': True, 'target_home': True, 'dock_home': True, 'suit_home': True, 'guidance_slot': True, 'guidance_end': True, 'inv_read': True, 'inv_drop': True,
-                                                                  'foot_where': True, 'transport_list': True, 'transport_to': True, 'transport_named': True})
+                                                                  'foot_where': True, 'transport_list': True, 'transport_to': True, 'transport_named': True, 'inv_research_seen': True, 'inv_research_hqs': True})
 
     def test_the_guidance_ops_set_and_end_it_where_the_maps_click_runs(self):
         """play39p-long: client 2's map set guidance on slot 1's ship (SetGuidance) inside its presentation scope; the ops do
@@ -790,6 +790,70 @@ def stock_config(**override):
 
 def failures(text):
     return [f['rule'] for f in options.ui_replay_rules(text, set(re.findall(r'X4LAN_CONFIG\.(native_gate_\w+)\s*=\s*true\b', text)))]
+
+
+class SlotLibraryTests(unittest.TestCase):
+    """A start's blueprints and research for a slot with a faction of its own (S.slot_library): inside the slot's scope,
+    X4's own calls. Mocked gate and exports: the order of the calls and the row, not the game."""
+
+    def session(self, library=True):
+        lua, g = client()
+        lua.execute('''
+          calls={}
+          gate.mpp_scope=function(k) calls[#calls+1]='scope:'..k;return NO_SCOPE and 0 or 1 end
+          gate.mpp_unscope=function(k) calls[#calls+1]='unscope:'..k;return 1 end
+          gate.ui_replay_bypass=function(on) calls[#calls+1]='bypass:'..on end
+          gate.research_list=function(k) return 'research_x,research_y',3 end
+          C.LearnBlueprint=function(w) if BAD then error('boom') end;calls[#calls+1]='blueprint:'..w end
+          C.AddResearch=function(w) calls[#calls+1]='research:'..w end
+          function library_session(library)
+            return X4LAN_UI_REPLAY_CORE.session({gate=gate,C=C,env=env,log=log,mask=7,slot_ships=function() return {} end,mpp=true,library=library})
+          end
+          KIT={blueprints={'module_a','module_b'},research={'research_x'}}
+        ''')
+        lua.execute('S=library_session(%s)' % ('true' if library else 'nil'))
+        return lua, g
+
+    def test_the_wares_are_given_inside_the_slots_scope(self):
+        lua, g = self.session()
+        self.assertEqual(lua.eval("S.slot_library(70,2,'window',KIT)"), 'given')
+        self.assertEqual(values(g.calls), ['scope:2', 'bypass:1', 'blueprint:module_a', 'blueprint:module_b', 'research:research_x', 'bypass:0', 'unscope:2'])
+        self.assertEqual(values(g.logs)[-1], 'KIT_LIBRARY tick=70 slot=2 why=window blueprints=2 research=1 given now=blueprints:3 research:2')
+
+    def test_without_the_scope_or_the_library_nothing_is_given(self):
+        lua, g = self.session()
+        g.NO_SCOPE = True
+        self.assertEqual(lua.eval("S.slot_library(70,2,'window',KIT)"), 'no_scope')
+        self.assertEqual(values(g.calls), ['scope:2'])
+        lua, g = self.session(library=False)                         # a session without a library per faction: player 1's is not touched
+        self.assertEqual(lua.eval("S.slot_library(70,2,'handover',KIT)"), 'no_library_per_faction')
+        self.assertEqual(values(g.calls), [])
+
+    def test_an_error_closes_the_scope_and_is_named(self):
+        lua, g = self.session()
+        g.BAD = True
+        self.assertTrue(lua.eval("S.slot_library(70,2,'window',KIT)").startswith('error:'))
+        self.assertEqual(values(g.calls)[-2:], ['bypass:0', 'unscope:2'])
+
+
+class PlotSignalTests(unittest.TestCase):
+    """The two signals to the session's story MD (S.plot_debug, S.plot_ready): outside any scope, with the bypass.
+    Mocked gate and exports."""
+
+    def test_the_galaxy_is_signalled_with_the_code(self):
+        lua, g = client()
+        lua.execute('''
+          calls={}
+          gate.ui_replay_bypass=function(on) calls[#calls+1]='bypass:'..on end
+          S=X4LAN_UI_REPLAY_CORE.session({gate=gate,C=C,env=env,log=log,mask=7,slot_ships=function() return {} end,
+            galaxy=function() return 77 end})
+          S.stock.SignalObject=function(o,name,code) calls[#calls+1]='signal:'..o..':'..name..':'..code end
+        ''')
+        self.assertEqual(lua.eval('S.plot_ready(140,1)'), 'signalled')
+        self.assertEqual(lua.eval('S.plot_debug(600,101)'), 'signalled')
+        self.assertEqual(values(g.calls), ['bypass:1', 'signal:77:x4lan_plot_ready:1', 'bypass:0',
+                                           'bypass:1', 'signal:77:x4lan_plot_debug:101', 'bypass:0'])
+        self.assertEqual(values(g.logs)[-2:], ['PLOT_READY tick=140 code=1 signalled', 'PLOT_DEBUG tick=600 code=101 signalled'])
 
 
 class OptionTests(unittest.TestCase):

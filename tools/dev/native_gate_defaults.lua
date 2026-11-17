@@ -203,6 +203,7 @@ D.ON={
  {'native_gate_player_settings_per_slot',true,'native_gate_ui_replay~faction','each slot its own faction settings'},
  {'native_gate_missions_per_player',true,'native_gate_ui_replay~events native_gate_ui_replay~missions native_gate_script_rng native_gate_pilot_stock_slots','a mission slot k accepts runs as slot k player on every client (personal missions, first form)'},
  {'native_gate_missions_per_player_offers',true,'native_gate_missions_per_player','generic mission offers around every player, not only player 1'},
+ {'native_gate_research_per_faction',true,'native_gate_missions_per_player','research and blueprints belong to a faction: shared in coop, each player faction its own in factions mode (a production module tells and credits its owner)'},
  {'native_gate_pilot_present_walk_hud',true,'native_gate_pilot_present native_gate_pilot_foot_slots','no cockpit HUD and no radar on a player 2+ own screen while that player walks'},
  {'native_gate_pilot_slots_post',true,'native_gate_pilot_stock_slots','a player 2+ own ship answers that player as its pilot while the game runs as that player (the autopilot check)'},
  {'native_gate_missions_per_player_ai_frames',true,'native_gate_missions_per_player','the autopilot and other scripts of a player 2+ own ship computer run as that player'},
@@ -519,6 +520,7 @@ D.EXCLUDED={
  {'native_gate_virtual_players','virtual players spikes (observe/construct)'},
  {'native_gate_player_orders','scripted player orders (wire runs; the UI replay orders family carries orders)'},
  {'native_gate_fork_save','non-blocking save (Linux gate only)'},
+ {'native_gate_plot_debug','signals the debug cue of a plot at a tick, in the stock script or in the copy of a slot (plot copies tests)'},
  {'native_gate_save_every','every client saves the world every N ticks and plays on (Windows gate; set by build_play_overlay.py --save-every)'},
  {'native_gate_save_keep','periodic save: how many saves a client keeps in its profile (probe: 3)'},
  {'native_gate_join','hot join (lockstep_join.h): not live-tested yet (J1-J3, reports/LOCKSTEP-HOTJOIN-20261101.txt); set by the join tooling'},
@@ -580,7 +582,7 @@ D.TUNING={
 }
 -- The keys a session config supplies itself (no default).
 D.SESSION={'native_gate_test','native_gate_clients','native_gate_player_identity_plan','native_gate_relay_host','native_gate_arm_timeout_ms',
- 'native_gate_arm_at','native_gate_story',
+ 'native_gate_arm_at','native_gate_story','native_gate_plot_first','native_gate_plot_ready',
  'native_gate_input_priority','native_gate_defaults'}
 -- Stop reasons the probe names in its info line (docs/LOCKSTEP-REGISTRY.txt, section 4; tests check them).
 D.STOP_REASONS={[1]='the relay stopped the session',[2]='not the main thread or loading at start',[3]='load or state mismatch',
