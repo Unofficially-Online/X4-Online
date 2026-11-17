@@ -671,8 +671,13 @@
            cone. The plan holds the player's trigger for 7 s with the aim assist on its target (script op aim_fire);
            10 s after the accept what is left of the wall is destroyed by nobody, so the library
            ends: 1 = the player killed some of them (3 = all, -1 = none: no shot landed or no kill was the player's). -->
+      <!-- killmatch: the same wall and the same guns, counted by RML_Destroy_Matching_Objects. That library keeps one
+           target of its own choice (a destroyed target whose killer's owner is the player faction counts) and takes
+           every other kill from the "player killed an object" notice with its filters (here: the scout's macro, no
+           owner): the per-player form of the kill notice. One kill ends it (live, 17 Nov: player 1's ship destroyed
+           one scout in the seven seconds, player 2's two). The MT_KILLED rows name each notice that player got. -->
       <cue name="MtKill" onfail="cancel">
-       <conditions><check_value value="$Type == 'kill'"/></conditions>
+       <conditions><check_value value="$Type == 'kill' or $Type == 'killmatch'"/></conditions>
        <actions>
         <create_group groupname="$Wall"/>
         <do_all exact="7" counter="$I">
@@ -697,10 +702,41 @@
         <debug_text text="'[X4LAN] MT_SETUP type=%s slot=%s wall=%s speed=%s target=%s time=%s'.[$Type, $Slot, $Wall.count, player.ship.speed, $Middle.distanceto.{player.ship}, player.age]"/>
        </actions>
        <cues>
-        <cue name="MtKill_Ref" ref="md.RML_Destroy_Components.DestroyComponents">
-         <param name="MissionCue" value="$Mission"/>
-         <param name="EndSignalCue" value="MtEnd"/>
-         <param name="Targets_Param" value="$Wall"/>
+        <cue name="MtKill_Lib" onfail="cancel">
+         <conditions><check_value value="$Type == 'kill'"/></conditions>
+         <cues>
+          <cue name="MtKill_Ref" ref="md.RML_Destroy_Components.DestroyComponents">
+           <param name="MissionCue" value="$Mission"/>
+           <param name="EndSignalCue" value="MtEnd"/>
+           <param name="Targets_Param" value="$Wall"/>
+          </cue>
+         </cues>
+        </cue>
+        <cue name="MtKillmatch_Lib" onfail="cancel">
+         <conditions><check_value value="$Type == 'killmatch'"/></conditions>
+         <actions>
+          <set_value name="$Notices" exact="0"/>
+         </actions>
+         <cues>
+          <cue name="MtKillmatch_Ref" ref="md.RML_Destroy_Matching_Objects.DestroyMatchingObjects">
+           <param name="MissionCue" value="$Mission"/>
+           <param name="EndSignalCue" value="MtEnd"/>
+           <param name="EndAmount" value="1"/>
+           <param name="ObjectiveText" value="'X4LAN kill'"/>
+           <param name="Guidance" value="false"/>
+           <param name="Filter_Macros" value="[macro.ship_arg_s_scout_01_a_macro]"/>
+           <param name="Filter_Owner" value="[faction.ownerless]"/>
+          </cue>
+          <cue name="MtKillmatch_Seen" instantiate="true">
+           <conditions><event_player_killed_object/></conditions>
+           <actions>
+            <set_value name="$Notices" operation="add"/>
+            <do_if value="$Notices le 3">
+             <debug_text text="'[X4LAN] MT_KILLED slot=%s player=%s killed=%s macro=%s notices=%s time=%s'.[$Slot, player.entity, event.param, event.param.macro, $Notices, player.age]"/>
+            </do_if>
+           </actions>
+          </cue>
+         </cues>
         </cue>
         <cue name="MtKill_Drive">
          <delay exact="10s"/>

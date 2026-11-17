@@ -38,7 +38,8 @@ ROOT = Path(__file__).resolve().parents[2]
 # type -> (the stock library, what the test does in place of the player, the library's answer for X4's own player).
 # The MD cues of the same names start them. destroy: the target destroyed by nobody (the library's "destroyed, but
 # not by the player" answer); kill: by the player's own guns; scan: a station's modules revealed by being close;
-# deepscan: a ship scanned by the player's ship; lrs: a ship found by the player's long-range scan. Not here because
+# killmatch: the same through the kill notice; deepscan: a ship scanned by the player's ship; lrs: a ship found by
+# the player's long-range scan. Not here because
 # MD has no action for it: a hull repair, a dock, a talk.
 TYPES = {
     'flyto': ('RML_FlyTo.FlyTo', 'the target is moved to 300 m from the player (arrival is a distance to that player)', '1'),
@@ -49,6 +50,7 @@ TYPES = {
     'target': ('RML_Long_Range_Scan.LongRangeScan', 'the player targets the object it was sent to find', '1'),
     'deploy': ('RML_DeployInPlace.DeployInPlace', 'the player launches a satellite with the call the stock menu makes', '1'),
     'kill': ('RML_Destroy_Components.DestroyComponents', "the player's own guns destroy targets ahead: the library must count a kill by the player", '1'),
+    'killmatch': ('RML_Destroy_Matching_Objects.DestroyMatchingObjects', "the player's own guns destroy targets ahead: the library must count a kill (its own target, or the player-killed-an-object notice with its filters)", '1'),
     'lrs': ('RML_Long_Range_Scan.LongRangeScan', "the player's long-range scan (mode, a full charge, the send) pings a ship 5 km ahead, which the test then targets", '1'),
     'deepscan': ('RML_Scan.Scan', "the player's ship scans a ship ahead of it (scan mode, the scan's start, two seconds on target): the library must hear the scan finish", '1'),
     # last: it leaves the player's ship at a station
@@ -63,6 +65,7 @@ OPS = {
     # the aim assist on the player's target and the trigger, from 2 s after the accept for 7 s (an input state is a key
     # press and counts only in the window with the focus)
     'kill': (('own', 120, 'aim_fire', 1), ('own', 330, 'aim_fire', 0)),
+    'killmatch': (('own', 120, 'aim_fire', 1), ('own', 330, 'aim_fire', 0)),
     # the long-range scan mode (its key, 0x131) 1 s after the accept, the secondary trigger held for 2.1 s (a full
     # charge is 2 s, lost 0.2 s later), the mode off again at the test's end
     'lrs': (('own', 90, 'input', 'action', 0x131, 0), ('own', 150, 'missile', 1), ('own', 213, 'missile', 0), ('own', 480, 'input', 'action', 0x131, 0)),

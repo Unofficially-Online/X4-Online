@@ -570,7 +570,9 @@ python tools/dev/mission_matrix.py report CLIENT1.log CLIENT2.log [--run RUNDIR]
   300 m ahead (scan mode on, the scan started, two seconds on target) and the library must hear the scan finish.
   And lrs (17 Nov): the long-range scan. The mode's key, the secondary trigger held for a full charge (2 s; held
   0.2 s longer the charge is lost), the release; the scan's ping reaches a ship 5 km ahead, the test targets it,
-  and the library that waits for the found object ends. Eleven of eleven for both players.
+  and the library that waits for the found object ends. And killmatch (17 Nov): the kill test's wall and guns,
+  counted by the library that hears the "player killed an object" notice; each player's own mission got that
+  player's notices. Twelve of twelve for both players.
 - A plan's trigger goes through `aim_fire`. A trigger injected as an input state (`{tick,'input','state',24,1}`) is
   a key press, and a key press counts only in the window that has the Windows focus (two clients on one PC share
   one keyboard): it fires in one run and not in the next.
