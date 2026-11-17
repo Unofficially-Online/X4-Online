@@ -5638,6 +5638,13 @@ local function frame()
      assert(cfg.native_gate_shared_listeners==true and gate.shared_listeners(1)==1,'shared listeners refused')
      log('SHARED_LISTENERS_ARMED')
     end
+    -- A sector's resource area job runs at the tick of its request (lockstep_area_jobs.h; a session default, Windows
+    -- gate): on a job thread its finish decided the tick, and the mining areas of two clients ran a few ticks apart
+    -- long before the session split. Armed here: its call site is re-pointed through the slots' near page.
+    if cfg.native_gate_area_jobs and gate.area_jobs then
+     assert(cfg.native_gate_area_jobs==true and gate.area_jobs(1)==1,'area jobs refused '..tostring(gate.area_jobs_status and gate.area_jobs_status()))
+     log('AREA_JOBS_ARMED '..tostring(gate.area_jobs_status()))
+    end
    else
     assert(cfg.native_gate_pilot_respawn==nil,'pilot respawn refused: needs native_gate_pilot_death')
     assert(cfg.native_gate_pilot_death_suit==nil,'pilot death suit refused: needs native_gate_pilot_death')
@@ -6707,6 +6714,7 @@ local function frame()
    log('WORLD_HASH '..summary)
    if X4LAN_NATIVE_HYBRID then world_hash_state=X4LAN_NATIVE_HYBRID.census(tick,world_hash_state) end
    if cfg.native_gate_world_hash_shields then log('WORLD_HASH_SHIELDS tick='..tick..' '..gate.world_hash_shields_status()) end
+   if cfg.native_gate_area_jobs and gate.area_jobs_status then log('AREA_JOBS tick='..tick..' '..gate.area_jobs_status()) end
    if tick==1 and cfg.native_gate_world_trace_ticks then assert(gate.world_trace(cfg.native_gate_world_trace_ticks)==1,'world trace arm refused') end
   end
   drain_world_trace()

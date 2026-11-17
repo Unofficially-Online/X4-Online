@@ -402,7 +402,9 @@ static pnat_node *pnat_next(pnat_node *n) {
 /* Slots 2..N (lockstep_pilot_slots.h, included after lockstep_virtual_players.h). */
 static int pslot_pass(uint64_t tick);static int pslot_replay(uint64_t tick);static void pslot_restore(void);
 /* A slot ship's death (lockstep_pilot_death.h, included after the presentation). */
-static int pdeath_pass(uint64_t tick,unsigned char *controller);static void pdeath_restore(void);static const char *pdeath_why;
+static int pdeath_pass(uint64_t tick,unsigned char *controller);static void pdeath_restore(void);
+static void areaj_restore(void);   /* lockstep_area_jobs.h */
+static const char *pdeath_why;
 static int pfbody_armed;static const char *pfbody_why;static int pfbody_pass(uint64_t tick,int phase);static void pfbody_restore(void); /* lockstep_pilot_foot_body.h */
 static int pfbody_guard(uint64_t tick);
 static int pfslot_armed;static const char *pfslot_why;static int pfslot_pass(uint64_t tick);static void pfslot_frame(void);static void pfslot_restore(void); /* lockstep_pilot_foot_slots.h */
@@ -961,6 +963,7 @@ static void pnat_restore(void) {
     pfbody_restore();/* the slots' bodies off their rooms before the seats go */
     pslot_restore(); /* slots 2..N next: their seats use the authority patch */
     if(pdeath_armed) pdeath_restore();
+    areaj_restore();   /* lockstep_area_jobs.h: its call site sits on the same near page */
     if(pnat_installed || pstk_aim_installed || pview_installed || pfoot_installed || uirh_patched) pnat_uninstall();
     if(pnat_installed) pnat_stage="restore_refused";
 }
