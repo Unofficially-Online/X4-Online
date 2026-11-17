@@ -568,7 +568,9 @@ python tools/dev/mission_matrix.py report CLIENT1.log CLIENT2.log [--run RUNDIR]
   station, looking at it, and the library must see the station's revealed share grow (a module is revealed by being
   close and looked at; the scan mode is not needed for it); and deepscan (17 Nov): the player's ship scans a ship
   300 m ahead (scan mode on, the scan started, two seconds on target) and the library must hear the scan finish.
-  Ten of ten for both players.
+  And lrs (17 Nov): the long-range scan. The mode's key, the secondary trigger held for a full charge (2 s; held
+  0.2 s longer the charge is lost), the release; the scan's ping reaches a ship 5 km ahead, the test targets it,
+  and the library that waits for the found object ends. Eleven of eleven for both players.
 - A plan's trigger goes through `aim_fire`. A trigger injected as an input state (`{tick,'input','state',24,1}`) is
   a key press, and a key press counts only in the window that has the Windows focus (two clients on one PC share
   one keyboard): it fires in one run and not in the next.
@@ -657,7 +659,7 @@ python tools/dev/mission_matrix.py report CLIENT1.log CLIENT2.log [--run RUNDIR]
   ship reached the satellite, at the same game time on both clients; 0 desyncs, world checks equal at every check.
   Not shown yet: a slot that joins a running session, any start but the Terran cadet, a person playing it through.
   What the cadet chain still needs for a player 2..N after the first parts: leaving the ship in a spacesuit and the
-  repair laser, and long-range scan (the scan's charge runs in a per-frame update only player 1 has).
+  repair laser, and long-range scan (works for every player since 17 Nov, see the mission tests).
 - **After a person's session with that story (11 Nov, the same evening): what was fixed, with three scripted runs** (two
   X4 on one PC, discover as the session's start, slot 2 on the Terran cadet start with its story, 3640 ticks each; slot
   2 gets up from its seat, walks forward and sits down again; scripted input, not a person's keys):

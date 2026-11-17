@@ -206,6 +206,7 @@ D.ON={
  {'native_gate_missions_per_player_ai_frames',true,'native_gate_missions_per_player','the autopilot and other scripts of a player 2+ own ship computer run as that player'},
  {'native_gate_md_media',true,'native_gate_pilot_stock_slots','a mission call on the target monitor starts in the simulation at one tick on every client and shows on its owner client only'},
  {'native_gate_player_groups',true,'native_gate_pilot_stock_slots','the stock scripts lists of the player ship, container and controlled object hold every player (scans, docking and damage notices, cover count for all)'},
+ {'native_gate_scan_long',true,'native_gate_pilot_stock_slots','the long-range scan for every player: the mode for players 2+, the charge on the secondary trigger, the send at its release'},
  {'native_gate_scan_mode',true,'native_gate_pilot_stock_slots','the scan mode for every player: its key is shared, players 2+ get the mode on their own player'},
  {'native_gate_area_jobs',true,'native_gate_pilot_stock_slots','a sector resource area job runs at the tick of its request on every client (its finish on a job thread decided the tick before)'},
  {'native_gate_shared_listeners',true,'native_gate_pilot_stock_slots','a script no player owns (world plots, story activators, statistics) hears the events of every player, each inside that player scope'},
@@ -468,7 +469,6 @@ D.DIAGNOSTIC={
 }
 -- Neither a feature default nor a diagnostic: fixtures, experiments, alternatives and cross-platform keys. {'key','why'}.
 D.EXCLUDED={
- {'native_gate_scan_long','long-range scan for every player (the mode for players 2+, charge on the secondary trigger, send at its release): built 11 Nov, first run owed; a session default after it'},
  {'native_gate_ui_exports','generic UI write guard (lockstep_ui_exports.h): opt-in beside native_gate_ui_guard (tools/build_soak_overlay.py --ui-guard)'},
  {'native_gate_ui_exports_block','generic UI write guard: the exports it refuses'},
  {'native_gate_ui_relay','generic UI write guard: exports relayed through the ffi section (--ui-relay)'},

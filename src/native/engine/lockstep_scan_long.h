@@ -1,5 +1,9 @@
-/* Long-range scan for every player (native_gate_scan_long; needs the stock slots, pilot fire and the UI replay's travel
- * and missiles families; Windows gate; no stop reason of its own). Built 11 Nov, not yet run in the game.
+/* Long-range scan for every player (native_gate_scan_long, a session default; needs the stock slots, pilot fire and the
+ * UI replay's travel and missiles families; Windows gate; no stop reason of its own). Built 11 Nov, first run 17 Nov
+ * (two clients, the mission matrix's lrs type): for player 1 and for player 2 the mode's key set the activity, a 2.1 s
+ * hold of the secondary trigger charged to power 1.0, the release sent the scan, event_long_range_scan_sent came on
+ * that player and its ship, the ping reached a ship 5 km ahead and X4's own long-range scan library ended for that
+ * player; every row equal on both clients.
  *
  * Why: the cadet story's chapter 2 waits for a long-range scan (event_player_changed_activity, then
  * event_long_range_scan_sent and _ping), and in a session nobody can make one. In the stock game the scan mode is an

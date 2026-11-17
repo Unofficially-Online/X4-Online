@@ -795,6 +795,58 @@
         </cue>
        </cues>
       </cue>
+      <!-- Long-range scan: the stock "find it with the long-range scan" step (RML_Long_Range_Scan ends when the player
+           targets the object it was sent to find). An ownerless scout 5 km ahead of the player's ship is the mission's
+           scan target; the plan switches that player's long-range scan mode on, holds the secondary trigger for a full
+           charge and lets go. When the scan's ping reaches the scout the test targets it, as a person would select
+           what the scan showed. The rows name the mode, the sent scan and the ping. -->
+      <cue name="MtLrs" onfail="cancel">
+       <conditions><check_value value="$Type == 'lrs'"/></conditions>
+       <actions>
+        <transform_position name="$At" refposition="player.ship.position" refrotation="player.ship.rotation">
+         <position z="5km"/>
+        </transform_position>
+        <create_ship name="$Pinged" macro="macro.ship_arg_s_scout_01_a_macro" zone="player.zone">
+         <owner exact="faction.ownerless"/>
+         <position value="$At"/>
+        </create_ship>
+        <update_mission cue="$Mission" scantarget="$Pinged"/>
+        <debug_text text="'[X4LAN] MT_SETUP type=%s slot=%s pinged=%s distance=%s time=%s'.[$Type, $Slot, $Pinged, $Pinged.distanceto.{player.ship}, player.age]"/>
+       </actions>
+       <cues>
+        <cue name="MtLrs_Ref" ref="md.RML_Long_Range_Scan.LongRangeScan">
+         <param name="MissionCue" value="$Mission"/>
+         <param name="EndSignalCue" value="MtEnd"/>
+         <param name="ObjectToScan" value="$Pinged"/>
+         <param name="ObjectiveText" value="'X4LAN long-range scan'"/>
+         <param name="FeedbackValue" value="1"/>
+        </cue>
+        <cue name="MtLrs_Mode" instantiate="true">
+         <conditions><event_player_changed_activity/></conditions>
+         <actions>
+          <debug_text text="'[X4LAN] MT_LRS mode slot=%s player=%s activity=%s time=%s'.[$Slot, player.entity, player.activity, player.age]"/>
+         </actions>
+        </cue>
+        <cue name="MtLrs_Sent" instantiate="true">
+         <conditions>
+          <check_any>
+           <event_long_range_scan_sent object="player.entity"/>
+           <event_long_range_scan_sent object="player.ship"/>
+          </check_any>
+         </conditions>
+         <actions>
+          <debug_text text="'[X4LAN] MT_LRS sent slot=%s player=%s on=%s time=%s'.[$Slot, player.entity, event.object, player.age]"/>
+         </actions>
+        </cue>
+        <cue name="MtLrs_Ping" instantiate="true">
+         <conditions><event_long_range_scan_ping object="$Pinged"/></conditions>
+         <actions>
+          <debug_text text="'[X4LAN] MT_LRS ping slot=%s player=%s pinged=%s time=%s'.[$Slot, player.entity, event.object, player.age]"/>
+          <set_player_target object="$Pinged"/>
+         </actions>
+        </cue>
+       </cues>
+      </cue>
       <!-- Deep scan: the stock "scan this ship" step (RML_Scan with a ship and the explicit scan: it waits for a
            finished scan by one of the players' ships). An ownerless scout 300 m ahead of the player's ship is that
            player's target; the plan switches the scan mode on and starts the scan (script ops scan_key and
@@ -866,6 +918,9 @@
         </do_if>
         <do_if value="@$Scanned.exists">
          <destroy_object object="$Scanned" explosion="false"/>
+        </do_if>
+        <do_if value="@$Pinged.exists">
+         <destroy_object object="$Pinged" explosion="false"/>
         </do_if>
         <remove_mission cue="$Mission" type="completed"/>
         <cancel_cue cue="$Mission"/>
