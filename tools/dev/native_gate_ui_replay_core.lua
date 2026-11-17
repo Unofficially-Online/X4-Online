@@ -892,6 +892,13 @@ function K.script(plan,start,tools)
   elseif op=='target_none' then call=function() return tools.env.RemoveSofttarget() end
   elseif op=='match' then call=function() return tools.gate.pilot_stock_inject('state',0x5b,e[3]) end
   elseif op=='input' then call=function() return tools.gate.pilot_stock_inject(e[3],e[4],e[5]) end
+  -- This client's guns without a person: {tick,'aim_fire',1} aims with the aim assist at its player's target and holds
+  -- the primary trigger, {tick,'aim_fire',0} lets go (gate.pilot_aim_script). A trigger injected as an input state
+  -- (state 24) is a key press: it counts only in the window that has the focus (two windows on one PC), so a plan
+  -- cannot rely on it.
+  elseif op=='aim_fire' then call=function()
+    local on=e[3]==1 or e[3]==true
+    return tools.gate.pilot_aim_script(on and 2 or 0,0,0,1000,on and 1 or 0) end
   -- The flight families: autopilot by Lua (no guidance needed) and by the FFI toggle, dock, undock, weapon groups.
   elseif op=='ap_to' then call=function() return tools.env.StartAutoPilot(tools.slot_lua(e[3])) end
   -- The autopilot to any saved object, as the map's "Autopilot" on a station (e.g. to get within docking range first).

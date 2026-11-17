@@ -667,6 +667,52 @@
         </cue>
        </cues>
       </cue>
+      <!-- Kill: a wall of scouts with one hull point each, 75 m ahead of the player's ship and as wide as its guns'
+           cone. The plan holds the player's trigger for 7 s with the aim assist on its target (script op aim_fire);
+           10 s after the accept what is left of the wall is destroyed by nobody, so the library
+           ends: 1 = the player killed some of them (3 = all, -1 = none: no shot landed or no kill was the player's). -->
+      <cue name="MtKill" onfail="cancel">
+       <conditions><check_value value="$Type == 'kill'"/></conditions>
+       <actions>
+        <create_group groupname="$Wall"/>
+        <do_all exact="7" counter="$I">
+         <do_all exact="7" counter="$J">
+          <transform_position name="$At" refposition="player.ship.position" refrotation="player.ship.rotation">
+           <position x="($I - 4) * 14m" y="($J - 4) * 14m" z="75m"/>
+          </transform_position>
+          <create_ship name="$One" macro="macro.ship_arg_s_scout_01_a_macro" zone="player.zone">
+           <owner exact="faction.ownerless"/>
+           <position value="$At"/>
+          </create_ship>
+          <set_object_shield object="$One" exact="0"/>
+          <set_object_hull object="$One" exact="1"/>
+          <add_to_group groupname="$Wall" object="$One"/>
+          <do_if value="$I == 4 and $J == 4">
+           <set_value name="$Middle" exact="$One"/>
+          </do_if>
+         </do_all>
+        </do_all>
+        <!-- the one straight ahead is the player's target: the guns aim at a target, not at the cursor -->
+        <set_player_target object="$Middle"/>
+        <debug_text text="'[X4LAN] MT_SETUP type=%s slot=%s wall=%s speed=%s target=%s time=%s'.[$Type, $Slot, $Wall.count, player.ship.speed, $Middle.distanceto.{player.ship}, player.age]"/>
+       </actions>
+       <cues>
+        <cue name="MtKill_Ref" ref="md.RML_Destroy_Components.DestroyComponents">
+         <param name="MissionCue" value="$Mission"/>
+         <param name="EndSignalCue" value="MtEnd"/>
+         <param name="Targets_Param" value="$Wall"/>
+        </cue>
+        <cue name="MtKill_Drive">
+         <delay exact="10s"/>
+         <actions>
+          <debug_text text="'[X4LAN] MT_DRIVE type=%s slot=%s player=%s left=%s time=%s'.[$Type, $Slot, player.entity, $Wall.count, player.age]"/>
+          <do_all exact="$Wall.count" counter="$I" reverse="true">
+           <destroy_object object="$Wall.{$I}" explosion="false"/>
+          </do_all>
+         </actions>
+        </cue>
+       </cues>
+      </cue>
       <!-- The library's end signal: its feedback value is the result (positive: X4 calls it a success). -->
       <cue name="MtEnd">
        <conditions><event_cue_signalled/></conditions>

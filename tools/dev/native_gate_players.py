@@ -138,7 +138,7 @@ UI_REPLAY_MPP_DEMO = {1: ((60, 'mis_fixture', 1), (90, 'mis_fixture', 1), (150, 
                           (600, 'mis_abort'))}
 UI_REPLAY_OP_FAMILY = {'missile': 'missiles', 'travel': 'travel', 'travel_stop': 'travel', 'travel_key': 'travel', 'target_slot': 'target', 'target_none': 'target',
                        'match': 'target', 'input': 'target', 'ap_to': 'autopilot', 'ap_obj': 'autopilot', 'ap_stop': 'autopilot', 'ap_toggle': 'autopilot',
-                       'quickdock': 'dock', 'dock_at': 'dock', 'undock': 'dock', 'wgroup': 'weapons', 'wkey': 'weapons',
+                       'quickdock': 'dock', 'dock_at': 'dock', 'undock': 'dock', 'wgroup': 'weapons', 'wkey': 'weapons', 'aim_fire': 'weapons',
                        'flight_assist': 'flight', 'turret_mode': 'flight', 'turret_missile': 'flight', 'drones': 'flight', 'drone_mode': 'flight', 'launch': 'flight', 'launch_stock': 'flight', 'probe_far': 'flight', 'groups_look': 'flight', 'turrets_mode': 'flight', 'turrets_armed': 'flight', 'drones_armed': 'flight',
                        'drop_cargo': 'flight',
                        'mis_fixture': 'missions', 'mt_offer': 'missions', 'mt_accept': 'events', 'offers_list': 'missions', 'offer_accept_n': 'events', 'offer_accept_next': 'events', 'mis_new': 'missions', 'mis_list': 'missions', 'mis_abort_new': 'missions', 'gm_limit': 'missions', 'slot_kill': 'events', 'slot_airlock': 'events', 'ui_reload': 'events', 'briefing': 'missions', 'briefing_stop': 'missions', 'briefing_button': 'missions',

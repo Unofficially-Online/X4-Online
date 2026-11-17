@@ -36,8 +36,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 
 # type -> (the stock library, what the test does in place of the player, the library's answer for X4's own player).
-# The MD cues of the same names start them. Not here because MD has no action for it: a kill with a killer (the destroy
-# test checks the library's "destroyed, but not by the player" answer), a hull repair, a scan, a dock, a talk.
+# The MD cues of the same names start them. destroy: the target destroyed by nobody (the library's "destroyed, but
+# not by the player" answer); kill: by the player's own guns. Not here because MD has no action for it: a hull
+# repair, a scan, a dock, a talk.
 TYPES = {
     'flyto': ('RML_FlyTo.FlyTo', 'the target is moved to 300 m from the player (arrival is a distance to that player)', '1'),
     'collect': ('RML_Collect_Inventory.CollectInventory', 'two inventory items are added to the player', '1'),
@@ -46,6 +47,7 @@ TYPES = {
     'capture': ('RML_Capture.Capture', "the target comes to the player, then becomes the player faction's", '1'),
     'target': ('RML_Long_Range_Scan.LongRangeScan', 'the player targets the object it was sent to find', '1'),
     'deploy': ('RML_DeployInPlace.DeployInPlace', 'the player launches a satellite with the call the stock menu makes', '1'),
+    'kill': ('RML_Destroy_Components.DestroyComponents', "the player's own guns destroy targets ahead: the library must count a kill by the player", '1'),
 }
 SLOT = '<slot>'
 # What a test needs in the clients' plans beside its offer and accept: ('all' every client | 'own' the player under
@@ -53,6 +55,9 @@ SLOT = '<slot>'
 OPS = {
     'deploy': (('all', 120, 'launch_stock', SLOT, 'eq_arg_satellite_01_macro', 1),
                ('own', 270, 'launch', 'satellite', 'eq_arg_satellite_01_macro')),
+    # the aim assist on the player's target and the trigger, from 2 s after the accept for 7 s (an input state is a key
+    # press and counts only in the window with the focus)
+    'kill': (('own', 120, 'aim_fire', 1), ('own', 330, 'aim_fire', 0)),
 }
 START = 60          # window-relative tick of the first offer
 SPACING = 600       # ticks per test (20 s at 30 Hz): offer, accept after 2 s, the test's action 5 s later

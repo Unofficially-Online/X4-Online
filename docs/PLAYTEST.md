@@ -560,11 +560,16 @@ python tools/dev/mission_matrix.py report CLIENT1.log CLIENT2.log [--run RUNDIR]
 - `run` starts its own windowed clients with disposable profiles (`x4ls play`), about a minute per type and two
   players plus the start, and stops them. Beside another session on the same PC: `--first-profile N`, `--lanes DIR`,
   `--beside`, `--display N`, `--tile-skip N`.
-- The types (16 Nov): fly to, collect inventory, destroy (MD cannot name a killer, so the test checks the library's
-  "destroyed, not by the player" answer), reputation, capture, target an object, deploy a satellite (the one type
-  driven through a replayed call of the stock UI, `launch`). Seven of seven for both players in two runs.
-- Not covered, because it needs a person's aim or a menu: shooting a target, repairing, scanning, docking, talking to
-  a person. A test that passes says the library heard that player; it does not say a person can fly the mission.
+- The types: fly to, collect inventory, destroy (the target destroyed by nobody: the library's "destroyed, not by
+  the player" answer), reputation, capture, target an object, deploy a satellite (a replayed call of the stock UI,
+  `launch`), and kill (17 Nov): a wall of targets ahead of the player's ship, the player's own guns fire for seven
+  seconds (script op `aim_fire`: the aim assist on the player's target and the trigger), and the library must
+  count a kill by the player. Eight of eight for both players.
+- A plan's trigger goes through `aim_fire`. A trigger injected as an input state (`{tick,'input','state',24,1}`) is
+  a key press, and a key press counts only in the window that has the Windows focus (two clients on one PC share
+  one keyboard): it fires in one run and not in the next.
+- Not covered, because it needs a menu or a tool MD cannot drive: repairing, scanning, docking, talking to a
+  person. A test that passes says the library heard that player; it does not say a person can fly the mission.
 - The stock offers (`mission_matrix.py offers ...`, the same options as `run`): the offers X4 itself made in the
   session's world, the generic missions of the stations around the players, are accepted one after the other, by
   player 1 in one session and by player 2 in the next (`--accept-as 1,2`), each aborted again after five seconds. The
