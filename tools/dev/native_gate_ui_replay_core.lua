@@ -614,8 +614,27 @@ function K.session(p)
    tostring(gate.ui_missions_state and gate.ui_missions_state() or '-')..'] '..tostring(gate.mpp_status and gate.mpp_status() or '-'))
   return done
  end
+ -- The stock scripts' lists of "the player's" objects hold every player's (native_gate_player_groups; the MD patch
+ -- native_gate_player_groups.xml of md.Setup): every client, at the same ticks (stateless: a joiner computes the same
+ -- ticks), names the player entities of the slots that have one, in slot order; the script sets its groups again when
+ -- the list changed. p.groups={first=tick,every=ticks,player=function(slot) -> Lua ID or nil}.
+ function S.player_groups(tick)
+  local g=p.groups
+  if not g or tick<g.first or (tick-g.first)%g.every~=0 then return end
+  local list={}
+  for k=1,p.slots do
+   local id=g.player(k)
+   if id then list[#list+1]=id end
+  end
+  if #list==0 then return end
+  S.replaying=true;gate.ui_replay_bypass(1)
+  local ok,why=pcall(env.AddUITriggeredEvent,'X4LAN_PlayerGroups','Players',list)
+  gate.ui_replay_bypass(0);S.replaying=false
+  if tick==g.first or not ok then log('PLAYER_GROUPS tick='..tick..' players='..#list..' '..(ok and 'named' or 'error:'..tostring(why))) end
+ end
  -- Every client, the probe's frame of the tick, the events in slot order and call order.
  function S.apply(tick)
+  S.player_groups(tick)
   S.slot_offers(tick)
   local list=gate.ui_replay_lua(tick)
   if not list then return end
@@ -764,7 +783,7 @@ end
 K.SCOPED={target_slot=true,target_none=true,target_home=true,dock_home=true,suit_home=true,guidance_slot=true,guidance_end=true,inv_read=true,inv_drop=true}
 -- A canonical op is the probe's own call, not a person's click: a test fixture that every client's plan holds at the same
 -- tick (MD runs it on every client alike, nothing is captured).
-K.CANONICAL={mis_fixture=true,mt_offer=true,gm_limit=true,slot_kill=true,slot_airlock=true,launch_stock=true,probe_far=true,inv_seed=true,inv_look=true,inv_join_state=true,inv_join_give=true}
+K.CANONICAL={mis_fixture=true,mt_offer=true,gm_limit=true,slot_kill=true,slot_airlock=true,launch_stock=true,probe_far=true,groups_look=true,inv_seed=true,inv_look=true,inv_join_state=true,inv_join_give=true}
 -- Refused entries the stock HUD calls by itself, not on a person's action: logged, no info line. AddKnownItem: the
 -- encyclopedia entry the HUD adds for whatever comes into view (45 refusals and their info lines in a playtest of 9 Nov).
 K.GUARD_QUIET={AddKnownItem=true}
@@ -963,6 +982,12 @@ function K.script(plan,start,tools)
     tools.env.AddUITriggeredEvent('X4LAN_UiReplay','Stock',{ship=tools.slot_lua(e[3]),macro=e[4],amount=e[5] or 1});return 'lua' end
   -- Test only (MD ProbeFar, canonical): a resource probe launched at the first ore the galaxy's sectors have.
   elseif op=='probe_far' then call=function() tools.env.AddUITriggeredEvent('X4LAN_UiReplay','ProbeFar',{});return 'lua' end
+  -- Test only (MD GroupsLook, canonical): the members of md.Setup's four player groups, and whether each slot's ship is
+  -- among the controlled ones (native_gate_player_groups).
+  elseif op=='groups_look' then call=function()
+    local ships={}
+    for k=1,tools.slots or 0 do ships[k]=tools.slot_lua(k) end
+    tools.env.AddUITriggeredEvent('X4LAN_UiReplay','GroupsLook',ships);return 'lua' end
   elseif op=='comm' then call=function() return tools.env.StartConversationFromMenu('default',tools.slot_lua(e[3])) end
   -- Missions and conversations (lockstep_ui_missions.h). mis_fixture: the test offer (MD native_gate_ui_replay.xml), canonical;
   -- the rest as the briefing menu, the map's mission list and the dialog call the stock entries.

@@ -1,0 +1,110 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The stock scripts' lists of "the player's" objects hold every player's (native_gate_player_groups, a session
+     default; the probe names the slots' player entities, tools/dev/native_gate_ui_replay_core.lua S.player_groups).
+
+     md.Setup keeps four global groups: the object the player controls, the ship the player pilots, the container the
+     player is in, and the ships around the player. About fifty stock conditions listen on them: a scan counts for a
+     mission when its scanner is in the first (rml_scan, gm_patrol), docking and damage notices come for the second and
+     third, crew gains skill, a cover is lost, an attack is announced. Three cues keep them, each for one player: they
+     CLEAR the group and add what "the player" has now.
+     With several players that is the last one who changed seat or room: once the scripts that no player owns heard
+     every player (native_gate_shared_listeners), player 2 taking a seat removed player 1's ship from the lists, and
+     the other way round; before that, players 2+ were never in them.
+
+     Here each of the three cues, after its own actions, sets the four groups to what every player of the session has
+     (the library X4LAN_PlayerGroups; slot order, so the first member is slot 1's as in a stock game). The players are
+     named by the probe on every client at the same ticks (the cue X4LAN_PlayerGroupsPlayers); until it has done so,
+     and in a game without the gate, every line here leaves the stock behaviour. Each naming also compares what the
+     players have now with what the groups were last set from, and sets them again when it differs: a change that
+     raised no event for the keeper cues is taken then (seen live: a slot put outside in a suit after its ship's
+     death left the wreck in the lists and the suit out of them).
+     The container cue reads "the group's first member" as the container the player was in before. It reads that
+     player's own previous container now ($X4LAN_Container on the player's entity): its condition, and a first action
+     that puts that container first for the stock lines that follow.
+     Our own lines only; the stock script is patched in memory by X4's own diff loading, never on disk. -->
+<diff>
+ <add sel="/mdscript/cues">
+  <library name="X4LAN_PlayerGroups" purpose="include_actions">
+   <actions>
+    <do_if value="global.$X4LAN_Players?">
+     <clear_group group="global.$PlayerControlledGroup"/>
+     <clear_group group="global.$PlayerOccupiedShipGroup"/>
+     <clear_group group="global.$PlayerContainerGroup"/>
+     <clear_group group="global.$PlayerShipsGroup"/>
+     <set_value name="global.$X4LAN_PlayersState" exact="[]"/>
+     <do_all exact="global.$X4LAN_Players.count" counter="$X4LAN_I">
+      <set_value name="$X4LAN_E" exact="global.$X4LAN_Players.{$X4LAN_I}"/>
+      <do_if value="$X4LAN_E.exists">
+       <append_to_list name="global.$X4LAN_PlayersState" exact="[$X4LAN_E, $X4LAN_E.controlled, $X4LAN_E.container, $X4LAN_E.ship]"/>
+       <do_if value="$X4LAN_E.controlled">
+        <add_to_group groupname="global.$PlayerControlledGroup" object="$X4LAN_E.controlled"/>
+        <do_if value="$X4LAN_E.controlled.isclass.ship">
+         <add_to_group groupname="global.$PlayerOccupiedShipGroup" object="$X4LAN_E.controlled"/>
+        </do_if>
+       </do_if>
+       <do_if value="$X4LAN_E.container">
+        <add_to_group groupname="global.$PlayerContainerGroup" object="$X4LAN_E.container"/>
+       </do_if>
+       <set_value name="$X4LAN_E.$X4LAN_Container" exact="$X4LAN_E.container"/>
+       <set_value name="$X4LAN_S" exact="$X4LAN_E.ship"/>
+       <do_while value="@$X4LAN_S.exists">
+        <add_to_group groupname="global.$PlayerShipsGroup" object="$X4LAN_S"/>
+        <set_value name="$X4LAN_S" exact="$X4LAN_S.ship"/>
+       </do_while>
+      </do_if>
+     </do_all>
+     <debug_text text="'[X4LAN] PLAYER_GROUPS_SET event=%s player=%s controlled=%s piloted=%s containers=%s ships=%s time=%s'.[@event.name, player.entity, global.$PlayerControlledGroup.count, global.$PlayerOccupiedShipGroup.count, global.$PlayerContainerGroup.count, global.$PlayerShipsGroup.count, player.age]"/>
+     <remove_value name="$X4LAN_I"/>
+     <remove_value name="$X4LAN_E"/>
+     <remove_value name="$X4LAN_S"/>
+    </do_if>
+   </actions>
+  </library>
+  <cue name="X4LAN_PlayerGroupsPlayers" instantiate="true" namespace="this">
+   <conditions><event_ui_triggered screen="'X4LAN_PlayerGroups'" control="'Players'"/></conditions>
+   <actions>
+    <set_value name="$New" exact="event.param3"/>
+    <set_value name="$Now" exact="[]"/>
+    <do_all exact="$New.count" counter="$N">
+     <do_if value="$New.{$N}.exists">
+      <append_to_list name="$Now" exact="[$New.{$N}, $New.{$N}.controlled, $New.{$N}.container, $New.{$N}.ship]"/>
+     </do_if>
+    </do_all>
+    <set_value name="$Same" exact="global.$X4LAN_Players? and global.$X4LAN_PlayersState? and global.$X4LAN_Players.count == $New.count and global.$X4LAN_PlayersState.count == $Now.count"/>
+    <do_if value="$Same">
+     <do_all exact="$Now.count" counter="$N">
+      <do_all exact="4" counter="$F">
+       <do_if value="global.$X4LAN_PlayersState.{$N}.{$F} != $Now.{$N}.{$F}">
+        <set_value name="$Same" exact="false"/>
+       </do_if>
+      </do_all>
+     </do_all>
+    </do_if>
+    <do_if value="not $Same">
+     <set_value name="global.$X4LAN_Players" exact="$New.clone"/>
+     <include_actions ref="X4LAN_PlayerGroups"/>
+    </do_if>
+   </actions>
+  </cue>
+ </add>
+ <replace sel="/mdscript/cues/cue[@name='Start']/cues/cue[@name='GameStart']/cues/cue[@name='PlayerObjectChanged']/conditions/check_value/@value">player.container != (if global.$X4LAN_Players? then @player.entity.$X4LAN_Container else global.$PlayerContainerGroup.{1})</replace>
+ <add sel="/mdscript/cues/cue[@name='Start']/cues/cue[@name='GameStart']/cues/cue[@name='PlayerObjectChanged']/actions" pos="prepend">
+  <do_if value="global.$X4LAN_Players?">
+   <do_if value="@player.entity.$X4LAN_Container.exists">
+    <add_to_group groupname="global.$PlayerContainerGroup" object="player.entity.$X4LAN_Container" replace="true"/>
+   </do_if>
+   <do_else>
+    <add_to_group groupname="global.$PlayerContainerGroup" object="player.container" replace="true"/>
+   </do_else>
+  </do_if>
+ </add>
+ <add sel="/mdscript/cues/cue[@name='Start']/cues/cue[@name='GameStart']/cues/cue[@name='PlayerObjectChanged']/actions">
+  <include_actions ref="X4LAN_PlayerGroups"/>
+ </add>
+ <add sel="/mdscript/cues/cue[@name='Start']/cues/cue[@name='GameStart']/cues/cue[@name='PlayerShipsGroupUpdate']/actions">
+  <include_actions ref="X4LAN_PlayerGroups"/>
+ </add>
+ <add sel="/mdscript/cues/cue[@name='Start']/cues/cue[@name='GameStart']/cues/cue[@name='PlayerControlledChanged']/actions">
+  <include_actions ref="X4LAN_PlayerGroups"/>
+ </add>
+</diff>

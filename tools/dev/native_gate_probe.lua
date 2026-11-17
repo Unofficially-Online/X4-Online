@@ -2856,7 +2856,7 @@ function pilot_view.arm_ui_replay(slot,window)
   end
   return out
  end
- local tools={gate=gate,C=ffi.C,ffi=ffi,env=_G,own_slot=slot,
+ local tools={gate=gate,C=ffi.C,ffi=ffi,env=_G,own_slot=slot,slots=#cfg.native_gate_pilot_slots,
   slot_id=function(s) return ffi.new('UniverseID',(assert(gate.pilot_ship(s),'ui replay script: slot ship unresolved'))) end,  -- one value: assert returns its message too
   slot_lua=function(s) return ConvertStringToLuaID(string.format('%.0f',(assert(gate.pilot_ship(s),'ui replay script: slot ship unresolved')))) end,
   saved_id=function(saved) return ConvertStringTo64Bit((assert(gate.ui_replay_saved(saved),'ui replay script: saved ID unresolved'))) end,
@@ -2931,6 +2931,11 @@ function pilot_view.arm_ui_replay(slot,window)
    pcall(ffi.cdef,'UniverseID GetPlayerGalaxyID(void);') and
    {first=window[1]+450,every=5400,stagger=90,galaxy=function() return ConvertStringTo64Bit(tostring(ffi.C.GetPlayerGalaxyID())) end} or nil,
   galaxy=pcall(ffi.cdef,'UniverseID GetPlayerGalaxyID(void);') and function() return ConvertStringTo64Bit(tostring(ffi.C.GetPlayerGalaxyID())) end or nil,
+  -- The stock lists of the player's objects hold every player's (native_gate_player_groups, a session default): the
+  -- slots' player entities are named 3 s into the window and every 5 s after it (a joiner, a slot that left, a
+  -- change of seat that raised no event).
+  groups=cfg.native_gate_player_groups==true and gate.ui_inventory_player and
+   {first=window[1]+90,every=150,player=function(k) local id=gate.ui_inventory_player(k);return id and ConvertStringToLuaID(id) or nil end} or nil,
   story=cfg.native_gate_story,   -- {[k]='<Script>.<Cue>'}: the start script's cue that begins slot k's story (S.slot_story)
   notify=function(text) ffi.C.ShowInfoLine(text,4) end,   -- every refusal of the families shows its info line (also without the guard)
   active_mission=missions_on and function() return (tostring(ffi.C.GetActiveMissionID()):gsub('ULL$','')) end or nil,

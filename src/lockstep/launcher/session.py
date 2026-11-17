@@ -152,7 +152,7 @@ def other_clients():
     return found
 
 
-def release_beside(own):
+def release_beside(own, log=print):
     """Before a client start: X4's instance mutex is freed in every other session's launcher client (never in an X4
     that is not a launcher client). A client another session started a moment ago holds the mutex until its own
     launcher frees it at the start menu; a client of this session started in that time would be refused by X4 and
@@ -563,7 +563,7 @@ def run(o: Options, log=print):
                             borderless=o.borderless)
             if o.steam_fix:
                 steam.fix(o.state / 'steam-fix.json')  # Steam can reset it once a client connects
-            release_beside(set(state['pids']))
+            release_beside(set(state['pids']), log)
             proc = subprocess.Popen(client_command(view, profile_id, k, seed), cwd=view, env=steam.client_environment(),
                                     startupinfo=None if o.focus else no_activate_startup())
             clients.append((k, profile_id, proc))

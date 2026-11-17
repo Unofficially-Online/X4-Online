@@ -89,6 +89,24 @@
     </do_else>
    </actions>
   </cue>
+  <!-- Test only (script op groups_look, in every client's plan at the same tick): md.Setup's four groups of the player's
+       objects (native_gate_player_groups; the patch native_gate_player_groups.xml), and for each slot's ship whether it
+       is among the controlled and the piloted ones. -->
+  <cue name="GroupsLook" instantiate="true" namespace="this">
+   <conditions><event_ui_triggered screen="'X4LAN_UiReplay'" control="'GroupsLook'"/></conditions>
+   <actions>
+    <set_value name="$In" exact="''"/>
+    <do_all exact="event.param3.count" counter="$K">
+     <set_value name="$Ship" exact="event.param3.{$K}"/>
+     <set_value name="$In" exact="$In + ' slot' + $K + '=' + (if global.$PlayerControlledGroup.indexof.{$Ship} then 'c' else '-') + (if global.$PlayerOccupiedShipGroup.indexof.{$Ship} then 'p' else '-') + (if global.$PlayerContainerGroup.indexof.{$Ship} then 'k' else '-') + (if global.$PlayerShipsGroup.indexof.{$Ship} then 's' else '-')"/>
+    </do_all>
+    <do_all exact="@global.$X4LAN_Players.count" counter="$K">
+     <set_value name="$E" exact="global.$X4LAN_Players.{$K}"/>
+     <set_value name="$In" exact="$In + ' player' + $K + '=' + $E + '/' + @$E.controlled + '/' + @$E.container + '/' + @$E.ship"/>
+    </do_all>
+    <debug_text text="'[X4LAN] GROUPS_LOOK controlled=%s piloted=%s containers=%s ships=%s named=%s%s time=%s'.[global.$PlayerControlledGroup.count, global.$PlayerOccupiedShipGroup.count, global.$PlayerContainerGroup.count, global.$PlayerShipsGroup.count, @global.$X4LAN_Players.count, $In, player.age]"/>
+   </actions>
+  </cue>
   <!-- Missions and conversations (native_gate_ui_replay missions, conversation; reports/LOCKSTEP-UI-MISSIONS-20261101.txt):
        a test offer whose client is a cue actor, made from the probe's frame at the same tick on every client (script op
        mis_fixture, in every client's plan). Slot 1's accept, briefing, active mission, abort and talk then arrive here on

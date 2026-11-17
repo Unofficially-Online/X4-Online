@@ -537,7 +537,7 @@ class MdScriptTests(unittest.TestCase):
         self.assertIsNone(steps["$a.$step == 'reputation'"].find('.//add_licence'))   # a pool faction: no player licences
         # The two patches: one condition each on a stock cue, nothing else, and every overlay gets them under the stock names.
         import native_gate_defaults as defaults
-        self.assertEqual(sorted(defaults.MD_PATCHES), ['md/notifications.xml', 'md/playerreputation.xml', 'md/tutorial_global.xml'])
+        self.assertEqual(sorted(defaults.MD_PATCHES), ['md/notifications.xml', 'md/playerreputation.xml', 'md/setup.xml', 'md/tutorial_global.xml'])
         cues = {'md/playerreputation.xml': "/mdscript/cues/cue[@name='TrackPlayerReputation']/cues/cue[@name='Base']/conditions",
                 'md/notifications.xml': "/mdscript/cues/cue[@name='Init']/cues/cue[@name='PlayerDiscountCommission']/conditions"}
         # The third: the new-game hint's timeout on (four attribute values, one per show_help of the two hint cues), nothing else.
@@ -548,8 +548,29 @@ class MdScriptTests(unittest.TestCase):
         self.assertEqual([e.get('sel') for e in hint],
                          [start % (outer, inner, branch) for outer, inner in (('NewGameHint', 'NewGameHintShip'), ('NewGameHint2', 'NewGameEnterShipHint'))
                           for branch in ('do_if', 'do_else')])
+        # The fourth: the player groups of md.Setup hold every player (a library and a cue added, the three keeper cues
+        # include the library after their own actions, the container cue reads the player's own previous container).
+        groups = ET.fromstring((DEV / defaults.MD_PATCHES['md/setup.xml']).read_text(encoding='utf-8'))
+        keeper = "/mdscript/cues/cue[@name='Start']/cues/cue[@name='GameStart']/cues/cue[@name='%s']/%s"
+        self.assertEqual([(e.tag, e.get('sel'), e.get('pos')) for e in groups],
+                         [('add', '/mdscript/cues', None),
+                          ('replace', keeper % ('PlayerObjectChanged', 'conditions/check_value/@value'), None),
+                          ('add', keeper % ('PlayerObjectChanged', 'actions'), 'prepend'),
+                          ('add', keeper % ('PlayerObjectChanged', 'actions'), None),
+                          ('add', keeper % ('PlayerShipsGroupUpdate', 'actions'), None),
+                          ('add', keeper % ('PlayerControlledChanged', 'actions'), None)])
+        self.assertEqual([(e.tag, e.get('name')) for e in groups[0]], [('library', 'X4LAN_PlayerGroups'), ('cue', 'X4LAN_PlayerGroupsPlayers')])
+        for e in groups[3:]:
+            self.assertEqual([(a.tag, a.get('ref')) for a in e], [('include_actions', 'X4LAN_PlayerGroups')])
+        # every line of it leaves the stock behaviour until the probe has named the players
+        self.assertEqual(groups[0][0].find('actions')[0].get('value'), 'global.$X4LAN_Players?')
+        # the naming sets the groups again when what a player has differs from what they were set from
+        self.assertIn('global.$X4LAN_PlayersState', ET.tostring(groups[0][0], encoding='unicode'))
+        self.assertIn('global.$X4LAN_PlayersState.{$N}.{$F} != $Now.{$N}.{$F}', ET.tostring(groups[0][1], encoding='unicode'))
+        self.assertIn('if global.$X4LAN_Players? then', groups[1].text)
+        self.assertEqual(groups[2][0].get('value'), 'global.$X4LAN_Players?')
         for name, source in defaults.MD_PATCHES.items():
-            if name == 'md/tutorial_global.xml':
+            if name in ('md/tutorial_global.xml', 'md/setup.xml'):
                 continue
             diff = ET.fromstring((DEV / source).read_text(encoding='utf-8'))
             self.assertEqual(diff.tag, 'diff')
