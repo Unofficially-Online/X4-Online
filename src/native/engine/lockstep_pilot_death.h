@@ -465,13 +465,19 @@ static void pvehk_event_raw(unsigned char *player,unsigned vtable,unsigned size,
  * the deferred post while the slot's replayed input runs in its scope) are due at X4's event phase, outside every
  * scope, and were dropped the same way (the audit: changed_target for slot 1 only). A due event whose source is a
  * slot's player is delivered inside that slot's scope (lockstep_event_order.h's delivery asks here). A scope that
- * cannot be opened there (another one open, another thread): delivered as before, counted. Status deliver=in/out. */
-static volatile LONG64 pvehk_delivered_scoped,pvehk_delivered_plain;
+ * cannot be opened there (another one open, another thread): delivered as before, counted.
+ * A delivery that finds the slot's scope open already (17 Nov: a menu's UI event, AddUITriggeredEvent, replayed for
+ * slot k: its deferred post is delivered while the replay's scope is still open) opens nothing, and it used to answer
+ * "no scope": the scripts nobody owns never heard it (a ping from player 2's client reached only player 2's own cues,
+ * player 1's reached the shared cue). The answer is now the slot with a minus sign: nothing to leave, but the event
+ * is forwarded like any other. Status deliver=in/out/inside/unseated. */
+static volatile LONG64 pvehk_delivered_scoped,pvehk_delivered_plain,pvehk_delivered_inside,pvehk_delivered_unseated;
 static int pvehk_deliver_enter(void *source) {
     if(!source || !pvehk_events_more) return 0;
     for(unsigned k=2;k<=PILOT_SLOTS;k++) {
-        if(pslots[k].player!=(unsigned char *)source || !pslots[k].seated) continue;
-        if(pstk_scope_slot==k) return 0;
+        if(pslots[k].player!=(unsigned char *)source) continue;
+        if(!pslots[k].seated) {InterlockedIncrement64(&pvehk_delivered_unseated);return 0;}
+        if(pstk_scope_slot==k) {InterlockedIncrement64(&pvehk_delivered_inside);return -(int)k;}
         if(pslot_enter(k)) {InterlockedIncrement64(&pvehk_delivered_scoped);return (int)k;}
         InterlockedIncrement64(&pvehk_delivered_plain);return 0;
     }
@@ -559,7 +565,8 @@ static void pvehk_forward(unsigned k,unsigned char *event,double now) {
     __except(GetExceptionCode()==EXCEPTION_ACCESS_VIOLATION?EXCEPTION_EXECUTE_HANDLER:EXCEPTION_CONTINUE_SEARCH) {pvehk_forward_on=0;}
 }
 static void pvehk_deliver_forward(int scope,void *event,double time) {
-    if(scope>=2 && scope<=(int)PILOT_SLOTS) pvehk_forward((unsigned)scope,event,time);
+    const int k=scope<0?-scope:scope;   /* minus: the scope was open already */
+    if(k>=2 && k<=(int)PILOT_SLOTS) pvehk_forward((unsigned)k,event,time);
 }
 /* The same event dispatched at once inside slot k's scope (the event_player_* kind; header). */
 static void pvehk_event_now(unsigned k,unsigned vtable,unsigned size,uint64_t first,uint64_t second,double now) {
@@ -1440,8 +1447,9 @@ static int pdeath_status(char *out,size_t capacity) {
                                               (long long)pvehk_fades_shown,(long long)pvehk_fades_kept);
     if(n>0 && (size_t)n<capacity) n+=snprintf(out+n,capacity-(size_t)n," menu=%d/%lld/%lld",pvehk_menu_installed,
                                               (long long)pvehk_menus_shown,(long long)pvehk_menus_kept);
-    if(n>0 && (size_t)n<capacity) n+=snprintf(out+n,capacity-(size_t)n," events=%d/%lld/%d/%lld deliver=%lld/%lld kill=%d/%lld leak=%d/%lld did=%d/%d/%lld seen=",pvehk_events_on,(long long)pvehk_events_posted,pvehk_events_more,(long long)pvehk_events_unscoped,
-                                              (long long)pvehk_delivered_scoped,(long long)pvehk_delivered_plain,pvehk_did_sites[PVEHK_DID_KILL].installed,(long long)pvehk_did_sites[PVEHK_DID_KILL].told,
+    if(n>0 && (size_t)n<capacity) n+=snprintf(out+n,capacity-(size_t)n," events=%d/%lld/%d/%lld deliver=%lld/%lld/%lld/%lld kill=%d/%lld leak=%d/%lld did=%d/%d/%lld seen=",pvehk_events_on,(long long)pvehk_events_posted,pvehk_events_more,(long long)pvehk_events_unscoped,
+                                              (long long)pvehk_delivered_scoped,(long long)pvehk_delivered_plain,(long long)pvehk_delivered_inside,(long long)pvehk_delivered_unseated,
+                                              pvehk_did_sites[PVEHK_DID_KILL].installed,(long long)pvehk_did_sites[PVEHK_DID_KILL].told,
                                               pvehk_did_sites[PVEHK_DID_LEAK].installed,(long long)pvehk_did_sites[PVEHK_DID_LEAK].told,
                                               pvehk_did_installed(),(int)PVEHK_DID_SITES,pvehk_did_told());
     if(n>0 && (size_t)n<capacity) n+=pvehk_did_seen(out+n,capacity-(size_t)n);

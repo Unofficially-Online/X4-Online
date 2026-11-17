@@ -356,6 +356,10 @@
        <conditions><event_player_started_control/></conditions>
        <actions><debug_text text="'[X4LAN] MPP_AUDIT event=player_started_control player=%s ship=%s on=%s p=%s time=%s'.[player.entity, @player.occupiedship, @event.object, @event.param, player.age]"/></actions>
       </cue>
+      <cue name="Audit_Ui_ping" instantiate="true">
+       <conditions><event_ui_triggered screen="'X4LAN_Audit'"/></conditions>
+       <actions><debug_text text="'[X4LAN] MPP_AUDIT event=ui_ping player=%s ship=%s on=%s p=%s time=%s'.[player.entity, @player.occupiedship, @event.object, @event.param, player.age]"/></actions>
+      </cue>
       <cue name="Audit_Player_changed_activity" instantiate="true">
        <conditions><event_player_changed_activity/></conditions>
        <actions><debug_text text="'[X4LAN] MPP_AUDIT event=player_changed_activity player=%s ship=%s on=%s p=%s time=%s'.[player.entity, @player.occupiedship, @event.object, @event.param, player.age]"/></actions>
@@ -1174,6 +1178,7 @@
      <event_player_changed_target/>
      <event_player_killed_object/>
      <event_player_started_control/>
+     <event_ui_triggered screen="'X4LAN_Audit'"/>
     </check_any>
    </conditions>
    <actions>

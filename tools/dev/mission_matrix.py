@@ -7,6 +7,7 @@
     python tools/dev/mission_matrix.py offers --snapshot ... --session ... --gate-dll ... [--accept-as 1,2] [--count 13]
     python tools/dev/mission_matrix.py real --offer NAME --snapshot ... --session ... --gate-dll ... [--accept-as 1,2]
     python tools/dev/mission_matrix.py meet --snapshot ... --session ... --gate-dll ... [--mover 2] [--to 1]
+    python tools/dev/mission_matrix.py script --op "2 300 ui_ping" --rows REGEX --snapshot ... --session ... --gate-dll ...
 
 What a test is (MD: tools/dev/native_gate_ui_replay.xml, cue MissionTest; script ops mt_offer / mt_accept): the probe
 makes a test offer at the same tick on every client, the player under test accepts it as the stock menus accept an
@@ -391,6 +392,37 @@ def offers_table(results):
     return failed
 
 
+# ---- any small plan ----
+# The ops given on the command line ("SLOT TICK NAME [ARGS...]", numbers as numbers), a session of --ticks ticks, and
+# every log line of every client that matches --rows. Fails only when the clients split or log an error row.
+def custom(args):
+    out = [[] for _ in range(args.players)]
+    for text in args.op:
+        slot, tick, name, *rest = text.split()
+        out[int(slot) - 1].append((int(tick), name) + tuple(int(v) if re.fullmatch(r'-?\d+', v) else v for v in rest))
+    out[0].append((args.ticks - 30, 'account'))
+    plan = lua([sorted(p, key=lambda e: e[0]) for p in out])
+    rows = re.compile(args.rows)
+
+    def done(logs):
+        return logs[0].exists() and any(' op=account ' in l for l in read_lines(logs[0]))
+
+    def report(logs, run_dir):
+        for k, path in enumerate(logs):
+            for line in read_lines(path):
+                if rows.search(line):
+                    print('  client %d: %s' % (k + 1, line.strip()[:args.width]))
+        desyncs = [l for l in read_lines(Path(run_dir) / 'desyncs.log') if 'DESYNC' in l] if run_dir else []
+        errors = read_lines(Path(run_dir) / 'errors.log') if run_dir else []
+        if desyncs:
+            print('FAIL: the clients split: %s' % desyncs[0].strip()[:160])
+        if errors:
+            print('FAIL: %d error rows, first: %s' % (len(errors), errors[0].strip()[:200]))
+        return len(desyncs) + len(errors)
+
+    return session(args, plan, args.ticks, done, report, '%d ops' % len(args.op))
+
+
 # ---- two players meet ----
 # One player's ship is put next to another player's ship, in that player's sector (script op goto_slot), and the
 # rows of the next seconds say where it stands and at what attention. With --keep the clients stay up for a look at
@@ -521,7 +553,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     commands = parser.add_subparsers(dest='command', required=True)
     commands.add_parser('list', help='the mission types and what each test does')
-    for name in ('plan', 'run', 'report', 'offers', 'real', 'meet'):
+    for name in ('plan', 'run', 'report', 'offers', 'real', 'meet', 'script'):
         sub = commands.add_parser(name)
         sub.add_argument('--types', default=','.join(TYPES), help='comma separated, in this order (default: all)')
         sub.add_argument('--players', type=int, default=2)
@@ -539,7 +571,12 @@ def main():
             sub.add_argument('--to', type=int, default=1, help='the player it is put next to (default 1)')
             sub.add_argument('--metres', type=int, default=300, help='how far from that ship (default 300)')
             sub.add_argument('--leave', metavar='OFFER', help='afterwards the other player takes this stock destroy offer and jumps to its first target')
-        if name in ('run', 'offers', 'real', 'meet'):
+        if name == 'script':
+            sub.add_argument('--op', action='append', default=[], metavar='"SLOT TICK NAME [ARGS]"', help='one script op of one player; repeat')
+            sub.add_argument('--ticks', type=int, default=700, help='how long the plan runs (default 700 ticks)')
+            sub.add_argument('--rows', default=r'\[X4LAN\] MPP_AUDIT', help='log lines to print (a regular expression)')
+            sub.add_argument('--width', type=int, default=260)
+        if name in ('run', 'offers', 'real', 'meet', 'script'):
             sub.add_argument('--snapshot', type=Path, required=True, help="the session's save (session-save.xml.gz)")
             sub.add_argument('--session', type=Path, required=True, help="the session's session.json")
             sub.add_argument('--gate-dll', type=Path, required=True)
@@ -571,6 +608,10 @@ def main():
         return 0
     if args.command == 'report':
         return 1 if table(args.logs, types, args.players, args.run) else 0
+    if args.command == 'script':
+        if not args.op:
+            parser.error('--op: at least one')
+        return custom(args)
     if args.command == 'meet':
         if not (1 <= args.mover <= args.players and 1 <= args.to <= args.players and args.mover != args.to):
             parser.error('--mover and --to name two different players of this session')

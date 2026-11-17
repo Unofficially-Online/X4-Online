@@ -1355,6 +1355,9 @@ function K.script(plan,start,tools)
     return 'none' end
   -- {tick,'goto_slot',k,metres}: this player's ship is put that far from slot k's ship, looking at it (MD MtGoto, the
   -- same signal as mis_goto): two players meet in one sector without the flight.
+  -- {tick,'ui_ping'}: a UI event of this client's menus kind that no stock script listens for (screen X4LAN_Audit); the
+  -- audit's shared cue AuditShared, which no player owns, logs who it heard it from.
+  elseif op=='ui_ping' then call=function() tools.env.AddUITriggeredEvent('X4LAN_Audit','Ping',tonumber(e[3]) or 1);return 'lua' end
   elseif op=='goto_slot' then call=function()
     tools.env.SignalObject(tools.env.ConvertStringTo64Bit(tostring(tools.C.GetPlayerGalaxyID())),'x4lan_goto',tools.slot_lua(e[3]),tonumber(e[4]) or 300)
     return 'goto slot '..tostring(e[3]) end
