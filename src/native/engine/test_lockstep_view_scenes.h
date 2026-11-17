@@ -56,7 +56,7 @@ static void test_view_scenes(void) {
     test_vsc_world();memset(test_vsc_scene_store,0,sizeof(test_vsc_scene_store));
     void *b=test_vsc_scene_store[0];memcpy(image+VSC_SCENE_B,&b,8);
     vsc_ctor_native=test_vsc_ctor;vsc_anchor_native=test_vsc_anchor;vsc_step_native=test_vsc_step;vsc_zone_native=test_vsc_native;vsc_highway_native=test_vsc_native;rid_allocate_native=test_vsc_allocate;
-    vsc_created=0;vsc_active=0;vsc_steps=vsc_moves=vsc_rebases=vsc_assigns=vsc_releases=vsc_early=vsc_blocked_ticks=0;vsc_blocked_now=0;
+    vsc_created=0;vsc_active=0;vsc_steps=vsc_moves=vsc_rebases=vsc_assigns=vsc_releases=vsc_early=vsc_blocked_ticks=vsc_follows=vsc_pre=0;vsc_blocked_now=0;
     /* Creation: C and D with B's arguments, once; no scene B or a failed constructor refuses. */
     {
         void *none=NULL;memcpy(image+VSC_SCENE_B,&none,8);assert(!vsc_create() && !test_vsc_ctors);memcpy(image+VSC_SCENE_B,&b,8);
@@ -84,6 +84,30 @@ static void test_view_scenes(void) {
     test_vsc_views(0,3,2,1);vsc_latch(3);
     assert(vsc_entries[0].sector==test_vsc_sectors[1] && vsc_entries[1].sector==test_vsc_sectors[2] && vsc_entries[2].sector==test_vsc_sectors[3]);
     assert(vsc_entries[0].view==3 && vsc_entries[1].view==2 && vsc_entries[2].view==1 && vsc_assigns==3 && !vsc_releases);
+    /* A view point that held its scene alone and goes to a sector without one takes it along: no release, no wait,
+     * although no scene is free; and back again the same way. */
+    {
+        test_vsc_place(3,4);vsc_latch(4);
+        assert(vsc_entries[2].sector==test_vsc_sectors[4] && vsc_entries[2].view==1 && vsc_entries[2].point==test_vsc_ships[3] && !vsc_entries[2].released);
+        assert(vsc_follows==1 && !vsc_releases && vsc_assigns==3 && !vsc_blocked_now && vsc_entries[2].scene==sd);
+        assert(vsc_entries[0].sector==test_vsc_sectors[1] && vsc_entries[1].sector==test_vsc_sectors[2]);
+        vsc_latch(4);assert(vsc_follows==1 && vsc_entries[2].sector==test_vsc_sectors[4]);   /* the same latch again: nothing */
+        test_vsc_place(3,3);vsc_latch(5);assert(vsc_entries[2].sector==test_vsc_sectors[3] && vsc_follows==2 && !vsc_releases);
+        /* Not alone: the other view point keeps the scene, the one that left asks for a new one (none free here). */
+        test_vsc_place(2,3);vsc_latch(6);assert(!vsc_entries[1].sector && vsc_entries[1].released==6 && vsc_releases==1 && vsc_entries[2].view==1);
+        test_vsc_place(2,4);vsc_latch(7);
+        assert(vsc_entries[2].sector==test_vsc_sectors[3] && vsc_follows==2 && vsc_blocked_now==1 && !vsc_entries[1].sector);
+        /* Into a sector that has a scene: that one's; nothing is taken along. */
+        test_vsc_place(2,2);vsc_latch(8);test_vsc_place(2,1);vsc_latch(9);
+        assert(vsc_follows==2 && vsc_entries[0].sector==test_vsc_sectors[1] && vsc_entries[0].view==2 && !vsc_entries[1].sector);
+        /* Into view point 1's sector: no scene of the table, nothing to take along. */
+        test_vsc_place(3,0);vsc_latch(10);assert(vsc_follows==2 && !vsc_entries[2].sector);
+        /* As it was before this block. */
+        test_vsc_place(2,2);test_vsc_place(3,3);
+        vsc_entries[1].sector=test_vsc_sectors[2];vsc_entries[1].released=0;vsc_entries[2].sector=test_vsc_sectors[3];vsc_entries[2].released=0;
+        vsc_releases=0;vsc_blocked_ticks=0;vsc_assigns=3;vsc_latch(11);
+        assert(vsc_entries[0].view==3 && vsc_entries[1].view==2 && vsc_entries[2].view==1 && vsc_assigns==3 && !vsc_releases && !vsc_blocked_now);
+    }
     /* A sector left gives its scene back, which waits: a new sector finds none free and is counted; then it moves in. */
     test_vsc_place(1,4);test_vsc_views(0,1,2,3);vsc_latch(100);
     assert(!vsc_entries[0].sector && vsc_entries[0].released==100 && vsc_releases==1);
@@ -142,6 +166,22 @@ static void test_view_scenes(void) {
                *(void**)((unsigned char*)vsc_entries[2].scene+0x40)==test_vsc_zones[3]);
         assert(vsc_frame(202) && test_vsc_ctors==2 && test_vsc_anchor_calls==3); /* nothing moved */
     }
+    /* The view points' latch asks before its refresh: the table and the anchors at once, for a sector the table did not
+     * hold a moment ago; not before the scenes exist, not while stopped, not without view point 1. */
+    {
+        const uint64_t pre=vsc_pre,follows=vsc_follows;const unsigned anchors=test_vsc_anchor_calls;
+        vsc_armed=1;test_vsc_place(2,4);vsc_before_refresh(203);
+        assert(vsc_pre==pre+1 && vsc_follows==follows+1 && vsc_entries[1].sector==test_vsc_sectors[4] && test_vsc_anchor_calls==anchors+1);
+        assert(*(void**)((unsigned char*)vsc_entries[1].scene+0x40)==test_vsc_zones[4] && vsc_zone_scene(test_vsc_zones[4])==vsc_entries[1].scene);
+        assert(vsc_frame(203) && vsc_follows==follows+1 && test_vsc_anchor_calls==anchors+1);   /* the frame's own call: nothing left to do */
+        test_vsc_place(2,2);
+        vsc_created=0;vsc_before_refresh(204);assert(vsc_pre==pre+1 && vsc_entries[1].sector==test_vsc_sectors[4]);vsc_created=1;
+        InterlockedExchange(&vsc_active,0);vsc_before_refresh(204);assert(vsc_pre==pre+1);InterlockedExchange(&vsc_active,1);
+        {const uint64_t id=view_ids[0];view_ids[0]=id+1u;vsc_before_refresh(204);view_ids[0]=id;assert(vsc_pre==pre+1);}
+        vsc_armed=0;vsc_before_refresh(204);assert(vsc_pre==pre+1);vsc_armed=1;
+        vsc_before_refresh(204);assert(vsc_pre==pre+2 && vsc_entries[1].sector==test_vsc_sectors[2] && vsc_follows==follows+2);
+        vsc_armed=0;
+    }
     /* Slot 943: the table first; else native; a native B the table does not hold is no scene; a highway the same. */
     {
         void *const s_b=vsc_entries[0].scene,*const s_c=vsc_entries[1].scene,*const main=(void*)0x1234;
@@ -160,7 +200,7 @@ static void test_view_scenes(void) {
     /* Status names the slots, the anchors' IDs and the counters. */
     {
         *(uint64_t*)(test_vsc_zones[1]+8)=0xabc1;char text[320];vsc_status(text,sizeof(text));
-        assert(strstr(text,"1,slots:2/3/4,anchors:abc1/") && strstr(text,",steps:2,") && strstr(text,",early:2,blocked:"));
+        assert(strstr(text,"1,slots:2/3/4,anchors:abc1/") && strstr(text,",steps:2,") && strstr(text,",early:2,blocked:") && strstr(text,",follows:") && strstr(text,",pre:"));
     }
     /* Other modules can tell C and D from an unknown scene. */
     assert(vsc_extra[0] && vsc_extra[1]);
@@ -211,7 +251,7 @@ static void test_view_scenes(void) {
     }
     vsc_ctor_native=NULL;vsc_anchor_native=NULL;vsc_step_native=NULL;vsc_zone_native=NULL;vsc_highway_native=NULL;rid_allocate_native=NULL;
     memset(vsc_entries,0,sizeof(vsc_entries));memset((void *)vsc_extra,0,sizeof(vsc_extra));vsc_created=vsc_armed=vsc_installed=0;vsc_active=0;rc_failures=0;
-    vsc_steps=vsc_moves=vsc_rebases=vsc_assigns=vsc_releases=vsc_early=vsc_blocked_ticks=0;vsc_blocked_now=0;
+    vsc_steps=vsc_moves=vsc_rebases=vsc_assigns=vsc_releases=vsc_early=vsc_blocked_ticks=vsc_follows=vsc_pre=0;vsc_blocked_now=0;vsc_view_forget();
     memcpy(view_points,saved_points,sizeof(saved_points));memcpy(view_ids,saved_ids,sizeof(saved_ids));view_count=saved_count;rc_view_sector58=saved_home;memcpy(image+VSC_SCENE_B,&saved_b,8);
     printf("view scenes table/anchors/slot 943/steps/create/stop tests PASS\n");
 }

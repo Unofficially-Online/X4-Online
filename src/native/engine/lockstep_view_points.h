@@ -76,6 +76,18 @@ static volatile LONG view_active;
 static unsigned char *view_page;
 static unsigned char view_sites_done[VIEW_SITES],view_call_done;
 static void *view_points[VIEW_MAX],*view_previous[VIEW_MAX],*view_previous_zone[VIEW_MAX];
+/* A view point that changed sector (17 Nov; lockstep_view_scenes.h sets the function when its group is armed).
+ * The latch's refresh makes X4 create the physics bodies of everything whose attention rises around the view point's
+ * new place, and X4 asks the zone for its physics scene at that moment. The scenes' table followed the latch one
+ * call later (the probe calls the region camera's frame after this one), so the new sector had no scene yet: the
+ * objects near the arrival got their level and no body, and nothing asks again while the level stays (seen live: a
+ * mine 120 m ahead of player 2's ship in a sector only that player had entered, level 9, no body: no bullet hit
+ * it and its sensor never saw the ship; the same mine went off 1.9 s after player 1's ship arrived). With the
+ * function set, the table is brought up to the new latch first, and the zone the view point left is refreshed
+ * too, so the sector it left drops in this frame as X4's own player's does (its chain is no longer the view
+ * point's; zones recompute themselves only up to a second later). Counted: sector_moves=. */
+static void (*view_before_refresh)(uint64_t tick);
+static uint64_t view_previous_zone_id[VIEW_MAX],view_sector_moves;
 static unsigned view_count,view_previous_count,view_latched,view_source; /* source: 0 none, 1 slots, 2 player object, 3 occupied ship */
 static uint64_t view_ids[VIEW_MAX],view_previous_ids[VIEW_MAX];
 static uint64_t view_tick=UINT64_MAX,view_frame_calls,view_frame_evaluations,view_frame_differ,view_frame_levels[VIEW_LEVELS];
@@ -602,6 +614,7 @@ static int view_arm(int mode) {
     view_tick=UINT64_MAX;view_calls=view_evaluations=view_differ=view_first_differ=view_refreshes=view_latches=view_unreadable=0;
     view_latched=view_count=view_previous_count=view_source=0;view_restored=0;view_foreign=0;view_depth=0;
     memset(view_points,0,sizeof(view_points));memset(view_previous,0,sizeof(view_previous));memset(view_previous_zone,0,sizeof(view_previous_zone));
+    memset(view_previous_zone_id,0,sizeof(view_previous_zone_id));view_sector_moves=0;
     view_mode=mode;InterlockedExchange(&view_active,1);
     if(!view_install_patches()) {InterlockedExchange(&view_active,0);view_remove_patches();view_stage="cas";return 0;}
     view_patched=1;view_installed=1;view_stage="armed";return 1;
@@ -630,17 +643,19 @@ static void view_restore(void) {
     }
     view_restored=1;view_installed=0;
 }
-/* Zone (class 0x6d) of a component, for the latch's change test; NULL when none. */
-static void *view_zone_of(void *object) {
+/* The component itself or its first ancestor of a class (0x6d zone, 0x58 sector); NULL when none. */
+static void *view_class_of(void *object,int klass) {
     unsigned char *p=object;
     for(unsigned depth=0;p && depth<16;depth++) {
         void **vtable=NULL;if(!read_local(p,&vtable,8) || !vtable) return NULL;
         int (*is_a)(void *,int)=NULL;if(!read_local((unsigned char*)vtable+0x11e8,&is_a,8) || !is_a) return NULL;
-        if(is_a(p,0x6d)) return p;
+        if(is_a(p,klass)) return p;
         if(!read_local(p+0x70,&p,8)) return NULL;
     }
     return NULL;
 }
+/* Zone (class 0x6d) of a component, for the latch's change test; NULL when none. */
+static void *view_zone_of(void *object) {return view_class_of(object,0x6d);}
 /* Recompute the attention of the viewpoint and every ancestor that keeps its
  * own attention (+0xd1; SetAttention(x,1) would otherwise set level 1). */
 static void view_refresh_chain(void *object) {
@@ -761,16 +776,30 @@ static int view_frame_latch(uint64_t tick,int refresh) {
         if(p && read_local((unsigned char*)p+8,&id,8)) {points[0]=p;ids[0]=id;n=1;}
     }
     int changed=!view_latched || n!=view_count || hybrid_start;
-    void *zones[VIEW_MAX];
-    for(unsigned i=0;i<n;i++) {zones[i]=view_zone_of(points[i]);if(!changed && (points[i]!=view_points[i] || zones[i]!=view_previous_zone[i])) changed=1;}
+    void *zones[VIEW_MAX],*left[VIEW_MAX];uint64_t zone_ids[VIEW_MAX];
+    memset(zones,0,sizeof(zones));memset(left,0,sizeof(left));memset(zone_ids,0,sizeof(zone_ids));
+    for(unsigned i=0;i<n;i++) {
+        zones[i]=view_zone_of(points[i]);if(zones[i]) read_local((unsigned char*)zones[i]+8,&zone_ids[i],8);
+        /* The same view point in another sector than at the last latch: the zone it left, when that still lives. */
+        if(view_latched && i<view_count && points[i]==view_points[i] && ids[i]==view_ids[i] && zones[i] && view_previous_zone[i] &&
+           zones[i]!=view_previous_zone[i]) {
+            uint64_t was=0;void *const old=view_previous_zone[i];
+            if(read_local((unsigned char*)old+8,&was,8) && was && was==view_previous_zone_id[i] && view_class_of(old,0x58)!=view_class_of(zones[i],0x58)) left[i]=old;
+        }
+        if(!changed && (points[i]!=view_points[i] || zones[i]!=view_previous_zone[i])) changed=1;
+    }
     if(changed) {
         for(unsigned i=0;i<view_count;i++) {view_previous[i]=view_points[i];view_previous_ids[i]=view_ids[i];}
         view_previous_count=view_count;
     }
     memcpy(view_points,points,sizeof(points));memcpy(view_ids,ids,sizeof(ids));view_count=n;view_source=source;
-    memcpy(view_previous_zone,zones,sizeof(zones));view_latched=1;++view_latches;
+    memcpy(view_previous_zone,zones,sizeof(zones));memcpy(view_previous_zone_id,zone_ids,sizeof(zone_ids));view_latched=1;++view_latches;
     hyb_view_index_set(own_index); /* before the refreshes: they evaluate with the split */
     if(refresh && changed && view_mode==VIEW_PLAYERS) {
+        if(view_before_refresh) { /* the scenes' table first, then the sectors the view points left */
+            view_before_refresh(tick);
+            for(unsigned i=0;i<n;i++) if(left[i]) {++view_sector_moves;view_refresh_chain(left[i]);}
+        }
         if(first && view_slot_mask!=VIEW_MASK_ALL) { /* the live player object answered before this latch */
             unsigned char *universe=*(unsigned char*volatile*)(image+VIEW_UNIVERSE);void *p=NULL;
             if(universe && read_local(universe+0x230,&p,8) && p) view_refresh_chain(p);
@@ -794,7 +823,7 @@ static int view_status(char *out,size_t capacity) {
     int n=snprintf(out,capacity,"mode=%s armed=%ld installed=%d frame=%llu source=%s viewpoints=%u ids=%s calls=%llu evaluations=%llu "
         "levels=%s differ=%llu total_calls=%llu total_evaluations=%llu total_differ=%llu first_differ=%llu refreshes=%llu latches=%llu "
         "unreadable=%llu foreign=%lld restored=%d stage=%s failures=%lld triggers=%s:%llu/%llu/%llu/%llu/%llu blocked=%llu "
-        "source_mode=%s ship_misses=%llu cutscene=%llu/%llu/%llu/%llu callers=%s callers_other=%llu ui=%s:%llu/%llu/%llu/%llu/%llu/%llu ui_blocked=%llu ui_local=%llu mask=%x masked=%llu",
+        "source_mode=%s ship_misses=%llu cutscene=%llu/%llu/%llu/%llu callers=%s callers_other=%llu ui=%s:%llu/%llu/%llu/%llu/%llu/%llu ui_blocked=%llu ui_local=%llu mask=%x masked=%llu sector_moves=%llu",
         view_mode==VIEW_PLAYERS?"players":view_mode==VIEW_OBSERVE?"observe":"off",view_active,view_installed,
         (unsigned long long)(view_tick==UINT64_MAX?0:view_tick),view_source==1?"slots":view_source==2?"player":view_source==3?"ship":"none",view_count,
         view_count?ids:"-",(unsigned long long)(fresh?view_frame_calls:0),(unsigned long long)(fresh?view_frame_evaluations:0),levels,
@@ -810,6 +839,6 @@ static int view_status(char *out,size_t capacity) {
         view_ui_mode==VIEW_UI_BLOCK?"block":view_ui_mode==VIEW_UI_OBSERVE?"observe":"off",
         (unsigned long long)view_ui_counts[VIEW_UI_PRESENT],(unsigned long long)view_ui_counts[VIEW_UI_VIEW],(unsigned long long)view_ui_counts[VIEW_UI_DISPATCH],
         (unsigned long long)view_ui_counts[VIEW_UI_RENDER],(unsigned long long)view_ui_counts[VIEW_UI_SLOT6],(unsigned long long)view_ui_counts[VIEW_UI_CAMERA],
-        (unsigned long long)view_ui_blocked,(unsigned long long)view_ui_local,view_slot_mask,(unsigned long long)view_masked);
+        (unsigned long long)view_ui_blocked,(unsigned long long)view_ui_local,view_slot_mask,(unsigned long long)view_masked,(unsigned long long)view_sector_moves);
     return n>0 && (size_t)n<capacity?n:0;
 }

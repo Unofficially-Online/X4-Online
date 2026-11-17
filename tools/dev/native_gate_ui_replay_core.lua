@@ -586,6 +586,55 @@ function K.session(p)
    end
   end
  end
+ -- Players see each other on foot (native_gate_foot_avatars, on by default; MD native_gate_ui_replay.xml Avatar): every
+ -- client, at the same ticks, signals the galaxy once per slot: slot 1 in the probe's own frame, slot k inside slot k's
+ -- scope with the generation open, so the cue instance the signal makes is slot k's and all its later frames see slot
+ -- k's player. That instance keeps a stand-in figure where its player walks. p.avatars={first=tick,stagger=ticks,
+ -- galaxy=function -> Lua ID}. Stateless: the instance is in the world a joiner loads.
+ function S.slot_avatars(tick)
+  local a=p.avatars
+  if not (a and a.galaxy) or tick<a.first then return end
+  for k=1,p.slots do
+   if tick==a.first+(k-1)*a.stagger then
+    local done='no_scope'
+    if k==1 then
+     S.replaying=true;gate.ui_replay_bypass(1)
+     local ok,why=pcall(function() stock.SignalObject(a.galaxy(),'x4lan_avatar',1) end)
+     gate.ui_replay_bypass(0);S.replaying=false
+     done=ok and 'signalled' or 'error:'..tostring(why)
+    elseif not (p.mpp and gate.mpp_generate) then done='no_missions_per_player'
+    elseif gate.mpp_scope(k)==1 then
+     S.replaying=true;gate.ui_replay_bypass(1)
+     local ok,why=pcall(function()
+      assert(gate.mpp_generate(k)==1,'generate refused')
+      stock.SignalObject(a.galaxy(),'x4lan_avatar',k)
+     end)
+     gate.mpp_generate(0)
+     gate.ui_replay_bypass(0);S.replaying=false
+     if gate.mpp_unscope(k)~=1 then gate.ui_replay_fail('mpp_leave') end
+     done=ok and 'signalled' or 'error:'..tostring(why)
+    end
+    log('FOOT_AVATAR tick='..tick..' slot='..k..' '..done)
+   end
+  end
+  -- On foot or not, per slot: the gate's answer, told to the figures' cues at its changes (the same tick everywhere).
+  if gate.pilot_foot_walking and tick>a.first+p.slots*a.stagger then
+   a.walks=a.walks or {}
+   for k=1,p.slots do
+    local walks=gate.pilot_foot_walking(k)==1
+    if walks~=(a.walks[k] or false) then
+     a.walks[k]=walks
+     S.replaying=true;gate.ui_replay_bypass(1)
+     local ok,why=pcall(function() stock.SignalObject(a.galaxy(),'x4lan_avatar_walk',k*10+(walks and 1 or 0)) end)
+     gate.ui_replay_bypass(0);S.replaying=false
+     log('FOOT_AVATAR_WALK tick='..tick..' slot='..k..' walks='..tostring(walks)..' '..(ok and 'signalled' or 'error:'..tostring(why)))
+     -- This client's own player got up: the dock menu X4 opened for it closes, as X4's own get-up closes it
+     -- (the stock menu listens for the player's get-up event, which only X4's own player's stand-up raises).
+     if walks and k==p.own_slot and k>=2 and a.close_dock_menu then pcall(a.close_dock_menu) end
+    end
+   end
+  end
+ end
  -- A start's story for slot k (native_gate_story = {[k]='<Script>.<Cue>'}; MD x4lan_story.xml Begin, generated per
  -- session): every client, the same tick, names the start script's static cue to the gate and signals the galaxy inside
  -- slot k's scope with the generation open; the MD signals that cue at once, the gate claims it for slot k at its first
@@ -636,6 +685,7 @@ function K.session(p)
  function S.apply(tick)
   S.player_groups(tick)
   S.slot_offers(tick)
+  S.slot_avatars(tick)
   local list=gate.ui_replay_lua(tick)
   if not list then return end
   S.replaying=true;gate.ui_replay_bypass(1)
@@ -780,10 +830,10 @@ end
 -- ship the player controls (ui/core/messageconfigurationgraph.xml: untargetableconditions is_playercontrolled), and in
 -- the probe's canonical frame that is slot 1's ship on every client, so slot k could not target it. The other ops keep
 -- the canonical frame their live runs (U5, U7) passed with. Guidance is set and ended where the map's click runs too.
-K.SCOPED={target_slot=true,target_none=true,target_home=true,dock_home=true,suit_home=true,guidance_slot=true,guidance_end=true,inv_read=true,inv_drop=true}
+K.SCOPED={foot_where=true,transport_list=true,transport_to=true,transport_named=true,target_slot=true,target_none=true,target_home=true,dock_home=true,suit_home=true,guidance_slot=true,guidance_end=true,inv_read=true,inv_drop=true}
 -- A canonical op is the probe's own call, not a person's click: a test fixture that every client's plan holds at the same
 -- tick (MD runs it on every client alike, nothing is captured).
-K.CANONICAL={mis_fixture=true,mt_offer=true,gm_limit=true,slot_kill=true,slot_airlock=true,launch_stock=true,probe_far=true,groups_look=true,inv_seed=true,inv_look=true,inv_join_state=true,inv_join_give=true}
+K.CANONICAL={mis_fixture=true,mt_offer=true,gm_limit=true,slot_kill=true,slot_airlock=true,launch_stock=true,dock_kit=true,probe_far=true,groups_look=true,inv_seed=true,inv_look=true,inv_join_state=true,inv_join_give=true}
 -- Refused entries the stock HUD calls by itself, not on a person's action: logged, no info line. AddKnownItem: the
 -- encyclopedia entry the HUD adds for whatever comes into view (45 refusals and their info lines in a playtest of 9 Nov).
 K.GUARD_QUIET={AddKnownItem=true}
@@ -878,6 +928,131 @@ function K.suit_fly(tools,limit)
  end
  return F
 end
+-- Docking at a station by script (the op dock_station): the autopilot to the station as the map's "Autopilot" starts
+-- it, then the station menu's "Request Docking" (RequestDockAt) every second once the ship is within X4's range for a
+-- request, until it is granted, then the autopilot to the dock the station assigned. At the dock X4 docks the ship
+-- itself when it carries the docking computer (the test fixture dock_kit installs X4's own ware); the step reports
+-- the docking when the ship says it is docked. tools.assigned_dock(): that dock as a Lua ID, or nil.
+-- tools.dock_state(saved): {docked, distance in metres or nil in another sector}.
+function K.dock_fly(tools,saved,limit,via)
+ local F={stage='fly',done=false,asked=0}
+ function F.start()
+  tools.env.StartAutoPilot(tools.saved_lua(saved));return 'autopilot'
+ end
+ function F.step(i)
+  if F.done then return nil end
+  local d=tools.dock_state(saved)
+  if d.docked then F.done=true;F.docked_at=i;return 'docked after='..i..' asked='..F.asked end
+  if i>=limit then F.done=true;return 'limit stage='..F.stage..' distance='..tostring(d.distance and math.floor(d.distance))..' asked='..F.asked end
+  if F.stage=='fly' and d.distance and d.distance<(tools.dock_range or 9000) and i%30==0 then
+   F.asked=F.asked+1
+   if tools.C.RequestDockAt(tools.saved_id(saved),false) then F.stage='asked';F.granted=i;return 'asked after='..i..' distance='..math.floor(d.distance)..' asked='..F.asked end
+  end
+  -- The call's own answer is this client's capture (the request itself runs at its apply tick on every client): it is
+  -- granted when the station has assigned a dock; none within two seconds: ask again.
+  if F.stage=='asked' then
+   if tools.assigned_dock() then F.stage='granted';F.granted=i;return 'granted after='..i..' distance='..tostring(d.distance and math.floor(d.distance))..' asked='..F.asked end
+   if i>F.granted+60 then F.stage='fly' end
+  end
+  -- The approach: the autopilot to the dock the station assigned (X4's autopilot flies to a dock's approach position),
+  -- started again every 20 s while the ship is not docked (an autopilot that arrived has ended).
+  if F.stage=='granted' and (i-F.granted)%600==5 then
+   local dock=tools.assigned_dock()
+   if dock then tools.env.StartAutoPilot(dock)
+   else F.stage='fly';F.last=nil end   -- the station took the dock back (the ship never docked there): ask again
+   return 'approach dock='..tostring(dock)..' distance='..tostring(d.distance and math.floor(d.distance))
+  end
+  -- An autopilot that ended short of the request's range (it stops where it loses its way: seen 16 km out): started
+  -- again whenever ten seconds brought the ship no closer.
+  if F.stage=='fly' and d.distance and i%300==0 then
+   local was=F.last;F.last=d.distance
+   if was and d.distance>was-500 then
+    -- X4's autopilot to a station ends at a free place around it, which can be far outside the request's range (15 km,
+    -- 16 Nov, with another ship already there). `via`: a slot whose ship is docked there: the autopilot to that ship
+    -- ends beside the dock.
+    F.again=(F.again or 0)+1
+    if via and F.again%2==1 then tools.env.StartAutoPilot(tools.slot_lua(via));return 'autopilot via slot '..via..' again='..F.again..' distance='..math.floor(d.distance) end
+    tools.env.StartAutoPilot(tools.saved_lua(saved))
+    return 'autopilot again='..F.again..' distance='..math.floor(d.distance)
+   end
+  end
+  if i%150==0 then return 'stage='..F.stage..' distance='..tostring(d.distance and math.floor(d.distance))..' asked='..F.asked end
+  return nil
+ end
+ return F
+end
+-- A walking player walks up to another player's figure: the op foot_meet, for runs without people. It reads both
+-- figures' places in the station (tools.foot_pose) and steers by what its own walking does: forward for a few ticks,
+-- the heading is the way its figure moved; when the other is not ahead it stops, holds a turn key for the ticks the
+-- angle takes (K.FOOT_TURN: X4's key turn, 0.2333 rad a tick, seen live 16 Nov) and walks on. Which key turns which
+-- way in the station's frame it learns from the first turn. Done when the other is `distance` away or nearer.
+-- Keys: FP_MOVE_FORWARD 26, FP_TURN_LEFT 28, FP_TURN_RIGHT 29.
+K.FOOT_TURN=0.2333
+function K.foot_walk(tools,slot,distance)
+ local F={held={},sign=1,phase='walk',ticks=0,turns=0}
+ local function key(id,on)
+  on=on and true or false
+  if (F.held[id] or false)~=on then F.held[id]=on;tools.gate.pilot_stock_inject('state',id,on and 1 or 0) end
+ end
+ local function release() key(26,false);key(28,false);key(29,false) end
+ local function wrap(a) return (a+math.pi)%(2*math.pi)-math.pi end
+ function F.start() return 'towards slot '..tostring(slot)..' to '..tostring(distance)..' m' end
+ function F.step(i)
+  if F.done then return nil end
+  local me,other=tools.foot_pose(tools.own_slot),tools.foot_pose(slot)
+  if not me or not other then release();F.phase='walk';F.ticks=0;F.mark=nil;return i%150==0 and 'waits for both figures' or nil end
+  local dx,dz=other.x-me.x,other.z-me.z
+  local d=math.sqrt(dx*dx+dz*dz)
+  if d<=distance then
+   F.done=true;release()
+   return string.format('there after=%d distance=%.1f heading=%s bearing=%.2f turns=%d sign=%d me=%.1f/%.1f/%.1f other=%.1f/%.1f/%.1f',
+    i,d,F.heading and string.format('%.2f',F.heading) or '-',math.atan2(dx,dz),F.turns,F.sign,me.x,me.y,me.z,other.x,other.y,other.z)
+  end
+  F.ticks=F.ticks+1
+  if F.phase=='turn' then
+   if F.ticks>F.need then
+    key(28,false);key(29,false);F.phase='settle';F.ticks=0
+   end
+  elseif F.phase=='settle' then          -- the keys' way through the records: a few ticks until the turn has ended
+   if F.ticks>=6 then F.phase='walk';F.ticks=0;F.mark=nil end
+  else
+   key(26,true)
+   if not F.mark then F.mark={x=me.x,z=me.z};F.ticks=0 end
+   if F.ticks>=10 then
+    local vx,vz=me.x-F.mark.x,me.z-F.mark.z
+    if vx*vx+vz*vz>=0.25 then
+     local heading=math.atan2(vx,vz)
+     if F.turned and F.heading and math.abs(F.turned)>=0.4 then   -- which way the last turn went
+      local went=wrap(heading-F.heading)
+      if went*F.turned<0 and math.abs(went)>0.3 then F.sign=-F.sign end
+     end
+     F.heading=heading;F.turned=nil;F.stuck=0
+     local err=wrap(math.atan2(dx,dz)-heading)
+     if math.abs(err)>0.2 then
+      key(26,false)
+      F.need=math.max(1,math.floor(math.abs(err)/K.FOOT_TURN+0.5));F.turned=err;F.turns=F.turns+1
+      local right=err*F.sign>0
+      key(29,right);key(28,not right);F.phase='turn';F.ticks=0
+     end
+    else
+     -- Walking and not moving: something is in the way. A quarter turn (one way, then the other), a few steps, and the
+     -- steering takes over again from wherever that leads.
+     F.stuck=(F.stuck or 0)+1
+     if F.stuck%2==0 then
+      key(26,false)
+      F.dodge=not F.dodge
+      F.need=math.floor(1.5708/K.FOOT_TURN+0.5);F.turned=nil;F.heading=nil;F.turns=F.turns+1
+      key(29,F.dodge);key(28,not F.dodge);F.phase='turn';F.ticks=0
+     end
+    end
+    F.mark={x=me.x,z=me.z};if F.phase=='walk' then F.ticks=0 end
+   end
+  end
+  return i%60==0 and string.format('distance=%.1f phase=%s heading=%s turns=%d stuck=%d',d,F.phase,F.heading and string.format('%.2f',F.heading) or '-',F.turns,F.stuck or 0) or nil
+ end
+ F.release=release
+ return F
+end
 -- Named script actions for runs without people; arguments are saved IDs or slots, resolved when they run.
 -- plan: list of {tick, op, ...}, ticks relative to the pilot window start.
 function K.script(plan,start,tools)
@@ -938,6 +1113,56 @@ function K.script(plan,start,tools)
     for i=1,e[3] or 900 do
      by[at+i]=by[at+i] or {};by[at+i][#by[at+i]+1]={op='suit_fly',call=function() return fly.step(i) end,quiet=true}
     end
+  -- Docking at a station (K.dock_fly): {tick,'dock_station',SAVED[,limit]} for this client's own ship; its steps run in
+  -- the presentation scope, where a person's request runs (the check's answer is about this client's own ship there).
+  -- {tick,'dock_kit',SLOT}: test fixture, canonical: X4's docking computer on that slot's ship (MD DockKit).
+  -- A fifth entry is a plan of its own whose ticks count from the docking ({ticks after it, op, ...}; within `limit`):
+  -- what the player does once the ship is docked, whenever that is. A sixth: a slot whose (docked) ship the approach
+  -- flies to when the autopilot to the station ends out of the request's range.
+  elseif op=='dock_station' then
+    local fly=K.dock_fly(tools,e[3],e[4] or 3000,e[6])
+    local after=e[5] and K.script(e[5],0,tools) or {}
+    call=fly.start
+    for i=1,e[4] or 3000 do
+     by[at+i]=by[at+i] or {};by[at+i][#by[at+i]+1]={op='dock_station',quiet=true,scoped=true,call=function()
+      local result=fly.step(i)
+      local due=fly.docked_at and after[i-fly.docked_at]
+      if not due then return result end
+      local parts={result}
+      for _,x in ipairs(due) do
+       local ok,value=pcall(x.call)
+       if not (x.quiet and ok and value==nil) then
+        parts[#parts+1]='docked+'..(i-fly.docked_at)..' '..tostring(x.op)..' ok='..tostring(ok)..' '..tostring(value)
+       end
+      end
+      return table.concat(parts,' | ')
+     end}
+    end
+  elseif op=='dock_kit' then call=function()
+    tools.env.AddUITriggeredEvent('X4LAN_UiReplay','DockKit',{ship=tools.slot_lua(e[3])});return 'lua' end
+  -- The transporter (menu_transporter.lua's calls) for this client's own player: {tick,'transport_list'} logs the
+  -- targets X4 offers from where the player is; {tick,'transport_to',N} is the menu's "Travel to" on target N of that
+  -- list (TransportPlayerToTarget); {tick,'transport_named',TEXT}: the first target whose name or class holds TEXT.
+  -- Test only: {tick,'avatar_hold',true|false}: this client's player's stand-in figure stops following it / follows
+  -- again (MD AvatarHold; the signal travels as any script call of the slot does).
+  elseif op=='avatar_hold' then call=function()
+    tools.env.SignalObject(tools.galaxy_lua(),'x4lan_avatar_hold',tools.own_slot*10+(e[3] and 1 or 0));return 'lua' end
+  elseif op=='transport_list' then call=function() return tools.transport_list() end
+  elseif op=='transport_to' then call=function() return tools.transport_to(e[3],nil) end
+  elseif op=='transport_named' then call=function() return tools.transport_to(nil,e[3]) end
+  -- {tick,'foot_meet',SLOT[,metres[,limit]]}: this client's walking player walks towards that slot's figure until it
+  -- is `metres` away (K.foot_walk; 3 m, 900 ticks).
+  elseif op=='foot_meet' then
+    local limit=e[5] or 900
+    local walk=K.foot_walk(tools,e[3],e[4] or 3)
+    call=walk.start
+    for i=1,limit do
+     by[at+i]=by[at+i] or {};by[at+i][#by[at+i]+1]={op=op,quiet=true,call=function()
+      if i==limit then walk.release();return 'ends' end
+      return walk.step(i) end}
+    end
+  -- Where this client's player is: tools.foot_where() (the probe's text: the player's room and place in it).
+  elseif op=='foot_where' then call=function() return tools.foot_where() end
   elseif op=='undock' then call=function() return ffi.string(tools.C.UndockPlayerShip(false)) end
   elseif op=='wgroup' then call=function() return tools.C.SetDefensibleActiveWeaponGroup(tools.slot_id(tools.own_slot),e[3]==1,e[4]) end
   elseif op=='wkey' then call=function() return tools.gate.pilot_stock_inject('action',e[3],0) end
@@ -1052,6 +1277,63 @@ function K.script(plan,start,tools)
      if not (tools.missions.before or {})[m.id] then parts[#parts+1]=(m.name:gsub('%s+','_')) end
     end
     return 'new='..#parts..' '..table.concat(parts,' ') end
+  -- A real stock offer finished by this client's player (tools/dev/mission_matrix.py real):
+  --  {tick,'offer_accept_named',name}: accepts the stock offer whose name (blanks as _) holds that text, as the
+  --    menus accept an offer;
+  --  {tick,'mis_goto',metres}: puts this player's ship that far from the first target of the first new mission's
+  --    objective, looking at it (MD MtGoto, a signal on the galaxy made by this client: every client replays it in
+  --    this player's scope. Not a UI event: one made in slot k's scope is posted on slot k's player, where no cue
+  --    that nobody owns listens; seen live, 17 Nov);
+  --  {tick,'mis_target'}: that target becomes this player's target, as a click on it would make it;
+  --  {tick,'account'}: the account this client's menus show (read only).
+  elseif op=='offer_accept_named' then call=function()
+    for _,o in ipairs(tools.missions.offers()) do
+     local name=o.name:gsub('%s+','_')
+     if name:find(tostring(e[3]),1,true) then
+      if not o.actor then return 'talk '..name end
+      tools.env.SignalObject(o.actor,'accept',tools.env.ConvertStringToLuaID(o.id))
+      return 'accepted '..o.kind..' '..o.faction..' '..name
+     end
+    end
+    return 'none' end
+  elseif op=='mis_goto' or op=='mis_target' then call=function()
+    for i=1,tonumber(tools.env.GetNumMissions()) or 0 do
+     local id=tostring((tools.env.GetMissionDetails(i)))
+     if not (tools.missions.before or {})[id] then
+      local target=(tostring(tools.C.GetMissionIDObjectiveTarget(tools.env.ConvertStringTo64Bit(id),1)):gsub('ULL$',''))
+      if target=='0' then return 'no_target' end
+      if op=='mis_target' then return tostring(tools.C.SetSofttarget(tools.env.ConvertStringTo64Bit(target),''))..' '..target end
+      tools.env.SignalObject(tools.env.ConvertStringTo64Bit(tostring(tools.C.GetPlayerGalaxyID())),'x4lan_goto',
+       tools.env.ConvertStringToLuaID(target),tonumber(e[3]) or 500)
+      return 'goto '..target
+     end
+    end
+    return 'no_mission' end
+  elseif op=='account' then call=function() return tostring(tools.env.GetPlayerMoney()) end
+  -- mis_look (read only): what each mission that was not there at the last offers_list asks for, as this client's
+  -- menus would show it: type, objective text, progress and the objective's targets (class, name, sector).
+  elseif op=='mis_look' then call=function()
+    local parts={}
+    local function word(v) return (tostring(v):gsub('%s+','_')) end
+    for i=1,tonumber(tools.env.GetNumMissions()) or 0 do
+     local d={tools.env.GetMissionDetails(i)}
+     if not (tools.missions.before or {})[tostring(d[1])] then
+      local o={tools.env.GetMissionObjective(i)}
+      local targets={}
+      for index=0,3 do
+       local ok,target=pcall(function() return tools.C.GetMissionIDObjectiveTarget(tools.env.ConvertStringTo64Bit(tostring(d[1])),index) end)
+       local id=ok and (tostring(target):gsub('ULL$','')) or '0'
+       if id~='0' then
+        local lua_id=tools.env.ConvertStringToLuaID(id)
+        local ok2,name,sector=pcall(tools.env.GetComponentData,lua_id,'name','sector')
+        local ok3,class=pcall(function() return ffi.string(tools.C.GetComponentClass(tools.env.ConvertStringTo64Bit(id))) end)
+        targets[#targets+1]=index..'='..id..'/'..(ok3 and class or '?')..'/'..word(ok2 and name or '?')..'/'..word(ok2 and sector or '?')
+       end
+      end
+      parts[#parts+1]=word(d[2])..'|'..word(d[6])..'/'..word(d[7])..'|'..word(o[1])..'|'..word(o[4])..'/'..word(o[5])..'|'..table.concat(targets,',')
+     end
+    end
+    return 'look='..#parts..' '..table.concat(parts,' ; ') end
   elseif op=='mis_list' then call=function()
     local parts={}
     for _,m in ipairs(tools.missions.missions_now()) do parts[#parts+1]=(m.name:gsub('%s+','_')) end

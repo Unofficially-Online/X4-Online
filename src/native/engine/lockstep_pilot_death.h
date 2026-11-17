@@ -224,6 +224,59 @@ static void pvehk_fade_install(void) {
 static void pvehk_fade_restore(void) {
     if(pvehk_fade_installed && pview_cas(PVEHK_FADE,pvehk_fade_patched,pvehk_fade_head,5)) pvehk_fade_installed=0;
 }
+/* ---- the menu X4 opens when it seats a player ----
+ * X4's seating of a player (0x716670, and its helper 0x70dc50, and the player's own vfunc at 0x705190 for a docked
+ * ship) ends by opening a menu by name through 0x8c82f0(std::string*): "DockedMenu" for a docked ship, "TopLevelMenu"
+ * in flight, others for other posts. The seating is simulation and runs on every client; the menu is this process's
+ * UI. So when player 1's ship had docked and X4 seated it there, the dock menu opened on EVERY client, on another
+ * player's screen as that player's own "Ship Interactions" menu, where it held the flight controls and, with X4's
+ * "stop in menus", the ship: from that tick player 2 could neither fly by hand nor by autopilot until somebody closed
+ * a menu they had never asked for (two scripted clients, 16 Nov: a ship that did not answer a thrust key for 1000
+ * ticks, the menu on its window's picture). As with the screen fade above: the routine's entry is hooked and the
+ * callers are told apart by the return address; from the seating's sites the menu opens on the client whose own slot
+ * the seating runs for (outside any scope: slot 1; inside slot k's scope: slot k) and nowhere else; every other
+ * caller (a person's key, the UI's own) passes. The menu system is no part of the simulation. Pinned; else X4's own.
+ * Status menu=installed/shown/left out. */
+#define PVEHK_MENU 0x8c82f0u
+#define PVEHK_MENU_SIZE 0x25bu
+#define PVEHK_MENU_SHA "7e901a2b3eebe35935bc5f456df7841eb55647ac1656b89ccc70f6a5601610f5"
+#define PVEHK_MENU_STUB 0x940u                 /* on the slots' near page, after the controller's end (0x900, 0x920) */
+#define PVEHK_MENU_TRAMPOLINE 0x960u           /* the routine's first instruction, then on at +5 */
+static const unsigned char pvehk_menu_head[5]={0x48,0x89,0x5c,0x24,0x08};   /* mov [rsp+8],rbx */
+typedef void (*pvehk_menu_fn)(void *name);
+static int pvehk_menu_installed,pvehk_menu_site_test=-1;   /* tests: 1 the call is from a seating site, 0 it is not */
+static unsigned char pvehk_menu_patched[5];
+static volatile LONG64 pvehk_menus_shown,pvehk_menus_kept;
+static pvehk_menu_fn pvehk_menu_original;   /* tests: in place of the trampoline */
+__attribute__((noinline)) static void pvehk_menu(void *name) {
+    const uintptr_t ret=(uintptr_t)__builtin_return_address(0)-(uintptr_t)pnat_base;
+    const int site=pvehk_menu_site_test>=0?pvehk_menu_site_test:
+        ((ret>=0x70dc50u && ret<0x70e0e1u) || (ret>=0x716670u && ret<0x716d7bu) || ret==0x705292u);
+    pvehk_menu_fn original=pvehk_menu_original?pvehk_menu_original:(pvehk_menu_fn)(void*)(pslot_page+PVEHK_MENU_TRAMPOLINE);
+    if(site) {
+        const unsigned running=pstk_scope_slot?pstk_scope_slot:1u,own=pstk_capture_slot?pstk_capture_slot:1u;
+        if(running!=own) {InterlockedIncrement64(&pvehk_menus_kept);return;}
+        InterlockedIncrement64(&pvehk_menus_shown);
+    }
+    original(name);
+}
+static void pvehk_menu_install(void) {
+    DWORD old,ignored;int32_t rel=0;
+    if(pvehk_menu_installed || !pslot_page || !hash_ok(pnat_base+PVEHK_MENU,PVEHK_MENU_SIZE,PVEHK_MENU_SHA) ||
+       memcmp(pnat_base+PVEHK_MENU,pvehk_menu_head,sizeof(pvehk_menu_head))) return;
+    if(!VirtualProtect(pslot_page,PVIEW_PAGE,PAGE_READWRITE,&old)) return;
+    pview_abs_jump(pslot_page+PVEHK_MENU_STUB,(void*)pvehk_menu);
+    memcpy(pslot_page+PVEHK_MENU_TRAMPOLINE,pvehk_menu_head,sizeof(pvehk_menu_head));
+    pview_abs_jump(pslot_page+PVEHK_MENU_TRAMPOLINE+sizeof(pvehk_menu_head),pnat_base+PVEHK_MENU+sizeof(pvehk_menu_head));
+    if(!VirtualProtect(pslot_page,PVIEW_PAGE,PAGE_EXECUTE_READ,&ignored)) return;
+    FlushInstructionCache(GetCurrentProcess(),pslot_page,PVIEW_PAGE);
+    rel=(int32_t)((intptr_t)(pslot_page+PVEHK_MENU_STUB)-(intptr_t)(pnat_base+PVEHK_MENU+5));
+    pvehk_menu_patched[0]=0xe9;memcpy(pvehk_menu_patched+1,&rel,4);
+    if(pview_cas(PVEHK_MENU,pvehk_menu_head,pvehk_menu_patched,5)) pvehk_menu_installed=1;
+}
+static void pvehk_menu_restore(void) {
+    if(pvehk_menu_installed && pview_cas(PVEHK_MENU,pvehk_menu_patched,pvehk_menu_head,5)) pvehk_menu_installed=0;
+}
 /* ---- a flying slot's reference frame while X4's own player has no flight control ----
  * A PlayerController with a reference object (+0x19390: set while it docks) refreshes its frame offsets in 0xd9b250,
  * which walks up from the environment zone (image 0x6b661e8, one of the slot bank's regions) without a test for
@@ -804,6 +857,7 @@ static int pdeath_guard_install(void) {
     event_order_scope_forward=pvehk_deliver_forward;
     pvehk_enter_install();   /* X4's entry of a suited player (above): where this image has it */
     pvehk_fade_install();    /* the fade of an exit or an entry: on the client whose player it is */
+    pvehk_menu_install();    /* the menu of a seat change: on the client whose player it is */
     pvehk_zone_install();    /* a flying slot's reference frame: its own environment zone */
     pvehk_did_install();     /* what a slot's ship did (kill, repair, collect, defuse): told to that slot's player */
     pvehk_scan_install();    /* a slot's player's scan and unlock progress: inside its scope */
@@ -816,6 +870,7 @@ static void pdeath_restore(void) {
     pvehk_scan_restore();
     pvehk_did_restore();
     pvehk_zone_restore();
+    pvehk_menu_restore();
     pvehk_fade_restore();
     pvehk_enter_restore();
     if(pdeath_guard_installed && pres_site_uninstall(PDEATH_GAME_OVER_CALL,PDEATH_GAME_OVER,pdeath_guard_patched)) pdeath_guard_installed=0;
@@ -881,7 +936,7 @@ static int pdeath_die(unsigned k,uint64_t tick) {
 /* The slot is not aboard its ship: slot 1 off its seat with no PlayerController (X4 stood its player up; a player
  * who was aboard sits in the eject's suit, which has one), slot k walking (lockstep_pilot_foot_slots.h). */
 static int pdeath_off_seat(unsigned k,const unsigned char *controller) {
-    if(k==1) return pfoot_armed && pfoot_state!=PFOOT_SEATED && !controller;
+    if(k==1) return pfoot_armed && pfoot_state!=PFOOT_SEATED && pfoot_state!=PFOOT_DOCKED && !controller;   /* docked: aboard, in its seat */
     return pslots[k].seated && pslots[k].walking;
 }
 /* Its ship went while the slot was off its seat: the loss of an asset, not a death (header). */
@@ -1306,7 +1361,9 @@ static int pdeath_pass(uint64_t tick,unsigned char *controller) {
         pilot_slot *s=&pilot_slots[k-1];pdeath_slot *d=&pdeath_slots[k-1];
         if(k==1 && pveh_left(s,d,tick,controller)) continue;   /* out of its spacesuit by a teleport into a ship: no death */
         if(k==1 && d->lost && !s->dead && !controller && pveh_aboard_until && tick<=pveh_aboard_until) (void)pveh_aboard(s,d);   /* ...and on foot in a ship by now */
-        if(k>=2 && d->out==2 && !s->dead && !d->lost) pvehk_dock_poll(k);   /* X4's entry check, where its own player's byte keeps it off */
+        /* X4's entry check, where its own player's byte keeps it off: a slot in its suit. (A slot's ship at its dock is
+         * docked by the same step from the slot's own Move, which runs inside its scope: lockstep_pilot_foot_body.h.) */
+        if(k>=2 && !s->dead && !d->lost && d->out==2) pvehk_dock_poll(k);
         if(k>=2 && d->out==2) {const int taken=pvehk_taken(k,tick);if(taken<0) return 0;if(taken) continue;}   /* X4 took it home */
         if(!s->dead && !d->lost && pdeath_dying(s)) {   /* who is aboard decides (header) */
             if(pdeath_off_seat(k,controller)?!pdeath_lose(k,tick):!pdeath_die(k,tick)) return 0;
@@ -1373,6 +1430,8 @@ static int pdeath_status(char *out,size_t capacity) {
                                               pvehk_enter_installed,(long long)pvehk_enters,(long long)pvehk_enters_else);
     if(n>0 && (size_t)n<capacity) n+=snprintf(out+n,capacity-(size_t)n," fade=%d/%lld/%lld",pvehk_fade_installed,
                                               (long long)pvehk_fades_shown,(long long)pvehk_fades_kept);
+    if(n>0 && (size_t)n<capacity) n+=snprintf(out+n,capacity-(size_t)n," menu=%d/%lld/%lld",pvehk_menu_installed,
+                                              (long long)pvehk_menus_shown,(long long)pvehk_menus_kept);
     if(n>0 && (size_t)n<capacity) n+=snprintf(out+n,capacity-(size_t)n," events=%d/%lld/%d/%lld deliver=%lld/%lld kill=%d/%lld leak=%d/%lld did=%d/%d/%lld seen=",pvehk_events_on,(long long)pvehk_events_posted,pvehk_events_more,(long long)pvehk_events_unscoped,
                                               (long long)pvehk_delivered_scoped,(long long)pvehk_delivered_plain,pvehk_did_sites[PVEHK_DID_KILL].installed,(long long)pvehk_did_sites[PVEHK_DID_KILL].told,
                                               pvehk_did_sites[PVEHK_DID_LEAK].installed,(long long)pvehk_did_sites[PVEHK_DID_LEAK].told,

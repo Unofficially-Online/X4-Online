@@ -595,12 +595,72 @@ python tools/dev/mission_matrix.py report CLIENT1.log CLIENT2.log [--run RUNDIR]
   table names for every offer whether a mission started and how many script errors came with it; an offer that does
   worse for a player than for player 1 fails. 16 Nov, the two-player test session: 13 offers (deliver, drop, destroy,
   board, intelligence, build, patrol, transport), a mission started for both players for each, no script error. It
-  completes none of them. Script ops `offers_list`, `offer_accept_next`, `mis_new`, `mis_abort_new`.
+  completes none of them. Script ops `offers_list`, `offer_accept_next`, `mis_new`, `mis_abort_new`. With `--look`
+  it also prints what each started mission asks for: the objective's text, its progress and its targets.
+- A real stock mission, finished (`mission_matrix.py real --offer NAME ...`, 17 Nov): one stock "destroy these
+  objects" offer, named by a part of its name, is accepted by the player under test; round after round that
+  player's ship is put near the first object of the mission's objective (the flight a person would make, here a jump
+  into another sector), the object becomes its target and its own guns fire. The kill credit, the mission's end and
+  the reward are the stock script's. 17 Nov, the two-player test session, the offer "Steady Trigger Finger
+  Required" (five mines in a sector no player was in): player 2 destroyed each mine with the first hit and the
+  mission ended as completed for player 2, reward paid, the same rows on both clients, no desync.
+  What it found on the way: a player other than player 1 that came into a sector of its own in the middle of a
+  session found the objects around its arrival without physics. The first runs fired at a mine 120 m ahead for
+  twenty seconds and hit nothing, and the mine's proximity sensor never saw the ship; for player 1 the same kind of
+  mine went off two seconds after the ship arrived. The cause was an order of two steps at the sector change (the
+  surroundings were raised to full detail one step before the sector got its physics scene); fixed the same day.
+  Still open there: two players who meet in one sector (the one who arrives keeps its own ship's physics in the
+  scene of the sector it left, so it does not collide with what the other player's scene holds).
 - A new type: an `Mt<Name>` cue beside the others (its `_Ref` cue names the library), a row in `TYPES` and, when the
   player has to act through the UI, a row in `OPS`.
 - What it found on its first run: every step behind a `<delay>` of player 2's mission ran as player 1 (the MD
   scheduler's own calls were no frame of the mission's owner); fixed the same day (`lockstep_mission_owners.h`,
   status `sched=`).
+
+## Stations: docking, walking on the dock, seeing each other (built 16 Nov; two scripted clients on one PC)
+
+Not merged yet: branch `contrib/ferrite-station-walk`. Run with scripted input, not by people.
+
+- **Docking.** Each player flies to a station, asks for a dock (the station's menu, or the dock key) and X4 docks the
+  ship. Before, the session stopped when X4 took a player's ship for the docking. Both players can do it at the same
+  time and end on neighbouring pads. Each client gets its own "docked" menu; the other players keep flying.
+- **Getting up and out.** Get up from the docked menu or with the key. A small ship is left through its rear: turn
+  round and walk out, or walk backwards. A player 2..N who walked sits down again with the get-up key.
+- **Undocking.** Every player undocks from its seat (the docked menu's Undock) and has its controls again when X4
+  lets the ship go, about ten seconds later.
+- **Seeing each other.** X4 draws no figure for a player. Each player on foot gets a stand-in figure (a crew
+  character) where it stands; it walks while the player walks and stands when the player stands. You do not see your
+  own. Session default `native_gate_foot_avatars`.
+- **Known faults.**
+  - A player 2..N on the dock is still counted as being in its ship's cockpit (the move into the dock's room is held
+    back; X4's own player is moved properly). Walking, turning and the view are right; what X4's scripts make of the
+    room (people to talk to, the transporter) is not tested.
+  - Pointing at a figure still shows "Talk"; it starts no conversation (the figure is titled "Player N").
+  - Near a station the clients' checks disagreed (play mode goes on silently). Four causes, fixed on 17 Nov:
+    the station people's animation choices moved the simulation's random numbers (a traffic ship's pilot got a
+    different face on the two clients, the world check of the next census differed); every animation start was
+    keyed by this process's own asset numbers, so the people's animations ran out of phase between clients from
+    their first tick; a new person's first animation waited for the loader thread, a tick longer on one client than
+    on the other; and X4 steps a body's animation by what each client's camera shows of it, so an animation ended at
+    different ticks (the dock marshal's wave up to three seconds apart) and the people's scripts ran that much
+    apart. Now the starts are keyed and loaded alike and an animation's end goes by the simulation's time
+    (`native_gate_move_rng`, `native_gate_body_clock`, the character play module; all defaults). After that the two
+    clients started every body animation at the same tick (229 of 229 in a five minute run; before, 358 of 432 ticks
+    differed), and the meet, walk and undock tests agreed in every digest part at every tick, the runtime ID word
+    included. One earlier run with a real mouse over a test window had a world mismatch that is not explained. The
+    Linux gate has none of these fixes yet.
+  - Not tried: three or more players, a hot join while someone is docked or on the dock, a docked ship's death,
+    the Linux gate, two PCs.
+- **The test** (starts its own windowed clients with disposable profiles, prints a check list, saves pictures of both
+  windows, exit code 0 when every check passed):
+
+      python tools/dev/station_walk_test.py run --snapshot SAVE.xml.gz --gate-dll x4lan_gate_64.dll --scenario meet
+
+  All three scenarios passed on 17 Nov (two scripted clients on one PC).
+  `meet`: both dock, get up, walk out, and player 2 walks 40 m across the dock up to player 1; the pictures show, on
+  each client, the other player's figure three metres away. `walk`: get up, a few steps, player 2 sits down and
+  undocks. `undock`: both undock from their seats and fly off. The snapshot is the two-player one (both ships side by
+  side).
 
 ## Not yet
 

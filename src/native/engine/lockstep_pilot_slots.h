@@ -89,6 +89,7 @@ typedef struct {
     float throttle;                        /* slot 14: the smoothed throttle at the last scope exit */
     int seated,released,roomless;
     int walking;                           /* on foot (lockstep_pilot_foot_slots.h): seated for the scope, no controller */
+    int docked,dock_checked;               /* in its seat in a docked ship (pslot_ctl_end): seated for the scope, no controller */
     /* After a ship's death (lockstep_pilot_death.h): the first seat's store for the next seat,
      * and the controllers that stayed with their dying ships under this vtable copy. */
     unsigned char first[VPL_BLOCK_MAX];
@@ -588,6 +589,42 @@ static void pslot_vf36(void *controller,void *a,void *b,char c) {
     if(!pslot_scope_begin(k,s,"change_scope")) return;
     __try {pslot_fn.change(controller,a,b,c);} __finally {if(!pslot_leave(k)) pslot_async("change_leave");}
 }
+/* Slots 51, 52, 53: what a docking asks of the ship's controller. X4's docking code (0x7d0de0 and the dock's own
+ * steps, in the simulation, outside every scope) calls them on the docking ship's movement controller:
+ *   51 (d8dd00) the dock's state for this ship changed (state 6 with no autopilot: 0xea1bb0);
+ *   52 (d8dc60) how the ship docks: 2, 5 or 6 by the autopilot target (bank 0x2f4b7d8), the flight control byte
+ *      (0x2f4b828) and the docking options;
+ *   53 (d8dbc0) the reference object while it docks (+0x19390), by the same two bank values.
+ * All three read the player's flight bank, which outside a scope is X4's own player's. So whether a slot's ship was
+ * taken in by the dock depended on what PLAYER 1 was doing: with player 1 flying under its autopilot, player 2's
+ * ship docked; with player 1 parked, docked or on foot it flew to its pad and hung there until the station took the
+ * dock back (two scripted clients, 16 Nov: runs with each; the user watching called it at once). For C_k they run
+ * inside slot k's scope: its own autopilot and flight control answer. A scope that cannot open (another one is open,
+ * another thread) leaves X4's call as it is, counted. Status dockq=scoped/plain. */
+static volatile LONG64 pslot_dockq_scoped,pslot_dockq_plain;
+static unsigned pslot_dockq_begin(void *controller) {
+    const unsigned k=pslot_of(controller);
+    if(!k || pslot_in_own_scope(k)) return 0;
+    if(!pslot_enter(k)) {InterlockedIncrement64(&pslot_dockq_plain);return 0;}
+    InterlockedIncrement64(&pslot_dockq_scoped);return k;
+}
+static void pslot_vf51(void *controller,int state) {
+    const unsigned k=pslot_dockq_begin(controller);
+    ((void(*)(void*,int))pslot_getter_orig[51])(controller,state);
+    if(k && !pslot_leave(k)) pslot_async("dock_state_leave");
+}
+static int pslot_vf52(void *controller) {
+    const unsigned k=pslot_dockq_begin(controller);
+    const int mode=((int(*)(void*))pslot_getter_orig[52])(controller);
+    if(k && !pslot_leave(k)) pslot_async("dock_mode_leave");
+    return mode;
+}
+static void *pslot_vf53(void *controller,void *out) {
+    const unsigned k=pslot_dockq_begin(controller);
+    void *answer=((void*(*)(void*,void*))pslot_getter_orig[53])(controller,out);
+    if(k && !pslot_leave(k)) pslot_async("dock_reference_leave");
+    return answer;
+}
 /* d8dd50 (pnat's authority patch): C_k outside its own scope answers from its
  * snapshot; the canonical controller from its own while a slot scope is open. */
 static int pslot_authority(void *controller,unsigned char *answer) {
@@ -621,7 +658,7 @@ static volatile LONG64 pslot_update_orphans;   /* updates left out because the s
 static void pslot_update_slots(double now) {
     for(unsigned k=2;k<=PILOT_SLOTS;k++) {
         pslot_slot *s=&pslots[k];
-        if(!s->seated || s->walking) continue;   /* on foot: no PlayerController, its FPC updates at 9fe604 */
+        if(!s->seated || s->walking || s->docked || !s->controller) continue;   /* on foot: no PlayerController, its FPC updates at 9fe604; docked: none either */
         if(pslot_ship_dying(s)) continue;        /* its ship died earlier in this frame: the next pass ends the seat */
         /* Its ship no longer holds its controller (X4 ended the seat itself earlier in this frame: the controller is
          * deleted; live 14 Nov, an access violation under d95180 on both clients): the next pass sees to the seat. */
@@ -807,10 +844,11 @@ static int pslot_seat_ship(unsigned k,unsigned char *ship) {
     s->vt.slots[6]=(void*)pslot_route6;s->vt.slots[7]=(void*)pslot_route7;s->vt.slots[10]=(void*)pslot_route10;
     s->vt.slots[33]=(void*)pslot_vf33;s->vt.slots[34]=(void*)pslot_vf34;s->vt.slots[35]=(void*)pslot_vf35;s->vt.slots[36]=(void*)pslot_vf36;
     s->vt.slots[49]=(void*)pslot_vf49;s->vt.slots[50]=(void*)pslot_vf50;s->vt.slots[14]=(void*)pslot_vf14;s->vt.slots[23]=(void*)pslot_vf23;
+    s->vt.slots[51]=(void*)pslot_vf51;s->vt.slots[52]=(void*)pslot_vf52;s->vt.slots[53]=(void*)pslot_vf53;   /* the docking's questions */
     pslot_set_routes(s,0);
     if(InterlockedCompareExchangePointer((void*volatile*)controller,&s->vt.slots[0],pnat_base+PSLOT_VTABLE)!=(void*)(pnat_base+PSLOT_VTABLE))
         return pslot_fail("controller_vtable");
-    s->seated=1;s->released=0;
+    s->seated=1;s->released=0;s->docked=0;s->dock_checked=0;
     return 1;
 }
 static int pslot_seat(unsigned k) {
@@ -931,6 +969,71 @@ static int phud_uninstall(void) {
        !pnat_swap8(pnat_base+PHUD_STOPPED_EVENT+PHUD_DISPATCH_SLOT,(void*)phud_stopped,(void*)phud_original[0],1)) return 0;
     phud_installed=0;memset(phud_listeners,0,sizeof(phud_listeners));return 1;
 }
+/* ---- a slot's ship docks: X4 ends its PlayerController ----
+ * X4 gives a docking ship its docking controller in place of whatever moved it (0x540530 builds a
+ * U::DockMovementController and hands it to the ship's set-movement-controller 0x745e00 with "delete the old one"). For
+ * a slot's ship the old one is C_k, deleted through U::PlayerController's destructor 0xd84730 (one caller, its deleting
+ * form 0xd839c0), in the middle of the simulation and outside every scope: what the destructor does to the player's
+ * side (the flight bank, the input contexts, the camera's head controller) would then be done to X4's own player's,
+ * slot 1's. Seen with execute breakpoints on X4's own player's docking, 16 Nov (the destructor under 0x745fd9 at the
+ * tick the ship reported docked).
+ * The destructor's entry is hooked (its first instruction runs from a trampoline on the slots' near page): for a
+ * seated slot's controller outside every scope, on the frame thread, it runs inside that slot's scope, as the seat's
+ * own release does at a stand-up; the seat then has no controller and is 'docked' (seated for the scope: its player in
+ * its room, its bank; no update, no controller checks), which the next pass confirms by the ship's movement controller
+ * (X4's docking or undocking one; anything else stops with controller_lost as before). A scope that cannot open (another
+ * one is open, another thread) leaves X4's call as it is, counted. Every other controller passes: X4's own player's,
+ * a slot's inside its own scope (the release of a stand-up or of the session's end), one retired with its dying ship.
+ * Pinned (the whole destructor); else nothing is installed and a slot's docking stops the session as before.
+ * Status ctl_end=installed/scoped/plain/inside (inside: X4 ended it while the slot's scope was open already). */
+#define PSLOT_CTL_END 0xd84730u
+#define PSLOT_CTL_END_SIZE 0x4e7u
+#define PSLOT_CTL_END_SHA "41bbe8ba92a63d834f7a6c11f485e5ca94ef333cbd238c012b879f4073651e50"
+#define PSLOT_CTL_END_STUB 0x900u           /* on the slots' near page, well after the others (they end at 0x480) */
+#define PSLOT_CTL_END_TRAMPOLINE 0x920u     /* the destructor's first instruction, then on at +5 */
+static const unsigned char pslot_ctl_end_head[5]={0x48,0x89,0x5c,0x24,0x10};   /* mov [rsp+0x10],rbx */
+typedef void (*pslot_ctl_end_fn)(void *controller);
+static int pslot_ctl_end_installed;
+static unsigned char pslot_ctl_end_patched[5];
+static volatile LONG64 pslot_ctl_ends_scoped,pslot_ctl_ends_plain,pslot_ctl_ends_inside;
+static int pslot_own_release;   /* the gate's own release of a seat is running (a stand-up, a seat's end): not X4's doing */
+static pslot_ctl_end_fn pslot_ctl_end_original;   /* tests: in place of the trampoline */
+__attribute__((noinline)) static void pslot_ctl_end(void *controller) {
+    const pslot_ctl_end_fn original=pslot_ctl_end_original?pslot_ctl_end_original:(pslot_ctl_end_fn)(void*)(pslot_page+PSLOT_CTL_END_TRAMPOLINE);
+    const unsigned k=pslot_of(controller);
+    if(!k || !pslots[k].seated || pslot_own_release) {original(controller);return;}
+    pslot_slot *s=&pslots[k];
+    if(pstk_scope_slot==k) {   /* already inside its scope: X4's docking reached from the slot's own Move (lockstep_pilot_foot_body.h) */
+        original(controller);
+        s->controller=NULL;s->docked=1;s->dock_checked=0;InterlockedIncrement64(&pslot_ctl_ends_inside);
+        return;
+    }
+    const int scoped=pslot_enter(k);
+    original(controller);
+    s->controller=NULL;s->docked=1;s->dock_checked=0;
+    if(scoped) {
+        InterlockedIncrement64(&pslot_ctl_ends_scoped);
+        if(!pslot_leave(k)) pslot_async("ctl_end_leave");
+    } else InterlockedIncrement64(&pslot_ctl_ends_plain);
+}
+static void pslot_ctl_end_install(void) {
+    DWORD old,ignored;int32_t rel=0;
+    if(pslot_ctl_end_installed || !pslot_page || !hash_ok(pnat_base+PSLOT_CTL_END,PSLOT_CTL_END_SIZE,PSLOT_CTL_END_SHA) ||
+       memcmp(pnat_base+PSLOT_CTL_END,pslot_ctl_end_head,sizeof(pslot_ctl_end_head))) return;
+    if(!VirtualProtect(pslot_page,PVIEW_PAGE,PAGE_READWRITE,&old)) return;
+    pview_abs_jump(pslot_page+PSLOT_CTL_END_STUB,(void*)pslot_ctl_end);
+    memcpy(pslot_page+PSLOT_CTL_END_TRAMPOLINE,pslot_ctl_end_head,sizeof(pslot_ctl_end_head));
+    pview_abs_jump(pslot_page+PSLOT_CTL_END_TRAMPOLINE+sizeof(pslot_ctl_end_head),pnat_base+PSLOT_CTL_END+sizeof(pslot_ctl_end_head));
+    if(!VirtualProtect(pslot_page,PVIEW_PAGE,PAGE_EXECUTE_READ,&ignored)) return;
+    FlushInstructionCache(GetCurrentProcess(),pslot_page,PVIEW_PAGE);
+    rel=(int32_t)((intptr_t)(pslot_page+PSLOT_CTL_END_STUB)-(intptr_t)(pnat_base+PSLOT_CTL_END+5));
+    pslot_ctl_end_patched[0]=0xe9;memcpy(pslot_ctl_end_patched+1,&rel,4);
+    if(pview_cas(PSLOT_CTL_END,pslot_ctl_end_head,pslot_ctl_end_patched,5)) pslot_ctl_end_installed=1;
+}
+static int pslot_ctl_end_restore(void) {
+    if(pslot_ctl_end_installed && pview_cas(PSLOT_CTL_END,pslot_ctl_end_patched,pslot_ctl_end_head,5)) pslot_ctl_end_installed=0;
+    return !pslot_ctl_end_installed;
+}
 static int pslot_hook_install(void) {
     if(pslot_hook_installed) return 1;
     int32_t rel=(int32_t)((intptr_t)(pnat_base+PSLOT_UPDATE_RVA)-(intptr_t)(pnat_base+PSLOT_CALL_SITE+5));
@@ -953,10 +1056,13 @@ static int pslot_hook_install(void) {
     pslot_flag_installed=pslot_lookup_installed && pview_cas(PSLOT_FLAG_SITE,pslot_flag_original,pslot_flag_patched,2);
     /* The HUD's flight control events (header above pslot_hook_install): this image only, pinned. */
     if(pslot_lookup_installed) (void)phud_install();
+    /* A slot's docking ship (header above pslot_ctl_end): this image only, pinned. */
+    if(pslot_lookup_installed) pslot_ctl_end_install();
     return 1;
 }
 static int pslot_hook_uninstall(void) {
     if(!pslot_hook_installed) return 1;
+    if(!pslot_ctl_end_restore()) return 0;
     if(!phud_uninstall()) return 0;
     if(pslot_flag_installed) {
         if(!pview_cas(PSLOT_FLAG_SITE,pslot_flag_patched,pslot_flag_original,2)) return 0;
@@ -974,6 +1080,7 @@ static int pslot_hook_intact(void) {
     if(!pslot_hook_installed || !pslot_page || memcmp(pnat_base+PSLOT_CALL_SITE,pslot_site_patched,5)) return 0;
     if(pslot_lookup_installed && memcmp(pnat_base+PSLOT_LOOKUP_SITE,pslot_lookup_patched,5)) return 0;
     if(pslot_flag_installed && memcmp(pnat_base+PSLOT_FLAG_SITE,pslot_flag_patched,2)) return 0;
+    if(pslot_ctl_end_installed && memcmp(pnat_base+PSLOT_CTL_END,pslot_ctl_end_patched,5)) return 0;
     if(phud_installed && (*(void*volatile*)(pnat_base+PHUD_STARTED_EVENT+PHUD_DISPATCH_SLOT)!=(void*)phud_started ||
                           *(void*volatile*)(pnat_base+PHUD_STOPPED_EVENT+PHUD_DISPATCH_SLOT)!=(void*)phud_stopped)) return 0;
     pview_abs_jump(jump,(void*)pslot_update);return !memcmp(pslot_page,jump,14);
@@ -1034,15 +1141,17 @@ static int pslot_release(unsigned k) {
     pslot_slot *s=&pslots[k];
     if(!s->seated) return 1;
     /* On foot (lockstep_pilot_foot_slots.h): its controller went at the stand-up; only the seat's pointers go back. */
-    if(s->walking) {pslot_unseat_player(s);s->seated=0;s->released=1;s->walking=0;return 1;}
+    if(s->walking || s->docked) {pslot_unseat_player(s);s->seated=0;s->released=1;s->walking=0;s->docked=0;return 1;}   /* docked: X4 took it at the dock */
     void **vtable=NULL,*release=NULL;int fault=0;
     if(!read_local(s->ship,&vtable,8) || !vtable || !read_local(vtable+PSLOT_RELEASE,&release,8) || release!=(void*)pslot_fn.release)
         return pslot_fail("release_vtable");
     if(!pslot_enter(k)) return pslot_fail("release_scope");
     int restored=InterlockedCompareExchangePointer((void*volatile*)s->controller,pnat_base+PSLOT_VTABLE,&s->vt.slots[0])==(void*)&s->vt.slots[0];
     if(restored) {
+        ++pslot_own_release;
         __try {((void(*)(void*))release)(s->ship);}
         __except(GetExceptionCode()==EXCEPTION_ACCESS_VIOLATION?EXCEPTION_EXECUTE_HANDLER:EXCEPTION_CONTINUE_SEARCH) {fault=1;}
+        --pslot_own_release;
         s->controller=NULL;
     }
     int left=pslot_leave(k);
@@ -1058,7 +1167,7 @@ static void pslot_retire(unsigned k) {
     if(k>=2 && k<=PILOT_SLOTS) pslot_post_drop(k,&pslots[k]);   /* a held pilot post entry goes back with the seat */
     pslot_slot *s=&pslots[k];
     s->retired[s->retired_next++%PSLOT_RETIRED]=s->controller;
-    s->controller=NULL;s->seated=0;s->released=1;
+    s->controller=NULL;s->seated=0;s->released=1;s->docked=0;
     pslot_unseat_player(s);
     s->room=NULL;
 }
@@ -1113,6 +1222,15 @@ static int pslot_check(uint64_t tick) {
         pslot_slot *s=&pslots[k];void *vtable=NULL;int refs=0;
         if(!s->seated) continue;
         if(s->walking) continue;   /* on foot: no controller to check (lockstep_pilot_foot_slots.h checks its FPC and parent) */
+        /* Docked (pslot_ctl_end): X4 ended its controller. Once, at the first pass after: it was for the docking. */
+        if(s->docked) {
+            if(!s->dock_checked) {
+                if(!pilot_slots[k-1].dead && pilot_slots[k-1].found && pilot_slots[k-1].found!=s->ship) return pslot_fail("ship_lost");
+                if(!pfoot_ship_docks(s->ship)) return pslot_fail("controller_lost");
+                s->dock_checked=1;
+            }
+            continue;
+        }
         /* Seated while dead: in its suit (lockstep_pilot_death.h), which is not the slot's ship. */
         if(!pilot_slots[k-1].dead && (!pilot_slots[k-1].resolved || pilot_slots[k-1].object!=s->ship)) return pslot_fail("ship_lost");
         if(pslot_controller_has(s->ship,0,s->controller)!=1 || !read_local(s->controller,&vtable,8) || vtable!=(void*)&s->vt.slots[0])
@@ -1230,9 +1348,11 @@ static int pslot_status(char *out,size_t capacity) {
             if(more<0) return 0;
             n+=more;}
     }
-    {   int more=n>0 && (size_t)n<capacity?snprintf(out+n,capacity-(size_t)n," upd=%016llx/%016llx/%llu lookup=%d/%lld takeflag=%d hud=%d/%lld/%lld/%lld/%lld",(unsigned long long)pslot_hook_now,
+    {   int more=n>0 && (size_t)n<capacity?snprintf(out+n,capacity-(size_t)n," upd=%016llx/%016llx/%llu lookup=%d/%lld takeflag=%d hud=%d/%lld/%lld/%lld/%lld ctl_end=%d/%lld/%lld dockq=%lld/%lld ctl_inside=%lld",(unsigned long long)pslot_hook_now,
             (unsigned long long)pslot_pass_now,(unsigned long long)pslot_pass_tick,pslot_lookup_installed,(long long)pslot_lookup_empty,
-            pslot_flag_installed,phud_installed,(long long)phud_seen,(long long)phud_kept,(long long)phud_delivered,(long long)phud_faults):-1;
+            pslot_flag_installed,phud_installed,(long long)phud_seen,(long long)phud_kept,(long long)phud_delivered,(long long)phud_faults,
+            pslot_ctl_end_installed,(long long)pslot_ctl_ends_scoped,(long long)pslot_ctl_ends_plain,
+            (long long)pslot_dockq_scoped,(long long)pslot_dockq_plain,(long long)pslot_ctl_ends_inside):-1;
         if(more<0) return 0;
         n+=more;}
     for(unsigned i=0,first=1;n>0 && (size_t)n<capacity && i<PSLOT_VT_SLOTS;i++) {

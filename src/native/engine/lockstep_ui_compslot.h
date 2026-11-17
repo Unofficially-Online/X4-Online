@@ -129,7 +129,7 @@ static uint32_t uics_seen,uics_expected;
 static int uics_ran;
 static volatile LONG64 uics_captured,uics_refused,uics_applied,uics_stale,uics_passed,uics_peeks,uics_faults;
 static uint32_t uics_last;
-static volatile LONG64 uics_seat_clicks,uics_instant,uics_menus,uics_transports;
+static volatile LONG64 uics_seat_clicks,uics_instant,uics_menus,uics_transports,uics_travels;   /* travels: slot 1 to a place (not a spacesuit) */
 static unsigned uics_transport_index=UINT_MAX;   /* the guard's entry of TransportPlayerToTarget, when claimed */
 static int (*uics_lua_original)(void *L);         /* tests: in place of the guard's trampoline of PerformAction */
 static int (*uics_zone_test)(unsigned char *);    /* tests: in place of X4's class test */
@@ -333,8 +333,16 @@ static int uics_transport_decide(unsigned index,const uint64_t *frame,uint64_t *
     uics_slot_arg target={0,NULL};const unsigned k=pstk_capture_slot;
     const unsigned char *arg=(const unsigned char *)(uintptr_t)uiguard_arg(frame,0);
     if(!uirep_capture_now() || !pstk_capturing || !arg || !read_local(arg,&target,sizeof(target)) || !target.component) return uics_refuse(index,ret);
-    if(k==1) {   /* X4's own player: the command itself, on every client (header, terminal); a zone only */
-        if(!uics_is_zone(uirep_component(target.component))) return uics_refuse(index,ret);
+    if(k==1) {   /* X4's own player: the command itself, on every client (header, terminal) */
+        /* A zone is "Use Spacesuit". Any other target the menu offers is a place to travel to (a station's dock area
+         * from a docked ship, a room, back to the ship: a component and the name of its transporter connection): the
+         * same command with that name, X4's own transport of its own player on every client (16 Nov). */
+        if(!uics_is_zone(uirep_component(target.component))) {
+            char name[UICS_NAME_MAX+1];const size_t length=target.connection?uics_name(target.connection,name):0;
+            if(!length || length>UICS_NAME_MAX) return uics_refuse(index,ret);
+            InterlockedIncrement64(&uics_transports);InterlockedIncrement64(&uics_travels);
+            return uics_capture(index,ret,0,target.component,name,length,0,UICS_CLASS_TRANSPORT);
+        }
         InterlockedIncrement64(&uics_transports);
         return uics_capture(index,ret,0,target.component,UICS_TRANSPORT_NAME,sizeof(UICS_TRANSPORT_NAME)-1,0,UICS_CLASS_TRANSPORT);
     }
@@ -392,12 +400,14 @@ static int uics_run(unsigned slot,const unsigned char *data,const char **why) {
     if(klass==UICS_CLASS_TRANSPORT) {   /* slot 1's "Use Spacesuit": X4's export, its eject (header, terminal) */
         void (*transport)(const void *)=uics_transport_test?uics_transport_test:
             (uics_transport_index<UIGUARD_MAX?(void(*)(const void *))uiguard_tramp[uics_transport_index]:NULL);
-        const uics_slot_arg target={runtime,""};int fault=0;
-        if(!transport || !uics_is_zone(component)) {InterlockedIncrement64(&uics_stale);return 1;}
+        const int zone=uics_is_zone(component);
+        const uics_slot_arg target={runtime,zone?"":name};int fault=0;   /* a place: its transporter connection's name */
+        if(!transport) {InterlockedIncrement64(&uics_stale);return 1;}
         __try {transport(&target);}
         __except(GetExceptionCode()==EXCEPTION_ACCESS_VIOLATION?EXCEPTION_EXECUTE_HANDLER:EXCEPTION_CONTINUE_SEARCH) {fault=1;}
         if(fault) {InterlockedIncrement64(&uics_faults);*why="ui_compslot_fault";return 0;}
-        InterlockedIncrement64(&uics_applied);pveh_allow(stats.issued);   /* the walking pass may adopt the suit */
+        InterlockedIncrement64(&uics_applied);
+        if(zone) pveh_allow(stats.issued);   /* the walking pass may adopt the suit */
         return 1;
     }
     if(!uics_call(UICS_APPLY,runtime,name,data[UIREP_REF],klass)) {*why="ui_compslot_fault";return 0;}

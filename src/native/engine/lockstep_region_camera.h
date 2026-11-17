@@ -1867,7 +1867,7 @@ static int rc_arm(int group) {
     }
     if(group==RC_SHAPE_REFRESH) memset((void *)rc_shape_keys,0,sizeof(rc_shape_keys));
     if(group==RC_POLICY) rc_policy=1;
-    if(group==RC_VIEW_SCENES) vsc_armed=1;
+    if(group==RC_VIEW_SCENES) {vsc_armed=1;view_before_refresh=vsc_before_refresh;}
     rc_armed_groups|=1u<<group;rc_mode=RC_VIEW;rc_installed=1;rc_stage="armed";return 1;
 }
 /* native_gate_viewpoint_standins: how many view points the policy answers for (2..VIEW_MAX), before the first frame. */
@@ -2066,7 +2066,7 @@ static void rc_restore(void) {
         if(!rc_remove_patches()) return;
         rc_patched=0;
     }
-    rc_restored=1;rc_installed=0;rc_armed_groups=0;vsc_armed=0;
+    rc_restored=1;rc_installed=0;rc_armed_groups=0;vsc_armed=0;view_before_refresh=NULL;
 }
 static int rc_status(char *out,size_t capacity) {
     char groups[288]="-",installed[288]="-",site_picks[240]="-",scenes[220]="0",fill[120]="off",rows[120]="off",pass[320];tp_status(pass,sizeof(pass));int a=0,b=0,c=0;uint32_t attempts=0,culls=0;

@@ -2149,6 +2149,10 @@ end
 local created_row_cursor=0
 local function drain_created_rows()
  if not cfg.native_gate_created_rows then return end
+ -- Only on a tick whose lines are written: a held tick's lines are dropped, and the rows drained on it were lost
+ -- with them (16 Nov: of 9500 rows 770 reached the log, those of the ticks before a status tick).
+ local current=ticklog.tick
+ if current and not current.write then return end
  local emitted=0
  while emitted<16384 do
   local row=gate.created_row(created_row_cursor)
@@ -2761,7 +2765,8 @@ function pilot_view.arm_ui_replay(slot,window)
    -- missions (lockstep_ui_missions.h): the stock menus declare them with MissionID, the same 64-bit value
    'void AbortMission(uint64_t);','bool SetActiveMission(uint64_t);','void StartBriefing(uint64_t,const char*,bool);','void StopBriefing(uint64_t,bool);',
    'void MissionBriefingInteractButtonClicked(uint64_t);','uint64_t GetActiveMissionID(void);','uint32_t GetNumCurrentMissionOffers(bool);',
-   'uint32_t GetCurrentMissionOffers(uint64_t*,uint32_t,bool);'}) do pcall(ffi.cdef,line) end
+   'uint32_t GetCurrentMissionOffers(uint64_t*,uint32_t,bool);','UniverseID GetMissionIDObjectiveTarget(uint64_t,size_t);',
+   'const char* GetComponentClass(UniverseID);'}) do pcall(ffi.cdef,line) end
  local armed,refused=gate.ui_replay(mask)
  assert(armed==1,'ui replay refused: '..tostring(refused))
  -- The UI guard (lockstep_ui_guard.h, native_gate_ui_guard, default off): every other world-changing stock UI entry
@@ -2889,6 +2894,135 @@ function pilot_view.arm_ui_replay(slot,window)
   local dx,dy,dz,sy,cy=q.x-p.x,q.y-p.y,q.z-p.z,math.sin(p.yaw),math.cos(p.yaw)
   return {dx*cy-dz*sy,dy,dx*sy+dz*cy}
  end
+ -- Docking at a station by script (core.script dock_station): whether this client's own ship is docked and how far
+ -- the station is (metres between the two positions in their sector; nil in another sector).
+ tools.dock_state=function(saved)
+  local ship=assert(gate.pilot_ship(slot),'ui replay script: slot ship unresolved')
+  local ship_lua=ConvertStringToLuaID(string.format('%.0f',ship))
+  local out={docked=GetComponentData(ship_lua,'isdocked') and true or false}
+  local station=tools.saved_lua(saved)
+  if tostring(GetComponentData(ship_lua,'sectorid'))==tostring(GetComponentData(station,'sectorid')) then
+   local p,q=ffi.C.GetObjectPositionInSector(ffi.new('UniverseID',ship)),ffi.C.GetObjectPositionInSector(tools.saved_id(saved))
+   out.distance=math.sqrt((q.x-p.x)^2+(q.y-p.y)^2+(q.z-p.z)^2)
+  end
+  return out
+ end
+ tools.galaxy_lua=function()
+  pcall(ffi.cdef,'UniverseID GetPlayerGalaxyID(void);')
+  return ConvertStringTo64Bit(tostring(ffi.C.GetPlayerGalaxyID()))
+ end
+ -- The dock the station assigned to this client's own ship after a granted request (a Lua ID), or nil.
+ tools.assigned_dock=function()
+  local ship=assert(gate.pilot_ship(slot),'ui replay script: slot ship unresolved')
+  local dock=GetComponentData(ConvertStringToLuaID(string.format('%.0f',ship)),'assigneddock')
+  return dock and tostring(dock)~='0' and dock or nil
+ end
+ -- Where this client's player is, in X4's own answers (core.script foot_where, in the presentation scope): the
+ -- player, what contains it, the ship it sits in or stands in, its room, its place in the sector.
+ -- The stand-in figures (MD cue Avatar tells their IDs): where a walking player's figure stands in its station
+ -- (X4's GetPositionalOffset: x, y, z, yaw), nil while it is in no room. The same answer on every client.
+ tools.foot_figures={}
+ for k=1,#cfg.native_gate_pilot_slots do
+  RegisterEvent('X4LAN_FootAvatar'..k,function(_,object) tools.foot_figures[k]=ConvertIDTo64Bit(object) end)
+ end
+ tools.foot_pose=function(k)
+  local figure=tools.foot_figures[k]
+  if not figure then return nil end
+  pcall(ffi.cdef,'UIPosRot GetPositionalOffset(UniverseID positionalid, UniverseID spaceid);')
+  pcall(ffi.cdef,'UniverseID GetContextByClass(UniverseID,const char*,bool);')
+  local id=ffi.new('UniverseID',ConvertStringTo64Bit(tostring(figure)))
+  local ok,station=pcall(ffi.C.GetContextByClass,id,'station',false)
+  if not ok or tonumber(station)==0 then return nil end
+  local ok2,p=pcall(ffi.C.GetPositionalOffset,id,station)
+  if not ok2 then return nil end
+  return {x=p.x,y=p.y,z=p.z,yaw=p.yaw}
+ end
+ tools.foot_where=function()
+  for _,line in ipairs({'UniverseID GetPlayerID(void);','UniverseID GetPlayerContainerID(void);','UniverseID GetPlayerOccupiedShipID(void);',
+    'UniverseID GetPlayerControlledShipID(void);','UniverseID GetContextByClass(UniverseID,const char*,bool);'}) do pcall(ffi.cdef,line) end
+  local function id(name,...)
+   local ok,value=pcall(ffi.C[name],...)
+   return ok and (tostring(value):gsub('ULL$','')) or 'err'
+  end
+  local parts={'player='..id('GetPlayerID'),'container='..id('GetPlayerContainerID'),'occupied='..id('GetPlayerOccupiedShipID'),
+   'controlled='..id('GetPlayerControlledShipID')}
+  local ok,player=pcall(ffi.C.GetPlayerID)
+  if ok then
+   parts[#parts+1]='room='..id('GetContextByClass',player,'room',false)
+   parts[#parts+1]='walkable='..id('GetContextByClass',player,'walkablemodule',false)
+   parts[#parts+1]='station='..id('GetContextByClass',player,'station',false)
+  end
+  -- ...and this client's own ship: whether it is docked, and where it is in its sector.
+  local ship=gate.pilot_ship(slot)
+  if ship then
+   local docked=GetComponentData(ConvertStringToLuaID(string.format('%.0f',ship)),'isdocked')
+   parts[#parts+1]='docked='..tostring(docked and true or false)
+   local ok3,q=pcall(ffi.C.GetObjectPositionInSector,ffi.new('UniverseID',ship))
+   if ok3 then parts[#parts+1]=string.format('ship_at=%.0f/%.0f/%.0f ship_yaw=%.3f',q.x,q.y,q.z,q.yaw) end
+  end
+  return table.concat(parts,' ')
+ end
+ -- The transporter's targets from where this client's player is (core.script transport_list / transport_to): the
+ -- stock menu's own calls. The current location is what contains the player, with the transporter connection the
+ -- menu would be opened for (native_gate_transport_connection, a test key; default: none named).
+ tools.transport_targets=function()
+  for _,line in ipairs({'typedef struct { UniverseID component; const char* connection; } UIComponentSlot;',
+    'uint32_t GetNumValidTransporterTargets2(UniverseID componentid, UIComponentSlot currentlocation);',
+    'uint32_t GetValidTransporterTargets2(UIComponentSlot* result, uint32_t resultlen, UniverseID componentid, UIComponentSlot currentlocation);',
+    'const char* GetTransporterLocationName(UIComponentSlot transporter);','UniverseID GetTransporterLocationComponent(UIComponentSlot transporter);',
+    'void TransportPlayerToTarget(UIComponentSlot target);','UniverseID GetPlayerContainerID(void);','UniverseID GetPlayerID(void);',
+    'const char* GetComponentClass(UniverseID componentid);'}) do pcall(ffi.cdef,line) end
+  local C=ffi.C
+  pcall(ffi.cdef,'UniverseID GetContextByClass(UniverseID,const char*,bool);')
+  local names=cfg.native_gate_transport_connection or {''}
+  if type(names)~='table' then names={names} end
+  -- What the menu is opened for: the transporter's component. Asked for the ship and for the player's room, with every
+  -- connection name; the list with the most targets is the answer (tried= says what each one gave).
+  local player=C.GetPlayerID()
+  local froms={C.GetPlayerContainerID(),C.GetContextByClass(player,'room',false)}
+  local out,used,tried={},'-',{}
+  for _,from in ipairs(froms) do
+   if tonumber(from)~=0 then
+    for _,name in ipairs(names) do
+     local here=ffi.new('UIComponentSlot');here.component=from;here.connection=name
+     local n=tonumber(C.GetNumValidTransporterTargets2(from,here)) or 0
+     tried[#tried+1]=(tostring(from):gsub('ULL$',''))..'/'..name..'='..n
+     if n>#out then
+      local list={}
+      local buf=ffi.new('UIComponentSlot[?]',n)
+      n=tonumber(C.GetValidTransporterTargets2(buf,n,from,here))
+      for i=0,n-1 do
+       local slot=ffi.new('UIComponentSlot');slot.component=buf[i].component
+       local connection=ffi.string(buf[i].connection);slot.connection=connection
+       list[#list+1]={component=buf[i].component,connection=connection,name=ffi.string(C.GetTransporterLocationName(slot)),
+        class=ffi.string(C.GetComponentClass(buf[i].component))}
+      end
+      if #list>#out then out=list;used=(tostring(from):gsub('ULL$',''))..'/'..name end
+     end
+    end
+   end
+  end
+  return out,used..' tried='..table.concat(tried,',')
+ end
+ tools.transport_list=function()
+  local targets,from=tools.transport_targets()
+  local parts={'from='..from..' targets='..#targets}
+  for i,t in ipairs(targets) do
+   parts[#parts+1]=i..':'..(tostring(t.component):gsub('ULL$',''))..'/'..t.class..'/'..t.connection..'/'..t.name
+  end
+  return table.concat(parts,' ')
+ end
+ tools.transport_to=function(index,text)
+  local targets=tools.transport_targets()
+  local pick=index and targets[index] or nil
+  for _,t in ipairs(targets) do
+   if not pick and text and (t.name:find(text,1,true) or t.class:find(text,1,true)) then pick=t end
+  end
+  assert(pick,'ui replay script: no transporter target '..tostring(index or text)..' among '..#targets)
+  local slot=ffi.new('UIComponentSlot');slot.component=pick.component;slot.connection=pick.connection
+  ffi.C.TransportPlayerToTarget(slot)
+  return (tostring(pick.component):gsub('ULL$',''))..'/'..pick.class..'/'..pick.connection..'/'..pick.name
+ end
  tools.missions=core.mission_tools(ffi.C,_G)
  local plan=cfg.native_gate_ui_replay_script   -- one plan per client, {} or false for none
  assert(plan==nil or plan==false or type(plan)=='table','ui replay refused: invalid script')
@@ -2916,6 +3050,38 @@ function pilot_view.arm_ui_replay(slot,window)
   if on then return gate.pilot_present_resume and gate.pilot_present_resume()==1 or false end
   return gate.pilot_present_pause()==1
  end
+ -- The dock menu opens for this client's own player only. The stock UI opens DockedMenu by itself from three places
+ -- (menu_docked.lua's game plan change and its checkActivation after a conversation or a cinematic camera, the menu
+ -- helper's auto menu after another menu closes), each asking "is the player's ship docked, or does the player sit at
+ -- a post that is not the pilot's". Those handlers run on engine events, outside the client's own view of the player,
+ -- where "the player" is player 1 on every client: when player 1 docked, the menu opened on every other client too,
+ -- as that client's "Ship Interactions", held its flight controls and stopped its ship (X4's stop in menus). Two
+ -- scripted clients, 16 Nov: player 2 could neither fly by hand nor by autopilot from the tick player 1 docked.
+ -- On a client of slot 2..N the same question is asked again inside this client's presentation scope and the
+ -- automatic open is left out when the answer is no. A person's own Enter key does not come through OpenMenu.
+ if slot>=2 and type(OpenMenu)=='function' and not X4LAN_OPEN_MENU_STOCK then
+  X4LAN_OPEN_MENU_STOCK=OpenMenu
+  pcall(ffi.cdef,'const char* GetPlayerCurrentControlGroup(void);')
+  local kept,passed=0,0
+  OpenMenu=function(name,...)
+   if name=='DockedMenu' then
+    local opened=present(true)
+    local ok,own=pcall(function()
+     local occupied=ConvertStringTo64Bit(tostring(ffi.C.GetPlayerOccupiedShipID()))
+     local post=ffi.string(ffi.C.GetPlayerCurrentControlGroup())
+     return ((occupied~=0) and GetComponentData(occupied,'isdocked')) or ((post~='') and (post~='pilotcontrol'))
+    end)
+    if opened then present(false) end
+    if ok and not own then
+     kept=kept+1
+     ticklog.write('UI_DOCKED_MENU kept='..kept..' passed='..passed..' scope='..tostring(opened))
+     return
+    end
+    passed=passed+1
+   end
+   return X4LAN_OPEN_MENU_STOCK(name,...)
+  end
+ end
  -- The trade family's test fixture (native_gate_ui_trade_fund): credits for every slot faction that is not `player`, once.
  local trade_fund=cfg.native_gate_ui_trade_fund
  assert(trade_fund==nil or (math.floor(mask/core.FAMILY.trade)%2==1 and type(trade_fund)=='number' and trade_fund%1==0 and trade_fund>=1 and trade_fund<=1e9),
@@ -2937,6 +3103,17 @@ function pilot_view.arm_ui_replay(slot,window)
   groups=cfg.native_gate_player_groups==true and gate.ui_inventory_player and
    {first=window[1]+90,every=150,player=function(k) local id=gate.ui_inventory_player(k);return id and ConvertStringToLuaID(id) or nil end} or nil,
   story=cfg.native_gate_story,   -- {[k]='<Script>.<Cue>'}: the start script's cue that begins slot k's story (S.slot_story)
+  -- Players see each other on foot (native_gate_foot_avatars, a session default; false: nobody has a figure): each
+  -- slot's stand-in figure is started 3 s into the window, the slots a tick apart (S.slot_avatars).
+  avatars=cfg.native_gate_foot_avatars==true and pcall(ffi.cdef,'UniverseID GetPlayerGalaxyID(void);') and
+   {first=window[1]+90,stagger=1,galaxy=function() return ConvertStringTo64Bit(tostring(ffi.C.GetPlayerGalaxyID())) end,
+    close_dock_menu=function()
+     for _,menu in ipairs(type(Menus)=='table' and Menus or {}) do
+      if menu.name=='DockedMenu' and menu.shown and type(Helper)=='table' and Helper.closeMenu then
+       Helper.closeMenu(menu,'close');if menu.cleanup then menu.cleanup() end
+      end
+     end
+    end} or nil,
   notify=function(text) ffi.C.ShowInfoLine(text,4) end,   -- every refusal of the families shows its info line (also without the guard)
   active_mission=missions_on and function() return (tostring(ffi.C.GetActiveMissionID()):gsub('ULL$','')) end or nil,
   menus=function() return type(Menus)=='table' and Menus or {} end}
@@ -4119,6 +4296,27 @@ local function frame()
    assert((mode=='split' or mode=='observe') and snapshot and gate.ship_sound_rng and gate.ship_sound_rng_status and
     gate.ship_sound_rng(mode)==1,'ship sound RNG refused')
    log('SHIP_SOUND_RNG_ARMED mode='..mode)
+  end
+  -- The station people (their bodies' animation picks) and the signal leaks draw on a word of their own, keyed by
+  -- tick and object: when a body's animation ends is each client's own, and a draw more or less moved every later
+  -- draw of the frame (lockstep_move_rng.h).
+  if cfg.native_gate_move_rng then
+   assert(cfg.native_gate_move_rng==true and gate.move_rng and gate.move_rng_status and gate.move_rng(1)==1,
+    'move RNG refused '..tostring(gate.move_rng_status and gate.move_rng_status()))
+   log('MOVE_RNG_ARMED')
+   if cfg.native_gate_move_rng_rows then
+    assert(gate.move_rng_rows and gate.move_rng_row and gate.move_rng_rows()==1,'move RNG rows refused')
+    log('MOVE_RNG_ROWS_ARMED')
+   end
+   -- A station person's animation ends by the simulation's time, not by how often this client steps it.
+   if cfg.native_gate_body_clock then
+    assert(cfg.native_gate_body_clock==true and cfg.native_gate_character_play and gate.body_clock and gate.body_clock(1)==1,'body clock refused')
+    log('BODY_CLOCK_ARMED')
+   end
+   if cfg.native_gate_body_clock_rows then
+    assert(gate.body_clock_rows and gate.body_clock_row and gate.body_clock_rows()==1,'body clock rows refused')
+    log('BODY_CLOCK_ROWS_ARMED')
+   end
   end
   -- The player's fleet rebuild timer (U::Player+0x8a538): its first deadline is
   -- an unkeyed loading-time draw, so the first check and its re-arm draw (in
@@ -6351,6 +6549,25 @@ local function frame()
  end
  if cfg.native_gate_ship_sound_rng then
   ticklog.status('SHIP_SOUND_RNG',tick,gate.ship_sound_rng_status,'ship sound RNG status unavailable')
+ end
+ if cfg.native_gate_move_rng then
+  ticklog.status('MOVE_RNG',tick,gate.move_rng_status,'move RNG status unavailable')
+  if cfg.native_gate_move_rng_rows then
+   row_cursors.move_rng=row_cursors.move_rng or 0
+   for _=1,4096 do
+    local row=gate.move_rng_row(row_cursors.move_rng)
+    if not row then break end
+    ticklog.write('MOVE_RNG_ROW '..row);row_cursors.move_rng=row_cursors.move_rng+1
+   end
+  end
+  if cfg.native_gate_body_clock_rows then
+   row_cursors.body_clock=row_cursors.body_clock or 0
+   for _=1,8192 do
+    local row=gate.body_clock_row(row_cursors.body_clock)
+    if not row then break end
+    ticklog.write('BODY_CLOCK_ROW '..row);row_cursors.body_clock=row_cursors.body_clock+1
+   end
+  end
  end
  if cfg.native_gate_player_timer then
   ticklog.status('PLAYER_TIMER',tick,gate.player_timer_status,'player timer status unavailable')

@@ -160,5 +160,30 @@ class Offers(unittest.TestCase):
         self.assertIn('not offered', out.getvalue())
 
 
+class Real(unittest.TestCase):
+    def test_the_plan_takes_one_offer_and_goes_from_target_to_target(self):
+        text, end = matrix.real_script(2, 2, 'Steady_Trigger', 2, 500)
+        self.assertEqual(text, "{{},{{700,'offers_list'},{730,'account'},{760,'offer_accept_named','Steady_Trigger'},{910,'mis_look'},"
+                               "{940,'mis_goto',500},{985,'mis_target'},{1000,'aim_fire',1},{1210,'aim_fire',0},"
+                               "{1240,'mis_goto',500},{1285,'mis_target'},{1300,'aim_fire',1},{1510,'aim_fire',0},"
+                               "{1540,'mis_list'},{1570,'account'}}}")
+        self.assertEqual(end, 1600)
+
+    def test_the_rows_of_a_finished_mission(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / 'c.log'
+            path.write_text(''.join([
+                op_row(760, 'offer_accept_named', 'accepted generic/destroy paranid Steady'),
+                "[=ERROR=] 31.0 [X4LAN] MT_GOTO slot=2 player=0x1 ship=0x2 target=0x3 macro=mine owner=xenon hull=10 sector=Far distance=500m time=31\n",
+                "[=ERROR=] 40.0 [X4LAN] MT_REAL end=completed name=Steady Trigger reward=12000Cr player=0x1 money=500Cr time=40\n",
+                "[=ERROR=] 41.0 Error in MD cue md.Some.Cue: something\n",
+                op_row(1570, 'account', '50000')]), encoding='latin-1')
+            ends, flights, ops, errors = matrix.read_real(path)
+        self.assertEqual(ends, [('completed', 'Steady Trigger', '12000Cr', '0x1', '500Cr', '40')])
+        self.assertEqual([row[:4] for row in flights], [('2', '0x1', '0x2', '0x3')])
+        self.assertEqual([(op, result) for _, op, _, result in ops], [('offer_accept_named', 'accepted generic/destroy paranid Steady'), ('account', '50000')])
+        self.assertEqual(errors, 1)
+
+
 if __name__ == '__main__':
     unittest.main()

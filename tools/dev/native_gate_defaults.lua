@@ -102,6 +102,7 @@ D.ON={
  {'native_gate_engine_refresh_rng',true,'native_gate_world_identities','engine parameter refreshes keyed'},
  {'native_gate_player_timer',true,'','player timers on game time'},
  {'native_gate_ship_sound_rng','split','','ship sounds on their own RNG word'},
+ {'native_gate_move_rng',true,'','station people and signal leaks draw on their own RNG word'},
  {'native_gate_warp_rng',true,'native_gate_world_identities','warp draws keyed'},
  -- With the inline jobs too (complete command-list splices either way): a hot join needs the temporary zones' portable order
  -- (hjs1, 11 Nov, without it: 17 objects more on the joiner at the first step after the join).
@@ -114,6 +115,7 @@ D.ON={
  {'native_gate_macro_arena',true,'','macros in id hash order'},
  {'native_gate_shape_order','sync','','collision files loaded before the part is built'},
  {'native_gate_character_play','sync','','a body animation start loads its character and motion first and draws on a keyed word (stop 188): the DF2 wharf patrol split without it'},
+ {'native_gate_body_clock',true,'native_gate_move_rng native_gate_character_play','a station person animation ends by the simulation time on every client'},
  {'native_gate_portable_math',true,'','CRT math entries on the portable library'},
  {'native_gate_exact_reciprocal',true,'','RCPSS/RSQRTSS exactly rounded'},
  {'native_gate_decimal',true,'','saved values read by the portable decimal reader'},
@@ -212,6 +214,7 @@ D.ON={
  {'native_gate_shared_listeners',true,'native_gate_pilot_stock_slots','a script no player owns (world plots, story activators, statistics) hears the events of every player, each inside that player scope'},
  {'native_gate_ui_reload_hold',true,'native_gate_ui_guard','a window resize, a UI scale change or a controller-mode switch no longer ends a player session: X4 reloads its UI after the session'},
  {'native_gate_ui_compslot',true,'native_gate_ui_guard native_gate_pilot_foot_slots','on foot a click works: the pilot seat (sit down) and the transporter terminal (its menu, Use Spacesuit) for every player'},
+ {'native_gate_foot_avatars',true,'native_gate_missions_per_player native_gate_pilot_foot_slots','players see each other on foot: a figure stands where each walking player is'},
  {'native_gate_guidance_local',true,'native_gate_pilot_present native_gate_runtime_ids_local native_gate_script_rng native_gate_md_timed_rng','a client own guidance takes local runtime IDs'},
  {'native_gate_render_fps',60,'native_gate_lookahead native_gate_tick_hz native_gate_snapshot_sha native_gate_serial_pathing native_gate_radar_serial native_gate_render_rng_split native_gate_mass_traffic=sync native_gate_region_pass=sync native_gate_runtime_ids_local','render-only frames between the steps, up to 60 per second'},
  {'native_gate_render_camera','extrapolate','native_gate_render_fps','the camera moves in the render-only frames'},
@@ -307,6 +310,9 @@ D.DIAGNOSTIC={
  {'native_gate_actor_rng_rows','actor RNG rows'},
  {'native_gate_command_order_rows','command order rows'},
  {'native_gate_created_rows','created identity rows'},
+ {'native_gate_move_rng_rows','move RNG rows (the station people and signal leaks that drew, per tick)'},
+ {'native_gate_body_clock_rows','body clock rows (what the animation system answers a station person each tick)'},
+ {'native_gate_transport_connection','transporter test ops: the connection names asked for'},
  {'native_gate_created_load_stacks','load-created object stacks'},
  {'native_gate_join_evq_dump','hot join pending event rows'},
  {'native_gate_join_watch','hot join watched object rows'},

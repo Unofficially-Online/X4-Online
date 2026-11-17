@@ -63,7 +63,7 @@ static void test_cp_reset(int mode) {
     cplay_installed=1;cplay_mode=mode;cplay_failures=cplay_rows=cplay_foreign=0;cplay_stage="armed";
     cplay_calls=cplay_frame_calls=cplay_native=cplay_resident=cplay_absent=cplay_invalid=cplay_loads=cplay_unloaded=0;
     cplay_load_us=cplay_load_max_us=cplay_keyed=cplay_declined=cplay_draws=cplay_uncounted=cplay_overflow=0;
-    cplay_tick=UINT64_MAX;cplay_pair_count=0;test_cp_calls=test_cp_queue_calls=0;
+    cplay_tick=UINT64_MAX;cplay_pair_count=0;cplay_caller_count=0;test_cp_calls=test_cp_queue_calls=0;
 }
 static void test_character_play(void) {
     uint64_t saved_issued=stats.issued;DWORD saved_ui=ui_thread;uint32_t saved_active=stats.active;int saved_boot=boot_mode,saved_phase=boot_phase;
@@ -98,7 +98,7 @@ static void test_character_play(void) {
     test_cp_resident(0,1);test_cp_delay=5;test_cp_fill=1;
     assert(test_cp_call(&loader,&word_c,TEST_CP_CHARACTER,TEST_CP_MOTION,1000)==1);
     assert(word_a==frame && word_c==frame && test_cp_queue_calls==1 && test_cp_queued==TEST_CP_CHARACTER && cplay_loads==1 && test_cp_calls==2);
-    const uint64_t seed=lockstep_seed(CPLAY_DOMAIN,22,TEST_CP_CHARACTER,TEST_CP_MOTION,0,0);
+    const uint64_t seed=lockstep_seed(CPLAY_DOMAIN,22,frame,0,0,0);   /* the caller's word and its ordinal, not this process's asset keys */
     assert(cplay_ring[0].seed==seed && cplay_ring[1].seed==seed && cplay_ring[0].exit==render_rng_step(seed) && cplay_ring[1].exit==cplay_ring[0].exit);
     assert(cplay_ring[0].before[0]==CPLAY_RESIDENT && cplay_ring[1].before[0]==CPLAY_ABSENT && cplay_ring[1].loaded[0]==1 && !cplay_ring[1].loaded[1]);
     assert(cplay_keyed==2 && cplay_draws==2 && !cplay_declined && !cplay_failures);
@@ -113,7 +113,7 @@ static void test_character_play(void) {
      * the next tick starts again. */
     test_cp_resident(1,1);
     assert(test_cp_call(&loader,&word_c,TEST_CP_CHARACTER,TEST_CP_MOTION,1000)==1 && cplay_ring[3].pair==1 && cplay_ring[3].ordinal==1);
-    assert(cplay_ring[3].seed==lockstep_seed(CPLAY_DOMAIN,23,TEST_CP_CHARACTER,TEST_CP_MOTION,1,0) && cplay_ring[3].seed!=cplay_ring[2].seed);
+    assert(cplay_ring[3].seed==lockstep_seed(CPLAY_DOMAIN,23,frame,0,1,0) && cplay_ring[3].seed!=cplay_ring[2].seed);
     assert(test_cp_call(&loader,&word_c,TEST_CP_CHARACTER,0x0000000600200000ULL,1000)==1 && cplay_ring[4].pair==0 && cplay_ring[4].before[1]==CPLAY_INVALID);
     stats.issued=24;assert(test_cp_call(&loader,&word_c,TEST_CP_CHARACTER,TEST_CP_MOTION,1000)==1 && !cplay_ring[5].pair && !cplay_ring[5].ordinal);
     assert(word_c==frame && test_cp_queue_calls==2);

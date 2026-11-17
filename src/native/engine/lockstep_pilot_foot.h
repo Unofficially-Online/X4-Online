@@ -77,7 +77,17 @@
 #define PFOOT_FP_REQUESTED 0x38f4e7cu     /* the FPC's input contexts requested (d81d20): this client's own, not hashed */
 #define PFOOT_FP_REFRESH_RVA 0xd81d20u    /* the FPC's context refresh, d9cc30's twin: FIRST_PERSON, FIRST_PERSON_INTERACTION */
 #define PFOOT_CONTROLS_ENABLED 0x2f4b7e0u /* the PlayerController's controls enabled (d9cc30 reads it) */
-enum {PFOOT_SEATED=0,PFOOT_LEAVING=1,PFOOT_WALKING=2};
+/* PFOOT_DOCKED: slot 1 sits in its ship and the ship is docked. X4 gives a docking ship its docking controller in place
+ * of whatever moved it (0x540530: a U::DockMovementController built and handed to the ship's set-movement-controller
+ * with "delete the old one"), so a player's PlayerController goes at that moment, on every client, in the simulation
+ * (seen with execute breakpoints, 16 Nov: the controller's destructor 0xd84730 under 0x745fd9, the tick the ship reported
+ * docked; until then every session stopped there with stock_controller_changed). From there the pass is the walking
+ * pass (no PlayerController, flight control the replayed SPACE state) with the player in its seat; a get-up goes on
+ * to leaving and walking, and a PlayerController on slot 1's ship again (the undocking's end) is adopted as after a
+ * sit-down. Like leaving and walking it counts as off the controls for everyone who asks pfoot_walking(). */
+enum {PFOOT_SEATED=0,PFOOT_LEAVING=1,PFOOT_WALKING=2,PFOOT_DOCKED=3};
+#define PFOOT_DOCK_VTABLE 0x2c3fdc0u      /* U::DockMovementController (lockstep_dock.h) */
+#define PFOOT_UNDOCK_VTABLE 0x2c3e568u    /* the undocking's */
 enum {PFOOT_NONE=0,PFOOT_WALK_ID=1,PFOOT_SPLIT_ID=2,PFOOT_REFUSE_ID=3};
 typedef void (*pfoot_context_fn)(int,unsigned char);
 /* Defined later (lockstep_pilot_native.h, lockstep_pilot_foot_guard.h). */
@@ -162,6 +172,22 @@ static void pfoot_replay_state(void *handler,int id,unsigned char active) {
 /* Slot 1 off its seat (a replayed GET_UP X4 may have taken, or walking): X4 then skips d95180 (9fe2b4) and slot 1's ship has
  * no player aim; lockstep_pilot_slots.h updates slots 2..N the frame after, pstk_aim answers X4's own. */
 static int pfoot_walking(void) {return pfoot_armed && pfoot_state!=PFOOT_SEATED;}
+/* The ship's movement controller is X4's docking or undocking one: what took a docking ship's PlayerController. */
+static volatile LONG64 pfoot_docks;
+static int (*pfoot_ship_docks_test)(const unsigned char *ship);   /* tests: in place of the read */
+static int pfoot_ship_docks(const unsigned char *ship) {
+    unsigned char *c=NULL;void *vtable=NULL;
+    if(pfoot_ship_docks_test) return pfoot_ship_docks_test(ship);
+    if(!ship || !pnat_base || !read_local(ship+0x200,&c,8) || !c || !read_local(c,&vtable,8)) return 0;
+    return vtable==(void*)(pnat_base+PFOOT_DOCK_VTABLE) || vtable==(void*)(pnat_base+PFOOT_UNDOCK_VTABLE);
+}
+/* The ship holds X4's undocking controller. It keeps it after the undocking is over, until someone gives the ship
+ * another one: X4's undock routine (5423c0) gives a PlayerController only to the ship of X4's own player (5426a6). */
+static int pfoot_ship_undocks(const unsigned char *ship) {
+    unsigned char *c=NULL;void *vtable=NULL;
+    if(pfoot_ship_docks_test) return 0;
+    return ship && pnat_base && read_local(ship+0x200,&c,8) && c && read_local(c,&vtable,8) && vtable==(void*)(pnat_base+PFOOT_UNDOCK_VTABLE);
+}
 
 /* ---- the bank and the receipt ---- */
 static uint64_t pfoot_bank_hash(void) {
@@ -222,7 +248,7 @@ static void pfoot_note_replay(unsigned kind,unsigned id,uint64_t tick) {
     if(!pfoot_armed) return;
     if(kind==0u && id==PFOOT_GET_UP) {
         InterlockedIncrement64(&pfoot_getups_replayed);
-        if(pfoot_state==PFOOT_SEATED) {pfoot_state=PFOOT_LEAVING;pfoot_leave_tick=tick;pfoot_transition_tick=tick;}
+        if(pfoot_state==PFOOT_SEATED || pfoot_state==PFOOT_DOCKED) {pfoot_state=PFOOT_LEAVING;pfoot_leave_tick=tick;pfoot_transition_tick=tick;}
     }
     if(kind==2u && pfoot_id(kind,(int)id)==PFOOT_SPLIT_ID) InterlockedIncrement64(&pfoot_split_replayed);
 }
@@ -667,7 +693,11 @@ static int pfoot_check(uint64_t tick,unsigned char *controller,unsigned char **p
                        unsigned replayed_flight) {
     unsigned char *ship=NULL;
     if(!pfoot_armed) return 0;
-    if(pfoot_state==PFOOT_SEATED) return 0;
+    if(pfoot_state==PFOOT_SEATED) {
+        /* Its ship docks (PFOOT_DOCKED): X4 took the PlayerController the pass held, for its docking controller. */
+        if(controller || !*pnat_controller_io || !pfoot_ship_docks(pnat_ship_now)) return 0;
+        pfoot_state=PFOOT_DOCKED;pfoot_transition_tick=tick;*pnat_controller_io=NULL;InterlockedIncrement64(&pfoot_docks);
+    }
     if(pfoot_state==PFOOT_LEAVING) {
         if(controller && controller==*pnat_controller_io) {
             if(tick>pfoot_leave_tick+PFOOT_LEAVE_TICKS) {pfoot_state=PFOOT_SEATED;InterlockedIncrement64(&pfoot_kept_seated);}
@@ -681,7 +711,7 @@ static int pfoot_check(uint64_t tick,unsigned char *controller,unsigned char **p
     if(!controller) {
         /* Walking: flight control is the replayed SPACE state once its edge (capture + delay) is through. */
         if(tick>pfoot_transition_tick+PFOOT_GRACE && flight!=replayed_flight) {pfoot_fail("foot_flight_drift");return -1;}
-        InterlockedIncrement64(&pfoot_walk_passes);pfoot_stage="walking";
+        InterlockedIncrement64(&pfoot_walk_passes);pfoot_stage=pfoot_state==PFOOT_DOCKED?"docked":"walking";
         return 1;
     }
     /* A PlayerController again: slot 1 sat down in its own ship (adopted), X4 put its player into another vehicle where one

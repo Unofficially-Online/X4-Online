@@ -222,11 +222,55 @@ static int pfslot_place(pslot_slot *s) {
 }
 
 /* ---- the stand-up and the sit-down (pstk_slot_replay, slot k's GET_UP, in scope k) ---- */
-static int pfslot_sit_down(unsigned k) {
-    pslot_slot *s=&pslots[k];pfslot_slot *f=&pfslots[k];void **vtable=NULL,*take=NULL,*controller=NULL,*cvt=NULL,*back=NULL;
+/* ---- a docked ship's seat (lockstep_pilot_slots.h pslot_ctl_end) ----
+ * A slot whose ship docked sits in it without a PlayerController, as X4's own player does (X4 took the controller for
+ * its docking one). From there, every step on every client at the same tick:
+ *   get up     as from a flying seat, without the controller's release (there is none); the placement is X4's own for
+ *              a docked ship (pfslot_place: the dock's connection).
+ *   sit down   in the docked ship: the seat without a take (X4 gives a docked ship no PlayerController): the control
+ *              position, the FPC's seat flag, first person off, the seat 'docked' again.
+ *   undocked   the ship is free again (no dock, no docking or undocking controller on it) and the slot sits in it:
+ *              the take, as the sit-down's, in the slot's scope (pfslot_pass). For X4's own player X4 does it itself
+ *              and the pass adopts the new controller (lockstep_pilot_foot.h).
+ * pfslot_ship_docked: X4's own answer (0x7ced40: the dock a ship is connected to), or its docking / undocking
+ * controller still on the ship. Status docked=mask/takes. */
+static volatile LONG64 pfslot_dock_takes,pfslot_dock_sits,pfslot_dock_getups;
+static int (*pfslot_ship_docked_test)(const unsigned char *ship);   /* tests: in place of X4's answer */
+static int pfslot_ship_docked(unsigned char *ship) {
+    unsigned char *dock=NULL;int fault=0;
+    if(pfslot_ship_docked_test) return pfslot_ship_docked_test(ship);
+    if(!ship || !pnat_base) return 0;
+    /* Its docking controller: docked or on the way in. Its undocking controller says nothing by itself: the ship
+     * keeps it after X4 has let it go (seen live, 16 Nov: slot 2's ship hung 30 m above its pad for good, its seat
+     * 'docked', its thrust keys dead), so there X4's own answer decides. */
+    if(pfoot_ship_docks(ship) && !pfoot_ship_undocks(ship)) return 1;
+    if(pfoot_ship_undocks(ship)) {
+        /* X4 lets an undocking ship go (5423c0, from the dock's event about 10 s after the request) by connecting it
+         * to its zone: no docking bay (class 0x28) above it any more. The dock connection that 7ced40 reads stays
+         * (seen live, 17 Nov: its answer was 'docked' for good), so the parents decide here. */
+        unsigned char *c=ship;
+        for(unsigned depth=0;depth<16;depth++) {
+            void **vt=NULL;unsigned char is=0;int fault=0;
+            if(!read_local(c+0x70,&c,8) || !c || !read_local(c,&vt,8) || !vt) return 0;
+            __try {is=((unsigned char(*)(void*,int))vt[0x11e8/8])(c,0x28);}
+            __except(GetExceptionCode()==EXCEPTION_ACCESS_VIOLATION?EXCEPTION_EXECUTE_HANDLER:EXCEPTION_CONTINUE_SEARCH) {fault=1;}
+            if(fault) return 1;
+            if(is) return 1;
+        }
+        return 0;
+    }
+    if(!pvehk_poll_on) return 1;   /* X4's answer cannot be asked on this image: a docked seat stays docked */
+    __try {(void)((void*(*)(void*,void**))(void*)(pnat_base+PVEHK_DOCKED))(ship,(void**)&dock);}
+    __except(GetExceptionCode()==EXCEPTION_ACCESS_VIOLATION?EXCEPTION_EXECUTE_HANDLER:EXCEPTION_CONTINUE_SEARCH) {fault=1;}
+    return !fault && dock!=NULL;
+}
+/* The seat's take (in scope k): a PlayerController for slot k's ship, under C_k's vtable copy. 1 taken, 2 the ship is
+ * held by another controller (nothing taken), 0 failed. */
+static int pfslot_take(unsigned k) {
+    pslot_slot *s=&pslots[k];void **vtable=NULL,*take=NULL,*controller=NULL,*cvt=NULL,*back=NULL;
     int fault=0,position=0;
     if(!read_local(s->ship,&vtable,8) || !vtable || !read_local(vtable+PSLOT_TAKE,&take,8) || take!=(void*)pslot_fn.take) return pfslot_fail("slot_take_vtable");
-    if(pslot_controller_has(s->ship,PSLOT_CONTROLLER_CLASS,NULL)!=0) {InterlockedIncrement64(&f->ignored);return 1;}   /* the ship is held */
+    if(pslot_controller_has(s->ship,PSLOT_CONTROLLER_CLASS,NULL)!=0) return 2;   /* the ship is held */
     if(!read_local(pnat_base+PSLOT_PILOT_POSITION,&position,4) || !position) return pfslot_fail("slot_pilot_position");
     memcpy(s->player+PFSLOT_POSITION,&position,4);
     /* The take's bank reset (d84c20) starts the new controller's flight control from THIS client's input object
@@ -250,9 +294,39 @@ static int pfslot_sit_down(unsigned k) {
     if(InterlockedCompareExchangePointer((void*volatile*)controller,&s->vt.slots[0],pnat_base+PSLOT_VTABLE)!=(void*)(pnat_base+PSLOT_VTABLE))
         return pfslot_fail("slot_controller_vtable");
     s->controller=controller;pslot_set_routes(s,1);
+    return 1;
+}
+static int pfslot_sit_down(unsigned k) {
+    pslot_slot *s=&pslots[k];pfslot_slot *f=&pfslots[k];
+    if(pfslot_ship_docked(s->ship)) {   /* a docked ship's seat: no controller (header above) */
+        int position=0;
+        if(!read_local(pnat_base+PSLOT_PILOT_POSITION,&position,4) || !position) return pfslot_fail("slot_pilot_position");
+        memcpy(s->player+PFSLOT_POSITION,&position,4);
+        f->fpc[PFSLOT_FPC_SEAT]=1;pnat_base[PFOOT_ACTIVE]=0;s->player[PFOOT_PLAYER_FLAG]=0;
+        f->walking=0;s->walking=0;s->docked=1;s->dock_checked=1;InterlockedIncrement64(&f->sat);InterlockedIncrement64(&pfslot_dock_sits);
+        return 1;
+    }
+    const int taken=pfslot_take(k);
+    if(!taken) return 0;
+    if(taken==2) {InterlockedIncrement64(&f->ignored);return 1;}
     f->fpc[PFSLOT_FPC_SEAT]=1;pnat_base[PFOOT_ACTIVE]=0;s->player[PFOOT_PLAYER_FLAG]=0;
     f->walking=0;s->walking=0;InterlockedIncrement64(&f->sat);
     pvehk_control(k,1);   /* MD: its player took the ship's controls (lockstep_pilot_death.h, the control events) */
+    return 1;
+}
+/* A docked slot whose ship is free again takes its controls (pfslot_pass, every tick, outside every scope). */
+static int pfslot_undocked(void) {
+    for(unsigned k=2;k<=PILOT_SLOTS;k++) {
+        pslot_slot *s=&pslots[k];
+        if(!s->seated || !s->docked || s->walking || !s->dock_checked || pilot_slots[k-1].dead || pfslot_ship_docked(s->ship)) continue;
+        if(!pslot_enter(k)) return pfslot_fail("slot_undock_scope");
+        const int taken=pfslot_take(k);
+        if(taken==1) {s->docked=0;InterlockedIncrement64(&pfslot_dock_takes);}
+        const int left=pslot_leave(k);
+        if(!taken) return 0;
+        if(!left) return pfslot_fail("slot_undock_leave");
+        if(taken==1) pvehk_control(k,1);   /* MD: its player took the ship's controls */
+    }
     return 1;
 }
 static int pfslot_get_up(unsigned k,double now) {
@@ -260,7 +334,7 @@ static int pfslot_get_up(unsigned k,double now) {
     if(!s || !pfslot_armed || pstk_scope_slot!=k || !pslot_frame_thread()) return pfslot_fail("slot_scope");
     InterlockedIncrement64(&f->getups);
     if(f->walking) return pfslot_sit_down(k);
-    if(!s->seated || !s->controller || pilot_slots[k-1].dead) {InterlockedIncrement64(&f->ignored);return 1;}
+    if(!s->seated || (!s->controller && !s->docked) || pilot_slots[k-1].dead) {InterlockedIncrement64(&f->ignored);return 1;}
     unsigned char may=0,*conversation=NULL;int fault=0,state=0;
     /* K2-2: as the GetUpEvent's handler asks (706cc0): the conversation manager idle, then 716d80. */
     if(read_local(pnat_base+PFSLOT_CONVERSATION,&conversation,8) && conversation && read_local(conversation+0x1a0,&state,4) && state!=1) {
@@ -270,16 +344,21 @@ static int pfslot_get_up(unsigned k,double now) {
     __except(GetExceptionCode()==EXCEPTION_ACCESS_VIOLATION?EXCEPTION_EXECUTE_HANDLER:EXCEPTION_CONTINUE_SEARCH) {fault=1;}
     if(fault) return pfslot_fail("slot_may_stand_fault");
     if(!may) {InterlockedIncrement64(&f->kept);return 1;}
-    /* K2-3: the seat's controller released in this scope, as pslot_release does at stop+1. */
-    void **vtable=NULL,*release=NULL;
-    if(!read_local(s->ship,&vtable,8) || !vtable || !read_local(vtable+PSLOT_RELEASE,&release,8) || release!=(void*)pslot_fn.release)
-        return pfslot_fail("slot_release_vtable");
-    if(InterlockedCompareExchangePointer((void*volatile*)s->controller,pnat_base+PSLOT_VTABLE,&s->vt.slots[0])!=(void*)&s->vt.slots[0])
-        return pfslot_fail("slot_controller_vtable");
-    __try {((void(*)(void*))release)(s->ship);}
-    __except(GetExceptionCode()==EXCEPTION_ACCESS_VIOLATION?EXCEPTION_EXECUTE_HANDLER:EXCEPTION_CONTINUE_SEARCH) {fault=1;}
-    s->controller=NULL;
-    if(fault) return pfslot_fail("slot_release_fault");
+    /* K2-3: the seat's controller released in this scope, as pslot_release does at stop+1. A docked seat has none. */
+    const int from_dock=s->docked && !s->controller;
+    if(!from_dock) {
+        void **vtable=NULL,*release=NULL;
+        if(!read_local(s->ship,&vtable,8) || !vtable || !read_local(vtable+PSLOT_RELEASE,&release,8) || release!=(void*)pslot_fn.release)
+            return pfslot_fail("slot_release_vtable");
+        if(InterlockedCompareExchangePointer((void*volatile*)s->controller,pnat_base+PSLOT_VTABLE,&s->vt.slots[0])!=(void*)&s->vt.slots[0])
+            return pfslot_fail("slot_controller_vtable");
+        ++pslot_own_release;
+        __try {((void(*)(void*))release)(s->ship);}
+        __except(GetExceptionCode()==EXCEPTION_ACCESS_VIOLATION?EXCEPTION_EXECUTE_HANDLER:EXCEPTION_CONTINUE_SEARCH) {fault=1;}
+        --pslot_own_release;
+        s->controller=NULL;
+        if(fault) return pfslot_fail("slot_release_fault");
+    }
     /* K2-4, K2-5: the FPC, its first update at the seat (as X4's own player's FPC had it long before it stands: the
      * placement then poses an initialised FPC), the placement, all with this client's FIRST_PERSON flags held. */
     volatile unsigned char *requested=pnat_base+PFOOT_FP_REQUESTED;volatile uint32_t *share=(volatile uint32_t*)(pnat_base+PFOOT_COUNTER);
@@ -299,7 +378,8 @@ static int pfslot_get_up(unsigned k,double now) {
     fpc[PFSLOT_FPC_SEAT]=0;s->player[PFOOT_PLAYER_FLAG]=1;
     pfslot_bank_start(1);   /* K2-6: the live bank is slot k's in this scope */
     f->fpc=fpc;f->walking=1;s->walking=1;f->stood_tick=stats.issued;InterlockedIncrement64(&f->stood);
-    pvehk_control(k,0);   /* MD: its player left the ship's controls */
+    if(from_dock) {s->docked=0;InterlockedIncrement64(&pfslot_dock_getups);}
+    else pvehk_control(k,0);   /* MD: its player left the ship's controls */
     InterlockedIncrement64(placed?&f->placed:&f->unplaced);
     if(placed==2) InterlockedIncrement64(&f->tagged);
     return 1;
@@ -359,7 +439,7 @@ static int pfslot_own_walking(void) {
 }
 /* The docked menu's Get Up on client k (lockstep_pilot_foot_guard.h): slot k sits in its ship. */
 static int pfslot_claim_ok(unsigned k) {
-    return pfslot_armed && k>=2 && k<=PILOT_SLOTS && pslots[k].seated && pslots[k].controller && !pfslots[k].walking && !pilot_slots[k-1].dead;
+    return pfslot_armed && k>=2 && k<=PILOT_SLOTS && pslots[k].seated && (pslots[k].controller || pslots[k].docked) && !pfslots[k].walking && !pilot_slots[k-1].dead;
 }
 /* A seated slot's GET_UP in this tick's records (lockstep_pilot_foot_body.h parks the bodies before any stand-up). */
 static int pfslot_getup_due(uint64_t tick) {
@@ -407,6 +487,7 @@ static int pfslot_pass(uint64_t tick) {
         if(!pfslot_hook_install()) return pfslot_fail("slot_hook_install");
         pfslot_update_tick=tick?tick-1:0;pfslot_stage="live";
     } else if(memcmp(pnat_base+PFSLOT_CALL_SITE,pfslot_site_patched,5)) return pfslot_fail("slot_hook_lost");
+    if(!pfslot_undocked()) return 0;   /* a docked slot whose ship is free again: its controls */
     if(!pfslot_any_walking()) return 1;
     for(unsigned k=2;k<=PILOT_SLOTS;k++) if(pfslots[k].walking && !pfslot_check(k)) return 0;
     if(pfslot_update_tick+1!=tick) {   /* X4 skipped the call (no FPC on its own player): the walking slots update here */
@@ -500,6 +581,25 @@ static int pfslot_arm(void) {
 static int pfslot_status(char *out,size_t capacity) {
     int n=snprintf(out,capacity," foot_slots=%s foot_slots_why=%s foot_slots_hook=%d/%lld/%lld claimed=%lld dying_skips=%lld",pfslot_stage,pfslot_why,
         pfslot_hook_installed,(long long)pfslot_hook_calls,(long long)pfslot_late,(long long)pfslot_getups_claimed,(long long)pfslot_dying_skips);
+    {   unsigned docked=0;   /* docked seats (mask) / takes after an undocking / sit-downs and get-ups in a docked ship */
+        for(unsigned k=2;k<=PILOT_SLOTS;k++) if(pslots[k].seated && pslots[k].docked) docked|=1u<<(k-1);
+        int more=n>0 && (size_t)n<capacity?snprintf(out+n,capacity-(size_t)n," docked=%x/%lld/%lld/%lld",docked,(long long)pfslot_dock_takes,
+            (long long)pfslot_dock_sits,(long long)pfslot_dock_getups):-1;
+        if(more<0) return 0;
+        n+=more;
+        /* per docked seat: its ship's controller (vtable RVA), X4's own answer about its dock, the one-time check */
+        for(unsigned k=2;k<=PILOT_SLOTS && n>0 && (size_t)n<capacity;k++) if(pslots[k].seated && pslots[k].docked && pslots[k].ship && pnat_base) {
+            unsigned char *c=NULL,*dock=NULL;void *vt=NULL;int fault=0;
+            if(read_local(pslots[k].ship+0x200,&c,8) && c) read_local(c,&vt,8);
+            if(pvehk_poll_on) {
+                __try {(void)((void*(*)(void*,void**))(void*)(pnat_base+PVEHK_DOCKED))(pslots[k].ship,(void**)&dock);}
+                __except(GetExceptionCode()==EXCEPTION_ACCESS_VIOLATION?EXCEPTION_EXECUTE_HANDLER:EXCEPTION_CONTINUE_SEARCH) {fault=1;}
+            }
+            more=snprintf(out+n,capacity-(size_t)n," dock%u=%llx/%d/%d",k,vt?(unsigned long long)((unsigned char*)vt-pnat_base):0ull,
+                fault?-1:dock!=NULL,pslots[k].dock_checked);
+            if(more<0) return 0;
+            n+=more;
+        }}
     for(unsigned k=2;n>0 && (size_t)n<capacity && k<=PILOT_SLOTS;k++) {
         pfslot_slot *f=&pfslots[k];
         if(!(pslot_mask>>(k-1)&1u)) continue;

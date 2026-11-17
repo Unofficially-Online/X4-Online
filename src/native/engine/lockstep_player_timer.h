@@ -44,7 +44,7 @@
 #define PT_AUTOPILOT_DUE 0x8a540u
 #endif
 #define PT_FIRST 15.0
-#define PT_OBJECTS 4u
+#define PT_OBJECTS 9u   /* X4's own player and one per slot */
 #define PT_STOP_REASON 142u
 typedef void (*pt_fn)(void *);
 static int pt_installed,pt_restored;
@@ -71,7 +71,28 @@ static int pt_first_call(const void *self) {
 }
 #ifndef PT_OWN_PLATFORM
 /* tls: the calling thread's TLS block (slot 0), NULL when unset. */
+/* lockstep_pilot_foot_body.h (the slots' own Moves): pt_slot_enter opens the scope of the slot whose player `self` is
+ * and answers that slot (0: none opened), pt_slot_leave closes it, pt_slot_parked lists, after X4's own player's Move,
+ * the slots' players X4 itself does not reach in this frame. */
+static unsigned (*pt_slot_enter)(void *self);
+static void (*pt_slot_leave)(unsigned k);
+static unsigned (*pt_slot_parked)(void *self,void **out,unsigned capacity);
+/* ...and pt_slot_drive runs, before such a player's Move, what X4's per-object driver (748120) runs before it. */
+static void (*pt_slot_drive)(void *self,double now);
+static void pt_run_one(pt_fn original,void *self,const unsigned char *tls);
 static void pt_run(pt_fn original,void *self,const unsigned char *tls) {
+    pt_run_one(original,self,tls);
+    if(pt_slot_parked && stats.active && boot_phase==3 && stats.issued && GetCurrentThreadId()==ui_thread) {
+        void *more[PT_OBJECTS];const unsigned n=pt_slot_parked(self,more,PT_OBJECTS);
+        for(unsigned i=0;i<n;i++) {
+            unsigned char ready=0;double now=0;
+            if(pt_slot_drive && tls && read_local(tls+0x10,&ready,1) && ready && read_local(tls+0x300,&now,8) && isfinite(now))
+                pt_slot_drive(more[i],now);
+            pt_run_one(original,more[i],tls);
+        }
+    }
+}
+static void pt_run_one(pt_fn original,void *self,const unsigned char *tls) {
     InterlockedIncrement64(&pt_calls);
     if(!stats.active || boot_phase!=3 || !stats.issued || GetCurrentThreadId()!=ui_thread) {original(self);return;}
     unsigned char ready=0;double now=0,due=0;
@@ -86,7 +107,13 @@ static void pt_run(pt_fn original,void *self,const unsigned char *tls) {
         if(!read_local((unsigned char*)self+PT_AUTOPILOT_DUE,&pt_autopilot,8)) pt_autopilot=0;
         ++pt_rebased;if(!pt_first) pt_first=stats.issued;
     }
-    original(self);
+    {   const unsigned scoped=pt_slot_enter?pt_slot_enter(self):0;
+        /* its draws and its body's animation clock as an NPC's (lockstep_move_rng.h); a slot's player has no
+         * portable ID: its place in this module's table stands for it (the players' Moves come in slot order) */
+        uint64_t stand_in=0;
+        for(unsigned i=0;i<pt_object_count;i++) if(pt_objects[i]==self) {stand_in=0xf1a7e00000000000ULL|(i+1u);break;}
+        mrng_player(original,self,stand_in);
+        if(scoped) pt_slot_leave(scoped);}
     double after=0;
     if(read_local((unsigned char*)self+PT_DUE,&after,8) && memcmp(&after,&due,8)) {++pt_fires;pt_last_fire=stats.issued;memcpy(&pt_next,&after,8);}
 }

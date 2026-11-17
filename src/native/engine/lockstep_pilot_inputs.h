@@ -426,6 +426,16 @@ static int pilot_resolve(pilot_slot *s,pilot_find_fn find,void *map,const void *
         if(!s->bare) {s->bare=1;s->bare_why=why;InterlockedIncrement64(&pilot_bare);}
         s->object=object;s->resolved=1;s->seen=1;s->player=player_object && object==player_object;return 1;
     }
+    /* A stock slot's ship that docks or undocks (16 Nov): X4 moves it with its docking controller (lockstep_dock.h),
+     * which is no flight chain of the hull's own. The ship is still the slot's: resolved by its identity, as a bare hull
+     * is, for as long as that controller is on it (a docked ship without any controller afterwards is the seat's
+     * business: lockstep_pilot_slots.h 'docked', lockstep_pilot_foot.h PFOOT_DOCKED). */
+    if(why && controller && s>=pilot_slots && s<pilot_slots+PILOT_SLOTS && (pilot_stock_slots>>(unsigned)(s-pilot_slots)&1u)) {
+        void *vtable=NULL;
+        if(read_local(controller,&vtable,8) && (vtable==(void*)(image+DOCK_CONTROLLER_VTABLE) || vtable==(void*)(image+UNDOCK_CONTROLLER_VTABLE))) {
+            s->object=object;s->resolved=1;s->seen=1;s->player=player_object && object==player_object;s->why="docking";return 1;
+        }
+    }
     if(why) return pilot_resolve_stop(s,why);
     s->object=object;s->agent=agent;s->solver=solver;s->resolved=1;s->seen=1;s->player=player_object && object==player_object;
     return 1;

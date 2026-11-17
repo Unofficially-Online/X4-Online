@@ -347,7 +347,8 @@ Modules (define, owner):
                                 slot_fpc_first_update, slot_take_vtable, slot_pilot_position, slot_take_fault,
                                 slot_take_controller, slot_update_scope, slot_update_fault, slot_update_leave,
                                 slot_update_outside_frame, slot_unseated, slot_fpc_lost, slot_moved, slot_player_lost,
-                                slot_hook_install, slot_hook_lost, slot_hook_restore)
+                                slot_hook_install, slot_hook_lost, slot_hook_restore; a docked seat taking its
+                                controls back after the undocking: slot_undock_scope, slot_undock_leave)
   186 NMESH_STOP_REASON         lockstep_nav_mesh.h (native_gate_nav_mesh: interior nav helper builds at the gate's join)
   187 HYB_STOP_REASON          lockstep_hybrid.h (native_gate_hybrid, hybrid sectors slice H1; whys: no_slots, owner_slot,
                                 owner_lost, owner_sector, shared_sector, sector_key, sector_lost, owner_left, other_entered,

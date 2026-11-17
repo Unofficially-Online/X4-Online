@@ -58,6 +58,31 @@
     </do_else>
    </actions>
   </cue>
+  <!-- Test only (script op dock_kit, in every client's plan at the same tick): X4's docking computer on a slot's ship, so
+       a scripted run can dock at a station through X4's own docking (the ship flies the approach itself once the
+       station grants the request). -->
+  <cue name="DockKit" instantiate="true">
+   <conditions><event_ui_triggered screen="'X4LAN_UiReplay'" control="'DockKit'"/></conditions>
+   <actions>
+    <set_value name="$ship" exact="event.param3.$ship"/>
+    <do_if value="@$ship.isoperational and $ship.isclass.ship">
+     <install_software object="$ship" software="ware.software_dockmk2"/>
+     <!-- ...and no NPC pilot in it, as a session's player hulls have none (x4ls new-session): the snapshot's second
+          hull has one, and when its player stood up in the docked ship that pilot undocked and flew off with the
+          player aboard (16 Nov). -->
+     <set_value name="$npc" exact="$ship.pilot"/>
+     <do_if value="$npc and $npc.isclass.npc">
+      <abort_scripts entity="$npc"/>
+      <dismiss_control_entity object="$ship" actor="$npc"/>
+      <remove_actor_from_room actor="$npc" destroy="true"/>
+     </do_if>
+     <debug_text text="'[X4LAN] UI_REPLAY_DOCK_KIT ship=%s pilot=%s time=%s'.[$ship.idcode, $npc, player.age]"/>
+    </do_if>
+    <do_else>
+     <debug_text text="'[X4LAN] UI_REPLAY_DOCK_KIT_REFUSED time=%s'.[player.age]"/>
+    </do_else>
+   </actions>
+  </cue>
   <!-- Test only (script op probe_far, in every client's plan at the same tick): a resource probe where there is something
        to measure. A probe launched in a sector without resource areas asks for no scan, and the slot ships of the test
        snapshots sit in such sectors. This takes the first sector of the galaxy with ore (the search looks in its
@@ -966,6 +991,134 @@
     </cue>
    </cues>
   </cue>
+  <!-- A real stock mission finished by one player (tools/dev/mission_matrix.py real). MtGoto is the flight a person
+       would make: the ship of the player in whose scope the signal runs is put the given distance from the named
+       object of the mission, looking at it; everything else is the stock mission's own script and that player's
+       own guns. The four
+       MtReal cues hear the generic missions' logbook cues, which every stock generic mission signals at its end,
+       and name the player in whose scope that end ran and its account. Rows only. -->
+  <cue name="MtGoto" instantiate="true" namespace="this">
+   <conditions><event_object_signalled object="player.galaxy" param="'x4lan_goto'"/></conditions>
+   <actions>
+    <set_value name="$Ship" exact="player.ship"/>
+    <set_value name="$Target" exact="event.param2"/>
+    <do_if value="@$Ship.exists and @$Target.exists">
+     <create_position name="$TPos" space="$Target.zone" object="$Target"/>
+     <set_value name="$Metres" exact="if event.param3 lt 0 then 0 - event.param3 else event.param3"/>
+     <set_value name="$Spot" exact="position.[$TPos.x, $TPos.y, $TPos.z - $Metres * 1m]"/>
+     <create_orientation name="$Look" orientation="look_at" refposition="$TPos">
+      <position value="$Spot"/>
+     </create_orientation>
+     <warp object="$Ship" zone="$Target.zone">
+      <position value="$Spot"/>
+      <rotation value="$Look"/>
+     </warp>
+     <debug_text text="'[X4LAN] MT_GOTO slot=%s player=%s ship=%s target=%s macro=%s owner=%s hull=%s sector=%s distance=%s time=%s'.[0, player.entity, $Ship, $Target, $Target.macro, @$Target.owner, @$Target.hull, $Target.sector.knownname, $Target.distanceto.{$Ship}, player.age]"/>
+    </do_if>
+    <do_else>
+     <debug_text text="'[X4LAN] MT_GOTO slot=%s player=%s ship=%s target=gone time=%s'.[0, player.entity, @$Ship, player.age]"/>
+    </do_else>
+    <set_value name="$Hits" exact="0"/>
+    <!-- a negative distance (a diagnosis): an ownerless scout with next to no hull stands on the line of fire, a
+         third of the way from the object to the ship -->
+    <do_if value="event.param3 lt 0 and @$Ship.exists and @$Target.exists">
+     <create_ship name="$Decoy" macro="macro.ship_arg_s_scout_01_a_macro" zone="$Target.zone">
+      <owner exact="faction.ownerless"/>
+      <position x="$TPos.x" y="$TPos.y" z="$TPos.z - $Metres * 1m / 3"/>
+     </create_ship>
+     <set_object_shield object="$Decoy" exact="0"/>
+     <set_object_hull object="$Decoy" exact="1"/>
+     <debug_text text="'[X4LAN] MT_DECOY decoy=%s distance=%s to_target=%s time=%s'.[$Decoy, $Decoy.distanceto.{$Ship}, $Decoy.distanceto.{$Target}, player.age]"/>
+    </do_if>
+   </actions>
+   <cues>
+    <!-- for nine seconds: where the target is in the ship's frame (ahead is +z), both attention levels, the hull,
+         and the first hits on it -->
+    <cue name="MtGoto_Watch">
+     <delay exact="2s"/>
+     <actions>
+      <do_if value="@$Ship.exists and @$Target.exists">
+       <create_position name="$Rel" space="$Ship" object="$Target"/>
+       <debug_text text="'[X4LAN] MT_WATCH ship=%s target=%s rel=%s,%s,%s ship_attention=%s target_attention=%s same_zone=%s hull=%s shield=%s hits=%s time=%s'.[$Ship, $Target, $Rel.x, $Rel.y, $Rel.z, $Ship.attention, $Target.attention, $Ship.zone == $Target.zone, @$Target.hull, @$Target.shield, $Hits, player.age]"/>
+      </do_if>
+      <do_else>
+       <debug_text text="'[X4LAN] MT_WATCH ship=%s target=gone hits=%s time=%s'.[@$Ship, $Hits, player.age]"/>
+      </do_else>
+      <reset_cue cue="this"/>
+     </actions>
+    </cue>
+    <cue name="MtGoto_Hit" instantiate="true">
+     <conditions><event_object_attacked object="$Target"/></conditions>
+     <actions>
+      <set_value name="$Hits" operation="add"/>
+      <do_if value="$Hits le 3">
+       <debug_text text="'[X4LAN] MT_HIT target=%s attacker=%s hull=%s hits=%s time=%s'.[$Target, event.param, @$Target.hull, $Hits, player.age]"/>
+      </do_if>
+     </actions>
+    </cue>
+    <cue name="MtGoto_DecoyWatch" onfail="cancel">
+     <conditions><check_value value="@$Decoy.exists"/></conditions>
+     <actions>
+      <set_value name="$DecoyHits" exact="0"/>
+     </actions>
+     <cues>
+      <cue name="MtGoto_DecoyHit" instantiate="true">
+       <conditions>
+        <check_any>
+         <event_object_attacked object="$Decoy"/>
+         <event_object_destroyed object="$Decoy"/>
+        </check_any>
+       </conditions>
+       <actions>
+        <set_value name="$DecoyHits" operation="add"/>
+        <do_if value="$DecoyHits le 3 or event.name == 'event_object_destroyed'">
+         <debug_text text="'[X4LAN] MT_HIT decoy=%s event=%s by=%s hits=%s time=%s'.[event.object, event.name, event.param, $DecoyHits, player.age]"/>
+        </do_if>
+       </actions>
+      </cue>
+     </cues>
+    </cue>
+    <cue name="MtGoto_Dead">
+     <conditions><event_object_destroyed object="$Target"/></conditions>
+     <actions>
+      <debug_text text="'[X4LAN] MT_DEAD target=%s killer=%s method=%s hits=%s time=%s'.[$Target, event.param, event.param2, $Hits, player.age]"/>
+     </actions>
+    </cue>
+    <cue name="MtGoto_End">
+     <delay exact="9s"/>
+     <actions>
+      <do_if value="@$Decoy.exists">
+       <destroy_object object="$Decoy" explosion="false"/>
+      </do_if>
+      <cancel_cue cue="parent"/>
+     </actions>
+    </cue>
+   </cues>
+  </cue>
+  <cue name="MtRealCompleted" instantiate="true">
+   <conditions><event_cue_signalled cue="md.GenericMissions.GenericCompleteLogbookEntry"/></conditions>
+   <actions>
+    <debug_text text="'[X4LAN] MT_REAL end=completed name=%s reward=%s player=%s money=%s time=%s'.[@event.param.{1}, @event.param.{4}, player.entity, player.money, player.age]"/>
+   </actions>
+  </cue>
+  <cue name="MtRealFailed" instantiate="true">
+   <conditions><event_cue_signalled cue="md.GenericMissions.GenericFailLogbookEntry"/></conditions>
+   <actions>
+    <debug_text text="'[X4LAN] MT_REAL end=failed name=%s reward=%s player=%s money=%s time=%s'.[@event.param.{1}, @event.param.{3}, player.entity, player.money, player.age]"/>
+   </actions>
+  </cue>
+  <cue name="MtRealAborted" instantiate="true">
+   <conditions><event_cue_signalled cue="md.GenericMissions.GenericAbortLogbookEntry"/></conditions>
+   <actions>
+    <debug_text text="'[X4LAN] MT_REAL end=aborted name=%s reward=none player=%s money=%s time=%s'.[@event.param.{1}, player.entity, player.money, player.age]"/>
+   </actions>
+  </cue>
+  <cue name="MtRealTimeout" instantiate="true">
+   <conditions><event_cue_signalled cue="md.GenericMissions.GenericTimeoutLogbookEntry"/></conditions>
+   <actions>
+    <debug_text text="'[X4LAN] MT_REAL end=timeout name=%s reward=none player=%s money=%s time=%s'.[@event.param.{1}, player.entity, player.money, player.age]"/>
+   </actions>
+  </cue>
   <!-- The audit's shared listener: a cue nobody owns, registered on the universe's player of the game's start. With
        native_gate_shared_listeners it also runs for what players 2..N do, and its row names that player. -->
   <cue name="AuditShared" instantiate="true">
@@ -989,6 +1142,159 @@
      <signal_cue_instantly cue="md.GenericMissions.EvaluateSectorMissions"/>
     </do_if>
    </actions>
+  </cue>
+  <!-- Players see each other on foot (native_gate_foot_avatars; the probe's S.slot_avatars signals once per slot, slot k
+       inside slot k's scope with the generation open, so this instance and its steps are slot k's and `player` here is
+       that slot's player on every client). X4 draws no figure for a player: its own player is the camera, and the other
+       slots' players are not in the rooms' child lists. So each player gets a stand-in: a cue actor, made here on every
+       client at the same game time, put by X4's own add_actor_to_room where its player stands while that player is on
+       foot (at every simulation step: the player's place and heading in its room) and taken out of the room when the player
+       sits again. The figure stands 40 cm behind the player's own eye, so its owner's camera never looks at it and every
+       other player sees it at that player's place (a heading of yaw looks along (sin yaw, cos yaw), seen from where the walk keys take a turned player; with the other sign each player had its own figure before its eyes, 16 Nov). It is a simulation object like any NPC: the same on every client. -->
+  <cue name="Avatar" instantiate="true" namespace="this">
+   <conditions><event_object_signalled object="player.galaxy" param="'x4lan_avatar'"/></conditions>
+   <actions>
+    <set_value name="$slot" exact="event.param2"/>
+    <set_value name="$shown" exact="false"/>
+    <set_value name="$steps" exact="0"/>
+    <set_value name="$polls" exact="0"/>
+    <set_value name="$held" exact="false"/>
+    <set_value name="$walks" exact="false"/>
+    <set_value name="$moving" exact="false"/>
+    <set_value name="$still" exact="0"/>
+    <set_value name="$room" exact="null"/>
+    <set_value name="$x" exact="0m"/>
+    <set_value name="$y" exact="0m"/>
+    <set_value name="$z" exact="0m"/>
+    <set_value name="$yaw" exact="0"/>
+    <!-- the player's place is its head's (the figures stood in the air with their boots at eye level, 16 Nov):
+         the figure's feet go this far below it -->
+    <set_value name="$drop" exact="1.5m"/>
+    <!-- sequence type / behaviour pairs tried for a walking figure, the first that X4 starts is used (16 Nov: which of
+         them X4 9.00 knows is being found out; FOOT_AVATAR_GAIT names the answers) -->
+    <set_value name="$gaits" exact="[['walk', 'generic'], ['walking', 'generic'], ['walk', 'stand'], ['walking', 'stand'], ['walkingslow', 'generic'], ['run', 'generic'], ['move', 'generic']]"/>
+    <create_cue_actor name="$body" cue="this">
+     <select faction="faction.argon" tags="tag.crew"/>
+     <owner exact="faction.player"/>
+    </create_cue_actor>
+    <!-- A stand-in, not crew: no generic conversation when a player points at it and presses Talk (the stock handler
+         offered to hire and assign it, 16 Nov), no comm from afar, and it is titled as the player it stands for. -->
+    <set_entity_traits entity="$body" customhandler="true" remote="false"/>
+    <set_entity_overrides entity="$body" title="'Player %s'.[$slot]"/>
+    <!-- the figure's ID for the probe's test ops (foot_meet: tools.foot_pose reads its place) -->
+    <raise_lua_event name="'X4LAN_FootAvatar%s'.[$slot]" param="$body"/>
+    <debug_text text="'[X4LAN] FOOT_AVATAR_MD slot=%s player=%s body=%s time=%s'.[$slot, player.entity, $body, player.age]"/>
+   </actions>
+   <cues>
+    <!-- Test only (script op avatar_hold, a signal as any player's script call: every client hears it at the same
+         time): the figure of the slot named stops following its player (value = slot * 10 + 1) or follows again
+         (slot * 10), so the player can turn round and look at its own figure. -->
+    <!-- Whether this slot's player is on foot: the gate's own answer (gate.pilot_foot_walking, simulation state),
+         signalled by the probe at its changes on every client at the same tick (value = slot * 10 + 1 on foot,
+         slot * 10 seated). X4's own script properties cannot tell for a slot 2..N: its player keeps the list of what
+         it controls while it walks, so player.occupiedship still names the ship. -->
+    <cue name="AvatarWalk" instantiate="true">
+     <conditions>
+      <event_object_signalled object="player.galaxy" param="'x4lan_avatar_walk'"/>
+      <check_value value="(event.param2 == parent.$slot * 10) or (event.param2 == parent.$slot * 10 + 1)"/>
+     </conditions>
+     <actions>
+      <set_value name="parent.$walks" exact="event.param2 == parent.$slot * 10 + 1"/>
+      <debug_text text="'[X4LAN] FOOT_AVATAR_WALK slot=%s walks=%s time=%s'.[parent.$slot, parent.$walks, player.age]"/>
+     </actions>
+    </cue>
+    <cue name="AvatarHold" instantiate="true">
+     <conditions>
+      <event_object_signalled object="player.galaxy" param="'x4lan_avatar_hold'"/>
+      <check_value value="(event.param2 == parent.$slot * 10) or (event.param2 == parent.$slot * 10 + 1)"/>
+     </conditions>
+     <actions>
+      <set_value name="parent.$held" exact="event.param2 == parent.$slot * 10 + 1"/>
+      <debug_text text="'[X4LAN] FOOT_AVATAR_HOLD slot=%s held=%s time=%s'.[parent.$slot, parent.$held, player.age]"/>
+     </actions>
+    </cue>
+    <!-- One cue that arms itself again (no instance per step: an instance takes a runtime ID, ten a second per player).
+         The delay is the step: a reset cue checks its condition again at once, so without it the cue would run on in
+         the same instant for ever (it did, 16 Nov: both clients stood still at the tick the figures start). -->
+    <cue name="AvatarStep" checkinterval="0.1s">
+     <conditions><check_value value="@parent.$body"/></conditions>
+     <!-- every simulation step (a delay shorter than a step ends at the next one): the figure moves as smoothly as its
+          player. Ten times a second it jumped from place to place (user report, 16 Nov). -->
+     <delay exact="1ms"/>
+     <actions>
+      <set_value name="parent.$polls" operation="add"/>
+      <do_if value="parent.$polls % 450 == 1">
+       <debug_text text="'[X4LAN] FOOT_AVATAR_POLL slot=%s polls=%s occupied=%s controlled=%s room=%s body=%s time=%s'.[parent.$slot, parent.$polls, player.occupiedship, player.controlled, player.room, parent.$body, player.age]"/>
+      </do_if>
+      <do_if value="parent.$held">
+       <!-- held by a test (script op avatar_hold): the figure stays where it stands -->
+       <set_value name="parent.$heldpolls" operation="add"/>
+      </do_if>
+      <do_elseif value="parent.$walks and player.room">
+       <set_value name="$yaw" exact="player.entity.rotation.yaw"/>
+       <set_value name="$at" exact="player.entity.position"/>
+       <set_value name="$newroom" exact="(not parent.$shown) or (parent.$room != player.room)"/>
+       <set_value name="$moved" exact="$newroom or ($at.x != parent.$x) or ($at.y != parent.$y) or ($at.z != parent.$z)"/>
+       <do_if value="$moved or ($yaw != parent.$yaw)">
+        <!-- X4's own action places the figure. Its default animation is asked for only when the figure enters a room:
+             asked for at every step it started again at every step, and the figure never got past its first pose
+             (the same report). A player that stands still is not placed again at all: its figure keeps its idle. -->
+        <add_actor_to_room actor="parent.$body" object="player.room" triggeranimation="$newroom">
+         <position x="$at.x - 0.4m * sin($yaw)" y="$at.y - parent.$drop" z="$at.z - 0.4m * cos($yaw)"/>
+         <rotation yaw="$yaw"/>
+        </add_actor_to_room>
+        <set_value name="parent.$room" exact="player.room"/>
+        <set_value name="parent.$x" exact="$at.x"/>
+        <set_value name="parent.$y" exact="$at.y"/>
+        <set_value name="parent.$z" exact="$at.z"/>
+        <set_value name="parent.$yaw" exact="$yaw"/>
+       </do_if>
+       <!-- Walking or standing, by whether the player's place changed (a few steps of grace, so one step without
+            movement does not end the walk): X4's animation sequences for a body. -->
+       <do_if value="$moved">
+        <set_value name="parent.$still" exact="0"/>
+        <do_if value="not parent.$moving">
+         <set_value name="parent.$moving" exact="true"/>
+         <set_value name="$started" exact="false"/>
+         <set_value name="$tried" exact="''"/>
+         <do_all exact="parent.$gaits.count" counter="$i">
+          <do_if value="not $started">
+           <start_actor_sequence actor="parent.$body" type="parent.$gaits.{$i}.{1}" behavior="parent.$gaits.{$i}.{2}" transition="true" immediate="true" result="$started"/>
+           <set_value name="$tried" exact="$tried + parent.$gaits.{$i}.{1} + '/' + parent.$gaits.{$i}.{2} + '=' + $started + ' '"/>
+          </do_if>
+         </do_all>
+         <debug_text text="'[X4LAN] FOOT_AVATAR_GAIT slot=%s walk %s time=%s'.[parent.$slot, $tried, player.age]"/>
+        </do_if>
+       </do_if>
+       <do_elseif value="parent.$moving">
+        <set_value name="parent.$still" operation="add"/>
+        <do_if value="parent.$still ge 4">
+         <set_value name="parent.$moving" exact="false"/>
+         <!-- the walking sequence carries the figure on by itself: back to where its player stands -->
+         <add_actor_to_room actor="parent.$body" object="player.room" triggeranimation="false">
+          <position x="$at.x - 0.4m * sin($yaw)" y="$at.y - parent.$drop" z="$at.z - 0.4m * cos($yaw)"/>
+          <rotation yaw="$yaw"/>
+         </add_actor_to_room>
+         <start_actor_sequence actor="parent.$body" type="'idle'" behavior="'stand'" transition="true" immediate="true" result="$started"/>
+         <debug_text text="'[X4LAN] FOOT_AVATAR_GAIT slot=%s stand idle/stand=%s time=%s'.[parent.$slot, $started, player.age]"/>
+        </do_if>
+       </do_elseif>
+       <set_value name="parent.$steps" operation="add"/>
+       <do_if value="(not parent.$shown) or (parent.$steps % 30 == 0)">
+        <debug_text text="'[X4LAN] FOOT_AVATAR_AT slot=%s room=%s at=%s yaw=%s body_room=%s steps=%s time=%s'.[parent.$slot, player.room, player.entity.position, $yaw, parent.$body.room, parent.$steps, player.age]"/>
+       </do_if>
+       <set_value name="parent.$shown" exact="true"/>
+      </do_elseif>
+      <do_elseif value="parent.$shown">
+       <remove_actor_from_room actor="parent.$body"/>
+       <set_value name="parent.$shown" exact="false"/>
+       <set_value name="parent.$moving" exact="false"/>
+       <debug_text text="'[X4LAN] FOOT_AVATAR_OFF slot=%s time=%s'.[parent.$slot, player.age]"/>
+      </do_elseif>
+      <reset_cue cue="this"/>
+     </actions>
+    </cue>
+   </cues>
   </cue>
   <!-- The player's ship as each client's HUD knows it (native_gate_hud_ship_refresh, the probe's pilot_view.hud_ship_changed).
        X4's HUD attaches the radar (monitors.lua: SetRadarRenderTarget2 walks up from the player to its ship), the crosshair

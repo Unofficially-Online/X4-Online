@@ -457,7 +457,8 @@ class SessionTests(unittest.TestCase):
                                 'UI_REPLAY_SCRIPT tick=42 op=target_none ok=true result=nil scope=1',
                                 'UI_REPLAY_SCRIPT tick=43 op=target_slot ok=true result=false scope=0',
                                 'UI_REPLAY_SCRIPT tick=50 op=target_slot ok=true result=false scope=0'])
-        self.assertEqual(dict(g.X4LAN_UI_REPLAY_CORE.SCOPED), {'target_slot': True, 'target_none': True, 'target_home': True, 'dock_home': True, 'suit_home': True, 'guidance_slot': True, 'guidance_end': True, 'inv_read': True, 'inv_drop': True})
+        self.assertEqual(dict(g.X4LAN_UI_REPLAY_CORE.SCOPED), {'target_slot': True, 'target_none': True, 'target_home': True, 'dock_home': True, 'suit_home': True, 'guidance_slot': True, 'guidance_end': True, 'inv_read': True, 'inv_drop': True,
+                                                                  'foot_where': True, 'transport_list': True, 'transport_to': True, 'transport_named': True})
 
     def test_the_guidance_ops_set_and_end_it_where_the_maps_click_runs(self):
         """play39p-long: client 2's map set guidance on slot 1's ship (SetGuidance) inside its presentation scope; the ops do

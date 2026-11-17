@@ -47,13 +47,16 @@ static void test_player_timer(void) {
     /* Each Player object once; beyond the table: counted, passed through. */
     memcpy(other+PT_DUE,&loading,8);pt_run(test_pt_original,other,tls);
     assert(pt_rebased==2 && test_pt_seen==now+PT_FIRST && pt_before==test_pt_bits(loading) && pt_first==7 && pt_object_count==2);
-    unsigned char extra[2][TEST_PT_OBJECT];memset(extra,0,sizeof(extra));
-    pt_run(test_pt_original,extra[0],tls);pt_run(test_pt_original,extra[1],tls);assert(pt_object_count==PT_OBJECTS && pt_rebased==4);
+    /* The table holds X4's own player and one player per slot (PT_OBJECTS): the rest of it filled, then one more. */
+    static unsigned char extra[PT_OBJECTS][TEST_PT_OBJECT];memset(extra,0,sizeof(extra));
+    for(unsigned i=2;i<PT_OBJECTS;i++) pt_run(test_pt_original,extra[i],tls);
+    assert(pt_object_count==PT_OBJECTS && pt_rebased==PT_OBJECTS);
     unsigned char *spill=calloc(1,TEST_PT_OBJECT);assert(spill);memcpy(spill+PT_DUE,&loading,8);
-    pt_run(test_pt_original,spill,tls);assert(pt_full==1 && pt_rebased==4 && test_pt_seen==loading);
-    char status[512];int n=pt_status(status,sizeof(status));
-    assert(n>0 && strstr(status,"installed=0 calls=15 admitted=8 rebased=4 first=7 ") && strstr(status," fires=1 last_fire=900 ") &&
-           strstr(status," objects=4 unreadable=3 full=1 restored=0 stage=idle failures=0"));
+    pt_run(test_pt_original,spill,tls);assert(pt_full==1 && pt_rebased==PT_OBJECTS && test_pt_seen==loading);
+    char status[512],want_head[96],want_tail[96];int n=pt_status(status,sizeof(status));
+    snprintf(want_head,sizeof(want_head),"installed=0 calls=%u admitted=%u rebased=%u first=7 ",11u+PT_OBJECTS,4u+PT_OBJECTS,PT_OBJECTS);
+    snprintf(want_tail,sizeof(want_tail)," objects=%u unreadable=3 full=1 restored=0 stage=idle failures=0",PT_OBJECTS);
+    assert(n>0 && strstr(status,want_head) && strstr(status," fires=1 last_fire=900 ") && strstr(status,want_tail));
     /* Arming: before the first admitted frame, on the MoveWorker; pins (zero image refuses). */
     test_pt_reset();stats.active=1;boot_mode=1;boot_phase=0;stats.issued=0;
     stats.issued=1;assert(!pt_arm());stats.issued=0;

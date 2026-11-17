@@ -329,7 +329,7 @@ static void pres_plan_canon(void) {
     unsigned char flag=0,*presenter;int position=0,none=0;
     if(stats.slot!=1 || pres_plan_state!=1 || !pres_plan_fn[0] || !pres_plan_fn[1] || !pfoot_armed || pstk_scope_slot || !pslot_p1 || !pnat_base) return;
     if(!read_local(pslot_p1+PEYE_POSITION,&position,4) || !read_local(pnat_base+PEYE_POSITION_NONE,&none,4)) return;
-    const int walks=pfoot_state==PFOOT_WALKING && position==none,sits=pfoot_state==PFOOT_SEATED && position!=none;
+    const int walks=pfoot_state==PFOOT_WALKING && position==none,sits=(pfoot_state==PFOOT_SEATED || pfoot_state==PFOOT_DOCKED) && position!=none;
     if(!walks && !sits) return;
     if(!(presenter=pres_plan_presenter(&flag))) {InterlockedIncrement64(&pres_plan_unreadable);return;}
     if((flag!=0)==walks) return;

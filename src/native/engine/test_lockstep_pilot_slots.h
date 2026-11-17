@@ -1173,6 +1173,15 @@ static void test_pilot_slots(void) {
         region[PFBODY_KILL_SITE+1]^=1;assert(!pfbody_pass(20,1) && !strcmp(pfbody_why,"body_kill_lost"));region[PFBODY_KILL_SITE+1]^=1;
         pfbody_failed=0;pfoot_failed=0;pfbody_why="-";pfoot_why="-";pfbody_checks=2;pfbody_stage="live";
         {char row[256];assert(pfbody_status(row,sizeof(row)) && strstr(row," bodies=live bodies_why=- bodies_mask=2 connects=1/0 body_checks=2"));}
+        {   /* A room change X4 asks for a slot's player is held (it stays in its seat's room: the stopgap of
+             * lockstep_pilot_foot_body.h); the controller step is only for a walking slot. */
+            LONG64 held=pfbody_rooms_held,drives=pfbody_drives;uint64_t room[2]={0,0x1234};
+            assert(pslots[2].seated && pslots[2].player);
+            pfbody_room(pslots[2].player,pslots[2].player,1.0,room,NULL,0,0);
+            assert(pfbody_rooms_held==held+1 && pfbody_room_asked==0x1234);
+            pfbody_move_drive(pslots[2].player,1.0);assert(pfbody_drives==drives);
+            {char row[512];assert(pfbody_status(row,sizeof(row)) && strstr(row," drive=") && strstr(row," room=1/0 "));}
+        }
         /* stop+1: off before the release, the upward pointer back; the release then finds the seat as it left it. */
         assert(pfbody_pass(41,0) && !pfbody_mask && test_pfbody_calls==2 && !test_pfbody_target && test_pfbody_singleton==p2 && *(void**)(p2+0x70)==room &&
                !strcmp(pfbody_stage,"released") && pfbody_disconnects==1);

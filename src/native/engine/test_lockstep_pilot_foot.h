@@ -14,6 +14,8 @@ static void test_pfoot_range(int id,float value) {            /* d7d5c0 */
     test_pstk_log('y',id,value,NULL);memcpy(pnat_base+PFOOT_BANK+4u*(unsigned)(id&7),&value,4);
 }
 static void **test_pfoot_no_ship(void *player,void **out) {(void)player;*out=NULL;return out;}   /* 55aeb0 off the seat */
+static int test_pfoot_ship_docks(const unsigned char *ship) {(void)ship;return 1;}   /* X4's docking controller is on the ship */
+static int test_pfoot_ship_free(const unsigned char *ship) {(void)ship;return 0;}
 static void test_pfoot_action(int id) {test_pstk_log('u',id,0,NULL);pnat_base[PFOOT_BANK+0x39]^=1;}   /* d7d690: FP_RUN toggles */
 static void test_pfoot_camera(int id,float value) {test_pstk_log('c',id,value,NULL);}                  /* 122d970: presentation */
 /* d7d6c0 as X4 has it: the bank reset, the active flag, the player's flag, the input object's +0x9063. */
@@ -228,6 +230,32 @@ static void test_pilot_foot(void) {
         pfoot_state=PFOOT_LEAVING;unsigned char *was=pnat_controller;
         assert(pfoot_check(5,test_pnat_ship,&pnat_controller,pnat_ship,0,0)<0 && !strcmp(pfoot_why,"foot_controller") && pnat_controller==was);
         pfoot_failed=0;pfoot_state=PFOOT_WALKING;pfoot_stage="walking";}
+    /* Docked (16 Nov): X4 takes a docking ship's PlayerController for its docking controller. Seated with the controller
+     * the pass held, then none: docked when the ship's movement controller is X4's docking one, in its seat; anything
+     * else is no state of this module (the caller's stock_controller_changed). From docked: the pass of a walker, the
+     * get-up's replay leaves, a PlayerController on the ship again (the undocking's end) is adopted. */
+    {   const int state=pfoot_state;unsigned char *held=pnat_controller;const LONG64 docks=pfoot_docks,adopted=pfoot_adopted;
+        const uint64_t transition=pfoot_transition_tick;const char *stage=pfoot_stage;
+        const LONG64 getups=pfoot_getups_replayed,walks=pfoot_walk_passes;const uint64_t leave=pfoot_leave_tick;
+        pfoot_state=PFOOT_SEATED;pnat_controller=controller;
+        pfoot_ship_docks_test=test_pfoot_ship_free;
+        assert(pfoot_check(50,NULL,&pnat_controller,pnat_ship,0,0)==0 && pfoot_state==PFOOT_SEATED && pnat_controller==controller && pfoot_docks==docks);
+        pfoot_ship_docks_test=test_pfoot_ship_docks;
+        assert(pfoot_check(50,controller,&pnat_controller,pnat_ship,0,0)==0 && pfoot_state==PFOOT_SEATED);   /* still held: seated */
+        assert(pfoot_check(51,NULL,&pnat_controller,pnat_ship,1,0)==1 && pfoot_state==PFOOT_DOCKED && !pnat_controller && pfoot_docks==docks+1 &&
+               pfoot_walking() && !strcmp(pfoot_stage,"docked") && pfoot_transition_tick==51);
+        assert(pfoot_check(51+PFOOT_GRACE,NULL,&pnat_controller,pnat_ship,1,0)==1);                        /* the SPACE edge's grace */
+        assert(pfoot_check(52+PFOOT_GRACE,NULL,&pnat_controller,pnat_ship,1,0)<0 && !strcmp(pfoot_why,"foot_flight_drift"));
+        pfoot_failed=0;pfoot_why="-";
+        assert(pfoot_check(52+PFOOT_GRACE,NULL,&pnat_controller,pnat_ship,0,0)==1 && pfoot_state==PFOOT_DOCKED);
+        pfoot_note_replay(0u,PFOOT_GET_UP,60);assert(pfoot_state==PFOOT_LEAVING && pfoot_leave_tick==60);   /* the get-up from a docked seat */
+        assert(pfoot_check(61,NULL,&pnat_controller,pnat_ship,0,0)==1 && pfoot_state==PFOOT_WALKING);
+        pfoot_state=PFOOT_DOCKED;
+        assert(pfoot_check(70,controller,&pnat_controller,pnat_ship,0,0)==0 && pfoot_state==PFOOT_SEATED && pnat_controller==controller &&
+               pfoot_adopted==adopted+1);                                                                     /* undocked: its controller again */
+        pfoot_ship_docks_test=NULL;pfoot_state=state;pnat_controller=held;pfoot_transition_tick=transition;pfoot_stage=stage;
+        pfoot_failed=0;pfoot_why="-";pfoot_getups_replayed=getups;pfoot_walk_passes=walks;pfoot_adopted=adopted;pfoot_leave_tick=leave;
+    }
     /* While walking: mouselook stays split; the context swap must stay intact; the guard must stay armed. */
     test_pstk_call_count=0;pfoot_local_fp=0;
     stats.issued=39;pnat_dispatch_range(map,7,-0.25f);assert(test_pstk_count('c')==1 && !test_pstk_count('y') && pfoot_split_local==2);   /* pfoot_on */

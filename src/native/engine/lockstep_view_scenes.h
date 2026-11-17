@@ -40,10 +40,26 @@
  * record+0x18, which needs the scene alive, and 0x841b70 (universe teardown) only knows A, B
  * and Navigation. They hold memory until the process ends.
  *
+ * A view point that changes sector (17 Nov, found with a real mission's mines in a sector only
+ * player 2 had entered):
+ *  - The table is brought up to the new latch BEFORE the attention refresh that latch runs
+ *    (vsc_before_refresh, called by the view points' latch; rc_frame's own call later in the
+ *    frame then finds nothing to do). Before, the refresh ran first: X4 asked for the new
+ *    sector's scene while the table did not hold that sector yet, so everything whose level
+ *    rose around the arrival got no body, for as long as its level stayed.
+ *  - A view point that held its scene alone and is now in a sector without one takes the scene
+ *    along (follows=), as X4's scene A goes with its player: the entry changes its sector, the
+ *    anchor moves to the new zone, the ship's own bodies stay valid in it and nothing waits for
+ *    a grace. The bodies of the sector it left die with their attention, which the latch now
+ *    refreshes in the same frame (lockstep_view_points.h); what is left of them for the next
+ *    second is where X4's own scene A is after its player took a gate.
+ *
  * Not here: a sector whose scene changes while a view point stays in it (slot 1 enters or
  * leaves a sector another slot is in) keeps its existing bodies in the old scene; new ones go
- * to the new scene. Traffic and highway parameters still answer for two sectors (uncovered=
- * in the status). */
+ * to the new scene. A view point that leaves a sector another one stays in, or arrives in a
+ * sector that has a scene already, keeps its own ship's bodies in the scene they were made in
+ * until its level changes: it does not collide with what the other scene holds. Traffic and
+ * highway parameters still answer for two sectors (uncovered= in the status). */
 #define VSC_ENTRIES (VIEW_MAX-1u)   /* B and the new scenes: one per sector other than view point 1's */
 _Static_assert(VSC_EXTRA==VSC_ENTRIES-1u,"VSC_EXTRA (lockstep_contact.h): the new scenes C, D (always) and E..H (more than four pilot slots)");
 #define VSC_GRACE 600u
@@ -69,7 +85,11 @@ static vsc_zone_fn vsc_zone_native,vsc_highway_native; /* tests only: replace sl
 static vsc_entry_t vsc_entries[VSC_ENTRIES];
 static volatile LONG vsc_active;
 static int vsc_armed,vsc_created,vsc_installed;
-static uint64_t vsc_steps,vsc_moves,vsc_rebases,vsc_assigns,vsc_releases,vsc_early,vsc_blocked_ticks;
+static uint64_t vsc_steps,vsc_moves,vsc_rebases,vsc_assigns,vsc_releases,vsc_early,vsc_blocked_ticks,vsc_follows,vsc_pre;
+/* Which entry served each view point's sector at the last latch (-1 none), and whose view point that was. */
+static int vsc_view_entry[VIEW_MAX];
+static uint64_t vsc_view_id[VIEW_MAX];
+static void vsc_view_forget(void) {for(unsigned i=0;i<VIEW_MAX;i++) {vsc_view_entry[i]=-1;vsc_view_id[i]=0;}}
 static unsigned vsc_blocked_now;
 static int vsc_read_ok(void *p,uint64_t id) {uint64_t now=0;return p && read_local((unsigned char*)p+8,&now,8) && now==id;}
 /* How many new scenes: C and D, or one per further slot beyond four (B and the new ones serve every sector but slot 1's). */
@@ -84,7 +104,7 @@ static int vsc_create(void) {
     void *b=NULL;if(!read_local(image+VSC_SCENE_B,&b,8) || !b) return 0;
     void *made[VSC_EXTRA];const unsigned n=vsc_extra_count();
     for(unsigned i=0;i<n;i++) if(!(made[i]=vsc_new_scene())) return 0;
-    memset(vsc_entries,0,sizeof(vsc_entries));vsc_entries[0].scene=b;
+    memset(vsc_entries,0,sizeof(vsc_entries));vsc_entries[0].scene=b;vsc_view_forget();
     for(unsigned i=0;i<n;i++) {vsc_entries[1+i].scene=made[i];vsc_extra[i]=made[i];}
     vsc_created=1;return 1;
 }
@@ -102,19 +122,31 @@ static int vsc_free(const vsc_entry_t *e,uint64_t tick) {
     if(!e->released || tick>=e->released+VSC_GRACE) return 1;
     return vsc_empty(e->scene)?2:0;
 }
-/* The table for this frame, from the latched view points; rc_view_sector58 is view point 1's sector (A's). */
-static void vsc_latch(uint64_t tick) {
-    void *const home=rc_view_sector58;void *points[VIEW_MAX],*sectors[VIEW_MAX];
+/* The table for this frame, from the latched view points; home is view point 1's sector (A's). */
+static void vsc_latch_home(uint64_t tick,void *const home) {
+    void *points[VIEW_MAX],*sectors[VIEW_MAX],*own[VIEW_MAX];
+    memset(points,0,sizeof(points));memset(sectors,0,sizeof(sectors));memset(own,0,sizeof(own));
     for(unsigned k=0;k<VSC_ENTRIES;k++) vsc_entries[k].point=NULL;
     /* Who still holds a scene: the first view point in slot order. The others in a held sector need nothing more. */
     for(unsigned i=1;i<view_count && i<VIEW_MAX;i++) {
         points[i]=view_points[i];sectors[i]=vsc_read_ok(points[i],view_ids[i])?rc_ancestor(points[i],0x58):NULL;
         if(sectors[i]==home) sectors[i]=NULL;
+        own[i]=sectors[i];
         if(!sectors[i]) continue;
         for(unsigned k=0;k<VSC_ENTRIES;k++) if(vsc_entries[k].sector==sectors[i]) {
             if(!vsc_entries[k].point) {vsc_entries[k].point=points[i];vsc_entries[k].view=i;}
             sectors[i]=NULL;break;
         }
+    }
+    /* A view point whose sector's scene nobody holds any more and whose new sector has none: the scene goes with it. */
+    for(unsigned i=1;i<view_count && i<VIEW_MAX;i++) {
+        const int k=vsc_view_entry[i];
+        if(!sectors[i] || k<0 || (unsigned)k>=VSC_ENTRIES || vsc_view_id[i]!=view_ids[i]) continue;
+        vsc_entry_t *const e=&vsc_entries[k];int held=0;
+        if(!e->sector || e->point) continue;
+        for(unsigned j=0;j<VSC_ENTRIES;j++) held|=vsc_entries[j].sector==sectors[i];
+        if(held) continue;
+        e->point=points[i];e->view=i;e->released=0;MemoryBarrier();e->sector=sectors[i];++vsc_follows;
     }
     /* Nobody in it any more: back to the pool once empty, after the grace at the latest. */
     for(unsigned k=0;k<VSC_ENTRIES;k++) if(vsc_entries[k].sector && !vsc_entries[k].point) {
@@ -134,7 +166,12 @@ static void vsc_latch(uint64_t tick) {
         vsc_entries[k].point=points[i];vsc_entries[k].view=i;vsc_entries[k].released=0;MemoryBarrier();vsc_entries[k].sector=sectors[i];++vsc_assigns;
     }
     if(vsc_blocked_now) ++vsc_blocked_ticks;
+    vsc_view_forget();
+    for(unsigned i=1;i<view_count && i<VIEW_MAX;i++) for(unsigned k=0;own[i] && k<VSC_ENTRIES;k++) if(vsc_entries[k].sector==own[i]) {
+        vsc_view_entry[i]=(int)k;vsc_view_id[i]=view_ids[i];break;
+    }
 }
+static void vsc_latch(uint64_t tick) {vsc_latch_home(tick,rc_view_sector58);}
 /* The native anchor call for one held scene, when its view point's zone is not the anchor any more. */
 static void vsc_anchor(vsc_entry_t *e) {
     unsigned char *scene=e->scene,*zone=rc_ancestor(e->point,0x6d);if(!scene || !zone) return;
@@ -156,6 +193,17 @@ static int vsc_frame(uint64_t tick) {
     vsc_latch(tick);
     for(unsigned k=0;k<VSC_ENTRIES;k++) if(vsc_entries[k].sector && vsc_entries[k].point) vsc_anchor(&vsc_entries[k]);
     return 1;
+}
+/* The view points' latch, before its attention refresh (header): the table and the anchors for the view points it
+ * just latched. Not before the scenes exist (the first frame's creation stays vsc_frame's) and not without view
+ * point 1, whose sector is A's. */
+static void vsc_before_refresh(uint64_t tick) {
+    uint64_t id=0;
+    if(!vsc_armed || !vsc_created || !InterlockedCompareExchange(&vsc_active,0,0) || !view_count || !view_points[0] ||
+       !read_local((unsigned char*)view_points[0]+8,&id,8) || id!=view_ids[0]) return;
+    vsc_latch_home(tick,rc_ancestor(view_points[0],0x58));
+    for(unsigned k=0;k<VSC_ENTRIES;k++) if(vsc_entries[k].sector && vsc_entries[k].point) vsc_anchor(&vsc_entries[k]);
+    ++vsc_pre;
 }
 /* Slot 943: the table, then the native answer; a native B the table does not hold is no scene. */
 static void *vsc_answer(void *zone,vsc_zone_fn native) {
@@ -203,8 +251,9 @@ static void vsc_status(char *out,size_t capacity) {
         void *zone=NULL;anchors[k]=0;
         if(vsc_entries[k].scene && read_local((unsigned char*)vsc_entries[k].scene+0x40,&zone,8) && zone) read_local((unsigned char*)zone+8,&anchors[k],8);
     }
-    snprintf(out,capacity,"%d,slots:%u/%u/%u,anchors:%llx/%llx/%llx,steps:%llu,moves:%llu,rebases:%llu,assigns:%llu,releases:%llu,early:%llu,blocked:%llu/%u",(int)vsc_active,
+    snprintf(out,capacity,"%d,slots:%u/%u/%u,anchors:%llx/%llx/%llx,steps:%llu,moves:%llu,rebases:%llu,assigns:%llu,releases:%llu,early:%llu,blocked:%llu/%u,follows:%llu,pre:%llu",(int)vsc_active,
         vsc_entries[0].sector?vsc_entries[0].view+1u:0u,vsc_entries[1].sector?vsc_entries[1].view+1u:0u,vsc_entries[2].sector?vsc_entries[2].view+1u:0u,
         (unsigned long long)anchors[0],(unsigned long long)anchors[1],(unsigned long long)anchors[2],(unsigned long long)vsc_steps,(unsigned long long)vsc_moves,
-        (unsigned long long)vsc_rebases,(unsigned long long)vsc_assigns,(unsigned long long)vsc_releases,(unsigned long long)vsc_early,(unsigned long long)vsc_blocked_ticks,vsc_blocked_now);
+        (unsigned long long)vsc_rebases,(unsigned long long)vsc_assigns,(unsigned long long)vsc_releases,(unsigned long long)vsc_early,(unsigned long long)vsc_blocked_ticks,vsc_blocked_now,
+        (unsigned long long)vsc_follows,(unsigned long long)vsc_pre);
 }

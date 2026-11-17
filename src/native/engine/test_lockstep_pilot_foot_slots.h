@@ -14,6 +14,11 @@ static unsigned test_pfslot_requests,test_pfslot_places,test_pfslot_poses,test_p
 static unsigned char *test_pfslot_update_singleton[4];
 static unsigned char test_pfslot_update_key[4];
 static unsigned char test_pfslot_fpc_is(void *self,int cls) {(void)self;return cls==PFSLOT_FPC_CLASS;}
+/* A docked ship's seat: X4's answer "the ship is docked", and X4 ending a slot's controller itself (0xd84730). */
+static int test_pfslot_docked;
+static int test_pfslot_ship_docked(const unsigned char *ship) {(void)ship;return test_pfslot_docked;}
+static unsigned test_pslot_ctl_end_calls,test_pslot_ctl_end_slot;
+static void test_pslot_ctl_end(void *controller) {(void)controller;++test_pslot_ctl_end_calls;test_pslot_ctl_end_slot=pstk_scope_slot;}
 static void *test_pfslot_fpc_next(void *self) {(void)self;return NULL;}
 static unsigned char test_pfslot_ship_is(void *self,int cls) {assert(self==test_pslot_ship2);return cls==PFSLOT_SHIP_CLASS;}
 static unsigned char test_pfslot_dock_is(void *self,int cls) {assert(self==test_pfslot_dock);return cls==PFSLOT_DOCK_CLASS;}
@@ -231,6 +236,7 @@ static void test_pilot_foot_slots_block(unsigned char *region,unsigned char *inp
      * the control position back, the seat flag 1, its bank inactive. */
     {   uint64_t tick=20;stats.issued=tick;test_pslot_call_count=0;pstk_slot_frames[1].tick=tick;
         pstk_slot_frames[1].r.events[0]=(pstk_event){PSTK_ACTION,PFOOT_GET_UP,0};
+        pfslot_ship_docked_test=test_pfslot_ship_docked;test_pfslot_docked=0;   /* the ship flies: X4's answer in the fixture */
         assert(pslot_replay(tick) && !f->walking && !s->walking && f->sat==1 && s->controller==test_pslot_c2 && *(void***)test_pslot_c2==&s->vt.slots[0]);
         assert(test_pslot_count('T')==1 && *(int*)(p2+PFSLOT_POSITION)==0x77 && test_pfslot_fpc[PFSLOT_FPC_SEAT]==1 && !f->bank[0x3d] && !p2[PFOOT_PLAYER_FLAG]);
         assert(!pfslot_own_walking() && pfoot_own_seated() && pfslot_claim_ok(2) && !pfslot_any_walking());
@@ -244,6 +250,35 @@ static void test_pilot_foot_slots_block(unsigned char *region,unsigned char *inp
         test_pfslot_record_tagged=0;}
     /* The status row names each slot: walking/getups/kept/stood/sat/ignored/updates/placed/unplaced. */
     {   char row[1024];assert(pfslot_status(row,sizeof(row)) && strstr(row," foot_slots=walking foot_slots_why=- foot_slots_hook=1/") && strstr(row," fs2=1/5/2/2/1/0/"));}
+    /* A docked ship's seat (16 Nov). Slot 2 walks; its ship is docked: the sit-down takes no controller, the seat is
+     * 'docked'; the get-up from it releases nothing; the ship free again: the take, in its scope; and X4 ending C_2
+     * itself (a docking: the destructor's entry hook) runs in slot 2's scope and leaves the seat docked. */
+    {   const LONG64 sat=f->sat,stood=f->stood;const unsigned takes=test_pslot_count('T'),releases=test_pslot_count('R');
+        uint64_t tick=22;stats.issued=tick;pstk_slot_frames[1].tick=tick;pstk_slot_frames[1].r.events[0]=(pstk_event){PSTK_ACTION,PFOOT_GET_UP,0};
+        pfslot_ship_docked_test=test_pfslot_ship_docked;test_pfslot_docked=1;
+        assert(pslot_replay(tick) && !f->walking && !s->walking && s->docked && s->seated && !s->controller && f->sat==sat+1 && pfslot_dock_sits==1);
+        assert(test_pslot_count('T')==takes && *(int*)(p2+PFSLOT_POSITION)==0x77 && test_pfslot_fpc[PFSLOT_FPC_SEAT]==1 && pfslot_claim_ok(2));
+        assert(pfslot_undocked() && s->docked && !s->controller && !pfslot_dock_takes);          /* still docked: nothing */
+        {char row[1024];assert(pfslot_status(row,sizeof(row)) && strstr(row," docked=2/0/1/0"));}
+        tick=23;stats.issued=tick;pstk_slot_frames[1].tick=tick;                                 /* up from the docked seat */
+        assert(pslot_replay(tick) && f->walking && s->walking && !s->docked && !s->controller && f->stood==stood+1 && pfslot_dock_getups==1);
+        assert(test_pslot_count('R')==releases);
+        tick=24;stats.issued=tick;pstk_slot_frames[1].tick=tick;                                 /* and down again */
+        assert(pslot_replay(tick) && !f->walking && s->docked && !s->controller);
+        test_pfslot_docked=0;                                                                    /* the ship is free: its controls */
+        assert(pfslot_undocked() && !s->docked && s->controller==test_pslot_c2 && *(void***)test_pslot_c2==&s->vt.slots[0] &&
+               pfslot_dock_takes==1 && test_pslot_count('T')==takes+1 && test_pslot_singleton()==p1);
+        /* X4 ends C_2 itself: in slot 2's scope, the seat docked, the canonical state back. */
+        pslot_ctl_end_original=test_pslot_ctl_end;test_pslot_ctl_end_calls=0;test_pslot_ctl_end_slot=0;
+        pslot_ctl_end(test_pslot_c2);memset(s->ship+0x200,0,8);
+        assert(test_pslot_ctl_end_calls==1 && test_pslot_ctl_end_slot==2 && !s->controller && s->docked && !s->dock_checked && s->seated &&
+               pslot_ctl_ends_scoped==1 && !pslot_ctl_ends_plain && !pstk_scope_slot && test_pslot_singleton()==p1);
+        {unsigned char other[16]={0};pslot_ctl_end(other);assert(test_pslot_ctl_end_calls==2 && test_pslot_ctl_end_slot==0 && pslot_ctl_ends_scoped==1);}   /* not a slot's: X4's call */
+        pslot_ctl_end_original=NULL;s->dock_checked=1;
+        test_pfslot_docked=1;tick=25;stats.issued=tick;pstk_slot_frames[1].tick=tick;            /* as the tests below expect it: walking */
+        assert(pslot_replay(tick) && f->walking && s->walking && !s->docked);
+        test_pfslot_docked=0;
+    }
     /* stop+1: the call site back before the seats go; the walking seat leaves with its pointers only. */
     {   assert(pfslot_pass(41) && !pfslot_hook_installed && region[PFSLOT_CALL_SITE]==0xe8 && !strcmp(pfslot_stage,"released") && !f->walking);
         {int32_t rel;memcpy(&rel,region+PFSLOT_CALL_SITE+1,4);assert(PFSLOT_CALL_SITE+5u+(unsigned)rel==PFSLOT_FPC_UPDATE);}

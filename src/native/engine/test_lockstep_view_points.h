@@ -3,7 +3,7 @@
 typedef struct {void **vtable;uint64_t id;unsigned char pad[0x60];void *parent;unsigned char rest[0x100];} test_vp_object;
 static void *test_vp_vtable[704];
 static unsigned char test_vp_universe[0x400];
-static test_vp_object test_vp_a,test_vp_b,test_vp_player,test_vp_zone,test_vp_zone2,test_vp_root,test_vp_outer,test_vp_inner;
+static test_vp_object test_vp_a,test_vp_b,test_vp_player,test_vp_zone,test_vp_zone2,test_vp_root,test_vp_outer,test_vp_inner,test_vp_sector2;
 static unsigned test_vp_calls,test_vp_shadow_seen,test_vp_refreshed;
 static void *test_vp_refresh_log[16];
 static int test_vp_native(void *object) {
@@ -20,12 +20,18 @@ static int test_vp_native(void *object) {
     ++test_vp_shadow_seen;
     return player==&test_vp_a?9:player==&test_vp_b?7:player==NULL?2:4;
 }
-static int test_vp_is_a(void *object,int cls) {return cls==0x6d && (object==&test_vp_zone || object==&test_vp_zone2);}
+static int test_vp_is_a(void *object,int cls) {
+    if(cls==0x58) return object==&test_vp_root || object==&test_vp_sector2;
+    return cls==0x6d && (object==&test_vp_zone || object==&test_vp_zone2);
+}
+/* The scenes' function as the latch calls it: when, and how many refreshes had run by then. */
+static unsigned test_vp_before_calls,test_vp_before_refreshed;static uint64_t test_vp_before_tick;
+static void test_vp_before(uint64_t tick) {++test_vp_before_calls;test_vp_before_tick=tick;test_vp_before_refreshed=test_vp_refreshed;}
 static void test_vp_set_attention(void *object,int level) {assert(level==1);if(test_vp_refreshed<16) test_vp_refresh_log[test_vp_refreshed]=object;++test_vp_refreshed;}
 static DWORD WINAPI test_vp_foreign(LPVOID object) {return (DWORD)view_attention(object);}
 static void test_vp_objects(void) {
     test_vp_vtable[703]=(void*)test_vp_native;test_vp_vtable[0x11e8/8]=(void*)test_vp_is_a;
-    test_vp_object *all[]={&test_vp_a,&test_vp_b,&test_vp_player,&test_vp_zone,&test_vp_zone2,&test_vp_root,&test_vp_outer,&test_vp_inner};
+    test_vp_object *all[]={&test_vp_a,&test_vp_b,&test_vp_player,&test_vp_zone,&test_vp_zone2,&test_vp_root,&test_vp_outer,&test_vp_inner,&test_vp_sector2};
     for(unsigned i=0;i<sizeof(all)/sizeof(*all);i++) {memset(all[i],0,sizeof(test_vp_object));all[i]->vtable=test_vp_vtable;all[i]->id=0x100+i;}
     test_vp_a.parent=&test_vp_zone;test_vp_b.parent=&test_vp_zone;test_vp_zone.parent=&test_vp_root;test_vp_zone2.parent=&test_vp_root;
     ((unsigned char*)&test_vp_a)[0xd1]=1;((unsigned char*)&test_vp_zone)[0xd1]=1;((unsigned char*)&test_vp_zone2)[0xd1]=1;
@@ -37,6 +43,7 @@ static void test_vp_reset(void) {
     view_tick=UINT64_MAX;view_calls=view_evaluations=view_differ=view_first_differ=view_refreshes=view_latches=view_unreadable=0;
     view_latched=view_count=view_previous_count=view_source=0;view_depth=0;
     memset(view_points,0,sizeof(view_points));memset(view_previous,0,sizeof(view_previous));memset(view_previous_zone,0,sizeof(view_previous_zone));
+    memset(view_previous_zone_id,0,sizeof(view_previous_zone_id));view_sector_moves=0;view_before_refresh=NULL;
     memset(view_sites_done,0,sizeof(view_sites_done));view_call_done=0;
     if(view_page) {memset(view_page,0,VIEW_PAGE_SHADOW+VIEW_SHADOW_SIZE);*(uint64_t*)(view_page+VIEW_PAGE_UNIVERSE)=(uint64_t)(uintptr_t)test_vp_universe;}
 }
@@ -90,6 +97,24 @@ static void test_view_points(void) {
     stats.issued=6;assert(view_frame(6) && test_vp_refreshed==2);   /* unchanged: no refresh */
     pilot_slots[1].resolved=1;stats.issued=7;assert(view_frame(7) && view_count==2 && test_vp_refreshed==2+2+3); /* old A chain, new A and B chains */
     test_vp_a.parent=&test_vp_zone2;stats.issued=8;assert(view_frame(8) && view_previous_zone[0]==&test_vp_zone2 && test_vp_refreshed>7);
+    /* A view point in another sector than at the last latch, with the scenes' function set: the function runs before
+     * any refresh, the zone it left is refreshed first (its sector is no ancestor of the view point any more), then
+     * the chains as always. The same sector, or no function: neither. */
+    {
+        assert(!view_sector_moves && view_previous_zone_id[0]==test_vp_zone2.id);
+        test_vp_a.parent=&test_vp_zone;assert(view_frame(8) && !view_sector_moves);   /* zone2 -> zone, both under the root */
+        test_vp_zone2.parent=&test_vp_sector2;view_before_refresh=test_vp_before;test_vp_refreshed=0;test_vp_before_calls=0;
+        test_vp_a.parent=&test_vp_zone2;assert(view_frame(8));                         /* into sector 2 */
+        assert(test_vp_before_calls==1 && test_vp_before_tick==8 && !test_vp_before_refreshed && view_sector_moves==1);
+        assert(test_vp_refresh_log[0]==&test_vp_zone && test_vp_refresh_log[1]==&test_vp_a && test_vp_refresh_log[2]==&test_vp_zone2);
+        assert(view_frame(8) && test_vp_before_calls==1 && view_sector_moves==1);      /* unchanged: nothing */
+        view_before_refresh=NULL;test_vp_refreshed=0;
+        test_vp_a.parent=&test_vp_zone;assert(view_frame(8) && view_sector_moves==1 && test_vp_refresh_log[0]==&test_vp_a); /* back, no function */
+        /* A zone that is gone (its ID is another's now) is not touched. */
+        view_before_refresh=test_vp_before;test_vp_zone.id+=0x1000;test_vp_refreshed=0;
+        test_vp_a.parent=&test_vp_zone2;assert(view_frame(8) && test_vp_before_calls==2 && view_sector_moves==1 && test_vp_refresh_log[0]==&test_vp_a);
+        test_vp_zone.id-=0x1000;view_before_refresh=NULL;test_vp_zone2.parent=&test_vp_root;assert(view_frame(8));
+    }
     pilot_slots[1].runtime=0x999;unsigned before=test_vp_refreshed;stats.issued=9;
     assert(view_frame(9) && view_count==1 && view_unreadable==1 && test_vp_refreshed>before); /* a mismatched slot is skipped */
     /* A dead slot (lockstep_pilot_death.h: not resolved, no object), in its suit or not, is no viewpoint, and the latch reads the

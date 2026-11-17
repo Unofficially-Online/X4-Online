@@ -76,6 +76,23 @@ static uint64_t cplay_calls,cplay_frame_calls,cplay_native,cplay_resident,cplay_
     cplay_load_us,cplay_load_max_us,cplay_keyed,cplay_declined,cplay_draws,cplay_uncounted,cplay_overflow,cplay_tick=UINT64_MAX;
 static struct {uint64_t character,motion;uint32_t count;} cplay_pairs[CPLAY_PAIRS];
 static unsigned cplay_pair_count;
+/* The key of a keyed play (17 Nov): the tick, the CALLER's word and how many plays came from that word before in the
+ * tick. Until then it was (tick, character, motion, the pair's ordinal), and the character and motion keys are this
+ * process's asset handles: the same body's play had character=..82b2 on one client and ..826c on the other (run sw48,
+ * tick 1849, the caller's word equal), so the two clients keyed it differently, the play's random start offset
+ * differed, and every station person's animation ran out of phase from its first tick (BODY_CLOCK_ROW: remaining
+ * 3.07 s against 6.84 s at elapsed 0.03). Their animations then ended at different ticks, and with them the people's
+ * scripts (the dock marshal's cues up to 90 ticks apart: runtime IDs taken at different ticks). The caller's word is
+ * the same on every client: the frame's word, a script's keyed word, or an NPC's own word of the tick
+ * (lockstep_move_rng.h). */
+static struct {uint64_t caller;uint32_t count;} cplay_callers[CPLAY_PAIRS];
+static unsigned cplay_caller_count;
+static uint32_t cplay_caller_ordinal(uint64_t caller) {
+    for(unsigned i=0;i<cplay_caller_count;i++) if(cplay_callers[i].caller==caller) return cplay_callers[i].count++;
+    if(cplay_caller_count==CPLAY_PAIRS) return 0x80000000u|(uint32_t)cplay_frame_calls;   /* counted with the pairs' overflow */
+    cplay_callers[cplay_caller_count].caller=caller;cplay_callers[cplay_caller_count].count=1;
+    ++cplay_caller_count;return 0;
+}
 static cplay_row cplay_ring[CPLAY_RING];
 static const char *cplay_stage="idle";
 static int cplay_fail(const char *why) {cplay_stage=why;InterlockedIncrement64(&cplay_failures);return 0;}
@@ -122,7 +139,7 @@ static uint64_t cplay_execute(cplay_fn original,const sorder_loader *loader,uint
         return CPLAY_ORIGINAL;
     }
     if(!word) {cplay_fail("word");return CPLAY_ORIGINAL;}
-    if(cplay_tick!=stats.issued) {cplay_tick=stats.issued;cplay_frame_calls=0;cplay_pair_count=0;}
+    if(cplay_tick!=stats.issued) {cplay_tick=stats.issued;cplay_frame_calls=0;cplay_pair_count=0;cplay_caller_count=0;}
     cplay_row r;memset(&r,0,sizeof(r));
     r.tick=stats.issued;r.character=character;r.motion=motion;r.mode=(uint8_t)cplay_mode;
     r.ordinal=(uint32_t)cplay_frame_calls;r.pair=cplay_pair(character,motion);++cplay_calls;++cplay_frame_calls;
@@ -141,7 +158,7 @@ static uint64_t cplay_execute(cplay_fn original,const sorder_loader *loader,uint
     }
     const int keyed=cplay_mode==CPLAY_SYNC;
     r.caller=*word;
-    if(keyed) {r.seed=lockstep_seed(CPLAY_DOMAIN,r.tick,character,motion,r.pair,0);++cplay_keyed;}
+    if(keyed) {r.seed=lockstep_seed(CPLAY_DOMAIN,r.tick,r.caller,0,cplay_caller_ordinal(r.caller),0);++cplay_keyed;}
     volatile uint64_t result=0;
     __try {
         if(keyed) *word=r.seed;
@@ -154,6 +171,7 @@ static uint64_t cplay_execute(cplay_fn original,const sorder_loader *loader,uint
         SetLastError(error);
     }
     r.result=(uint8_t)(result&0xffu);if(!r.result) ++cplay_declined;
+    bclk_played(self,character,motion,r.result!=0);   /* lockstep_move_rng.h: the station people's animation clock */
     r.draws=script_rng_steps(keyed?r.seed:r.caller,r.exit);
     if(r.draws==UINT32_MAX) ++cplay_uncounted;else cplay_draws+=r.draws;
     LONG64 at=InterlockedIncrement64(&cplay_rows)-1;cplay_ring[(uint64_t)at%CPLAY_RING]=r;
@@ -166,6 +184,39 @@ static uint64_t cplay_play(void *self,uint64_t character,uint64_t motion,uint64_
     const cplay_args x={{a4,a5,a6,a7,a8,a9,a10,a11,a12}};
     const sorder_loader loader=sorder_native_loader();
     return cplay_execute((cplay_fn)(void *)(image+CPLAY_PLAY),&loader,interrupt_rng(),self,character,motion,&x,CPLAY_WAIT_MS);
+}
+/* The instance lookup (slot 15, 0xe68970), 'sync' only (17 Nov). A body's first animation is not started through
+ * slot 17 at all while its character has no instance: BodyClass asks slot 15 first (37af70, from 37b6b0) and leaves
+ * when it answers none, and it answers none until the loader thread has finished the character. Seen with two
+ * clients at a station: of the people created in one tick, some started their first animation a tick later on one
+ * client and some on the other (run sw54, ticks 1848..1850), and stayed a tick apart from then on. Here: when the
+ * lookup answers none in an admitted frame on the simulation thread and the key's asset is absent, the asset is
+ * loaded through the engine's synchronous load (as the play's is) and the lookup asked again; a key that did not
+ * load is not tried again in the same tick. Status lookup=installed/absent/loaded. */
+#define CPLAY_LOOKUP_SLOT (CPLAY_VTABLE+15u*8u)
+typedef void *(*cplay_lookup_fn)(void *self,void **out,uint64_t key,uint64_t a4,uint64_t a5,uint64_t a6);
+static int cplay_lookup_installed;
+static volatile LONG64 cplay_lookup_absent,cplay_lookup_loaded;
+static uint64_t cplay_lookup_missed_key,cplay_lookup_missed_tick=UINT64_MAX;
+static void *cplay_lookup(void *self,void **out,uint64_t key,uint64_t a4,uint64_t a5,uint64_t a6) {
+    const cplay_lookup_fn original=(cplay_lookup_fn)(void *)(image+CPLAY_LOOKUP);
+    void *result=original(self,out,key,a4,a5,a6);
+    if(!out || *out || cplay_mode!=CPLAY_SYNC || !cplay_live()) return result;
+    if(cplay_lookup_missed_tick==stats.issued && cplay_lookup_missed_key==key) return result;
+    const sorder_loader loader=sorder_native_loader();
+    if(cplay_residency(&loader,key)!=CPLAY_ABSENT) return result;
+    uint32_t us=0;
+    InterlockedIncrement64(&cplay_lookup_absent);
+    if(cplay_load(&loader,key,CPLAY_WAIT_MS,&us)>0) {InterlockedIncrement64(&cplay_lookup_loaded);return original(self,out,key,a4,a5,a6);}
+    cplay_lookup_missed_key=key;cplay_lookup_missed_tick=stats.issued;
+    return result;
+}
+static void cplay_lookup_install(int on) {
+    DWORD old,ignored;
+    void *from=on?(void *)(image+CPLAY_LOOKUP):(void *)cplay_lookup,*to=on?(void *)cplay_lookup:(void *)(image+CPLAY_LOOKUP);
+    if(on==cplay_lookup_installed || !VirtualProtect(image+CPLAY_LOOKUP_SLOT,8,PAGE_READWRITE,&old)) return;
+    if(InterlockedCompareExchangePointer((void *volatile *)(image+CPLAY_LOOKUP_SLOT),to,from)==from) cplay_lookup_installed=on;
+    VirtualProtect(image+CPLAY_LOOKUP_SLOT,8,old,&ignored);
 }
 static int cplay_pins_ok(void) {
     for(unsigned i=0;i<sizeof(cplay_pins)/sizeof(*cplay_pins);i++) if(!hash_ok(image+cplay_pins[i].rva,cplay_pins[i].size,cplay_pins[i].sha)) return 0;
@@ -190,9 +241,12 @@ static int cplay_arm(int mode) {
     cplay_failures=cplay_rows=cplay_foreign=0;
     cplay_calls=cplay_frame_calls=cplay_native=cplay_resident=cplay_absent=cplay_invalid=cplay_loads=cplay_unloaded=0;
     cplay_load_us=cplay_load_max_us=cplay_keyed=cplay_declined=cplay_draws=cplay_uncounted=cplay_overflow=0;
-    cplay_tick=UINT64_MAX;cplay_pair_count=0;cplay_mode=mode;cplay_restored=0;
+    cplay_tick=UINT64_MAX;cplay_pair_count=0;cplay_caller_count=0;cplay_mode=mode;cplay_restored=0;
     if(!cplay_swap(image+CPLAY_PLAY,(void *)cplay_play)) {cplay_stage="swap";cplay_mode=CPLAY_OFF;return 0;}
-    cplay_installed=1;cplay_stage="armed";return 1;
+    cplay_installed=1;cplay_stage="armed";
+    cplay_lookup_absent=cplay_lookup_loaded=0;cplay_lookup_missed_tick=UINT64_MAX;
+    if(mode==CPLAY_SYNC) cplay_lookup_install(1);   /* not there (another value in the entry): the plays work as before */
+    return 1;
 }
 static int cplay_owned(void) {return !cplay_installed || *(void *volatile *)(image+CPLAY_SLOT)==(void *)cplay_play;}
 /* Main-thread tick check; any failure stops the gate with reason 188. */
@@ -202,6 +256,7 @@ static int cplay_check(void) {
     return why?cplay_fail(why):1;
 }
 static void cplay_restore(void) {
+    cplay_lookup_install(0);
     if(!cplay_installed) return;
     if(cplay_swap((void *)cplay_play,image+CPLAY_PLAY)) {cplay_installed=0;cplay_restored=1;} /* a foreign value stays */
 }
@@ -223,11 +278,12 @@ static int cplay_row_text(uint64_t index,char *out,size_t cap) {
 static int cplay_status(char *out,size_t cap) {
     int n=snprintf(out,cap,"mode=%s installed=%d frame=%llu calls=%llu frame_calls=%llu native=%llu foreign=%lld resident=%llu absent=%llu "
         "invalid=%llu loads=%llu unloaded=%llu load_us=%llu max_load_us=%llu keyed=%llu declined=%llu draws=%llu uncounted=%llu overflow=%llu "
-        "rows=%lld restored=%d stage=%s failures=%lld",cplay_mode_name(),cplay_installed,(unsigned long long)stats.issued,
+        "rows=%lld restored=%d stage=%s failures=%lld lookup=%d/%lld/%lld",cplay_mode_name(),cplay_installed,(unsigned long long)stats.issued,
         (unsigned long long)cplay_calls,(unsigned long long)(cplay_tick==stats.issued?cplay_frame_calls:0),(unsigned long long)cplay_native,
         (long long)cplay_foreign,(unsigned long long)cplay_resident,(unsigned long long)cplay_absent,(unsigned long long)cplay_invalid,
         (unsigned long long)cplay_loads,(unsigned long long)cplay_unloaded,(unsigned long long)cplay_load_us,(unsigned long long)cplay_load_max_us,
         (unsigned long long)cplay_keyed,(unsigned long long)cplay_declined,(unsigned long long)cplay_draws,(unsigned long long)cplay_uncounted,
-        (unsigned long long)cplay_overflow,(long long)cplay_rows,cplay_restored,cplay_stage,(long long)cplay_failures);
+        (unsigned long long)cplay_overflow,(long long)cplay_rows,cplay_restored,cplay_stage,(long long)cplay_failures,
+        cplay_lookup_installed,(long long)cplay_lookup_absent,(long long)cplay_lookup_loaded);
     return n>0 && (size_t)n<cap?n:0;
 }

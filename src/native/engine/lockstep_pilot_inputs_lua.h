@@ -395,6 +395,18 @@ static int lua_pilot_death_suit(lua_State *L) {
     unsigned slot=0;uint64_t runtime=0;
     p_lua_pushnumber(L,lua_pilot_death_answer(L,&slot,&runtime) && pdeath_suit_ship(slot,runtime));return 1;
 }
+/* gate.pilot_foot_walking(slot): 1 while that slot's player is on foot (slot 1: X4's own player off its seat with no
+ * PlayerController and not docked in it; slots 2..N: the slot walks), else 0. Simulation state: the same answer on
+ * every client at the same tick (the probe starts and ends the players' stand-in figures by it). */
+static int lua_pilot_foot_walking(lua_State *L) {
+    double slot=p_lua_tonumber(L,1);int walking=0;
+    if(accept_ui() && isfinite(slot) && floor(slot)==slot && slot>=1 && slot<=PILOT_SLOTS) {
+        const unsigned k=(unsigned)slot;
+        if(k==1) walking=pfoot_armed && pfoot_state==PFOOT_WALKING;
+        else walking=pfslot_armed && pslots[k].seated && pfslots[k].walking;
+    }
+    p_lua_pushnumber(L,walking);return 1;
+}
 /* gate.pilot_death_home(slot): the runtime ID of the ship a slot in its own spacesuit left, or nil.
  * gate.pilot_death_range(slot, meters): the probe's distance from that suit to that ship this tick (negative: none). */
 static int lua_pilot_death_home(lua_State *L) {

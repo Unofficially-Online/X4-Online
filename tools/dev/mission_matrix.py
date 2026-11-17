@@ -5,6 +5,7 @@
     python tools/dev/mission_matrix.py run --snapshot SAVE.xml.gz --session session.json --gate-dll x4lan_gate_64.dll
     python tools/dev/mission_matrix.py report CLIENT1.log CLIENT2.log [--run RUNDIR]
     python tools/dev/mission_matrix.py offers --snapshot ... --session ... --gate-dll ... [--accept-as 1,2] [--count 13]
+    python tools/dev/mission_matrix.py real --offer NAME --snapshot ... --session ... --gate-dll ... [--accept-as 1,2]
 
 What a test is (MD: tools/dev/native_gate_ui_replay.xml, cue MissionTest; script ops mt_offer / mt_accept): the probe
 makes a test offer at the same tick on every client, the player under test accepts it as the stock menus accept an
@@ -17,6 +18,11 @@ to give for that action.
 `offers` is the other half: the offers X4 itself made in the session's world (the generic missions of the stations
 around the players) are accepted one after the other, by player 1 in one session and by player 2 in the next; for each
 it names whether a mission started and how many script errors came with it. It completes none of them.
+
+`real` finishes one of them: a stock "destroy these objects" offer, named by a part of its name, is accepted by the
+player under test; round after round that player's ship is put near the first object of the mission's objective
+(the flight a person would make), the object becomes its target and its own guns fire. Everything else is the stock
+mission's script: the kill credit, the end, the reward. The row of the mission's end names the player it ended for.
 
 `run` starts its own windowed test clients with disposable profiles (the launcher's `x4ls play`), beside other running
 sessions when X4LS_FIRST_PROFILE / --first-profile, --lanes and --display keep them apart, waits for the rows, prints
@@ -273,16 +279,19 @@ def run(args, types):
 # scripts run without an error? The same world gives the same offers, so player 1's session is the reference again.
 OFFER_START = 700      # after the offers of every slot were generated
 OFFER_SPACING = 300    # ticks per offer: accept, 5 s later the new missions are named, then aborted
-OFFER_ROW = re.compile(r'UI_REPLAY_SCRIPT tick=(\d+) op=(offers_list|offer_accept_next|mis_new|mis_abort_new) ok=(\w+) result=(.*)')
+OFFER_ROW = re.compile(r'UI_REPLAY_SCRIPT tick=(\d+) op=(offers_list|offer_accept_next|mis_new|mis_look|mis_abort_new) ok=(\w+) result=(.*)')
 
 
-def offers_script(player, players, count):
+def offers_script(player, players, count, look=False):
     out = [[] for _ in range(players)]
     own = out[player - 1]
     own.append((OFFER_START, 'offers_list'))
     tick = OFFER_START + 60
     for _ in range(count):
-        own += [(tick, 'offer_accept_next'), (tick + 150, 'mis_new'), (tick + 180, 'mis_abort_new')]
+        own += [(tick, 'offer_accept_next'), (tick + 150, 'mis_new')]
+        if look:
+            own.append((tick + 165, 'mis_look'))
+        own.append((tick + 180, 'mis_abort_new'))
         tick += OFFER_SPACING
     return lua(out), tick
 
@@ -300,12 +309,14 @@ def read_offers(path):
         op, ok, result = match.group(2), match.group(3), match.group(4).strip()
         if op == 'offer_accept_next':
             current = {'offer': result[len('accepted '):] if result.startswith('accepted ') else None, 'refused': ok != 'true',
-                       'started': None, 'missions': '', 'errors': 0}
+                       'started': None, 'missions': '', 'errors': 0, 'look': ''}
             errors = 0
         elif op == 'mis_new' and current is not None:
             found = re.match(r'new=(\d+) ?(.*)', result)
             current['started'] = int(found.group(1)) if found else 0
             current['missions'] = found.group(2) if found else result
+        elif op == 'mis_look' and current is not None:
+            current['look'] = result if ok == 'true' else 'look failed: ' + result
         elif op == 'mis_abort_new' and current is not None:
             current['errors'] = errors
             if current['offer'] or current['refused']:
@@ -318,7 +329,7 @@ def offers(args, players_under_test):
     """One session per player under test; the table of every offer; failures = offers that did worse than for player 1."""
     results, code = {}, 0
     for player in players_under_test:
-        plan, end = offers_script(player, args.players, args.count)
+        plan, end = offers_script(player, args.players, args.count, args.look)
 
         def done(logs, player=player):
             return logs[player - 1].exists() and sum(1 for l in read_lines(logs[player - 1]) if ' op=mis_abort_new ' in l) >= args.count
@@ -368,6 +379,10 @@ def offers_table(results):
             failed += 1
         print('%-*s %s  %s' % (width, name, ''.join('%-34s' % c for c in cells), verdict))
     for player in players:
+        for entry in results[player]:
+            if entry.get('look'):
+                print('player %d, %s: %s' % (player, entry['offer'], entry['look']))
+    for player in players:
         refused = sum(1 for entry in results[player] if entry['refused'])
         if refused:
             print('note: player %d: %d accept(s) refused by the script op (see its UI_REPLAY_SCRIPT rows)' % (player, refused))
@@ -375,18 +390,111 @@ def offers_table(results):
     return failed
 
 
+# ---- one real stock offer, finished ----
+REAL_ROUND = 300       # ticks per target: the flight, the target, the guns
+REAL_END = re.compile(r'\[X4LAN\] MT_REAL end=(\w+) name=(.*?) reward=(\S+) player=(\S+) money=(\S+) time=(\S+)')
+REAL_GOTO = re.compile(r'\[X4LAN\] MT_GOTO slot=(\d+) player=(\S+) ship=(\S+) target=(\S+)(.*)')
+REAL_OP = re.compile(r'UI_REPLAY_SCRIPT tick=(\d+) op=(offer_accept_named|mis_look|mis_goto|mis_target|mis_list|account) ok=(\w+) result=(.*)')
+
+
+def real_script(player, players, offer, rounds, metres):
+    out = [[] for _ in range(players)]
+    own = out[player - 1]
+    own += [(OFFER_START, 'offers_list'), (OFFER_START + 30, 'account'), (OFFER_START + 60, 'offer_accept_named', offer),
+            (OFFER_START + 210, 'mis_look')]
+    tick = OFFER_START + 240
+    for _ in range(rounds):
+        own += [(tick, 'mis_goto', metres), (tick + 45, 'mis_target'), (tick + 60, 'aim_fire', 1), (tick + REAL_ROUND - 30, 'aim_fire', 0)]
+        tick += REAL_ROUND
+    own += [(tick, 'mis_list'), (tick + 30, 'account')]
+    return lua(out), tick + 60
+
+
+def read_real(path):
+    """(the mission end rows, the flight rows, the plan's op rows, script error lines) of one client log."""
+    ends, flights, ops, errors = [], [], [], 0
+    for line in read_lines(path):
+        if 'Error in MD' in line or 'Error in AI' in line:
+            errors += 1
+        match = REAL_END.search(line)
+        if match:
+            ends.append(match.groups())
+        match = REAL_GOTO.search(line)
+        if match:
+            flights.append(match.groups())
+        match = REAL_OP.search(line)
+        if match:
+            ops.append((match.group(1), match.group(2), match.group(3), match.group(4).strip()))
+    return ends, flights, ops, errors
+
+
+def real(args, players_under_test):
+    """One session per player under test. Fails when the mission did not end as completed for a player, when the
+    clients logged different rows, split or logged an error row."""
+    failed = 0
+    for player in players_under_test:
+        plan, end = real_script(player, args.players, args.offer, args.rounds, args.metres)
+
+        def done(logs, player=player):
+            return logs[player - 1].exists() and sum(1 for l in read_lines(logs[player - 1]) if ' op=account ' in l) >= 2
+
+        def report(logs, run_dir, player=player):
+            bad = 0
+            per_client = [read_real(path) for path in logs]
+            ends, flights, ops, errors = per_client[player - 1]
+            for tick, op, ok, result in ops:
+                print('  tick %s %s%s: %s' % (tick, op, '' if ok == 'true' else ' (failed)', result[:300]))
+            for row in flights:
+                print('  flight: slot %s player %s ship %s target %s%s' % row)
+            for line in read_lines(logs[player - 1]):
+                found = re.search(r'\[X4LAN\] (MT_WATCH|MT_HIT|MT_DEAD|MT_DECOY) (.*)', line)
+                if found:
+                    print('  %s %s' % (found.group(1).lower()[3:], found.group(2)[:260]))
+            for row in ends:
+                print('  the mission ended: %s, "%s", reward %s, for player %s (account %s) at %s' % row)
+            if not any(row[0] == 'completed' for row in ends):
+                print('FAIL (player %d): the mission did not end as completed' % player)
+                bad += 1
+            if any(client[:2] != per_client[0][:2] for client in per_client):
+                print('FAIL (player %d): the clients logged different end or flight rows' % player)
+                bad += 1
+            if errors:
+                print('note: %d MD/AI script error lines in player %d\'s client log' % (errors, player))
+            desyncs = [l for l in read_lines(Path(run_dir) / 'desyncs.log') if 'DESYNC' in l] if run_dir else []
+            rows = read_lines(Path(run_dir) / 'errors.log') if run_dir else []
+            if desyncs:
+                print("FAIL (player %d's session): the clients split: %s" % (player, desyncs[0].strip()[:160]))
+            if rows:
+                print("FAIL (player %d's session): %d error rows, first: %s" % (player, len(rows), rows[0].strip()[:200]))
+            return bad + len(desyncs) + len(rows)
+
+        print('player %d takes the stock offer "%s" and finishes it' % (player, args.offer))
+        outcome = session(args, plan, end, done, report, 'up to %d targets' % args.rounds)
+        if outcome == 2:
+            return 2
+        print('player %d: %s' % (player, 'FAIL' if outcome else 'pass'))
+        failed += 1 if outcome else 0
+    return 1 if failed else 0
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     commands = parser.add_subparsers(dest='command', required=True)
     commands.add_parser('list', help='the mission types and what each test does')
-    for name in ('plan', 'run', 'report', 'offers'):
+    for name in ('plan', 'run', 'report', 'offers', 'real'):
         sub = commands.add_parser(name)
         sub.add_argument('--types', default=','.join(TYPES), help='comma separated, in this order (default: all)')
         sub.add_argument('--players', type=int, default=2)
         if name == 'offers':
             sub.add_argument('--accept-as', default='1,2', help='the players that take the offers, one session each (default 1,2)')
             sub.add_argument('--count', type=int, default=13, help='how many offers each of them tries (default 13)')
-        if name in ('run', 'offers'):
+            sub.add_argument('--look', action='store_true', help="also print what each started mission asks for (objective, progress, targets)")
+        if name == 'real':
+            sub.add_argument('--accept-as', default='1,2', help='the players that take the offer, one session each (default 1,2)')
+            sub.add_argument('--offer', required=True, help='a part of the offer\'s name, blanks as _ (see `offers --look`)')
+            sub.add_argument('--rounds', type=int, default=5, help='how many targets at most (default 5)')
+            sub.add_argument('--metres', type=int, default=500, help='how far from a target the ship is put (default 500); negative: a diagnosis, the same distance with an ownerless scout on the line of fire')
+        if name in ('run', 'offers', 'real'):
             sub.add_argument('--snapshot', type=Path, required=True, help="the session's save (session-save.xml.gz)")
             sub.add_argument('--session', type=Path, required=True, help="the session's session.json")
             sub.add_argument('--gate-dll', type=Path, required=True)
@@ -418,6 +526,11 @@ def main():
         return 0
     if args.command == 'report':
         return 1 if table(args.logs, types, args.players, args.run) else 0
+    if args.command == 'real':
+        takers = [int(k) for k in args.accept_as.split(',') if k.strip()]
+        if not takers or any(k < 1 or k > args.players for k in takers):
+            parser.error('--accept-as names players 1..%d' % args.players)
+        return real(args, takers)
     if args.command == 'offers':
         takers = [int(k) for k in args.accept_as.split(',') if k]
         if not takers or any(k < 1 or k > args.players for k in takers):

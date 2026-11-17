@@ -14,7 +14,7 @@ static int uiguard_armed_now(void) {return uiguard_armed;}
 static int pfoot_claim_decide(unsigned index,const uint64_t *frame,uint64_t *ret) {
     (void)frame;*ret=0;
     if(!pfoot_armed || index!=pfoot_getup_index) return 0;
-    if(pnat_is_live() && pstk_capturing && pstk_capture_slot==1 && pfoot_state==PFOOT_SEATED &&
+    if(pnat_is_live() && pstk_capturing && pstk_capture_slot==1 && (pfoot_state==PFOOT_SEATED || pfoot_state==PFOOT_DOCKED) &&
        pstk_record_event(0u,PFOOT_GET_UP,0u)) {
         InterlockedIncrement64(&pfoot_getups_claimed);*ret=1;return 1;
     }

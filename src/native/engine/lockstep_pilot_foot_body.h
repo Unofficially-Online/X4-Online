@@ -327,7 +327,12 @@ static int pfbody_pass(uint64_t tick,int phase) {
 }
 /* Anyone off its seat now: slot 1 leaving or walking (a GET_UP replayed in this pass sets it), a slot k walking or
  * getting up in this tick's records. */
-static int pfbody_someone_up(uint64_t tick) {return (pfoot_armed && pfoot_state!=PFOOT_SEATED) || pfslot_any_walking() || pfslot_getup_due(tick);}
+/* Docked (lockstep_pilot_foot.h PFOOT_DOCKED) is seated: player 1 in its seat in a docked ship parks nobody. A parked
+ * player and its children (the ship computer that runs the autopilot script) get no updates from X4: with the bodies
+ * parked for as long as player 1 sat docked, player 2's autopilot took its target and never flew (16 Nov). */
+static int pfbody_someone_up(uint64_t tick) {
+    return (pfoot_armed && pfoot_state!=PFOOT_SEATED && pfoot_state!=PFOOT_DOCKED) || pfslot_any_walking() || pfslot_getup_due(tick);
+}
 /* After this tick's replay of slot 1 and the staging of slots 2..N, before their replay and before X4's event phase
  * (pnat_pass, live): every body off the tree while anyone is up; back after PFBODY_SETTLE ticks of everyone seated. */
 static int pfbody_guard(uint64_t tick) {
@@ -369,7 +374,115 @@ static int pfbody_guard(uint64_t tick) {
 }
 /* An abnormal stop (pnat_restore, before the seats' release): off on the frame thread outside any scope, else kept
  * and said so (the seats stay as well). */
+/* ---- every slot's player has X4's per-frame Move, in its own scope ----
+ * U::Player::vfunc674 (0x7113e0, lockstep_player_timer.h) is what X4 runs for a player every frame: the dock it asked
+ * for (the arrival's docking 0x731560, the permission's time-out), the autopilot's upkeep, timers. X4 reaches a player
+ * through the world tree (Positional::Move of what it sits in). Two things made that wrong for a slot 2..N:
+ *   - it ran outside every scope, so it read X4's own player's flight bank: the whole docking part sits behind the
+ *     flight control byte (0x712160), slot 1's;
+ *   - it ran only while P_k's body was in the tree, and every body is parked while anybody is off its seat or docked.
+ * Two scripted clients, 16 Nov: with player 1 docked, player 2's autopilot took a target and the ship never moved
+ * (its Move did not run at all: the timer module counted one player object a tick); with player 1 parked in space
+ * player 2's ship reached its pad and was not docked until player 1 happened to fly.
+ * Here: a Move X4 runs for P_k runs inside slot k's scope (pfbody_move_enter / _leave around the call), and after X4's
+ * own player's Move the gate runs the same routine for every seated slot whose body is not in the tree, each in its
+ * scope, on every client alike (pfbody_move_parked; the frame thread, inside X4's own movement of the frame). A scope
+ * that cannot open leaves a tree call as it was (counted plain) and leaves a parked player out for that frame.
+ * Status moves=scoped/parked/plain. */
+static volatile LONG64 pfbody_moves_scoped,pfbody_moves_parked,pfbody_moves_plain;
+static unsigned pfbody_move_enter(void *self) {
+    for(unsigned k=2;self && k<=PILOT_SLOTS;k++) if(pslots[k].player==self) {
+        if(!pslots[k].seated || pstk_scope_slot==k) return 0;
+        if(!pslot_enter(k)) {InterlockedIncrement64(&pfbody_moves_plain);return 0;}
+        InterlockedIncrement64(&pfbody_moves_scoped);return k;
+    }
+    return 0;
+}
+static void pfbody_move_leave(unsigned k) {if(!pslot_leave(k)) pslot_async("move_leave");}
+static unsigned pfbody_move_parked(void *self,void **out,unsigned capacity) {
+    unsigned n=0;
+    if(!self || self!=(void*)pslot_p1 || pstk_scope_slot) return 0;
+    for(unsigned k=2;k<=PILOT_SLOTS && n<capacity;k++) {
+        pslot_slot *s=&pslots[k];
+        if(!(pslot_mask>>(k-1)&1u) || !s->seated || !s->player || (pfbody_mask>>(k-1)&1u) || pslot_ship_dying(s)) continue;
+        if(!pslot_can_enter(k)) {InterlockedIncrement64(&pfbody_moves_plain);continue;}
+        out[n++]=s->player;InterlockedIncrement64(&pfbody_moves_parked);
+    }
+    return n;
+}
+/* A walking slot's controller step, and its room (16 Nov).
+ * What X4 does [F, pinned 9.00]: the per-object driver 748120 runs, for an object in the world tree with a movement
+ * controller (+0x200) and +0x1ec >= 5, the controller's vfunc 33 with the thread's game time, then the object's Move
+ * (vfunc 674). For a FirstPersonController vfunc 33 is d81340: it puts the walk's pose into the controller's final
+ * transform (+0x20..+0x5f, with the parent's matrices +0x2a0..+0x2df) and, when the floor under the player
+ * (+0x380) belongs to another walkable room than the player's parent, posts a U::ChangeRoomEvent (vtable 0x2baa7a8)
+ * to the player (d81986 -> 99a3f0). The event's execute 9aa8d0 calls the target's vfunc 24 (55d2a0 for a Player),
+ * which reparents it (3d8420 -> ConnectTo 3d6e50). That is how X4's own player gets from a docked ship's cockpit
+ * onto the dock: by walking, no teleport.
+ * A slot's player is outside the tree while anyone walks: the gate ran d7f8d0 and Move for it but never vfunc 33.
+ * Seen live (16 Nov, two clients): outside its cockpit slot 2 kept its cockpit as parent, its transform kept a pitch
+ * of 68 degrees (its own client looked at the sky), and it could not strafe there.
+ * Here: (1) before a parked walking slot's Move the gate runs vfunc 33 on its controller, in its scope, with the
+ * thread's game time, as 748120 does (the +0x1ec test is not made: X4's own walking player is always at that level;
+ * the value seen is in the status). (2) STOPGAP, named as one: the room change itself is held. The Player's vfunc 24
+ * entry points at a wrapper that drops a ChangeRoomEvent for a slot's player: it stays a child (by its upward pointer)
+ * of its seat's room and walks the dock in that room's frame, which is rigid with the docked ship. Everything that
+ * takes a slot's parent for its seat's room (the scope, the checks, the bodies, the eye, the sit-down) stays right.
+ * What it costs: X4's scripts see that player in its ship's room while it stands on the dock, and X4 posts the event
+ * again every frame. The real move (ConnectTo into the new room under the body module's guards, and back at the
+ * sit-down) is not built. Without the wrapper (pin mismatch) step (1) is not run either: X4's handler would connect
+ * a slot's player into a room with no guard.
+ * Status drive=installed/steps/skipped room=held/passed attn=<+0x1ec of the last driven player>. */
+#define PFBODY_FPC_STEP 0xd81340u
+#define PFBODY_FPC_STEP_SLOT 33u
+#define PFBODY_ROOM_ENTRY 0x2b32a68u      /* U::Player vtable 0x2b329a8 slot 24 */
+#define PFBODY_ROOM_HANDLER 0x55d2a0u
+#define PFBODY_ROOM_SIZE 0x26bu
+#define PFBODY_ROOM_SHA "5a8c319516da4770543b273560bebaf077560c4b5899a7a5f359f87ae4515234"
+#define PFBODY_FPC_STEP_SHA "8bff03d7d9524cb6dd80ac624dcb5f56f9319c9de1ef70af008f3b4d32892cc7"   /* its first 0x40 bytes */
+typedef void (*pfbody_room_fn)(void *self,void *target,double time,void *room,void *extra,unsigned char a,unsigned char b);
+static int pfbody_room_installed,pfbody_drive_attention=-1;
+static volatile LONG64 pfbody_drives,pfbody_drive_skips,pfbody_rooms_held,pfbody_rooms_passed;
+static uint64_t pfbody_room_asked;   /* the runtime ID of the room the last held event named */
+static void pfbody_room(void *self,void *target,double time,void *room,void *extra,unsigned char a,unsigned char b) {
+    for(unsigned k=2;self && k<=PILOT_SLOTS;k++) if(pslots[k].player==self && pslots[k].seated) {
+        if(room) read_local((unsigned char*)room+8,&pfbody_room_asked,8);
+        InterlockedIncrement64(&pfbody_rooms_held);return;
+    }
+    InterlockedIncrement64(&pfbody_rooms_passed);
+    ((pfbody_room_fn)(image+PFBODY_ROOM_HANDLER))(self,target,time,room,extra,a,b);
+}
+static unsigned char *pfslot_walking_fpc(unsigned k);   /* lockstep_pilot_foot_slots.h */
+static void pfbody_move_drive(void *self,double now) {
+    if(!pfbody_room_installed || pstk_scope_slot) return;
+    for(unsigned k=2;self && k<=PILOT_SLOTS;k++) if(pslots[k].player==self) {
+        unsigned char *fpc=pfslot_walking_fpc(k);void **vt=NULL;void *step=NULL;int fault=0;
+        if(!pslots[k].seated || !fpc) return;
+        if(!read_local(fpc,&vt,8) || !vt || !read_local(vt+PFBODY_FPC_STEP_SLOT,&step,8) || step!=(void*)(image+PFBODY_FPC_STEP) ||
+           !pslot_enter(k)) {InterlockedIncrement64(&pfbody_drive_skips);return;}
+        read_local((unsigned char*)self+0x1ec,&pfbody_drive_attention,4);
+        __try {((void(*)(void*,double))step)(fpc,now);}
+        __except(GetExceptionCode()==EXCEPTION_ACCESS_VIOLATION?EXCEPTION_EXECUTE_HANDLER:EXCEPTION_CONTINUE_SEARCH) {fault=1;}
+        if(!pslot_leave(k)) pslot_async("drive_leave");
+        if(fault) pslot_async("drive_fault");
+        InterlockedIncrement64(&pfbody_drives);
+        return;
+    }
+}
+static void pfbody_room_install(int on) {
+    if(on && !pfbody_room_installed) {
+        if(hash_ok(image+PFBODY_ROOM_HANDLER,PFBODY_ROOM_SIZE,PFBODY_ROOM_SHA) && hash_ok(image+PFBODY_FPC_STEP,0x40,PFBODY_FPC_STEP_SHA) &&
+           script_rng_slot_swap(PFBODY_ROOM_ENTRY,image+PFBODY_ROOM_HANDLER,(void*)pfbody_room)) pfbody_room_installed=1;
+    } else if(!on && pfbody_room_installed) {
+        if(script_rng_slot_swap(PFBODY_ROOM_ENTRY,(void*)pfbody_room,image+PFBODY_ROOM_HANDLER)) pfbody_room_installed=0;
+    }
+}
+static void pfbody_moves_install(int on) {
+    pt_slot_enter=on?pfbody_move_enter:NULL;pt_slot_leave=on?pfbody_move_leave:NULL;pt_slot_parked=on?pfbody_move_parked:NULL;
+    pfbody_room_install(on);pt_slot_drive=on && pfbody_room_installed?pfbody_move_drive:NULL;
+}
 static void pfbody_restore(void) {
+    pfbody_moves_install(0);
     if(!pfbody_armed) return;
     if(pfbody_mask) {
         if(GetCurrentThreadId()!=ui_thread || pstk_scope_slot) {pfbody_stage="left_connected";return;}   /* the guard stays: a body is in a room */
@@ -402,6 +515,8 @@ static int pfbody_arm_using(void) {
     if(!pfbody_connect || !pfbody_filter) return pstk_arm_refuse("bodies_functions");
     pfbody_failed=0;pfbody_mask=0;pfbody_parked=0;pfbody_seated_since=0;memset(pfbody_back,0,sizeof(pfbody_back));pfbody_returns=pfbody_roomless=0;
     pfbody_kill_installed=0;pfbody_kill_off=pfbody_kill_spared=pfbody_kill_late=0;pfbody_held=0;memset(pfbody_no_camera,0,sizeof(pfbody_no_camera));
+    pfbody_moves_scoped=pfbody_moves_parked=pfbody_moves_plain=0;pfbody_drives=pfbody_drive_skips=pfbody_rooms_held=pfbody_rooms_passed=0;
+    pfbody_moves_install(1);
     pfbody_stage="armed";pfbody_why="-";pfbody_armed=1;return 1;
 }
 static int pfbody_arm(void) {
@@ -419,9 +534,12 @@ static int pfbody_arm(void) {
     return pfbody_arm_using();
 }
 static int pfbody_status(char *out,size_t capacity) {
-    int n=snprintf(out,capacity," bodies=%s bodies_why=%s bodies_mask=%x connects=%lld/%lld body_checks=%lld parks=%lld/%lld returns=%lld kill=%d/%lld/%lld/%lld roomless=%lld held=%lld placed=%lld/%lld",
+    int n=snprintf(out,capacity," bodies=%s bodies_why=%s bodies_mask=%x connects=%lld/%lld body_checks=%lld parks=%lld/%lld returns=%lld kill=%d/%lld/%lld/%lld roomless=%lld held=%lld placed=%lld/%lld moves=%lld/%lld/%lld drive=%d/%lld/%lld room=%lld/%lld attn=%d",
         pfbody_stage,pfbody_why,pfbody_mask,(long long)pfbody_connects,(long long)pfbody_disconnects,(long long)pfbody_checks,(long long)pfbody_parks,
         (long long)pfbody_unparks,(long long)pfbody_returns,pfbody_kill_installed,(long long)pfbody_kill_off,(long long)pfbody_kill_spared,(long long)pfbody_kill_late,(long long)pfbody_roomless,
-        (long long)pfbody_held,(long long)pfbody_marks,(long long)pfbody_unmarks);
+        (long long)pfbody_held,(long long)pfbody_marks,(long long)pfbody_unmarks,
+        (long long)pfbody_moves_scoped,(long long)pfbody_moves_parked,(long long)pfbody_moves_plain,
+        pfbody_room_installed,(long long)pfbody_drives,(long long)pfbody_drive_skips,(long long)pfbody_rooms_held,(long long)pfbody_rooms_passed,
+        pfbody_drive_attention);
     return n>0 && (size_t)n<capacity?n:0;
 }
