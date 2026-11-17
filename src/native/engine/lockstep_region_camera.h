@@ -505,10 +505,11 @@ enum {RC_REGION,RC_FIELDS,RC_TRAFFIC,RC_EFFECTS,RC_EFFECT_ROWS,RC_HIGHWAY,RC_SCE
 enum {RC_OBJ_NONE,RC_OBJ_R12,RC_OBJ_R12_TRAFFIC,RC_OBJ_RDI};
 enum {RC_SLOT_MANAGER,RC_SLOT_UNIVERSE,RC_SLOT_MANAGER2};
 #define RC_SITES 25u
-#define RC_CALLS 54u
+#define RC_CALLS 55u
 #define RC_FILL_AREA_CALL 42u      /* 0xee6d32 in the refresh 0xee6a80: 0x78a690, a node's resource area */
 #define RC_FILL_REFRESH_CALL 43u   /* 0xeeb98a in the render pass 0xeeb650: the refresh 0xee6a80 */
 #define RC_VIEW_STEP_CALL 41u     /* 0x9fe48b in UniverseFrameUpdate: Scene::Step of B */
+#define RC_VIEW_ANCHOR_CALL 54u   /* 0x97e4f9 in 0x97dff0: Scene anchor 0xbd410(scene, &zone, rebase) */
 #define RC_SOUND_CALL 39u         /* 39 0x14eefdf FloatState, 40 0x14eeee5 the choice 0x14f2550, both in 0x14eed60 */
 #define RC_HWROW_CALL 36u         /* 36 GetOffset 0x5f4d7a in Highway::vfunc674, 37 its 0x5f7a50 at 0x5f4fee, 38 UniverseFrameUpdate's at 0x9fe3fd */
 #define RC_HWROW_RING 65536u
@@ -524,7 +525,7 @@ enum {RC_SLOT_MANAGER,RC_SLOT_UNIVERSE,RC_SLOT_MANAGER2};
 #define RC_COLLECT_CALL 17u     /* 0x8ad25d in 0x8ad220: 0x8afaf0, the zone's objects with cached waypoints */
 #define RC_ZONE_TEST_CALL 12u   /* 0x83f26f in 0x83ef20: 0x3e35d0, component vs camera (view caches) */
 #define RC_LANE_CAMERA_CALL 13u /* 0x8ab419 in 0x8ab1e0: 0x979ef0, the camera in the frame zone (view caches) */
-#define RC_PINS 95u
+#define RC_PINS 96u
 #define RC_THUNK_SITES 10u
 #define RC_CONTEXT_CALL 11u /* index of SetParent's 0x97dff0 call in rc_calls */
 #define RC_EFFECT_ROW_RING 65536u
@@ -585,7 +586,8 @@ static const rc_call_t rc_calls[RC_CALLS]={{0xedc57au,0x9fc950u,RC_FIELDS,{0,0,0
     {0x8ac5afu,0x91eec0u,RC_TRAFFIC_ROWS,{0,0,0}},
     {0x8abbb4u,0x3dde10u,RC_TRAFFIC_PASS,{0,0,0}},{0x8ac0dau,0x3dde10u,RC_TRAFFIC_PASS,{0,0,0}},{0x8ac6a3u,0x3dde10u,RC_TRAFFIC_PASS,{0,0,0}},
     {0x8ac354u,0x6e59b0u,RC_TRAFFIC_PASS,{0,0,0}},{0x8ac8fcu,0x6e59b0u,RC_TRAFFIC_PASS,{0,0,0}},
-    {0x8ac642u,0x8c0180u,RC_TRAFFIC_PASS,{0,0,0}},{0x8acc2cu,0xfb36d0u,RC_TRAFFIC_PASS,{0,0,0}}};
+    {0x8ac642u,0x8c0180u,RC_TRAFFIC_PASS,{0,0,0}},{0x8acc2cu,0xfb36d0u,RC_TRAFFIC_PASS,{0,0,0}},
+    {0x97e4f9u,0xbd410u,RC_VIEW_SCENES,{0,0,0}}};
 /* Jumps (7-byte instructions replaced by jmp rel32 + 66 90 into a thunk that resumes at a later address). */
 typedef struct {unsigned rva,resume;unsigned char original[7],group;} rc_jump_t;
 static const rc_jump_t rc_jumps[RC_JUMPS]={
@@ -672,6 +674,7 @@ static const struct {unsigned rva,size;unsigned char group;const char *sha;} rc_
     {0xba090u,0x134u,RC_VIEW_SCENES,"eadb7181c78d1e585fba5a779e4b52232389dbb76f144e1f11079fb7e35925de"},
     {0xbd410u,0x6aau,RC_VIEW_SCENES,"91da8ccfc069e2f2abea63c27479494f0b3a4b3f6401f7817cba8005dbf65e54"},
     {0x9fe480u,0x20u,RC_VIEW_SCENES,"fef2667c24ebedc2aa16a74bf208af697eecb9bd0083774824537f9b9c6898c2"},
+    {0x97e4c1u,0x4fu,RC_VIEW_SCENES,"783f08eb44fd13b2fcceeb04f5c74478e59390d30c4cbf98221ac982a423f9df"},
     {0x14ddc90u,0x78u,RC_SOUND,"584854a7bdbf956043c7756157888674152bd0ffc0a307c00f29537332e8780e"},
     /* field_fill: the render pass's node walk and insert, what the fill calls instead of it. */
     {0xeeb980u,0x6f0u,RC_FIELD_FILL,"3f550be6f495c5d159f1ffcf11cdac17968c26fa646663b26b4749cb6b2f2ea4"},
@@ -1792,7 +1795,7 @@ static void *rc_stub_target(unsigned i) {
                                    (void*)rc_hw_offset,(void*)rc_hw_set_move,(void*)rc_hw_set_frame,(void*)rc_sound_float,(void*)rc_sound_choice,
                                    (void*)vsc_step,(void*)rc_fill_area,(void*)rc_fill_render_refresh,
                                    (void*)tq_sim,(void*)tq_check,(void*)tq_late,(void*)tp_relative_a,(void*)tp_relative_b,(void*)tp_relative_c,
-                                   (void*)tp_place_a,(void*)tp_place_b,(void*)tp_filter_call,(void*)tp_draw};
+                                   (void*)tp_place_a,(void*)tp_place_b,(void*)tp_filter_call,(void*)tp_draw,(void*)vsc_anchor_call};
     return i<RC_CALLS?targets[i]:NULL;
 }
 /* Bytes before the stub's jump: the call's move, if any. */

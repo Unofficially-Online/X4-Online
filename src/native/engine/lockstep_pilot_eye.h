@@ -37,7 +37,8 @@
  * pose there means nothing in slot k's room. Then the presented pose is slot k's seat itself (stage 'seat', from
  * 0x75d110 for slot k's ship only), the w lanes X4's: client k's eye stays at its own seat while slot 1 walks.
  * Slot k on foot (native_gate_pilot_foot_slots, lockstep_pilot_foot_slots.h, K2-9): the presented pose is P_k's own
- * FirstPersonController pose (its room is the scope's parent: P_k never leaves it), live and published (stage 'walk'):
+ * FirstPersonController pose (the room P_k is in is the scope's parent: its seat's, or the one it walked into), live and
+ * published (stage 'walk'):
  * d81ec0 on P_k's FPC reads only that FPC's fields once its first update ran, so nothing simulated is touched here.
  * Status (PILOT_INPUTS present row): eye=stage/scopes/poses/lost/dx,dy,dz (stage: on, same, skip:...,
  * off:...; dx..dz: D's translation in slot k's room, metres). */
@@ -170,7 +171,7 @@ static int peye_update(const pslot_slot *s) {
         if(walker) {
             if(!s->seated || !s->ship || !s->room || !p1 || !read_local(p1+PRES_PARENT,&room1,8) || !room1) return peye_set("skip:parent",0);
             peye_identity(peye_delta);memset(peye_key,0,sizeof(peye_key));
-            peye_key[0]=ship1;peye_key[1]=room1;peye_key[2]=s->ship;peye_key[3]=s->room;peye_walk_fpc=walker;
+            peye_key[0]=ship1;peye_key[1]=room1;peye_key[2]=s->ship;peye_key[3]=pslot_at(s);peye_walk_fpc=walker;
             return peye_set("walk",1);
         }
     }
@@ -214,7 +215,7 @@ static void peye_pose(void *self,float *out,double time,unsigned char overwrite)
 /* In pres_enter, after the identity: both poses of the canonical player p1 (view = its cache entry of this bank). */
 static void peye_enter(unsigned char *p1,unsigned char *view,unsigned bank,const pslot_slot *s,unsigned char *room1) {
     peye_live=peye_published=0;
-    if(!peye_on || !peye_vt_ready || bank>1 || peye_key[1]!=room1 || peye_key[2]!=s->ship || peye_key[3]!=s->room) return;
+    if(!peye_on || !peye_vt_ready || bank>1 || peye_key[1]!=room1 || peye_key[2]!=s->ship || peye_key[3]!=pslot_at(s)) return;
     unsigned char *ctl=NULL;void *vt=NULL;
     if(read_local(p1+PEYE_MOVEMENT,&ctl,8) && ctl && read_local(ctl,&vt,8)) {
         if(vt==(void*)peye_fpc_stock) {

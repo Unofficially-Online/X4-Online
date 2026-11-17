@@ -89,6 +89,7 @@ typedef struct {
     float throttle;                        /* slot 14: the smoothed throttle at the last scope exit */
     int seated,released,roomless;
     int walking;                           /* on foot (lockstep_pilot_foot_slots.h): seated for the scope, no controller */
+    unsigned char *walk_room;              /* on foot in another room than its seat's (lockstep_pilot_foot_body.h): P_k's parent there */
     int docked,dock_checked;               /* in its seat in a docked ship (pslot_ctl_end): seated for the scope, no controller */
     /* After a ship's death (lockstep_pilot_death.h): the first seat's store for the next seat,
      * and the controllers that stayed with their dying ships under this vtable copy. */
@@ -110,6 +111,8 @@ typedef struct {
     void *original[3],*agent[3],*player[3]; /* vfunc 6/7/10 */
 } pslot_fns;
 static pslot_fns pslot_fn;
+/* Where P_k is by its upward pointer: its seat's room, or the room a walking slot went to. */
+static unsigned char *pslot_at(const pslot_slot *s) {return s->walk_room?s->walk_room:s->room;}
 static pslot_slot pslots[PILOT_SLOTS+1];
 static int pslot_armed,pslot_hook_installed,pslot_pins_checked;
 static unsigned pslot_mask;                 /* slots 2..N (bit s-1), as pstk_slot_mask */
@@ -499,7 +502,7 @@ static int pslot_leave(unsigned k) {
     if(k<2 || k>PILOT_SLOTS || pstk_scope_slot!=k || !pslot_frame_thread()) return 0;
     if(!read_local(pnat_base+VPL_UNIVERSE,&universe,8) || !universe || !read_local(universe+VPS_SINGLETON,&now,8) || now!=s->player) ok=0;
     memcpy(&parent,s->player+0x70,8);memcpy(vector,s->player+0x308,sizeof(vector));
-    if(parent!=s->room || vector[0]!=(void*)&s->vector[0] || vector[1]!=(void*)&s->vector[s->post+1] || !vpl_reentry_clear(pnat_base)) ok=0;
+    if(parent!=pslot_at(s) || vector[0]!=(void*)&s->vector[0] || vector[1]!=(void*)&s->vector[s->post+1] || !vpl_reentry_clear(pnat_base)) ok=0;
     if(s->controller) {s->authority=pslot_global_part(s->controller);s->auth_parts=pslot_global_parts(s->controller);pslot_take_answers(s);
                        pslot_set_routes(s,0);}
     pslot_post_leave(k,s);
@@ -772,7 +775,7 @@ static void (*pslot_unplace)(unsigned char *player);   /* lockstep_pilot_foot_bo
 static void pslot_unseat_player(pslot_slot *s) {
     if(pslot_unplace) pslot_unplace(s->player);
     if(pview_slot_player==s->player) pview_slot_player=NULL;
-    *(unsigned char *volatile*)(s->player+0x70)=NULL;
+    *(unsigned char *volatile*)(s->player+0x70)=NULL;s->walk_room=NULL;
     memcpy(s->player+0x308,s->saved_vector,sizeof(s->saved_vector));
 }
 static int pslot_seat_ship(unsigned k,unsigned char *ship) {
@@ -795,7 +798,7 @@ static int pslot_seat_ship(unsigned k,unsigned char *ship) {
     memcpy(s->player+0x6ab8,&position,4);memcpy(s->player+0x6aac,pslot_p1+0x6aac,4);
     memset(s->player+0x6ab4,0,4);memset(s->player+0x6dd0,0,8);s->player[0x6e20]=0;
     memset(s->vector,0,sizeof(s->vector));s->post=(unsigned)index;s->vector[s->post]=ship;
-    s->ship=ship;s->room=room;s->controller=NULL;s->runtime=0;read_local(ship+8,&s->runtime,8);
+    s->ship=ship;s->room=room;s->walk_room=NULL;s->controller=NULL;s->runtime=0;read_local(ship+8,&s->runtime,8);
     /* The first seat's store: canonical SIM at the start. A later one (after a death) starts from the same. */
     const int again=s->first_length!=0;   /* a seat after the first: a suit, the way home, a respawn */
     if(s->first_length) {memcpy(s->store,s->first,s->first_length);s->length=s->first_length;}

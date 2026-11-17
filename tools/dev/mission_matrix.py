@@ -6,6 +6,7 @@
     python tools/dev/mission_matrix.py report CLIENT1.log CLIENT2.log [--run RUNDIR]
     python tools/dev/mission_matrix.py offers --snapshot ... --session ... --gate-dll ... [--accept-as 1,2] [--count 13]
     python tools/dev/mission_matrix.py real --offer NAME --snapshot ... --session ... --gate-dll ... [--accept-as 1,2]
+    python tools/dev/mission_matrix.py meet --snapshot ... --session ... --gate-dll ... [--mover 2] [--to 1]
 
 What a test is (MD: tools/dev/native_gate_ui_replay.xml, cue MissionTest; script ops mt_offer / mt_accept): the probe
 makes a test offer at the same tick on every client, the player under test accepts it as the stock menus accept an
@@ -390,6 +391,45 @@ def offers_table(results):
     return failed
 
 
+# ---- two players meet ----
+# One player's ship is put next to another player's ship, in that player's sector (script op goto_slot), and the
+# rows of the next seconds say where it stands and at what attention. With --keep the clients stay up for a look at
+# the ships' physics bodies. No verdict of its own beyond the clients agreeing.
+MEET_AT = 300
+
+
+def meet(args):
+    out = [[] for _ in range(args.players)]
+    late = 400 if args.leave else 0
+    out[args.mover - 1] += [(MEET_AT, 'goto_slot', args.to, args.metres), (MEET_AT + 330 + late, 'account')]
+    if args.leave:   # then the other player takes a stock destroy offer and jumps to its first target: the two part again
+        out[args.to - 1] += [(MEET_AT + 200, 'offers_list'), (MEET_AT + 260, 'offer_accept_named', args.leave), (MEET_AT + 440, 'mis_goto', 5000)]
+    plan, end = lua(out), MEET_AT + 400 + late
+
+    def done(logs):
+        return logs[args.mover - 1].exists() and any(' op=account ' in l for l in read_lines(logs[args.mover - 1]))
+
+    def report(logs, run_dir):
+        rows = [[re.search(r'\[X4LAN\] (MT_GOTO|MT_WATCH) (.*)', l) for l in read_lines(path)] for path in logs]
+        rows = [[(m.group(1), m.group(2)) for m in client if m] for client in rows]
+        for name, text in rows[args.mover - 1]:
+            print('  %s %s' % (name.lower()[3:], text[:260]))
+        bad = 0
+        if not rows[0] or any(client != rows[0] for client in rows):
+            print('FAIL: no rows, or the clients logged different rows')
+            bad += 1
+        desyncs = [l for l in read_lines(Path(run_dir) / 'desyncs.log') if 'DESYNC' in l] if run_dir else []
+        errors = read_lines(Path(run_dir) / 'errors.log') if run_dir else []
+        if desyncs:
+            print('FAIL: the clients split: %s' % desyncs[0].strip()[:160])
+        if errors:
+            print('FAIL: %d error rows, first: %s' % (len(errors), errors[0].strip()[:200]))
+        return bad + len(desyncs) + len(errors)
+
+    print("player %d's ship is put %d m from player %d's" % (args.mover, args.metres, args.to))
+    return session(args, plan, end, done, report, 'one jump')
+
+
 # ---- one real stock offer, finished ----
 REAL_ROUND = 300       # ticks per target: the flight, the target, the guns
 REAL_END = re.compile(r'\[X4LAN\] MT_REAL end=(\w+) name=(.*?) reward=(\S+) player=(\S+) money=(\S+) time=(\S+)')
@@ -481,7 +521,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     commands = parser.add_subparsers(dest='command', required=True)
     commands.add_parser('list', help='the mission types and what each test does')
-    for name in ('plan', 'run', 'report', 'offers', 'real'):
+    for name in ('plan', 'run', 'report', 'offers', 'real', 'meet'):
         sub = commands.add_parser(name)
         sub.add_argument('--types', default=','.join(TYPES), help='comma separated, in this order (default: all)')
         sub.add_argument('--players', type=int, default=2)
@@ -494,7 +534,12 @@ def main():
             sub.add_argument('--offer', required=True, help='a part of the offer\'s name, blanks as _ (see `offers --look`)')
             sub.add_argument('--rounds', type=int, default=5, help='how many targets at most (default 5)')
             sub.add_argument('--metres', type=int, default=500, help='how far from a target the ship is put (default 500); negative: a diagnosis, the same distance with an ownerless scout on the line of fire')
-        if name in ('run', 'offers', 'real'):
+        if name == 'meet':
+            sub.add_argument('--mover', type=int, default=2, help='the player whose ship is moved (default 2)')
+            sub.add_argument('--to', type=int, default=1, help='the player it is put next to (default 1)')
+            sub.add_argument('--metres', type=int, default=300, help='how far from that ship (default 300)')
+            sub.add_argument('--leave', metavar='OFFER', help='afterwards the other player takes this stock destroy offer and jumps to its first target')
+        if name in ('run', 'offers', 'real', 'meet'):
             sub.add_argument('--snapshot', type=Path, required=True, help="the session's save (session-save.xml.gz)")
             sub.add_argument('--session', type=Path, required=True, help="the session's session.json")
             sub.add_argument('--gate-dll', type=Path, required=True)
@@ -526,6 +571,10 @@ def main():
         return 0
     if args.command == 'report':
         return 1 if table(args.logs, types, args.players, args.run) else 0
+    if args.command == 'meet':
+        if not (1 <= args.mover <= args.players and 1 <= args.to <= args.players and args.mover != args.to):
+            parser.error('--mover and --to name two different players of this session')
+        return meet(args)
     if args.command == 'real':
         takers = [int(k) for k in args.accept_as.split(',') if k.strip()]
         if not takers or any(k < 1 or k > args.players for k in takers):

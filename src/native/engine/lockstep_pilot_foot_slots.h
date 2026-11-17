@@ -298,6 +298,7 @@ static int pfslot_take(unsigned k) {
 }
 static int pfslot_sit_down(unsigned k) {
     pslot_slot *s=&pslots[k];pfslot_slot *f=&pfslots[k];
+    pfbody_walk_home(k,1);   /* from another room: P_k under its seat's room again (the walk back is not replayed, W7) */
     if(pfslot_ship_docked(s->ship)) {   /* a docked ship's seat: no controller (header above) */
         int position=0;
         if(!read_local(pnat_base+PSLOT_PILOT_POSITION,&position,4) || !position) return pfslot_fail("slot_pilot_position");
@@ -464,12 +465,13 @@ static int pfslot_hook_uninstall(void) {
     if(!pres_site_uninstall(PFSLOT_CALL_SITE,PFSLOT_FPC_UPDATE,pfslot_site_patched)) return 0;
     pfslot_hook_installed=0;return 1;
 }
-/* K2-8: a walking slot's FPC is still its movement controller, its parent still its room. */
+/* K2-8: a walking slot's FPC is still its movement controller, its parent still its room (its seat's, or the one it
+ * walked into: lockstep_pilot_foot_body.h). */
 static int pfslot_check(unsigned k) {
     pslot_slot *s=&pslots[k];pfslot_slot *f=&pfslots[k];unsigned char *parent=NULL;int refs=0;
     if(!s->seated || !s->walking) return pfslot_fail("slot_unseated");
     if(pfslot_fpc_of(s->player)!=f->fpc) return pfslot_fail("slot_fpc_lost");
-    if(!read_local(s->player+0x70,&parent,8) || parent!=s->room) return pfslot_fail("slot_moved");
+    if(!read_local(s->player+0x70,&parent,8) || parent!=pslot_at(s)) return pfslot_fail("slot_moved");
     if(!read_local(s->player+0x40,&refs,4) || refs<1) return pfslot_fail("slot_player_lost");
     return 1;
 }

@@ -364,6 +364,7 @@ static int world_nav_live_prefixes(void) {
 #include "lockstep_pilot_death.h"
 #include "lockstep_area_jobs.h"        /* a sector's resource area job runs at the tick of its request (native_gate_area_jobs) */
 #include "lockstep_pilot_foot_body.h"   /* slots 2..N in the world tree at their seats (native_gate_pilot_foot_bodies) */
+#include "lockstep_ui_holds.h"         /* a client's UI holds no temporary component in the simulation (native_gate_ui_holds) */
 #include "lockstep_pilot_foot_slots.h"  /* slots 2..N get up and walk (native_gate_pilot_foot_slots) */
 #include "lockstep_pilot_join.h"        /* a join save inside the window: the bodies off around it, P_k's IDs (W3) */
 #include "lockstep_own_predict.h"
@@ -819,7 +820,7 @@ static void finish(unsigned reason) {
     shape_restore();
     velocity_restore();
     ss_restore();
-    mrng_restore();
+    mrng_restore();uih_restore();
     pt_restore();
     wr_restore();
     trr_restore();
@@ -1846,6 +1847,15 @@ static int lua_body_clock(lua_State *L) {
 static int lua_body_clock_row(lua_State *L) {
     double index=p_lua_tonumber(L,1);char out[256];int n=0;
     if(accept_ui() && isfinite(index) && index>=0 && index<9007199254740992.0 && floor(index)==index) n=bclk_row_text((uint64_t)index,out,sizeof(out));
+    if(n) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);return 1;
+}
+/* gate.ui_holds(1): what a client's UI refers to holds no temporary component in the simulation (lockstep_ui_holds.h). */
+static int lua_ui_holds(lua_State *L) {
+    double on=p_lua_tonumber(L,1);
+    p_lua_pushnumber(L,accept_ui() && on==1 && uih_arm());return 1;
+}
+static int lua_ui_holds_status(lua_State *L) {
+    char out[192];int n=accept_ui()?uih_status(out,sizeof(out)):0;
     if(n) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);return 1;
 }
 static int lua_move_rng_status(lua_State *L) {
@@ -4701,7 +4711,7 @@ __declspec(dllexport) int luaopen_x4lan_gate(lua_State *L) {
     METHOD(character_play);METHOD(character_play_status);METHOD(character_play_row);
     METHOD(nav_octree);METHOD(nav_octree_status);METHOD(nav_octree_row);METHOD(nav_octree_report);METHOD(nav_octree_agree);METHOD(nav_octree_lookup_row);METHOD(nav_octree_sites);METHOD(nav_octree_sites_status);METHOD(nav_octree_site_row);METHOD(nav_mesh);METHOD(nav_mesh_status);METHOD(nav_mesh_frame);METHOD(nav_mesh_row);
     METHOD(camera_offset);METHOD(camera_offset_status);METHOD(camera_anchor);METHOD(camera_anchor_keys);METHOD(camera_anchor_status);
-    METHOD(move_rng);METHOD(move_rng_status);METHOD(move_rng_rows);METHOD(move_rng_row);METHOD(body_clock);METHOD(body_clock_rows);METHOD(body_clock_row);
+    METHOD(ui_holds);METHOD(ui_holds_status);METHOD(move_rng);METHOD(move_rng_status);METHOD(move_rng_rows);METHOD(move_rng_row);METHOD(body_clock);METHOD(body_clock_rows);METHOD(body_clock_row);
     METHOD(mass_traffic);METHOD(mass_traffic_status);METHOD(region_pass);METHOD(region_pass_status);METHOD(gravidar_digest);METHOD(gravidar_digest_frame);METHOD(gravidar_digest_row);
     METHOD(gravidar_deadlines);METHOD(gravidar_deadlines_status);
     METHOD(economy_load_rng);METHOD(economy_load_rng_status);METHOD(build_rows);METHOD(build_rows_status);METHOD(build_rows_row);METHOD(flight_faults);METHOD(flight_fault_row);METHOD(play_mode);METHOD(unowned);METHOD(ui_exports);METHOD(ui_lazy_callers);METHOD(ui_exports_status);METHOD(ui_exports_row);METHOD(ui_exports_relay);METHOD(ui_exports_block);METHOD(ui_exports_relay_kinds);METHOD(ui_exports_take);METHOD(ui_exports_name);METHOD(runtime_of);METHOD(key_of);METHOD(ui_exports_address);METHOD(observer_status);METHOD(npc_action_rows);METHOD(interrupt_faults);METHOD(interrupt_fault_row);METHOD(wire);METHOD(propose);METHOD(relay_host);METHOD(lookahead);METHOD(lookahead_status);METHOD(tick_rate);METHOD(fast_reads);METHOD(path_budget);METHOD(path_budget_status);METHOD(path_transforms);METHOD(path_transforms_status);METHOD(path_transforms_row);METHOD(body_pose);METHOD(body_pose_status);METHOD(body_pose_row);METHOD(pass_stride);METHOD(render_frames);METHOD(render_frames_status);METHOD(render_split);METHOD(lookahead_adaptive);METHOD(adaptive_status);METHOD(adaptive_plan);METHOD(wire_crypto);METHOD(wire_crypto_status);METHOD(render_camera);METHOD(render_motion);METHOD(render_display_rows);METHOD(render_display_status);METHOD(render_display_row);METHOD(peer_links);METHOD(peer_status);

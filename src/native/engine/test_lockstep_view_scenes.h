@@ -182,6 +182,69 @@ static void test_view_scenes(void) {
         vsc_before_refresh(204);assert(vsc_pre==pre+2 && vsc_entries[1].sector==test_vsc_sectors[2] && vsc_follows==follows+2);
         vsc_armed=0;
     }
+    /* View point 1 and the others. Here: view point 1 = ship 0 in sector 0 (A's), ship 1 in sector 1 (B), ship 2 in
+     * sector 2 (C), ship 3 in sector 3 (D). */
+    {
+        static __declspec(align(16)) unsigned char scene_a[0x80];memset(scene_a,0,sizeof(scene_a));
+        const uint64_t keeps=vsc_keeps,releases=vsc_releases,follows=vsc_follows;void *z=NULL;void *const e2=vsc_entries[2].scene; /* the frame above made the scenes anew */
+        assert(!pres_open && !vsc_a.sector);vsc_a.scene=scene_a;
+        vsc_latch_home(210,test_vsc_sectors[0]);
+        assert(vsc_entries[0].view==1 && vsc_entries[1].view==2 && vsc_entries[2].view==3 && vsc_keeps==keeps);
+        /* It arrives in a sector the table holds: the sector keeps its scene and view point 1 holds it first. */
+        test_vsc_place(0,1);vsc_latch_home(211,test_vsc_sectors[1]);
+        assert(vsc_entries[0].sector==test_vsc_sectors[1] && vsc_entries[0].view==0 && vsc_entries[0].point==test_vsc_ships[0]);
+        assert(vsc_keeps==keeps+1 && vsc_releases==releases && vsc_follows==follows && vsc_zone_scene(test_vsc_zones[1])==sb);
+        vsc_latch_home(212,test_vsc_sectors[1]);assert(vsc_keeps==keeps+1);
+        /* ...and the other one may leave: the scene stays view point 1's sector's. */
+        test_vsc_place(1,0);vsc_latch_home(213,test_vsc_sectors[1]);
+        assert(vsc_entries[0].sector==test_vsc_sectors[1] && vsc_entries[0].view==0 && vsc_releases==releases);
+        test_vsc_place(1,1);test_vsc_place(0,0);vsc_latch_home(214,test_vsc_sectors[0]);
+        assert(vsc_entries[0].sector==test_vsc_sectors[1] && vsc_entries[0].view==1 && vsc_releases==releases);
+        /* It leaves a sector another view point stays in, whose bodies are in A (anchored in sector 0): X4's anchor
+         * call for A is not made and A is pinned to that sector. Ship 3 is the one that stays. */
+        test_vsc_place(3,0);vsc_latch_home(215,test_vsc_sectors[0]);assert(!vsc_entries[2].sector && vsc_releases==releases+1);
+        vsc_entries[2].released=0;
+        {void *anchor=test_vsc_zones[0];memcpy(scene_a+0x40,&anchor,8);}
+        {const unsigned calls=test_vsc_anchor_calls;const uint64_t pins=vsc_pins,skips=vsc_anchor_skips;const LONG64 stubbed=rc_stub_calls[RC_VIEW_ANCHOR_CALL];
+         z=test_vsc_zones[4];vsc_anchor_call(scene_a,&z,0);
+         assert(vsc_a.sector==test_vsc_sectors[0] && vsc_a.point==test_vsc_ships[3] && vsc_a.view==3 && vsc_pins==pins+1 && vsc_anchor_skips==skips+1);
+         assert(test_vsc_anchor_calls==calls && *(void**)(scene_a+0x40)==test_vsc_zones[0] && rc_stub_calls[RC_VIEW_ANCHOR_CALL]==stubbed+1);
+         /* Pinned: X4's later calls for A are skipped too; another scene's call is X4's. */
+         z=test_vsc_zones[3];vsc_anchor_call(scene_a,&z,1);assert(test_vsc_anchor_calls==calls && vsc_anchor_skips==skips+2 && vsc_pins==pins+1);
+         z=test_vsc_zones[2];vsc_anchor_call(sc,&z,0);assert(test_vsc_anchor_calls==calls+1 && *(void**)((unsigned char*)sc+0x40)==test_vsc_zones[2]);}
+        /* Slot 943 while A is pinned: its sector answers A; where X4 would answer A (view point 1's new sector), a
+         * table scene is made at once when a view point is there; not in a client's presentation scope; nobody there: none. */
+        {const uint64_t lazy=vsc_lazy,assigns=vsc_assigns;const unsigned calls=test_vsc_anchor_calls;
+         test_vsc_native_answer=scene_a;test_vsc_native_calls=0;
+         assert(vsc_zone_scene(test_vsc_zones[0])==scene_a && !test_vsc_native_calls);
+         assert(!vsc_zone_scene(test_vsc_zones[4]) && vsc_lazy==lazy);                        /* nobody in sector 4 yet */
+         test_vsc_place(0,4);
+         InterlockedExchange(&pres_open,1);assert(!vsc_zone_scene(test_vsc_zones[4]) && vsc_lazy==lazy);InterlockedExchange(&pres_open,0);
+         assert(vsc_zone_scene(test_vsc_zones[4])==e2 && vsc_lazy==lazy+1 && vsc_assigns==assigns+1);
+         assert(vsc_entries[2].sector==test_vsc_sectors[4] && vsc_entries[2].view==0 && vsc_entries[2].point==test_vsc_ships[0]);
+         assert(test_vsc_anchor_calls==calls+1 && *(void**)((unsigned char*)e2+0x40)==test_vsc_zones[4]);
+         assert(vsc_zone_scene(test_vsc_zones[4])==e2 && vsc_lazy==lazy+1);                    /* the table's from now on */
+         test_vsc_native_answer=sb;assert(!vsc_zone_scene(test_vsc_zones[3]));                 /* X4's B is still none */
+         test_vsc_native_answer=NULL;assert(!vsc_zone_scene(test_vsc_zones[3]));}
+        /* The latch: A's holder is the view point in its sector, view point 1 holds its table scene; both anchored. */
+        {const uint64_t unpins=vsc_unpins;const unsigned calls=test_vsc_anchor_calls;
+         vsc_latch_home(216,test_vsc_sectors[4]);vsc_anchors();
+         assert(vsc_a.sector==test_vsc_sectors[0] && vsc_a.point==test_vsc_ships[3] && vsc_a.view==3 && vsc_unpins==unpins);
+         assert(vsc_entries[2].sector==test_vsc_sectors[4] && vsc_entries[2].view==0 && vsc_releases==releases+1 && !vsc_blocked_now);
+         assert(test_vsc_anchor_calls==calls);                                                 /* nothing moved */
+         /* Nobody is left in A's sector: A is X4's own again. */
+         test_vsc_place(3,3);vsc_latch_home(217,test_vsc_sectors[4]);
+         assert(!vsc_a.sector && vsc_unpins==unpins+1 && vsc_blocked_now==1);
+         test_vsc_native_answer=scene_a;assert(vsc_zone_scene(test_vsc_zones[0])==scene_a);
+         /* View point 1 back in A's sector: X4's own again as well. */
+         vsc_a.sector=test_vsc_sectors[0];test_vsc_place(0,0);vsc_latch_home(218,test_vsc_sectors[0]);
+         assert(!vsc_a.sector && vsc_unpins==unpins+2 && !vsc_entries[2].sector && vsc_releases==releases+2);}
+        /* As it was before this block. */
+        vsc_entries[2].sector=test_vsc_sectors[3];vsc_entries[2].released=0;vsc_entries[2].view=3;vsc_entries[2].point=test_vsc_ships[3];
+        {void *anchor=test_vsc_zones[3];memcpy((unsigned char*)e2+0x40,&anchor,8);}
+        memset(&vsc_a,0,sizeof(vsc_a));vsc_view_forget();vsc_latch_home(219,test_vsc_sectors[0]);
+        assert(vsc_entries[0].view==1 && vsc_entries[1].view==2 && vsc_entries[2].view==3 && !vsc_blocked_now);
+    }
     /* Slot 943: the table first; else native; a native B the table does not hold is no scene; a highway the same. */
     {
         void *const s_b=vsc_entries[0].scene,*const s_c=vsc_entries[1].scene,*const main=(void*)0x1234;
@@ -200,7 +263,7 @@ static void test_view_scenes(void) {
     /* Status names the slots, the anchors' IDs and the counters. */
     {
         *(uint64_t*)(test_vsc_zones[1]+8)=0xabc1;char text[320];vsc_status(text,sizeof(text));
-        assert(strstr(text,"1,slots:2/3/4,anchors:abc1/") && strstr(text,",steps:2,") && strstr(text,",early:2,blocked:") && strstr(text,",follows:") && strstr(text,",pre:"));
+        assert(strstr(text,"1,slots:2/3/4,anchors:abc1/") && strstr(text,",steps:2,") && strstr(text,",early:2,blocked:") && strstr(text,",follows:") && strstr(text,",pre:") && strstr(text,",a:0/"));
     }
     /* Other modules can tell C and D from an unknown scene. */
     assert(vsc_extra[0] && vsc_extra[1]);
@@ -252,6 +315,7 @@ static void test_view_scenes(void) {
     vsc_ctor_native=NULL;vsc_anchor_native=NULL;vsc_step_native=NULL;vsc_zone_native=NULL;vsc_highway_native=NULL;rid_allocate_native=NULL;
     memset(vsc_entries,0,sizeof(vsc_entries));memset((void *)vsc_extra,0,sizeof(vsc_extra));vsc_created=vsc_armed=vsc_installed=0;vsc_active=0;rc_failures=0;
     vsc_steps=vsc_moves=vsc_rebases=vsc_assigns=vsc_releases=vsc_early=vsc_blocked_ticks=vsc_follows=vsc_pre=0;vsc_blocked_now=0;vsc_view_forget();
+    memset(&vsc_a,0,sizeof(vsc_a));vsc_pins=vsc_unpins=vsc_lazy=vsc_keeps=vsc_anchor_skips=0;
     memcpy(view_points,saved_points,sizeof(saved_points));memcpy(view_ids,saved_ids,sizeof(saved_ids));view_count=saved_count;rc_view_sector58=saved_home;memcpy(image+VSC_SCENE_B,&saved_b,8);
     printf("view scenes table/anchors/slot 943/steps/create/stop tests PASS\n");
 }

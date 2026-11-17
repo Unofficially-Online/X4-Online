@@ -1296,6 +1296,11 @@ function K.script(plan,start,tools)
      end
     end
     return 'none' end
+  -- {tick,'goto_slot',k,metres}: this player's ship is put that far from slot k's ship, looking at it (MD MtGoto, the
+  -- same signal as mis_goto): two players meet in one sector without the flight.
+  elseif op=='goto_slot' then call=function()
+    tools.env.SignalObject(tools.env.ConvertStringTo64Bit(tostring(tools.C.GetPlayerGalaxyID())),'x4lan_goto',tools.slot_lua(e[3]),tonumber(e[4]) or 300)
+    return 'goto slot '..tostring(e[3]) end
   elseif op=='mis_goto' or op=='mis_target' then call=function()
     for i=1,tonumber(tools.env.GetNumMissions()) or 0 do
      local id=tostring((tools.env.GetMissionDetails(i)))

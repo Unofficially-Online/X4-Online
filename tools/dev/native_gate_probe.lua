@@ -5878,6 +5878,14 @@ local function frame()
     assert(armed==1,'pilot foot bodies refused: '..tostring(why))
     log('PILOT_FOOT_BODIES_ARMED slot='..slot)
    end
+   -- What a client's own UI refers to (a target, a menu) holds no temporary component in the simulation: X4 kept a
+   -- mass traffic ship alive for it and killed it later instead of keeping it for reuse, on that client only
+   -- (lockstep_ui_holds.h).
+   if cfg.native_gate_ui_holds then
+    assert(cfg.native_gate_ui_holds==true and gate.ui_holds and gate.ui_holds_status and gate.ui_holds(1)==1,
+     'ui holds refused '..tostring(gate.ui_holds_status and gate.ui_holds_status()))
+    log('UI_HOLDS_ARMED '..tostring(gate.ui_holds_status()))
+   end
    -- Slots 2..N get up and walk (lockstep_pilot_foot_slots.h, stop reason 185, default off): slot k's GET_UP (the key on
    -- client k, the docked menu's Get Up claimed for slot k) is consumed in slot k's scope on every client; its walking
    -- keys ride its stock record; its FirstPersonController updates in its scope after X4's own. With the death module a
@@ -6549,6 +6557,9 @@ local function frame()
  end
  if cfg.native_gate_ship_sound_rng then
   ticklog.status('SHIP_SOUND_RNG',tick,gate.ship_sound_rng_status,'ship sound RNG status unavailable')
+ end
+ if cfg.native_gate_ui_holds then
+  ticklog.status('UI_HOLDS',tick,gate.ui_holds_status,'ui holds status unavailable')
  end
  if cfg.native_gate_move_rng then
   ticklog.status('MOVE_RNG',tick,gate.move_rng_status,'move RNG status unavailable')

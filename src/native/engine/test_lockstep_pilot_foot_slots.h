@@ -8,7 +8,7 @@
  * body off the tree in the pass that replays slot 1's or slot 2's get-up, back after everyone sat for PFBODY_SETTLE. */
 static __attribute__((aligned(16))) unsigned char test_pfslot_fpc[0x3c0],test_pfslot_fpc1[0x3c0],test_pfslot_dock[0x100],test_pfslot_target[0x100],
     test_pfslot_conversation[0x200],test_pfslot_deleted[0x400];
-static void *test_pfslot_fpc_vt[32],*test_pfslot_dock_vt[600],*test_pfslot_target_vt[600];
+static void *test_pfslot_fpc_vt[40],*test_pfslot_dock_vt[600],*test_pfslot_target_vt[600];
 static unsigned char test_pfslot_may=1;
 static unsigned test_pfslot_requests,test_pfslot_places,test_pfslot_poses,test_pfslot_updates,test_pfslot_ship_found;
 static unsigned char *test_pfslot_update_singleton[4];
@@ -20,6 +20,11 @@ static int test_pfslot_ship_docked(const unsigned char *ship) {(void)ship;return
 static unsigned test_pslot_ctl_end_calls,test_pslot_ctl_end_slot;
 static void test_pslot_ctl_end(void *controller) {(void)controller;++test_pslot_ctl_end_calls;test_pslot_ctl_end_slot=pstk_scope_slot;}
 static void *test_pfslot_fpc_next(void *self) {(void)self;return NULL;}
+static void *test_pfslot_rebase_args[3],*test_pfslot_rebase_singleton;static unsigned test_pfslot_rebases;
+static void test_pfslot_rebase(void *controller,void *from,void *to) {
+    test_pfslot_rebase_args[0]=controller;test_pfslot_rebase_args[1]=from;test_pfslot_rebase_args[2]=to;
+    test_pfslot_rebase_singleton=test_pslot_singleton();++test_pfslot_rebases;
+}
 static unsigned char test_pfslot_ship_is(void *self,int cls) {assert(self==test_pslot_ship2);return cls==PFSLOT_SHIP_CLASS;}
 static unsigned char test_pfslot_dock_is(void *self,int cls) {assert(self==test_pfslot_dock);return cls==PFSLOT_DOCK_CLASS;}
 static unsigned char test_pfslot_target_is(void *self,int cls) {assert(self==test_pfslot_target);return cls==PFSLOT_TARGET_CLASS;}
@@ -232,12 +237,43 @@ static void test_pilot_foot_slots_block(unsigned char *region,unsigned char *inp
         {void *fpc=test_pfslot_fpc;memcpy(p2+0x200,&fpc,8);}pfslot_failed=0;pfoot_failed=0;pfslot_why="-";pfoot_why="-";
         {void *other=test_pfbody_elsewhere;memcpy(p2+0x70,&other,8);}assert(!pfslot_check(2) && !strcmp(pfslot_why,"slot_moved"));
         memcpy(p2+0x70,&room,8);pfslot_failed=0;pfoot_failed=0;pfslot_why="-";pfoot_why="-";pfslot_stage="walking";}
+    /* A room change X4 asks for a walking slot's player (lockstep_pilot_foot_body.h): its upward pointer to the new room,
+     * X4's rebase on its controller with the two rooms in the slot's scope, and the slot's room follows in the checks.
+     * With an offset, into a dying room or one out of the world: held. A room that is killed sends the pointer home.
+     * The sit-down below starts from the other room. */
+    {   static unsigned char other[0x100];
+        pfbody_rebase_fn saved=pfbody_rebase;pfbody_rebase=test_pfslot_rebase;test_pfslot_fpc_vt[PFBODY_FPC_REBASE_SLOT]=(void*)test_pfslot_rebase;
+        memset(other,0,sizeof(other));other[PFBODY_PLACED]=1;test_pfslot_rebases=0;
+        pvehk_events_on=0;   /* the notices ask X4's class tests of real components (the tests take posts by pvehk_event_test) */
+        LONG64 held=pfbody_rooms_held,moved=pfbody_rooms_moved,home=pfbody_rooms_home;
+        pfbody_room(p2,p2,1.0,other,other,0,0);assert(pfbody_rooms_held==held+1 && *(void**)(p2+0x70)==room && !s->walk_room);
+        other[PFBODY_LIFECYCLE]=1;pfbody_room(p2,p2,1.0,other,NULL,0,0);other[PFBODY_LIFECYCLE]=0;
+        other[PFBODY_PLACED]=0;pfbody_room(p2,p2,1.0,other,NULL,0,0);other[PFBODY_PLACED]=1;
+        assert(pfbody_rooms_held==held+3 && *(void**)(p2+0x70)==room && !s->walk_room && !test_pfslot_rebases);
+        pfbody_room(p2,p2,1.0,room,NULL,0,0);assert(pfbody_rooms_held==held+3 && pfbody_rooms_moved==moved && !test_pfslot_rebases);   /* there already */
+        pfbody_room(p2,p2,1.0,other,NULL,0,0);
+        assert(*(void**)(p2+0x70)==(void*)other && s->walk_room==other && pslot_at(s)==other && pfbody_rooms_moved==moved+1 && test_pfslot_rebases==1 &&
+               test_pfslot_rebase_args[0]==(void*)test_pfslot_fpc && test_pfslot_rebase_args[1]==(void*)room && test_pfslot_rebase_args[2]==(void*)other &&
+               test_pfslot_rebase_singleton==p2 && test_pslot_singleton()==p1 && !pstk_scope_slot && pfbody_rooms_held==held+3);
+        assert(pfslot_check(2) && !pfslot_failed && !pslot_failed);
+        {char row[512];assert(pfbody_status(row,sizeof(row)) && strstr(row," room=") && strstr(row,"/1/0/0 attn="));}
+        (void)pfbody_kill_query(other);   /* X4 kills that room */
+        assert(*(void**)(p2+0x70)==room && !s->walk_room && pfbody_rooms_home==home+1 && test_pfslot_rebases==1);
+        pfbody_room(p2,p2,1.0,other,NULL,0,0);assert(s->walk_room==other && test_pfslot_rebases==2);
+        const unsigned char was_placed=((unsigned char*)room)[PFBODY_PLACED];((unsigned char*)room)[PFBODY_PLACED]=1;   /* the cockpit is in the world */
+        pfbody_room(p2,p2,1.0,room,NULL,0,0);   /* back into its seat's room by walking */
+        ((unsigned char*)room)[PFBODY_PLACED]=was_placed;
+        assert(*(void**)(p2+0x70)==room && !s->walk_room && test_pfslot_rebases==3 && test_pfslot_rebase_args[1]==(void*)other && test_pfslot_rebase_args[2]==(void*)room);
+        pfbody_room(p2,p2,1.0,other,NULL,0,0);assert(s->walk_room==other && test_pfslot_rebases==4);
+        pfbody_rebase=saved?saved:test_pfslot_rebase;
+    }
     /* Slot 2's GET_UP while walking sits it down: X4's take in its scope, its PlayerController under the vtable copy again,
-     * the control position back, the seat flag 1, its bank inactive. */
+     * the control position back, the seat flag 1, its bank inactive. From another room: under its seat's room first. */
     {   uint64_t tick=20;stats.issued=tick;test_pslot_call_count=0;pstk_slot_frames[1].tick=tick;
         pstk_slot_frames[1].r.events[0]=(pstk_event){PSTK_ACTION,PFOOT_GET_UP,0};
         pfslot_ship_docked_test=test_pfslot_ship_docked;test_pfslot_docked=0;   /* the ship flies: X4's answer in the fixture */
         assert(pslot_replay(tick) && !f->walking && !s->walking && f->sat==1 && s->controller==test_pslot_c2 && *(void***)test_pslot_c2==&s->vt.slots[0]);
+        assert(*(void**)(p2+0x70)==room && !s->walk_room && test_pfslot_rebases==5 && test_pfslot_rebase_args[2]==(void*)room);
         assert(test_pslot_count('T')==1 && *(int*)(p2+PFSLOT_POSITION)==0x77 && test_pfslot_fpc[PFSLOT_FPC_SEAT]==1 && !f->bank[0x3d] && !p2[PFOOT_PLAYER_FLAG]);
         assert(!pfslot_own_walking() && pfoot_own_seated() && pfslot_claim_ok(2) && !pfslot_any_walking());
         {char a[64];pfslot_frame();assert(pfslot_frame_text(a,sizeof(a)) && !strcmp(a,"|W2:0:0000000000000000"));}

@@ -25,6 +25,8 @@ What it checks, from each client's own log and the relay's:
             place: the FOOT_AVATAR_AT rows (written by the script that places the figures) are the same on both
             clients, for both players
   walked    a walking player's place changed after its walk keys
+  room      a walking player left its cockpit for a room of the station, as X4's scripts are told (player.room in
+            the figure rows); (meet) both players then stand in the same room
   met       (meet) each player stopped as near the other as asked, with the other ahead of it
   undocked  a ship that undocked is no longer docked and moved after its thrust key
   in sync   the world, the players' records and their inputs agree at every tick (the clients' digest parts);
@@ -203,6 +205,19 @@ def report(logs, run_dir, scenario):
         places = len({rows[0][n][1] for n in common})
         check('figures', same and places > 1, "player %d's figure: %d rows on client 1, %d on client 2, the %d both have are %s, %d places" %
               (k, len(rows[0]), len(rows[1]), len(common), 'the same' if same else 'DIFFERENT', places))
+    # The room each walker is in, as X4's scripts are told (the figure rows carry player.room): out of its ship it is
+    # a room of the station, for a player 2..N as for player 1 (until 17 Nov a player 2..N stayed a child of its cockpit).
+    last_rooms = {}
+    for k in sorted(s['up']):
+        rows = clients[k]['figures'].get(k, {})
+        rooms = [rows[n][0] for n in sorted(rows)]
+        changed = len(rooms) > 1 and rooms[-1] != rooms[0]
+        last_rooms[k] = rooms[-1] if rooms else None
+        check('room', changed, 'player %d: %s' % (k, 'from room %s into room %s' % (rooms[0], rooms[-1]) if changed else
+                                                 'stayed in room %s' % (rooms[0] if rooms else '?')))
+    if s.get('meets') and len(last_rooms) == 2:
+        a, b = (last_rooms[k] for k in sorted(last_rooms))
+        check('room', a is not None and a == b, 'both players stand in room %s' % a if a == b else 'player rooms differ: %s and %s' % (a, b))
     for k, wanted in sorted(s.get('meets', {}).items()):
         there = [text for steps in clients[k]['after'].values() for op, ok, text in steps if op == 'foot_meet' and ok and text.startswith('there')]
         distance = float(field(there[0], 'distance')) if there else None

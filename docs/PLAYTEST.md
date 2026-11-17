@@ -609,8 +609,13 @@ python tools/dev/mission_matrix.py report CLIENT1.log CLIENT2.log [--run RUNDIR]
   twenty seconds and hit nothing, and the mine's proximity sensor never saw the ship; for player 1 the same kind of
   mine went off two seconds after the ship arrived. The cause was an order of two steps at the sector change (the
   surroundings were raised to full detail one step before the sector got its physics scene); fixed the same day.
-  Still open there: two players who meet in one sector (the one who arrives keeps its own ship's physics in the
-  scene of the sector it left, so it does not collide with what the other player's scene holds).
+  Players who meet and part (`mission_matrix.py meet [--mover 2 --to 1] [--leave OFFER] [--keep]`, the same day):
+  one player's ship is put next to another player's, in that player's sector; with `--leave` the other one then
+  jumps away with a stock offer. Read from both clients' memory after each: a ship that arrives has its physics
+  in the scene of the sector it is in; when player 1 arrives where player 2 is, the sector keeps its scene and
+  both ships are in it; when player 1 leaves a sector player 2 stays in, that sector keeps its scene and player
+  1's new sector gets one of its own at the moment the ship arrives. No desync in any of them. Not covered: a
+  flight through a gate instead of the test's jump, and more than two players.
 - A new type: an `Mt<Name>` cue beside the others (its `_Ref` cue names the library), a row in `TYPES` and, when the
   player has to act through the UI, a row in `OPS`.
 - What it found on its first run: every step behind a `<delay>` of player 2's mission ran as player 1 (the MD
@@ -619,7 +624,7 @@ python tools/dev/mission_matrix.py report CLIENT1.log CLIENT2.log [--run RUNDIR]
 
 ## Stations: docking, walking on the dock, seeing each other (built 16 Nov; two scripted clients on one PC)
 
-Not merged yet: branch `contrib/ferrite-station-walk`. Run with scripted input, not by people.
+In the integration branch since 17 Nov. Run with scripted input, not by people.
 
 - **Docking.** Each player flies to a station, asks for a dock (the station's menu, or the dock key) and X4 docks the
   ship. Before, the session stopped when X4 took a player's ship for the docking. Both players can do it at the same
@@ -632,9 +637,10 @@ Not merged yet: branch `contrib/ferrite-station-walk`. Run with scripted input, 
   character) where it stands; it walks while the player walks and stands when the player stands. You do not see your
   own. Session default `native_gate_foot_avatars`.
 - **Known faults.**
-  - A player 2..N on the dock is still counted as being in its ship's cockpit (the move into the dock's room is held
-    back; X4's own player is moved properly). Walking, turning and the view are right; what X4's scripts make of the
-    room (people to talk to, the transporter) is not tested.
+  - Rooms (17 Nov). A player 2..N who walks out of its ship is now in the station's rooms as player 1 is: X4's
+    scripts see it there and hear the change of room and of ship/station. Before, it stayed counted in its cockpit.
+    Still missing for a player 2..N: X4's transporter between rooms (the request is dropped), and sitting down is
+    still the get-up key from anywhere on the dock (the player is put back in its seat).
   - Pointing at a figure still shows "Talk"; it starts no conversation (the figure is titled "Player N").
   - Near a station the clients' checks disagreed (play mode goes on silently). Four causes, fixed on 17 Nov:
     the station people's animation choices moved the simulation's random numbers (a traffic ship's pilot got a
@@ -649,6 +655,16 @@ Not merged yet: branch `contrib/ferrite-station-walk`. Run with scripted input, 
     differed), and the meet, walk and undock tests agreed in every digest part at every tick, the runtime ID word
     included. One earlier run with a real mouse over a test window had a world mismatch that is not explained. The
     Linux gate has none of these fixes yet.
+  - One more cause, found on 17 Nov after a run that split while the PC was short of memory (one client had one
+    traffic ship more than the other from then on). X4 keeps a station's traffic ship alive for as long as the
+    client's own UI refers to it (a target, a menu) and afterwards destroys it instead of keeping it for reuse; what
+    each client's UI refers to is that client's own business, so the two clients' stocks of reusable ships drifted
+    apart, and the next ship of that model was reused on one client and built on the other. A client's UI no longer
+    holds such ships in the simulation (`native_gate_ui_holds`, a default). In a 3600 tick run the two clients' UIs
+    had asked for 6314 and 6578 holds, never the same. The split itself was not reproduced (stalling one client's
+    threads or capping its memory did not bring it back), so that this was its cause is likely, not proven (`tools/dev/client_squeeze.py` is the tool that stalls or caps one
+    test client). What it
+    costs: a traffic ship you have targeted can leave while targeted.
   - Not tried: three or more players, a hot join while someone is docked or on the dock, a docked ship's death,
     the Linux gate, two PCs.
 - **The test** (starts its own windowed clients with disposable profiles, prints a check list, saves pictures of both

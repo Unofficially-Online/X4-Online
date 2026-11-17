@@ -346,6 +346,7 @@ static void pres_stop_presenting(const char *why) {
     pres_failed=1;pnat_async_fail(why);
 }
 static int pres_has_seat(void) {return pslots[pres_slot].seated;}
+static unsigned char *pres_room;static int pres_room_is;   /* the open scope's room, and whether it is one */
 static int pres_enter(void) {
     pslot_slot *s=&pslots[pres_slot];unsigned char *universe=NULL,*now=NULL,*p1=pslot_p1;unsigned n=0,p=0,bank=0;
     if(!pres_active) return 0;
@@ -379,24 +380,27 @@ static int pres_enter(void) {
         void *none[3]={&s->vector[0],&s->vector[0],&s->vector[0]};
         memcpy(p1+PRES_VECTOR,none,sizeof(none));InterlockedIncrement64(&pres_walk_scopes);
     } else memcpy(p1+PRES_VECTOR,s->player+PRES_VECTOR,sizeof(pres_vector_saved));
-    pres_parent_saved=*(unsigned char *volatile*)(p1+PRES_PARENT);*(unsigned char *volatile*)(p1+PRES_PARENT)=s->room;
+    /* The room the slot's player is in: its seat's, or the one it walked into (lockstep_pilot_foot_body.h); kept for
+     * the scope's exit. */
+    pres_room=pslot_at(s);pres_room_is=!s->roomless || s->walk_room!=NULL;
+    pres_parent_saved=*(unsigned char *volatile*)(p1+PRES_PARENT);*(unsigned char *volatile*)(p1+PRES_PARENT)=pres_room;
     pres_view_at=p1+PRES_VIEW_CACHE+bank*PRES_VIEW_STRIDE;
-    pres_view_parent_saved=*(unsigned char *volatile*)pres_view_at;*(unsigned char *volatile*)pres_view_at=s->room;
+    pres_view_parent_saved=*(unsigned char *volatile*)pres_view_at;*(unsigned char *volatile*)pres_view_at=pres_room;
     /* The room as the player's room: only when it is a room (a ship without one keeps its attention). */
-    if(!s->roomless) {
-        memcpy(&pres_room_attention_saved,s->room+PRES_ATTENTION,4);
-        memcpy(&pres_room_view_attention_saved,s->room+PRES_VIEW_ATTENTION+bank*PRES_VIEW_STRIDE,4);
-        *(volatile int*)(s->room+PRES_ATTENTION)=PRES_ROOM_ATTENTION;
-        *(volatile int*)(s->room+PRES_VIEW_ATTENTION+bank*PRES_VIEW_STRIDE)=PRES_ROOM_ATTENTION;
+    if(pres_room_is) {
+        memcpy(&pres_room_attention_saved,pres_room+PRES_ATTENTION,4);
+        memcpy(&pres_room_view_attention_saved,pres_room+PRES_VIEW_ATTENTION+bank*PRES_VIEW_STRIDE,4);
+        *(volatile int*)(pres_room+PRES_ATTENTION)=PRES_ROOM_ATTENTION;
+        *(volatile int*)(pres_room+PRES_VIEW_ATTENTION+bank*PRES_VIEW_STRIDE)=PRES_ROOM_ATTENTION;
     }
     pres_main_at=NULL;
     {   unsigned other=bank;
         if(read_local(pnat_base+PRES_MAIN_INDEX,&other,4) && other<=1 && other!=bank) {
             pres_main_at=p1+PRES_VIEW_CACHE+other*PRES_VIEW_STRIDE;
-            pres_main_parent_saved=*(unsigned char *volatile*)pres_main_at;*(unsigned char *volatile*)pres_main_at=s->room;
-            if(!s->roomless) {
-                memcpy(&pres_main_attention_saved,s->room+PRES_VIEW_ATTENTION+other*PRES_VIEW_STRIDE,4);
-                *(volatile int*)(s->room+PRES_VIEW_ATTENTION+other*PRES_VIEW_STRIDE)=PRES_ROOM_ATTENTION;
+            pres_main_parent_saved=*(unsigned char *volatile*)pres_main_at;*(unsigned char *volatile*)pres_main_at=pres_room;
+            if(pres_room_is) {
+                memcpy(&pres_main_attention_saved,pres_room+PRES_VIEW_ATTENTION+other*PRES_VIEW_STRIDE,4);
+                *(volatile int*)(pres_room+PRES_VIEW_ATTENTION+other*PRES_VIEW_STRIDE)=PRES_ROOM_ATTENTION;
             }
         }
     }
@@ -417,15 +421,15 @@ static void pres_leave(void) {
     mpp_active_leave(pres_slot,0);
     pres_foot_leave(p1,s);
     peye_leave();
-    if(!s->roomless) {
+    if(pres_room_is) {
         size_t bank=(size_t)(pres_view_at-(p1+PRES_VIEW_CACHE));
-        *(volatile int*)(s->room+PRES_ATTENTION)=pres_room_attention_saved;
-        *(volatile int*)(s->room+PRES_VIEW_ATTENTION+bank)=pres_room_view_attention_saved;
+        *(volatile int*)(pres_room+PRES_ATTENTION)=pres_room_attention_saved;
+        *(volatile int*)(pres_room+PRES_VIEW_ATTENTION+bank)=pres_room_view_attention_saved;
     }
     if(pres_main_at) {
         const size_t other=(size_t)(pres_main_at-(p1+PRES_VIEW_CACHE));
-        if(!s->roomless) *(volatile int*)(s->room+PRES_VIEW_ATTENTION+other)=pres_main_attention_saved;
-        if(*(unsigned char *volatile*)pres_main_at==s->room) *(unsigned char *volatile*)pres_main_at=pres_main_parent_saved;   /* else the engine's own by now */
+        if(pres_room_is) *(volatile int*)(pres_room+PRES_VIEW_ATTENTION+other)=pres_main_attention_saved;
+        if(*(unsigned char *volatile*)pres_main_at==pres_room) *(unsigned char *volatile*)pres_main_at=pres_main_parent_saved;   /* else the engine's own by now */
         pres_main_at=NULL;
     }
     *(unsigned char *volatile*)pres_view_at=pres_view_parent_saved;
@@ -569,7 +573,7 @@ static int pres_anchor_placed(unsigned char *universe,const pslot_slot *s) {
         if(!read_local(universe+PRES_UI_ANCHOR+8*i,&at,8) || !at) continue;
         for(unsigned step=0;at && step<4;step++) {
             if(!read_local(at+PRES_PARENT,&at,8)) break;
-            if(at==s->room || (at && at==pslot_p1)) return 1;
+            if(at==pslot_at(s) || (at && at==pslot_p1)) return 1;
         }
     }
     return 0;

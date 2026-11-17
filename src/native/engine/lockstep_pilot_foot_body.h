@@ -235,8 +235,11 @@ static int pfbody_release_slot(unsigned k) {
 /* Asked about one component (any thread X4 kills on): 1 spares it. A slot's seat ship or cockpit room: that slot's body
  * off the room now, in its scope, where one can open (the frame thread outside any scope and d95180); otherwise it
  * stays and is spared below when the walk reaches it, and the death pass takes it off. */
+static void pfbody_walk_home(unsigned k,int rebase);
 __attribute__((used,noinline)) static int pfbody_kill_query(unsigned char *component) {
     unsigned mask=pfbody_mask;
+    /* The room a walking slot went to is being killed: its pointer home (no pose change: that room goes). */
+    for(unsigned k=2;component && k<=PILOT_SLOTS;k++) if(pslots[k].walk_room==component) pfbody_walk_home(k,0);
     if(!mask || !component) return 0;
     for(unsigned k=2;k<=PILOT_SLOTS;k++) {
         if(!(mask>>(k-1)&1u)) continue;
@@ -424,15 +427,38 @@ static unsigned pfbody_move_parked(void *self,void **out,unsigned capacity) {
  * of 68 degrees (its own client looked at the sky), and it could not strafe there.
  * Here: (1) before a parked walking slot's Move the gate runs vfunc 33 on its controller, in its scope, with the
  * thread's game time, as 748120 does (the +0x1ec test is not made: X4's own walking player is always at that level;
- * the value seen is in the status). (2) STOPGAP, named as one: the room change itself is held. The Player's vfunc 24
- * entry points at a wrapper that drops a ChangeRoomEvent for a slot's player: it stays a child (by its upward pointer)
- * of its seat's room and walks the dock in that room's frame, which is rigid with the docked ship. Everything that
- * takes a slot's parent for its seat's room (the scope, the checks, the bodies, the eye, the sit-down) stays right.
- * What it costs: X4's scripts see that player in its ship's room while it stands on the dock, and X4 posts the event
- * again every frame. The real move (ConnectTo into the new room under the body module's guards, and back at the
- * sit-down) is not built. Without the wrapper (pin mismatch) step (1) is not run either: X4's handler would connect
- * a slot's player into a room with no guard.
- * Status drive=installed/steps/skipped room=held/passed attn=<+0x1ec of the last driven player>. */
+ * the value seen is in the status).
+ * (2) The room change (17 Nov; until then the event was dropped and a slot's player walked the dock as a child of its
+ * cockpit). What X4's handler 55d2a0 does with (room, no offset) [F]: nothing for an entity in the Universe's set
+ * +0x240, nothing when the room is the entity's nearest class 0x54 ancestor already, else 3d8420(entity, the filter of
+ * the entity's connection tag, room, NULL) = ConnectTo keeping the place in the world (its vfunc 624 gets
+ * offset == NULL as that flag): Component::vfunc624 (3d7010) moves it between the rooms' child lists,
+ * Positional::vfunc624 (748790) tells its movement controller (vfunc 36, 10b940 -> vfunc 34; a FirstPersonController's
+ * is d81b00: its pose, +0x20 while it walks, and its velocity +0x280 go from the old parent's frame into the new
+ * one's by Component::GetTransformRelativeTo), and Entity::vfunc624 (553660) posts the room and object notices
+ * (to the two rooms, a ChangedRoomEvent to the entity, and more).
+ * A walking slot's player is not in the tree (parked: its parent is an upward pointer), so the list part has nothing
+ * to do. The Player's vfunc 24 entry points at a wrapper; for a walking, parked slot's player and a room without an
+ * offset it does the rest in the slot's scope: the upward pointer to the new room, then X4's own d81b00 on its
+ * controller with the two rooms (the walk goes on at the same place in the world), and the slot remembers the room
+ * (walk_room; NULL again when the room is its seat's). The scope's exit check, the walking check, the presented eye
+ * and the presentation scope take the slot's room from there (pslot_at). A sit-down puts the pointer back to the
+ * seat's room first (pfbody_walk_home: the walk back to the seat is not replayed, as before); the seat's end clears
+ * it with the pointer; a room that X4 kills while a slot stands in it sends the pointer home in the kill guard.
+ * What the scripts hear: of 553660's notices the two on the entity itself, U::ChangedObjectEvent (when the object
+ * above the room changes: ship to station and back) and U::ChangedRoomEvent, old and new ID, posted deferred on P_k
+ * by the death module's poster (lockstep_pilot_death.h pvehk_event_post: MD's event_object_changed_object /
+ * event_object_changed_room on player.entity, 12 and 35 uses in the stock base scripts; the same two a slot's suit
+ * exit posts). The sit-down from another room posts them too (station to ship).
+ * STOPGAPS, named as such:
+ *   - 553660's notices to the rooms, the zone and the other ancestors are not posted (no stock base script listens
+ *     to them for a player);
+ *   - a room change with an offset (X4's transporter: the same handler, room and place) is still dropped for a
+ *     slot's player, and so is one for a slot that is not walking or whose body is in the tree (counted held);
+ *   - the Universe's set +0x240 is not asked.
+ * Without the wrapper (pin mismatch) step (1) is not run either: X4's handler would connect a slot's player into a
+ * room with no guard.
+ * Status drive=installed/steps/skipped room=held/passed/moved/home/notices attn=<+0x1ec of the last driven player>. */
 #define PFBODY_FPC_STEP 0xd81340u
 #define PFBODY_FPC_STEP_SLOT 33u
 #define PFBODY_ROOM_ENTRY 0x2b32a68u      /* U::Player vtable 0x2b329a8 slot 24 */
@@ -440,19 +466,83 @@ static unsigned pfbody_move_parked(void *self,void **out,unsigned capacity) {
 #define PFBODY_ROOM_SIZE 0x26bu
 #define PFBODY_ROOM_SHA "5a8c319516da4770543b273560bebaf077560c4b5899a7a5f359f87ae4515234"
 #define PFBODY_FPC_STEP_SHA "8bff03d7d9524cb6dd80ac624dcb5f56f9319c9de1ef70af008f3b4d32892cc7"   /* its first 0x40 bytes */
+#define PFBODY_FPC_REBASE 0xd81b00u        /* FirstPersonController vfunc 34: (controller, old parent, new parent) */
+#define PFBODY_FPC_REBASE_SLOT 34u
+#define PFBODY_FPC_REBASE_SIZE 0x1dbu
+#define PFBODY_FPC_REBASE_SHA "36dc0103859be5aa034359b49f0d406acdb9c32044f9d0ebdede9e29e97e66e8"
 typedef void (*pfbody_room_fn)(void *self,void *target,double time,void *room,void *extra,unsigned char a,unsigned char b);
+typedef void (*pfbody_rebase_fn)(void *controller,void *from,void *to);
+static pfbody_rebase_fn pfbody_rebase;      /* the image's at the arming, a test's */
 static int pfbody_room_installed,pfbody_drive_attention=-1;
-static volatile LONG64 pfbody_drives,pfbody_drive_skips,pfbody_rooms_held,pfbody_rooms_passed;
-static uint64_t pfbody_room_asked;   /* the runtime ID of the room the last held event named */
+static volatile LONG64 pfbody_drives,pfbody_drive_skips,pfbody_rooms_held,pfbody_rooms_passed,pfbody_rooms_moved,pfbody_rooms_home;
+static uint64_t pfbody_room_asked;   /* the runtime ID of the room the last event for a slot's player named */
+static unsigned char *pfslot_walking_fpc(unsigned k);   /* lockstep_pilot_foot_slots.h */
+/* X4's own routine on a walking slot's controller: its pose from one parent's frame into another's. */
+static int pfbody_rebase_call(unsigned char *fpc,unsigned char *from,unsigned char *to) {
+    void **vt=NULL;void *entry=NULL;int fault=0;
+    if(!pfbody_rebase || !fpc || !read_local(fpc,&vt,8) || !vt || !read_local(vt+PFBODY_FPC_REBASE_SLOT,&entry,8) || entry!=(void*)pfbody_rebase) return 0;
+    __try {pfbody_rebase(fpc,from,to);}
+    __except(GetExceptionCode()==EXCEPTION_ACCESS_VIOLATION?EXCEPTION_EXECUTE_HANDLER:EXCEPTION_CONTINUE_SEARCH) {fault=1;}
+    return !fault;
+}
+/* The ID of the nearest component of a class at or above one (X4's own class test, vtable +0x11e8); 0: none. */
+static uint64_t pfbody_up_id(unsigned char *c,int cls) {
+    for(unsigned depth=0;c && depth<32;depth++) {
+        void **vt=NULL;unsigned char is=0;uint64_t id=0;int fault=0;
+        if(!read_local(c,&vt,8) || !vt) return 0;
+        __try {is=((unsigned char(*)(void*,int))vt[0x11e8/8])(c,cls);}
+        __except(GetExceptionCode()==EXCEPTION_ACCESS_VIOLATION?EXCEPTION_EXECUTE_HANDLER:EXCEPTION_CONTINUE_SEARCH) {fault=1;}
+        if(fault) return 0;
+        if(is) return read_local(c+8,&id,8)?id:0;
+        if(!read_local(c+0x70,&c,8)) return 0;
+    }
+    return 0;
+}
+/* What MD hears of a slot's room change (header): the object above the room when it changed, then the room. */
+static volatile LONG64 pfbody_room_notices;
+static void pfbody_room_notice(unsigned k,unsigned char *old,unsigned char *room) {
+    double now=0;
+    if(!pvehk_events_on || !old || !room || !pnat_fn.time || !pnat_fn.time(&now)) return;
+    pvehk_event_post(pslots[k].player,PVEHK_EVENT_OBJECT,pfbody_up_id(old,0x49),pfbody_up_id(room,0x49),now);
+    pvehk_event_post(pslots[k].player,PVEHK_EVENT_ROOM,pfbody_up_id(old,0x54),pfbody_up_id(room,0x54),now);
+    InterlockedIncrement64(&pfbody_room_notices);
+}
+/* A walking, parked slot's player into another room (header (2)); 1 moved (or there already), 0 not: held. */
+static int pfbody_walk_to(unsigned k,unsigned char *room) {
+    pslot_slot *s=&pslots[k];unsigned char *fpc=pfslot_walking_fpc(k),*old=NULL,life=1,in=0;
+    if(!pfbody_rebase || !fpc || !s->walking || (pfbody_mask>>(k-1)&1u) || pilot_slots[k-1].dead || pslot_ship_dying(s)) return 0;
+    if(!read_local(s->player+0x70,&old,8) || !old || old!=pslot_at(s)) return 0;
+    if(room==old) return 1;
+    if(!read_local(room+PFBODY_LIFECYCLE,&life,1) || life || !read_local(room+PFBODY_PLACED,&in,1) || !in) return 0;   /* dying, or out of the world */
+    const int own=pstk_scope_slot==k;
+    if(!own && (pstk_scope_slot || !pslot_enter(k))) return 0;   /* X4 asks again next frame */
+    *(unsigned char *volatile*)(s->player+0x70)=room;s->walk_room=room==s->room?NULL:room;
+    const int rebased=pfbody_rebase_call(fpc,old,room);
+    if(!own && !pslot_leave(k)) pslot_async("room_leave");
+    if(!rebased) pslot_async("room_rebase");
+    else pfbody_room_notice(k,old,room);
+    InterlockedIncrement64(&pfbody_rooms_moved);
+    return 1;
+}
+/* Before a sit-down (lockstep_pilot_foot_slots.h, in the slot's scope), and from the kill guard (rebase 0: the room is
+ * being killed): a slot that stands in another room is under its seat's room again. */
+static void pfbody_walk_home(unsigned k,int rebase) {
+    pslot_slot *s=k>=2 && k<=PILOT_SLOTS?&pslots[k]:NULL;
+    if(!s || !s->walk_room || !s->player) return;
+    unsigned char *old=s->walk_room;
+    *(unsigned char *volatile*)(s->player+0x70)=s->room;s->walk_room=NULL;
+    if(rebase && s->room) {(void)pfbody_rebase_call(pfslot_walking_fpc(k),old,s->room);pfbody_room_notice(k,old,s->room);}
+    InterlockedIncrement64(&pfbody_rooms_home);
+}
 static void pfbody_room(void *self,void *target,double time,void *room,void *extra,unsigned char a,unsigned char b) {
     for(unsigned k=2;self && k<=PILOT_SLOTS;k++) if(pslots[k].player==self && pslots[k].seated) {
         if(room) read_local((unsigned char*)room+8,&pfbody_room_asked,8);
+        if(target==self && room && !extra && pfbody_walk_to(k,room)) return;
         InterlockedIncrement64(&pfbody_rooms_held);return;
     }
     InterlockedIncrement64(&pfbody_rooms_passed);
     ((pfbody_room_fn)(image+PFBODY_ROOM_HANDLER))(self,target,time,room,extra,a,b);
 }
-static unsigned char *pfslot_walking_fpc(unsigned k);   /* lockstep_pilot_foot_slots.h */
 static void pfbody_move_drive(void *self,double now) {
     if(!pfbody_room_installed || pstk_scope_slot) return;
     for(unsigned k=2;self && k<=PILOT_SLOTS;k++) if(pslots[k].player==self) {
@@ -472,7 +562,11 @@ static void pfbody_move_drive(void *self,double now) {
 static void pfbody_room_install(int on) {
     if(on && !pfbody_room_installed) {
         if(hash_ok(image+PFBODY_ROOM_HANDLER,PFBODY_ROOM_SIZE,PFBODY_ROOM_SHA) && hash_ok(image+PFBODY_FPC_STEP,0x40,PFBODY_FPC_STEP_SHA) &&
-           script_rng_slot_swap(PFBODY_ROOM_ENTRY,image+PFBODY_ROOM_HANDLER,(void*)pfbody_room)) pfbody_room_installed=1;
+           script_rng_slot_swap(PFBODY_ROOM_ENTRY,image+PFBODY_ROOM_HANDLER,(void*)pfbody_room)) {
+            pfbody_room_installed=1;
+            /* The move needs X4's rebase routine as pinned; without it every room change of a slot stays held. */
+            if(!pfbody_rebase && hash_ok(image+PFBODY_FPC_REBASE,PFBODY_FPC_REBASE_SIZE,PFBODY_FPC_REBASE_SHA)) pfbody_rebase=(pfbody_rebase_fn)(image+PFBODY_FPC_REBASE);
+        }
     } else if(!on && pfbody_room_installed) {
         if(script_rng_slot_swap(PFBODY_ROOM_ENTRY,(void*)pfbody_room,image+PFBODY_ROOM_HANDLER)) pfbody_room_installed=0;
     }
@@ -516,6 +610,7 @@ static int pfbody_arm_using(void) {
     pfbody_failed=0;pfbody_mask=0;pfbody_parked=0;pfbody_seated_since=0;memset(pfbody_back,0,sizeof(pfbody_back));pfbody_returns=pfbody_roomless=0;
     pfbody_kill_installed=0;pfbody_kill_off=pfbody_kill_spared=pfbody_kill_late=0;pfbody_held=0;memset(pfbody_no_camera,0,sizeof(pfbody_no_camera));
     pfbody_moves_scoped=pfbody_moves_parked=pfbody_moves_plain=0;pfbody_drives=pfbody_drive_skips=pfbody_rooms_held=pfbody_rooms_passed=0;
+    pfbody_rooms_moved=pfbody_rooms_home=pfbody_room_notices=0;
     pfbody_moves_install(1);
     pfbody_stage="armed";pfbody_why="-";pfbody_armed=1;return 1;
 }
@@ -534,12 +629,12 @@ static int pfbody_arm(void) {
     return pfbody_arm_using();
 }
 static int pfbody_status(char *out,size_t capacity) {
-    int n=snprintf(out,capacity," bodies=%s bodies_why=%s bodies_mask=%x connects=%lld/%lld body_checks=%lld parks=%lld/%lld returns=%lld kill=%d/%lld/%lld/%lld roomless=%lld held=%lld placed=%lld/%lld moves=%lld/%lld/%lld drive=%d/%lld/%lld room=%lld/%lld attn=%d",
+    int n=snprintf(out,capacity," bodies=%s bodies_why=%s bodies_mask=%x connects=%lld/%lld body_checks=%lld parks=%lld/%lld returns=%lld kill=%d/%lld/%lld/%lld roomless=%lld held=%lld placed=%lld/%lld moves=%lld/%lld/%lld drive=%d/%lld/%lld room=%lld/%lld/%lld/%lld/%lld attn=%d",
         pfbody_stage,pfbody_why,pfbody_mask,(long long)pfbody_connects,(long long)pfbody_disconnects,(long long)pfbody_checks,(long long)pfbody_parks,
         (long long)pfbody_unparks,(long long)pfbody_returns,pfbody_kill_installed,(long long)pfbody_kill_off,(long long)pfbody_kill_spared,(long long)pfbody_kill_late,(long long)pfbody_roomless,
         (long long)pfbody_held,(long long)pfbody_marks,(long long)pfbody_unmarks,
         (long long)pfbody_moves_scoped,(long long)pfbody_moves_parked,(long long)pfbody_moves_plain,
         pfbody_room_installed,(long long)pfbody_drives,(long long)pfbody_drive_skips,(long long)pfbody_rooms_held,(long long)pfbody_rooms_passed,
-        pfbody_drive_attention);
+        (long long)pfbody_rooms_moved,(long long)pfbody_rooms_home,(long long)pfbody_room_notices,pfbody_drive_attention);
     return n>0 && (size_t)n<capacity?n:0;
 }
