@@ -1148,7 +1148,11 @@ static int pslot_replay(uint64_t tick) {
         if(pstk_slot_frames[k-1].tick!=tick) return pslot_fail("replay_missing");
         if(!pslot_enter(k)) return pslot_fail("replay_scope");
         int replayed=0,left=0;
-        __try {replayed=pstk_slot_replay(k,now);if(replayed && scl_armed) scl_frame_slot(k,now);} __finally {left=pslot_leave(k);}
+        __try {
+            replayed=pstk_slot_replay(k,now);
+            if(replayed && scl_armed) scl_frame_slot(k,now);
+            if(replayed && scm_armed) scm_frame_slot(k);
+        } __finally {left=pslot_leave(k);}
         if(!left) return pslot_fail("replay_leave");
         if(!replayed) return pslot_fail("replay_refused");
         InterlockedIncrement64(&s->replays);

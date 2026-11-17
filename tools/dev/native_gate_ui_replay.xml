@@ -585,7 +585,7 @@
         <cue name="MtReputation_Drive">
          <delay exact="5s"/>
          <actions>
-          <add_faction_relation faction="faction.player" otherfaction="faction.argon" value="0.0064"/>
+          <add_faction_relation faction="faction.player" otherfaction="faction.argon" value="0.0064" reason="relationchangereason.missioncompleted"/>
           <debug_text text="'[X4LAN] MT_DRIVE type=%s slot=%s player=%s dummy=%s distance=%s time=%s'.[$Type, $Slot, player.entity, @$Dummy, @$Dummy.distanceto.{player.entity}, player.age]"/>
          </actions>
         </cue>
@@ -709,6 +709,88 @@
           <do_all exact="$Wall.count" counter="$I" reverse="true">
            <destroy_object object="$Wall.{$I}" explosion="false"/>
           </do_all>
+         </actions>
+        </cue>
+       </cues>
+      </cue>
+      <!-- Scan: the stock "scan this station" step (RML_Scan with a station: its modules are revealed by flying
+           close and looking at them). Three seconds after the accept the player's ship is put outside the outermost
+           module of the nearest station of its sector (one module size plus 100 m from its centre, on the line from
+           the station's centre), looking at it, and eight seconds later at half that distance. The library ends with
+           1 once the station's revealed share has grown by one point. Live, 17 Nov: nothing at the first distance,
+           the module about 1.5 s after the second, for player 1 and for player 2, with and without the scan mode.
+           The rows name the share every two seconds and the objects the player discovered. The ship stays at the
+           station: this type runs last. -->
+      <cue name="MtScan" onfail="cancel">
+       <conditions><check_value value="$Type == 'scan'"/></conditions>
+       <actions>
+        <find_station name="$Station" space="player.sector" sortbydistanceto="player.ship"/>
+        <find_object_component name="$Modules" object="$Station" class="class.module" multiple="true"/>
+        <set_value name="$Before" exact="$Station.revealedpercentage"/>
+        <set_value name="$Seen" exact="0"/>
+        <debug_text text="'[X4LAN] MT_SETUP type=%s slot=%s station=%s modules=%s revealed=%s distance=%s time=%s'.[$Type, $Slot, $Station.idcode, $Modules.count, $Before, $Station.distanceto.{player.ship}, player.age]"/>
+       </actions>
+       <cues>
+        <cue name="MtScan_Ref" ref="md.RML_Scan.Scan">
+         <param name="MissionCue" value="$Mission"/>
+         <param name="EndSignalCue" value="MtEnd"/>
+         <param name="ScanObjective" value="objective.scan"/>
+         <param name="ObjectiveText" value="'X4LAN scan'"/>
+         <param name="TargetStation" value="$Station"/>
+         <param name="ScanType" value="0"/>
+         <param name="ScanPercentage" value="$Before + 1"/>
+        </cue>
+        <cue name="MtScan_Drive">
+         <delay exact="3s"/>
+         <actions>
+          <set_value name="$Far" exact="-1m"/>
+          <do_all exact="$Modules.count" counter="$I">
+           <do_if value="$Modules.{$I}.distanceto.{$Station} gt $Far">
+            <set_value name="$Far" exact="$Modules.{$I}.distanceto.{$Station}"/>
+            <set_value name="$Module" exact="$Modules.{$I}"/>
+           </do_if>
+          </do_all>
+          <create_position name="$MPos" space="$Station.zone" object="$Module"/>
+          <create_position name="$SPos" space="$Station.zone" object="$Station"/>
+          <set_value name="$Off" exact="$Module.size + 100m"/>
+          <set_value name="$Scale" exact="($Off)f / ([$Far, 1m].max)f"/>
+          <set_value name="$Spot" exact="position.[$MPos.x + ($MPos.x - $SPos.x) * $Scale, $MPos.y + ($MPos.y - $SPos.y) * $Scale, $MPos.z + ($MPos.z - $SPos.z) * $Scale]"/>
+          <create_orientation name="$Look" orientation="look_at" refposition="$MPos">
+           <position value="$Spot"/>
+          </create_orientation>
+          <warp object="player.ship" zone="$Station.zone">
+           <position value="$Spot"/>
+           <rotation value="$Look"/>
+          </warp>
+          <debug_text text="'[X4LAN] MT_DRIVE type=%s slot=%s player=%s ship=%s module=%s size=%s distance=%s revealed=%s activity=%s time=%s'.[$Type, $Slot, player.entity, player.ship, $Module.macro, $Module.size, $Module.distanceto.{player.ship}, $Station.revealedpercentage, player.activity, player.age]"/>
+         </actions>
+        </cue>
+        <cue name="MtScan_Closer">
+         <delay exact="11s"/>
+         <actions>
+          <set_value name="$Scale" exact="$Scale / 2"/>
+          <set_value name="$Spot" exact="position.[$MPos.x + ($MPos.x - $SPos.x) * $Scale, $MPos.y + ($MPos.y - $SPos.y) * $Scale, $MPos.z + ($MPos.z - $SPos.z) * $Scale]"/>
+          <warp object="player.ship" zone="$Station.zone">
+           <position value="$Spot"/>
+           <rotation value="$Look"/>
+          </warp>
+          <debug_text text="'[X4LAN] MT_DRIVE type=%s slot=%s player=%s ship=%s module=%s size=%s distance=%s revealed=%s activity=%s time=%s'.[$Type, $Slot, player.entity, player.ship, $Module.macro, $Module.size, $Module.distanceto.{player.ship}, $Station.revealedpercentage, player.activity, player.age]"/>
+         </actions>
+        </cue>
+        <cue name="MtScan_Watch">
+         <delay exact="2s"/>
+         <actions>
+          <debug_text text="'[X4LAN] MT_SCAN slot=%s player=%s revealed=%s seen=%s activity=%s distance=%s time=%s'.[$Slot, player.entity, $Station.revealedpercentage, $Seen, player.activity, @$Module.distanceto.{player.ship}, player.age]"/>
+          <reset_cue cue="this"/>
+         </actions>
+        </cue>
+        <cue name="MtScan_Seen" instantiate="true">
+         <conditions><event_player_discovered_object/></conditions>
+         <actions>
+          <set_value name="$Seen" operation="add"/>
+          <do_if value="$Seen le 3 or event.param.hascontext.{$Station}">
+           <debug_text text="'[X4LAN] MT_SCAN_SEEN slot=%s player=%s object=%s of_station=%s revealed=%s time=%s'.[$Slot, player.entity, event.param.macro, event.param.hascontext.{$Station}, $Station.revealedpercentage, player.age]"/>
+          </do_if>
          </actions>
         </cue>
        </cues>

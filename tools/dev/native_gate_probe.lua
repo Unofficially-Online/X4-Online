@@ -5701,6 +5701,12 @@ local function frame()
     assert(cfg.native_gate_scan_long==true and gate.scan_long(1)==1,'scan long refused '..tostring(gate.scan_long_status and gate.scan_long_status()))
     log('SCAN_LONG_ARMED '..tostring(gate.scan_long_status()))
    end
+   -- Scan mode for every player (lockstep_scan_mode.h): the mode's key rides the record, players 2..N get the
+   -- activity on their own player. A gate without it runs as before (nobody can switch the mode on in a session).
+   if cfg.native_gate_scan_mode and gate.scan_mode then
+    assert(cfg.native_gate_scan_mode==true and gate.scan_mode(1)==1,'scan mode refused '..tostring(gate.scan_mode_status and gate.scan_mode_status()))
+    log('SCAN_MODE_ARMED '..tostring(gate.scan_mode_status()))
+   end
    -- Camera follow: this client watches its own slot ship through the stock
    -- target view unless that ship is the occupied one. Differing cameras need
    -- the render RNG split (slot 10 draws stay off the simulation word).
@@ -6262,6 +6268,7 @@ local function frame()
   ticklog.status('VIEW_POINTS',tick,gate.view_points_status,'view points status unavailable')
   if cfg.native_gate_view_cameras and gate.view_cameras_status then ticklog.status('VIEW_CAMERAS',tick,gate.view_cameras_status,'view cameras status unavailable') end
   if cfg.native_gate_scan_long and gate.scan_long_status then ticklog.status('SCAN_LONG',tick,gate.scan_long_status,'scan long status unavailable') end
+  if cfg.native_gate_scan_mode and gate.scan_mode_status then ticklog.status('SCAN_MODE',tick,gate.scan_mode_status,'scan mode status unavailable') end
   if cfg.native_gate_view_rows then
    for _=1,8192 do
     local row=gate.view_points_row(row_cursors.view)

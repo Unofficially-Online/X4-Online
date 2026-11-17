@@ -888,6 +888,12 @@ function K.script(plan,start,tools)
   if op=='travel' then call=function() tools.C.StartPlayerActivity('travel');return 'ffi' end
   elseif op=='travel_stop' then call=function() tools.C.StopPlayerActivity('travel');return 'ffi' end
   elseif op=='travel_key' then call=function() return tools.gate.pilot_stock_inject('action',0x12f,0) end
+  -- This client's scan mode key ({tick,'scan_key'}: on, the next one off), as travel_key.
+  elseif op=='scan_key' then call=function() return tools.gate.pilot_stock_inject('action',0x130,0) end
+  -- This client's scan mode on or off ({tick,'scan_mode',1|0}): the call X4's own mode switch ends in.
+  elseif op=='scan_mode' then call=function()
+    if e[3]==1 or e[3]==true then tools.C.StartPlayerActivity('scan') else tools.C.StopPlayerActivity('scan') end
+    return 'ffi' end
   elseif op=='target_slot' then call=function() return tools.C.SetSofttarget(tools.slot_id(e[3]),'') end
   elseif op=='target_none' then call=function() return tools.env.RemoveSofttarget() end
   elseif op=='match' then call=function() return tools.gate.pilot_stock_inject('state',0x5b,e[3]) end

@@ -524,7 +524,8 @@ static uint64_t uirep_get_ref(const unsigned char *in,uint32_t *check) {
 /* ---- travel: the two functions every activity start and stop ends in ---- */
 static int uirep_activity_valid(unsigned slot,int activity,int stop) {
     if(activity==UIREP_ACTIVITY_TRAVEL) return 1;
-    if(slot>=2) return activity==2 && scl_armed;           /* slots 2+: the adapter below has travel, and the long-range scan with lockstep_scan_long.h */
+    /* slots 2+: the adapter below has travel, the long-range scan with lockstep_scan_long.h, the scan mode with lockstep_scan_mode.h */
+    if(slot>=2) return (activity==2 && scl_armed) || (activity==3 && scm_armed);
     return activity>=(stop?0:1) && activity<=UIREP_ACTIVITY_MAX;
 }
 static void uirep_activity_capture(unsigned op,int activity,unsigned char flag) {
@@ -558,6 +559,12 @@ static void uirep_adapter_start(pslot_slot *s,int activity) {
         uirep_set_activity(s,activity);
         InterlockedIncrement64(&uirep_scope_start);return;
     }
+    if(activity==3 && scm_armed) {   /* md/modes.xml's scan mode: its one check is a ship the player sits in (a suit is one) */
+        if(!s->ship || !s->runtime || s->walking) {InterlockedIncrement64(&uirep_unavailable);++scm_unavailable;return;}
+        if(current) uirep_set_activity(s,0);
+        uirep_set_activity(s,activity);scm_ship[s-pslots]=s->runtime;
+        InterlockedIncrement64(&uirep_scope_start);++scm_starts;return;
+    }
     if(activity!=UIREP_ACTIVITY_TRAVEL) {InterlockedIncrement64(&uirep_scope_refused);return;}
     if(!uirep_fn.can_travel(s->ship) && !uirep_drive_active(s->ship)) {InterlockedIncrement64(&uirep_unavailable);return;}
     uint64_t id=0;
@@ -570,6 +577,7 @@ static void uirep_adapter_stop(pslot_slot *s,int activity) {
     int current=0;memcpy(&current,s->player+UIREP_PLAYER_ACTIVITY,4);
     if(!current || activity!=current) return;
     uirep_set_activity(s,0);
+    if(activity==3 && scm_armed) {scm_ship[s-pslots]=0;++scm_stops;}
     InterlockedIncrement64(&uirep_scope_stop);
 }
 static pslot_slot *uirep_scope_of_thread(void) {

@@ -22,7 +22,7 @@ it names whether a mission started and how many script errors came with it. It c
 sessions when X4LS_FIRST_PROFILE / --first-profile, --lanes and --display keep them apart, waits for the rows, prints
 the table and stops the clients it started. Exit code: 0 all passed, 1 a test failed or the clients split, 2 the run
 itself did not work. A mocked or scripted completion is not a person playing the mission: the actions that need a
-person's aim or a menu (shooting, scanning, docking, talking) are not covered by these tests.
+person or a menu (a ship's deep scan, docking, talking) are not covered by these tests.
 """
 import argparse
 import math
@@ -37,8 +37,8 @@ ROOT = Path(__file__).resolve().parents[2]
 
 # type -> (the stock library, what the test does in place of the player, the library's answer for X4's own player).
 # The MD cues of the same names start them. destroy: the target destroyed by nobody (the library's "destroyed, but
-# not by the player" answer); kill: by the player's own guns. Not here because MD has no action for it: a hull
-# repair, a scan, a dock, a talk.
+# not by the player" answer); kill: by the player's own guns; scan: a station's modules revealed by being close.
+# Not here because MD has no action for it: a hull repair, a ship's deep scan, a dock, a talk.
 TYPES = {
     'flyto': ('RML_FlyTo.FlyTo', 'the target is moved to 300 m from the player (arrival is a distance to that player)', '1'),
     'collect': ('RML_Collect_Inventory.CollectInventory', 'two inventory items are added to the player', '1'),
@@ -48,6 +48,8 @@ TYPES = {
     'target': ('RML_Long_Range_Scan.LongRangeScan', 'the player targets the object it was sent to find', '1'),
     'deploy': ('RML_DeployInPlace.DeployInPlace', 'the player launches a satellite with the call the stock menu makes', '1'),
     'kill': ('RML_Destroy_Components.DestroyComponents', "the player's own guns destroy targets ahead: the library must count a kill by the player", '1'),
+    # last: it leaves the player's ship at a station
+    'scan': ('RML_Scan.Scan', "the player's ship is put close to a station module, looking at it: the library must see the station revealed", '1'),
 }
 SLOT = '<slot>'
 # What a test needs in the clients' plans beside its offer and accept: ('all' every client | 'own' the player under
