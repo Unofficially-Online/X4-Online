@@ -319,6 +319,32 @@ static void test_created_capture_image(void) {
             if(!with) assert(world_hash_created_count==1 && strcmp(world_hash_state,session) && !world_hash_rows_taken);
             else assert(world_hash_created_count==2 && !strcmp(world_hash_state,session) && world_hash_rows_taken==2);
         }
+        assert(!world_hash_rows_left_out);
+        {   /* a created object the session held at T that the join save left out: an absent row of its own */
+            VirtualFree(world_hash_created,0,MEM_RELEASE);VirtualFree(world_hash_items,0,MEM_RELEASE);VirtualFree(world_hash_changed,0,MEM_RELEASE);
+            world_hash_items=NULL;world_hash_created=NULL;world_hash_changed=NULL;world_hash_count=world_hash_created_count=0;world_hash_scans=0;world_hash_tick=0;
+            {const unsigned objects=test_created_map_count;test_created_reset();test_created_map_count=objects;}
+            AcquireSRWLockExclusive(&created_lock);assert(created_live_add(101,z,1) && created_live_add(102,a,1));ReleaseSRWLockExclusive(&created_lock);
+            const uint64_t q=(1ull<<63)|0x1234567ull;assert(q!=z && q!=a && !created_runtime_of(q));
+            static join_id_rec more[4];
+            more[0]=(join_id_rec){0x9077,0x77,WORLD_KEY_SAVED,1};more[1]=(join_id_rec){0x9101,z,WORLD_KEY_CREATED,1};
+            more[2]=(join_id_rec){0x9102,a,WORLD_KEY_CREATED,1};more[3]=(join_id_rec){0x9103,q,WORLD_KEY_CREATED,1};
+            join_rx.loaded=1;join_rx.t.version=13;join_rx.t.ids=more;join_rx.t.nids=4;
+            world_hash_rows_taken=0;
+            assert(world_hash_capture_with(2,1,test_created_find));
+            assert(world_hash_created_count==3 && world_hash_rows_taken==2 && world_hash_rows_left_out==1);
+            int found=0;for(unsigned i=0;i<world_hash_created_count;i++) if(world_hash_created[i].saved==q) {found=1;assert(!world_hash_created[i].runtime);}
+            assert(found);
+            /* back to the two rows the next block expects */
+            VirtualFree(world_hash_created,0,MEM_RELEASE);VirtualFree(world_hash_items,0,MEM_RELEASE);VirtualFree(world_hash_changed,0,MEM_RELEASE);
+            world_hash_items=NULL;world_hash_created=NULL;world_hash_changed=NULL;world_hash_count=world_hash_created_count=0;world_hash_scans=0;world_hash_tick=0;
+            {const unsigned objects=test_created_map_count;test_created_reset();test_created_map_count=objects;}
+            AcquireSRWLockExclusive(&created_lock);assert(created_live_add(101,z,1) && created_live_add(102,a,1));ReleaseSRWLockExclusive(&created_lock);
+            static join_id_rec again[3];
+            again[0]=(join_id_rec){0x9077,0x77,WORLD_KEY_SAVED,1};again[1]=(join_id_rec){0x9101,z,WORLD_KEY_CREATED,1};again[2]=(join_id_rec){0x9102,a,WORLD_KEY_CREATED,1};
+            join_rx.t.ids=again;join_rx.t.nids=3;world_hash_rows_taken=0;
+            assert(world_hash_capture_with(2,1,test_created_find) && world_hash_created_count==2 && !world_hash_rows_left_out);
+        }
         {   /* taken once: the rows' entries are captured, so a later capture adds nothing */
             unsigned count=world_hash_created_count;
             assert(created_capture_rows(test_created_find,test_created_map,world_hash_created,&count,WORLD_HASH_CREATED_MAX) && count==2);

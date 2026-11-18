@@ -478,8 +478,19 @@ python tools/x4ls.py new-session --base-start x4ep1_gamestart_discover --players
   the joiner with the time of its load, so something on the joiner takes those references again in its first
   step after the load, as the session did after its own load at the start. And the world part of the digest
   differs from the joiner's first tick as before: the session's table holds 16 more created rows than the
-  joiner's (the saves do not differ in them), which the session reports as a desync at the handover. Both are
-  open.
+  joiner's (the saves do not differ in them), which the session reports as a desync at the handover.
+- The 16 rows (17 Nov, late evening): objects the session still held at the join tick that the join save does not
+  hold (in a battle; the joiner counts as many session records it cannot place, and the session's next capture no
+  longer finds them). The joiner's table took a row only for an object it has, so it stayed that many rows short
+  for good. Now it takes an absent row for each, as it does for an object that is gone. Run hq37 (join at tick
+  6060, 11 such objects): the two tables have the same number of rows from the first capture, and at tick 7200
+  three of the four parts of the world digest agree (alive, hull and shield, timing), where all four had
+  differed for good.
+- Still open after both: the motion part of the world digest differs (so the session still reports a desync at
+  the handover), and the runtime IDs part later (tick 7496 in hq37, 9173 in hq32). Which objects move
+  differently is the next thing to find; the reading above that the joiner takes zone references again in its
+  first step is not confirmed: a counter on the game's eight calls that take a reference showed none of them
+  running on either client in 6,000 ticks, so the counts change some other way.
 - A joiner started on the same PC beside freshly started clients of other sessions twice stayed at 90 MB without
   a log (hq20, the first control run). `x4ls join --same-pc` now frees X4's instance lock in the other launcher
   clients before it starts its client, as `x4ls play` does; in the second control run it freed one and the joiner

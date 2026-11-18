@@ -307,6 +307,7 @@ static int world_hash_compare(const void *a,const void *b) {
 }
 static int created_take_rows(const uint64_t *keys,uint32_t nkeys,world_hash_item *items,unsigned *count,unsigned capacity);
 static uint64_t world_hash_rows_taken;
+static unsigned world_hash_rows_left_out;   /* a joiner's rows of the session's created objects that its join save did not hold */
 static int world_hash_init(void) {
     if(!world_identities || world_identity_count<=0 || world_identity_count>WORLD_IDENTITY_CAPACITY/2 ||
        !hash_ok(image+0xced70,32,"de126e38d2532250fc386f851f355cdb4812bf6b4507ace0549728e27505f268") || !dock_state_pins()) return 0;
@@ -368,6 +369,16 @@ static int world_hash_init(void) {
             const int taken=created_take_rows(rows,nrows,world_hash_created,&world_hash_created_count,WORLD_HASH_CREATED_MAX);
             if(taken<0) return 0;
             world_hash_rows_taken=(uint64_t)taken;
+        }
+        /* ...and the ones the join save left out. hq32 (17 Nov, a join 100 s into a session with a battle): the session held
+         * 16 created objects at T that the joiner did not have (ATTN's missing count; the session's capture at T+1 found
+         * them present, the capture 510 ticks later did not), so the joiner was 16 rows short for good and the world state
+         * of the declared digest stayed apart with every common object equal. Each gets an absent row, as a gone object:
+         * the session's row reads the same once its object has left the map. */
+        world_hash_rows_left_out=0;
+        for(uint32_t i=0;i<nrows;i++) if(rows[i] && !created_runtime_of(rows[i])) {
+            if(world_hash_created_count>=WORLD_HASH_CREATED_MAX) return 0;
+            world_hash_created[world_hash_created_count++]=(world_hash_item){.runtime=0,.saved=rows[i]};++world_hash_rows_left_out;
         }
         if(world_hash_created_count>1) qsort(world_hash_created,world_hash_created_count,sizeof(*world_hash_created),world_hash_compare);
     }
