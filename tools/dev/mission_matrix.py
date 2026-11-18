@@ -28,7 +28,8 @@ mission's script: the kill credit, the end, the reward. The row of the mission's
 
 `run` starts its own windowed test clients with disposable profiles (the launcher's `x4ls play`), beside other running
 sessions when X4LS_FIRST_PROFILE / --first-profile, --lanes and --display keep them apart, waits for the rows, prints
-the table and stops the clients it started. Exit code: 0 all passed, 1 a test failed or the clients split, 2 the run
+the table and stops the clients it started. Every session logs the per-tick digest parts and runtime ID rows; when the
+clients split, the report names the parts and the ID keys that differ at that tick. Exit code: 0 all passed, 1 a test failed or the clients split, 2 the run
 itself did not work. A mocked or scripted completion is not a person playing the mission: the actions that need a
 person or a menu (docking, talking) are not covered by these tests.
 """
@@ -156,6 +157,7 @@ def table(logs, types, players, run=None):
         if desyncs:
             failed += 1
             print('FAIL: the clients split: ' + desyncs[0].strip()[:160])
+            print_lines(split_note(logs, desyncs[0]))
         if errors:
             failed += 1
             print('FAIL: %d error rows, first: %s' % (len(errors), errors[0].strip()[:200]))
@@ -171,6 +173,62 @@ def read_lines(path):
         return Path(path).read_text(encoding='latin-1').splitlines()
     except OSError:
         return []
+
+
+# Every test session logs, for each tick, the parts of the digest the clients compare and the runtime IDs taken (a
+# few megabytes a run): a split that shows once in many runs is then named by the run that had it.
+DIAGNOSTIC_SETS = ('native_gate_digest_parts={1,400000}', 'native_gate_runtime_ids_rows=true')
+SPLIT_TICK = re.compile(r'DESYNC tick=(\d+)')
+PARTS_ROW = re.compile(r'DIGEST_PARTS tick=(\d+) (.*)')
+IDS_ROW = re.compile(r'RUNTIME_IDS_ROW index=\d+ tick=(\d+) .*? keys=(\S*)')
+
+
+def print_lines(lines):
+    for line in lines:
+        print(line)
+
+
+def with_diagnostics(sets):
+    """The session's settings with the diagnostic rows, unless the caller set those keys itself."""
+    named = {extra.split('=', 1)[0] for extra in sets}
+    return list(sets) + [extra for extra in DIAGNOSTIC_SETS if extra.split('=', 1)[0] not in named]
+
+
+def split_note(logs, desync_line):
+    """What the clients' logs say about the tick of a split: the digest parts that differ there, and the runtime ID
+    keys taken a different number of times in that tick or the one before. Lines to print; [] without the rows."""
+    match = SPLIT_TICK.search(desync_line or '')
+    if not match:
+        return []
+    tick = int(match.group(1))
+    parts, keys = [], []
+    for path in logs:
+        mine, taken = {}, {}
+        for line in read_lines(path):
+            if 'DIGEST_PARTS tick=' in line:
+                row = PARTS_ROW.search(line)
+                if row and int(row.group(1)) == tick:
+                    mine = dict(re.findall(r'(\w+)=(\w+)', row.group(2)))
+            elif 'RUNTIME_IDS_ROW ' in line:
+                row = IDS_ROW.search(line)
+                if row and int(row.group(1)) in (tick - 1, tick):
+                    for item in row.group(2).split(','):
+                        key, _, count = item.partition(':')
+                        if key and count.isdigit():
+                            taken[(int(row.group(1)), key)] = int(count)
+        parts.append(mine)
+        keys.append(taken)
+    out = []
+    if all(parts):
+        differ = sorted({k for p in parts for k in p if any(q.get(k) != parts[0].get(k) for q in parts)} - {'hash'})
+        out.append('  at tick %d the clients differ in: %s' % (tick, ' '.join(differ) if differ else 'no part (only the whole)'))
+    if any(keys):
+        odd = sorted(k for k in set().union(*keys) if any(c.get(k, 0) != keys[0].get(k, 0) for c in keys))
+        for at, key in odd[:12]:
+            out.append('  runtime IDs, tick %d, key %s: %s' % (at, key, ' / '.join(str(c.get((at, key), 0)) for c in keys)))
+        if not odd:
+            out.append('  runtime IDs: the same keys the same number of times in ticks %d and %d' % (tick - 1, tick))
+    return out
 
 
 def below_normal(pids):
@@ -212,7 +270,7 @@ def session(args, plan, end, done, report, what):
     made = subprocess.run([sys.executable, str(ROOT / 'tools/build_play_overlay.py'), '--snapshot', str(args.snapshot), '--session', str(args.session),
                            '--gate-dll', str(args.gate_dll), '--out', str(overlay), '--players', str(args.players), '--mode', 'coop',
                            '--minutes', str(minutes), '--set', 'native_gate_ui_replay_script=' + plan] +
-                          [x for extra in args.set for x in ('--set', extra)], cwd=ROOT, env=env, capture_output=True, text=True)
+                          [x for extra in with_diagnostics(args.set) for x in ('--set', extra)], cwd=ROOT, env=env, capture_output=True, text=True)
     (work / 'overlay.log').write_text(made.stdout + made.stderr, encoding='utf-8')
     if made.returncode:
         print('the overlay was not built (%s):\n%s' % (work / 'overlay.log', (made.stdout + made.stderr)[-600:]))
@@ -342,6 +400,7 @@ def offers(args, players_under_test):
             rows = read_lines(Path(run_dir) / 'errors.log') if run_dir else []
             if bad:
                 print("FAIL (player %d's session): the clients split: %s" % (player, bad[0].strip()[:160]))
+                print_lines(split_note(logs, bad[0]))
             if rows:
                 print("FAIL (player %d's session): %d error rows, first: %s" % (player, len(rows), rows[0].strip()[:200]))
             return len(bad) + len(rows)
@@ -416,6 +475,7 @@ def custom(args):
         errors = read_lines(Path(run_dir) / 'errors.log') if run_dir else []
         if desyncs:
             print('FAIL: the clients split: %s' % desyncs[0].strip()[:160])
+            print_lines(split_note(logs, desyncs[0]))
         if errors:
             print('FAIL: %d error rows, first: %s' % (len(errors), errors[0].strip()[:200]))
         return len(desyncs) + len(errors)
@@ -454,6 +514,7 @@ def meet(args):
         errors = read_lines(Path(run_dir) / 'errors.log') if run_dir else []
         if desyncs:
             print('FAIL: the clients split: %s' % desyncs[0].strip()[:160])
+            print_lines(split_note(logs, desyncs[0]))
         if errors:
             print('FAIL: %d error rows, first: %s' % (len(errors), errors[0].strip()[:200]))
         return bad + len(desyncs) + len(errors)
@@ -536,6 +597,7 @@ def real(args, players_under_test):
             rows = read_lines(Path(run_dir) / 'errors.log') if run_dir else []
             if desyncs:
                 print("FAIL (player %d's session): the clients split: %s" % (player, desyncs[0].strip()[:160]))
+                print_lines(split_note(logs, desyncs[0]))
             if rows:
                 print("FAIL (player %d's session): %d error rows, first: %s" % (player, len(rows), rows[0].strip()[:200]))
             return bad + len(desyncs) + len(rows)

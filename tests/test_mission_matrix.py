@@ -185,5 +185,39 @@ class Real(unittest.TestCase):
         self.assertEqual(errors, 1)
 
 
+class Splits(unittest.TestCase):
+    def test_every_session_carries_the_diagnostic_rows_unless_the_caller_set_them(self):
+        self.assertEqual(matrix.with_diagnostics([]), list(matrix.DIAGNOSTIC_SETS))
+        self.assertEqual(matrix.with_diagnostics(['native_gate_swarm_seed=true']), ['native_gate_swarm_seed=true'] + list(matrix.DIAGNOSTIC_SETS))
+        self.assertEqual(matrix.with_diagnostics(['native_gate_digest_parts={1,5}']),
+                         ['native_gate_digest_parts={1,5}', 'native_gate_runtime_ids_rows=true'])
+
+    def test_a_split_is_named_by_the_parts_and_the_runtime_id_keys_that_differ(self):
+        def log(rid, world, keys_before, keys_at):
+            return ''.join([
+                "[=ERROR=] 1.0 [X4LAN] NATIVE_GATE DIGEST_PARTS tick=41 sample=aa pilot=bb rid=11 world=22 hash=33\n",
+                "[=ERROR=] 1.0 [X4LAN] NATIVE_GATE RUNTIME_IDS_ROW index=40 tick=41 next=0000000000000001 count=3 seq=1 sum=2 keys=%s\n" % keys_before,
+                "[=ERROR=] 1.1 [X4LAN] NATIVE_GATE DIGEST_PARTS tick=42 sample=aa pilot=bb rid=%s world=%s hash=%s%s\n" % (rid, world, rid, world),
+                "[=ERROR=] 1.1 [X4LAN] NATIVE_GATE RUNTIME_IDS_ROW index=41 tick=42 next=0000000000000001 count=3 seq=1 sum=2 keys=%s\n" % keys_at,
+                "[=ERROR=] 1.2 [X4LAN] NATIVE_GATE DIGEST_PARTS tick=43 sample=cc pilot=bb rid=99 world=22 hash=77\n"])
+        with tempfile.TemporaryDirectory() as folder:
+            one, two, bare = Path(folder) / 'c1.log', Path(folder) / 'c2.log', Path(folder) / 'c3.log'
+            one.write_text(log('11', '22', 'aaaa0001:2,bbbb0002:1', 'cccc0003:4'), encoding='latin-1')
+            two.write_text(log('12', '22', 'aaaa0001:1,bbbb0002:1', 'cccc0003:4,dddd0004:1'), encoding='latin-1')
+            bare.write_text("[=ERROR=] 1.0 [X4LAN] NATIVE_GATE STATUS tick=42\n", encoding='latin-1')
+            line = '21:50:16 NATIVE_GATE DESYNC tick=42 slots=2 first=42 mismatches=1'
+            self.assertEqual(matrix.split_note([one, two], line), [
+                '  at tick 42 the clients differ in: rid',
+                '  runtime IDs, tick 41, key aaaa0001: 2 / 1',
+                '  runtime IDs, tick 42, key dddd0004: 0 / 1'])
+            # The same rows on both: said so. No rows at all, or no tick in the line: nothing.
+            self.assertEqual(matrix.split_note([one, one], line), [
+                '  at tick 42 the clients differ in: no part (only the whole)',
+                '  runtime IDs: the same keys the same number of times in ticks 41 and 42'])
+            self.assertEqual(matrix.split_note([bare, bare], line), [])
+            self.assertEqual(matrix.split_note([one, two], 'no tick here'), [])
+            self.assertEqual(matrix.split_note([Path(folder) / 'missing.log'], line), [])
+
+
 if __name__ == '__main__':
     unittest.main()
