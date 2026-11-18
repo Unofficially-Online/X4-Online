@@ -797,10 +797,21 @@ python tools/dev/mission_matrix.py report CLIENT1.log CLIENT2.log [--run RUNDIR]
   byte of X4's formation code, so two swarms in the air at once now weave alike): the same sequences then ran
   2,500 ticks in sync, with player 2 parked at player 1's old place and without. How it was found: with
   `native_gate_created_rows` on, the two clients' rows were equal until the missiles' `retire` rows.
-- Seen once in three full runs of the matrix (17 Nov, tick 14085, during player 2's station scan), not
-  explained: client 2 alone rebuilt one station's interior walk mesh six times in one tick, and the clients
-  parted from there. X4 asks for that rebuild from a docking bay when the bay's platform has finished moving;
-  what made six bays do so on one client is not found, and the run does not repeat on demand.
+- Seen once (17 Nov, tick 14085, during player 2's station scan; not in the ten full runs of the matrix
+  after it): client 2 alone rebuilt one station's interior walk mesh six times in one tick, a second after
+  its player arrived there, and the clients parted from there. What is known: every such rebuild is asked
+  for by an animation listener (a docking bay's fence, a cockpit, a dock area), which waits for an animation
+  to reach a state. With breakpoints on both clients over whole runs (read-only, `bpwatch`-style logging of
+  X4's own functions), the event that serves a listener is posted about 313 times a run, the same on both
+  clients and always inside the simulation's frame; but the call that sets an animation's state runs about
+  167,000 times a run and never equally, 37,000 to 41,000 of them from the render pass: each client sets the
+  animation states of what it draws, and such a call served a waiting listener like any other. Since 18 Nov a
+  call from a client's own part of the frame (render, UI, a player's own presentation) leaves the listeners
+  waiting (`native_gate_anim_listeners`, a default; status `ANIM_LISTENERS held=`). In a normal run it holds
+  nothing (626 calls with waiting listeners on both clients, none held, 14,433 ticks in sync). That the run
+  of 17 Nov was this is the reading that fits; it was not captured, so it is not proven, and the run does not
+  repeat on demand. What the change costs: a fence that moved while nobody watched is not followed by a mesh
+  rebuild at the moment a player first sees it.
 - A new type: an `Mt<Name>` cue beside the others (its `_Ref` cue names the library), a row in `TYPES` and, when the
   player has to act through the UI, a row in `OPS`.
 - What it found on its first run: every step behind a `<delay>` of player 2's mission ran as player 1 (the MD

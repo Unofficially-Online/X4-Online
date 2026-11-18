@@ -405,6 +405,7 @@ static int pslot_pass(uint64_t tick);static int pslot_replay(uint64_t tick);stat
 static int pdeath_pass(uint64_t tick,unsigned char *controller);static void pdeath_restore(void);
 static void areaj_restore(void);   /* lockstep_area_jobs.h */
 static void swseed_restore(void);  /* lockstep_swarm_seed.h */
+static void animl_restore(void);   /* lockstep_anim_listeners.h */
 static const char *pdeath_why;
 static int pfbody_armed;static const char *pfbody_why;static int pfbody_pass(uint64_t tick,int phase);static void pfbody_restore(void); /* lockstep_pilot_foot_body.h */
 static int pfbody_guard(uint64_t tick);
@@ -968,6 +969,7 @@ static void pnat_restore(void) {
     if(pdeath_armed) pdeath_restore();
     areaj_restore();   /* lockstep_area_jobs.h: its call site sits on the same near page */
     swseed_restore();  /* lockstep_swarm_seed.h: its one byte */
+    animl_restore();   /* lockstep_anim_listeners.h: its call site sits on the same near page */
     if(pnat_installed || pstk_aim_installed || pview_installed || pfoot_installed || uirh_patched) pnat_uninstall();
     if(pnat_installed) pnat_stage="restore_refused";
 }

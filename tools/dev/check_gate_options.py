@@ -81,6 +81,7 @@ PROBE_OPTIONS = {
     'native_gate_viewpoint_policy': (('sector',), (), None),
     'native_gate_effect_rows': (('true',), (), None),
     'native_gate_swarm_seed': (('true',), (), None),
+    'native_gate_anim_listeners': (('true',), (), None),
     'native_gate_motion_watch_orders': (('true',), (), None),
     'native_gate_motion_watch_digest': (('true',), (), None),
     'native_gate_rng_rows': (('true',), (), None),

@@ -1117,6 +1117,7 @@ static void test_dynamic_registry(void) {
 #include "test_lockstep_scan_long.h"
 #include "test_lockstep_scan_mode.h"
 #include "test_lockstep_pilot_deliver.h"
+#include "test_lockstep_anim_listeners.h"
 #include "test_lockstep_spline_calc_watch.h"
 #include "test_lockstep_step_chain.h"
 #include "test_lockstep_path_transforms.h"
@@ -1269,6 +1270,7 @@ int main(int argc,char **argv) {
     test_scan_long();
     test_scan_mode();
     test_pilot_deliver();
+    test_anim_listeners();
     test_pilot_aim();
     test_speech_local();
     test_spline_calc_watch();

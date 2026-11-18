@@ -6118,6 +6118,14 @@ local function frame()
     -- X4 seeds a swarm's member offsets with the address of the formation shape, so each client flew its missiles
     -- elsewhere. Seen in a played sequence too (17 Nov): a player that jumped to another sector met a fight with
     -- eight swarm missiles there, and the clients parted about 300 ticks after the launch, in every run.
+    -- An animation's waiting listeners are served by the simulation only (lockstep_anim_listeners.h; a session
+    -- default, Windows gate): a client sets the animation states of what it draws, also from its render pass, and
+    -- such a call served a listener (a docking bay fence's: a walk mesh rebuild) on that client alone.
+    if cfg.native_gate_anim_listeners and gate.anim_listeners then
+     assert(cfg.native_gate_anim_listeners==true and gate.anim_listeners(1)==1,
+      'anim listeners refused '..tostring(gate.anim_listeners_status and gate.anim_listeners_status()))
+     log('ANIM_LISTENERS_ARMED '..tostring(gate.anim_listeners_status()))
+    end
     if cfg.native_gate_swarm_seed and gate.swarm_seed then
      assert(cfg.native_gate_swarm_seed==true and gate.swarm_seed(1)==1,
       'swarm seed refused '..tostring(gate.swarm_seed_status and gate.swarm_seed_status()))
@@ -6748,6 +6756,7 @@ local function frame()
   if X4LAN_NATIVE_HYBRID then X4LAN_NATIVE_HYBRID.frame(tick) end
   ticklog.status('VIEW_POINTS',tick,gate.view_points_status,'view points status unavailable')
   if cfg.native_gate_swarm_seed and gate.swarm_seed_status then ticklog.status('SWARM_SEED',tick,gate.swarm_seed_status,'swarm seed status unavailable') end
+  if cfg.native_gate_anim_listeners and gate.anim_listeners_status then ticklog.status('ANIM_LISTENERS',tick,gate.anim_listeners_status,'anim listeners status unavailable') end
   if cfg.native_gate_view_cameras and gate.view_cameras_status then ticklog.status('VIEW_CAMERAS',tick,gate.view_cameras_status,'view cameras status unavailable') end
   if cfg.native_gate_scan_long and gate.scan_long_status then ticklog.status('SCAN_LONG',tick,gate.scan_long_status,'scan long status unavailable') end
   if cfg.native_gate_scan_mode and gate.scan_mode_status then ticklog.status('SCAN_MODE',tick,gate.scan_mode_status,'scan mode status unavailable') end

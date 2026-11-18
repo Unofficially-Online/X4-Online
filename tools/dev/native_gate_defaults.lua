@@ -212,6 +212,7 @@ D.ON={
  {'native_gate_scan_long',true,'native_gate_pilot_stock_slots','the long-range scan for every player: the mode for players 2+, the charge on the secondary trigger, the send at its release'},
  {'native_gate_scan_mode',true,'native_gate_pilot_stock_slots','the scan mode for every player: its key is shared, players 2+ get the mode on their own player'},
  {'native_gate_area_jobs',true,'native_gate_pilot_stock_slots','a sector resource area job runs at the tick of its request on every client (its finish on a job thread decided the tick before)'},
+ {'native_gate_anim_listeners',true,'native_gate_pilot_stock_slots native_gate_view_points','an animation event its listeners wait for is posted by the simulation only: a client that draws a station no longer rebuilds its walk mesh alone'},
  {'native_gate_swarm_seed',true,'native_gate_pilot_stock_slots','swarm missiles keep the same formation on every client (X4 seeds the offsets of a swarm with a memory address, so each client flew its missiles elsewhere)'},
  {'native_gate_shared_listeners',true,'native_gate_pilot_stock_slots','a script no player owns (world plots, story activators, statistics) hears the events of every player, each inside that player scope'},
  {'native_gate_ui_reload_hold',true,'native_gate_ui_guard','a window resize, a UI scale change or a controller-mode switch no longer ends a player session: X4 reloads its UI after the session'},
