@@ -10,6 +10,13 @@
  *   site 10b  the render pass's late queue (0x8ac5af): a = the record's ID low 32 bits
  *   site 10c  a queue grew inside Zone::Move's 0x82d680 (0x834c95): a = before, b = after, pend = the object's ordinal
  *   site 10d  a queue grew since the last Zone::Move, outside it (seen at 0x834ca9): a, b, pend as 10c
+ *   site 113  the temp-component update 0x8be450 asks whether a real traffic ship is at its member's place (within
+ *             10 m; only then can it leave: RemoveTempComponentEvent at its expiry or beyond the traffic distance).
+ *             Key: the ship. pos = place - ship in the network's space, a/b/pend = the float bits of the thread's
+ *             game time, the place's x and the ship's x. The call 0x8be72a (the ship's GetTransformRelativeTo; the
+ *             place, from 0x8bee50, is the matrix 0x40 below its out matrix in the caller's frame) passes through.
+ *             17 Nov: one police traffic ship left at ticks 3019 and 3024 on two clients whose scripts had drawn
+ *             the same numbers all the way; these rows are to say which side of the test differed.
  * A network's objects: +0x40, then +0x370 entries at +0x48 (inline when +0x368 is 100). The last count per object
  * is kept in a table by object pointer (local addresses, never logged). Status: traffic_rows=early,late,sim,outside.
  * reg-tour7: client 1 alone, tick 195 two 10a rows (key 432c1), tick 196 10d a=0 b=2, the ship at 196: the render
@@ -40,6 +47,7 @@
  * drawn by any of these. */#define TQ_SIM_CALL 44u       /* 0x834c95 in Zone::Move: 0x82d680(network, zone) */
 #define TQ_CHECK_CALL 45u     /* 0x834ca9 in Zone::Move: 0x831390(network), rdx = zone (r14) */
 #define TQ_LATE_CALL 46u      /* 0x8ac5af in 0x8aba40: 0x91eec0(tree, out, record) */
+#define TQ_ARRIVE_CALL 55u    /* 0x8be72a in 0x8be450: GetTransformRelativeTo 0x3db8a0(ship, out, time, space, 0) */
 #define TQ_EARLY_SITE 0x8abf2du
 #define TQ_EARLY_TRACKED 0x8abf46u
 #define TQ_EARLY_UNTRACKED 0x8abf34u
@@ -115,6 +123,20 @@ static void tq_note(void *network,uint32_t site,volatile LONG64 *counter) {
         if(now>*last) {InterlockedIncrement64(counter);rc_pick_note_ab(site,objects[i],RC_OBJ_R12_TRAFFIC,0,*last,now,i);}
         *last=now;
     }
+}
+/* 0x8be72a: the ship's place for the arrival test; a row with how far it is from its member's place. */
+typedef void (*tq_arrive_fn)(void *,float *,double,void *,unsigned char);
+static tq_arrive_fn tq_arrive_native; /* tests only */
+static volatile LONG64 tq_arrive_count;
+static void tq_arrive(void *ship,float *out,double time,void *space,unsigned char flag) {
+    InterlockedIncrement64(&rc_stub_calls[TQ_ARRIVE_CALL]);
+    (tq_arrive_native?tq_arrive_native:(tq_arrive_fn)(void *)(image+rc_calls[TQ_ARRIVE_CALL].target))(ship,out,time,space,flag);
+    if(!rc_pick_rows_ticks || !ship || !out) return;
+    const float *place=out-16;const float at=(float)time;
+    const float delta[3]={place[0]-out[0],place[1]-out[1],place[2]-out[2]};uint32_t ab[3];
+    memcpy(&ab[0],&at,4);memcpy(&ab[1],&place[0],4);memcpy(&ab[2],&out[0],4);
+    InterlockedIncrement64(&tq_arrive_count);
+    rc_pick_note_full(0x113u,ship,RC_OBJ_RDI,0,delta,ab);
 }
 /* 0x834c95: Zone::Move's own queue (0x82d680 -> 0x8bd190) when the zone is flagged. */
 static void tq_sim(void *network,void *zone) {

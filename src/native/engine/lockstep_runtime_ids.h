@@ -245,6 +245,12 @@ static const rid_site_t rid_sites[]={
      * from 0xb82d0 (a JPH::SphereShape in an IDBase wrapper), swept with 0x841500/0x841620 and deleted (vfunc 0) before it
      * returns. Its shared ID raced the frame thread's allocations: h1h3, client 2 one more at 3903 (on-foot report 15m). */
     RID_CALL(0xecc728u,0xb82d0u,RID_ROUTE_VIEW),
+    /* The same pathing job's query box (0xec0cb0, the calculator thread's request routine: a JPH::BoxShape in an IDBase
+     * wrapper from 0xb83b0, made at its start and deleted, vfunc 0, on each of its three ways out). Shared, its ID was
+     * taken at the tick the worker happened to start the request: 17 Nov, a two-client station run on a busy PC, one
+     * client at tick 3347 and the other at 3348 (RUNTIME_IDS_ROW keys, stack c0039,b84ee,ec0db8,1099771), the digest
+     * part rid apart for good from there and the world census at 3600. Not seen while the PC was idle. */
+    RID_CALL(0xec0db8u,0xb83b0u,RID_ROUTE_VIEW),
     /* The player entity's two query spheres (U::Player::vfunc674 0x7113e0: +0x8a520 and +0x8a528 from 0xb82d0, made the first
      * time its scan deadline +0x8a4d0 comes due, 10 s after the client's start or load, and kept): the local player's own, one per
      * client. Shared, they moved every later ID on a hot joiner, whose load leaves them null: j1-230, the session at tick 300, the

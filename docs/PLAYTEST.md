@@ -818,9 +818,15 @@ In the integration branch since 17 Nov. Run with scripted input, not by people.
   round and walk out, or walk backwards. A player 2..N who walked sits down again with the get-up key.
 - **Undocking.** Every player undocks from its seat (the docked menu's Undock) and has its controls again when X4
   lets the ship go, about ten seconds later.
-- **Seeing each other.** X4 draws no figure for a player. Each player on foot gets a stand-in figure (a crew
-  character) where it stands; it walks while the player walks and stands when the player stands. You do not see your
-  own. Session default `native_gate_foot_avatars`.
+- **Seeing each other.** X4 draws no body for a player on foot (not even when another player's own object stands
+  in the room: tried 17 Nov). Each player on foot gets a figure where it stands. Since 17 Nov the figure is the
+  player's own character (the game start's player model; before, a crew character picked at random), and a client
+  does not draw its own figure (before, you saw yourself in front of you while walking backward out of your ship).
+  The figure walks to where its player is with X4's own NPC walk (asked again a few times a second), so it strides
+  and turns as X4's people do; before, it was put at the player's place every step, which started its walk
+  animation again each time: it slid along in a standing pose. It is a step or two behind a moving player and walks
+  facing the way it goes (a player walking backward is seen walking forward the other way round). The figure
+  stands half a metre behind its player, so the player's crosshair does not start inside it. Session default `native_gate_foot_avatars`.
 - **Known faults.**
   - Rooms (17 Nov). A player 2..N who walks out of its ship is now in the station's rooms as player 1 is: X4's
     scripts see it there and hear the change of room and of ship/station. Before, it stayed counted in its cockpit.
@@ -858,6 +864,26 @@ In the integration branch since 17 Nov. Run with scripted input, not by people.
     threads or capping its memory did not bring it back), so that this was its cause is likely, not proven (`tools/dev/client_squeeze.py` is the tool that stalls or caps one
     test client). What it
     costs: a traffic ship you have targeted can leave while targeted.
+  - And one that was caught with the diagnostics on (17 Nov evening, six clients of other tests on the PC): the
+    pathing thread makes a small query box for each flight path it works out and throws it away again, and the box
+    took a number from the list the simulation's objects are numbered from. On a busy PC the thread got to a request
+    one step later on one client (tick 3347 against 3348), so every object made afterwards had a different number on
+    the two clients: the runtime ID word apart for good, the world census at the next count. The box now takes its
+    number from the client's own list, as that thread's query sphere already did (`native_gate_runtime_ids_local`, a
+    default; no new key). The same test on the same busy PC then agreed at all 7571 ticks (its seven-tick ID
+    difference near tick 7220 is something else: it was back in the next run). The Linux gate does not have this
+    entry yet.
+  - OPEN, the split at tick 3128 or 3129 of the earlier runs (seen four times on 17 Nov, only while other tests'
+    clients loaded the PC): one police traffic ship that returns to its lane after a scan is taken out of the world
+    (pilot removed, ship kept for reuse) a few ticks apart on the two clients (3024 and 3036, 3017 and 3019, 3019
+    and 3024). When the next batch of traffic ships falls in between, one client reuses that ship and the other
+    does not, and every object made afterwards has another number. Not the cause: what the UI holds (fixed above),
+    the camera distance X4 takes from its render cache there (compared with the simulation's on a million calls,
+    never another verdict), the police script (its random draws are the same on both clients up to the removal).
+    Left: X4's test that the ship is back at its place in the lane (within 10 m). `native_gate_traffic_rows` with
+    `native_gate_viewpoint_policy_rows` now writes that test for every traffic ship and tick (POLICY_ROW
+    site=113), for the next time it shows; nine runs on a quiet PC and seven with the test's two clients pinned to
+    a few cores did not show it.
   - Not tried: three or more players, a hot join while someone is docked or on the dock, a docked ship's death,
     the Linux gate, two PCs.
 - **The test** (starts its own windowed clients with disposable profiles, prints a check list, saves pictures of both

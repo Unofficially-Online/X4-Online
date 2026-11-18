@@ -505,7 +505,7 @@ enum {RC_REGION,RC_FIELDS,RC_TRAFFIC,RC_EFFECTS,RC_EFFECT_ROWS,RC_HIGHWAY,RC_SCE
 enum {RC_OBJ_NONE,RC_OBJ_R12,RC_OBJ_R12_TRAFFIC,RC_OBJ_RDI};
 enum {RC_SLOT_MANAGER,RC_SLOT_UNIVERSE,RC_SLOT_MANAGER2};
 #define RC_SITES 25u
-#define RC_CALLS 55u
+#define RC_CALLS 56u
 #define RC_FILL_AREA_CALL 42u      /* 0xee6d32 in the refresh 0xee6a80: 0x78a690, a node's resource area */
 #define RC_FILL_REFRESH_CALL 43u   /* 0xeeb98a in the render pass 0xeeb650: the refresh 0xee6a80 */
 #define RC_VIEW_STEP_CALL 41u     /* 0x9fe48b in UniverseFrameUpdate: Scene::Step of B */
@@ -587,7 +587,8 @@ static const rc_call_t rc_calls[RC_CALLS]={{0xedc57au,0x9fc950u,RC_FIELDS,{0,0,0
     {0x8abbb4u,0x3dde10u,RC_TRAFFIC_PASS,{0,0,0}},{0x8ac0dau,0x3dde10u,RC_TRAFFIC_PASS,{0,0,0}},{0x8ac6a3u,0x3dde10u,RC_TRAFFIC_PASS,{0,0,0}},
     {0x8ac354u,0x6e59b0u,RC_TRAFFIC_PASS,{0,0,0}},{0x8ac8fcu,0x6e59b0u,RC_TRAFFIC_PASS,{0,0,0}},
     {0x8ac642u,0x8c0180u,RC_TRAFFIC_PASS,{0,0,0}},{0x8acc2cu,0xfb36d0u,RC_TRAFFIC_PASS,{0,0,0}},
-    {0x97e4f9u,0xbd410u,RC_VIEW_SCENES,{0,0,0}}};
+    {0x97e4f9u,0xbd410u,RC_VIEW_SCENES,{0,0,0}},
+    {0x8be72au,0x3db8a0u,RC_TRAFFIC_ROWS,{0,0,0}}};
 /* Jumps (7-byte instructions replaced by jmp rel32 + 66 90 into a thunk that resumes at a later address). */
 typedef struct {unsigned rva,resume;unsigned char original[7],group;} rc_jump_t;
 static const rc_jump_t rc_jumps[RC_JUMPS]={
@@ -1795,7 +1796,8 @@ static void *rc_stub_target(unsigned i) {
                                    (void*)rc_hw_offset,(void*)rc_hw_set_move,(void*)rc_hw_set_frame,(void*)rc_sound_float,(void*)rc_sound_choice,
                                    (void*)vsc_step,(void*)rc_fill_area,(void*)rc_fill_render_refresh,
                                    (void*)tq_sim,(void*)tq_check,(void*)tq_late,(void*)tp_relative_a,(void*)tp_relative_b,(void*)tp_relative_c,
-                                   (void*)tp_place_a,(void*)tp_place_b,(void*)tp_filter_call,(void*)tp_draw,(void*)vsc_anchor_call};
+                                   (void*)tp_place_a,(void*)tp_place_b,(void*)tp_filter_call,(void*)tp_draw,(void*)vsc_anchor_call,
+                                   (void*)tq_arrive};
     return i<RC_CALLS?targets[i]:NULL;
 }
 /* Bytes before the stub's jump: the call's move, if any. */

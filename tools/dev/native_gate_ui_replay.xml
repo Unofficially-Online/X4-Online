@@ -1294,6 +1294,9 @@
     <set_value name="$walks" exact="false"/>
     <set_value name="$moving" exact="false"/>
     <set_value name="$still" exact="0"/>
+    <set_value name="$since" exact="0"/>
+    <set_value name="$placed" exact="0"/>
+    <set_value name="$walked" exact="0"/>
     <set_value name="$room" exact="null"/>
     <set_value name="$x" exact="0m"/>
     <set_value name="$y" exact="0m"/>
@@ -1302,20 +1305,36 @@
     <!-- the player's place is its head's (the figures stood in the air with their boots at eye level, 16 Nov):
          the figure's feet go this far below it -->
     <set_value name="$drop" exact="1.5m"/>
+    <!-- ...and half a metre behind it: a figure at the very place of its player is in the way of that player own
+         crosshair (Talk wherever it looked, 17 Nov; the client does not draw its own figure, but its ray still met it).
+         Named as a stopgap: a player that looks behind itself still points at its own figure. -->
+    <set_value name="$back" exact="0.5m"/>
     <!-- sequence type / behaviour pairs tried for a walking figure, the first that X4 starts is used (16 Nov: which of
          them X4 9.00 knows is being found out; FOOT_AVATAR_GAIT names the answers) -->
     <set_value name="$gaits" exact="[['walk', 'generic'], ['walking', 'generic'], ['walk', 'stand'], ['walking', 'stand'], ['walkingslow', 'generic'], ['run', 'generic'], ['move', 'generic']]"/>
-    <create_cue_actor name="$body" cue="this">
-     <select faction="faction.argon" tags="tag.crew"/>
-     <owner exact="faction.player"/>
-    </create_cue_actor>
+    <!-- The figure is the player character itself: the NPC twin of its player macro, which the launcher wrote from this
+         PC game files (tools/dev/native_gate_figure_macros.py; 17 Nov: the figures were crew characters picked at
+         random, and a player has a character of its own). Without a twin (a start from a mod, a player macro without
+         a body an NPC can wear) it is a crew character as before. -->
+    <set_value name="$look" exact="@macro.{'x4lan_figure_' + player.entity.macro.id}"/>
+    <do_if value="$look">
+     <create_cue_actor name="$body" cue="this" macro="$look">
+      <owner exact="faction.player"/>
+     </create_cue_actor>
+    </do_if>
+    <do_else>
+     <create_cue_actor name="$body" cue="this">
+      <select faction="faction.argon" tags="tag.crew"/>
+      <owner exact="faction.player"/>
+     </create_cue_actor>
+    </do_else>
     <!-- A stand-in, not crew: no generic conversation when a player points at it and presses Talk (the stock handler
          offered to hire and assign it, 16 Nov), no comm from afar, and it is titled as the player it stands for. -->
     <set_entity_traits entity="$body" customhandler="true" remote="false"/>
     <set_entity_overrides entity="$body" title="'Player %s'.[$slot]"/>
     <!-- the figure's ID for the probe's test ops (foot_meet: tools.foot_pose reads its place) -->
     <raise_lua_event name="'X4LAN_FootAvatar%s'.[$slot]" param="$body"/>
-    <debug_text text="'[X4LAN] FOOT_AVATAR_MD slot=%s player=%s body=%s time=%s'.[$slot, player.entity, $body, player.age]"/>
+    <debug_text text="'[X4LAN] FOOT_AVATAR_MD slot=%s player=%s body=%s time=%s look=%s of=%s'.[$slot, player.entity, $body, player.age, $look, player.entity.macro.id]"/>
    </actions>
    <cues>
     <!-- Test only (script op avatar_hold, a signal as any player's script call: every client hears it at the same
@@ -1366,13 +1385,14 @@
        <set_value name="$yaw" exact="player.entity.rotation.yaw"/>
        <set_value name="$at" exact="player.entity.position"/>
        <set_value name="$newroom" exact="(not parent.$shown) or (parent.$room != player.room)"/>
-       <set_value name="$moved" exact="$newroom or ($at.x != parent.$x) or ($at.y != parent.$y) or ($at.z != parent.$z)"/>
-       <do_if value="$moved or ($yaw != parent.$yaw)">
-        <!-- X4's own action places the figure. Its default animation is asked for only when the figure enters a room:
-             asked for at every step it started again at every step, and the figure never got past its first pose
-             (the same report). A player that stands still is not placed again at all: its figure keeps its idle. -->
+       <set_value name="parent.$since" operation="add"/>
+       <!-- How far the figure is from its player (the player's place is its head: 1.5 m of that are height). -->
+       <set_value name="$apart" exact="if $newroom then 100m else parent.$body.distanceto.{player.entity}"/>
+       <do_if value="$newroom or ($apart gt 8m)">
+        <!-- Into the player's room, or back to a player it lost (a transporter, a sit-down and stand-up elsewhere):
+             the game's own placement, at the player's place with its feet on the floor. -->
         <add_actor_to_room actor="parent.$body" object="player.room" triggeranimation="$newroom">
-         <position x="$at.x - 0.4m * sin($yaw)" y="$at.y - parent.$drop" z="$at.z - 0.4m * cos($yaw)"/>
+         <position x="$at.x - parent.$back * sin($yaw)" y="$at.y - parent.$drop" z="$at.z - parent.$back * cos($yaw)"/>
          <rotation yaw="$yaw"/>
         </add_actor_to_room>
         <set_value name="parent.$room" exact="player.room"/>
@@ -1380,40 +1400,33 @@
         <set_value name="parent.$y" exact="$at.y"/>
         <set_value name="parent.$z" exact="$at.z"/>
         <set_value name="parent.$yaw" exact="$yaw"/>
+        <set_value name="parent.$since" exact="0"/>
+        <set_value name="parent.$placed" operation="add"/>
        </do_if>
-       <!-- Walking or standing, by whether the player's place changed (a few steps of grace, so one step without
-            movement does not end the walk): X4's animation sequences for a body. -->
-       <do_if value="$moved">
-        <set_value name="parent.$still" exact="0"/>
-        <do_if value="not parent.$moving">
-         <set_value name="parent.$moving" exact="true"/>
-         <set_value name="$started" exact="false"/>
-         <set_value name="$tried" exact="''"/>
-         <do_all exact="parent.$gaits.count" counter="$i">
-          <do_if value="not $started">
-           <start_actor_sequence actor="parent.$body" type="parent.$gaits.{$i}.{1}" behavior="parent.$gaits.{$i}.{2}" transition="true" immediate="true" result="$started"/>
-           <set_value name="$tried" exact="$tried + parent.$gaits.{$i}.{1} + '/' + parent.$gaits.{$i}.{2} + '=' + $started + ' '"/>
-          </do_if>
-         </do_all>
-         <debug_text text="'[X4LAN] FOOT_AVATAR_GAIT slot=%s walk %s time=%s'.[parent.$slot, $tried, player.age]"/>
-        </do_if>
-       </do_if>
-       <do_elseif value="parent.$moving">
-        <set_value name="parent.$still" operation="add"/>
-        <do_if value="parent.$still ge 4">
-         <set_value name="parent.$moving" exact="false"/>
-         <!-- the walking sequence carries the figure on by itself: back to where its player stands -->
-         <add_actor_to_room actor="parent.$body" object="player.room" triggeranimation="false">
-          <position x="$at.x - 0.4m * sin($yaw)" y="$at.y - parent.$drop" z="$at.z - 0.4m * cos($yaw)"/>
+       <do_else>
+        <!-- The figure WALKS to where its player is: the game's own NPC walk (start_actor_walk: its path on the floor,
+             its steps, its turn), asked again a few times a second while the player moves on. Until 17 Nov the figure
+             was placed anew at every step with a walking sequence on top: every placement started that sequence again,
+             so it slid along in a standing pose (seen in a frame sequence of another player walking up), and its
+             player saw it in front of itself. Faster the further it has fallen behind. -->
+        <set_value name="$moved" exact="($at.x != parent.$x) or ($at.y != parent.$y) or ($at.z != parent.$z) or ($yaw != parent.$yaw)"/>
+        <do_if value="$moved and (parent.$since ge 8)">
+         <set_value name="$pace" exact="if $apart gt 5m then 4 else (if $apart gt 3m then 3 else 2)"/>
+         <start_actor_walk actor="parent.$body" target="player.room" speed="parent.$body.walkspeed * $pace" triggeranimation="false">
+          <position x="$at.x - parent.$back * sin($yaw)" y="$at.y - parent.$drop" z="$at.z - parent.$back * cos($yaw)"/>
           <rotation yaw="$yaw"/>
-         </add_actor_to_room>
-         <start_actor_sequence actor="parent.$body" type="'idle'" behavior="'stand'" transition="true" immediate="true" result="$started"/>
-         <debug_text text="'[X4LAN] FOOT_AVATAR_GAIT slot=%s stand idle/stand=%s time=%s'.[parent.$slot, $started, player.age]"/>
+         </start_actor_walk>
+         <set_value name="parent.$x" exact="$at.x"/>
+         <set_value name="parent.$y" exact="$at.y"/>
+         <set_value name="parent.$z" exact="$at.z"/>
+         <set_value name="parent.$yaw" exact="$yaw"/>
+         <set_value name="parent.$since" exact="0"/>
+         <set_value name="parent.$walked" operation="add"/>
         </do_if>
-       </do_elseif>
+       </do_else>
        <set_value name="parent.$steps" operation="add"/>
        <do_if value="(not parent.$shown) or (parent.$steps % 30 == 0)">
-        <debug_text text="'[X4LAN] FOOT_AVATAR_AT slot=%s room=%s at=%s yaw=%s body_room=%s steps=%s time=%s'.[parent.$slot, player.room, player.entity.position, $yaw, parent.$body.room, parent.$steps, player.age]"/>
+        <debug_text text="'[X4LAN] FOOT_AVATAR_AT slot=%s room=%s at=%s yaw=%s body_room=%s steps=%s time=%s body_at=%s body_yaw=%s apart=%s placed=%s walked=%s'.[parent.$slot, player.room, player.entity.position, $yaw, parent.$body.room, parent.$steps, player.age, parent.$body.position, parent.$body.rotation.yaw, $apart, parent.$placed, parent.$walked]"/>
        </do_if>
        <set_value name="parent.$shown" exact="true"/>
       </do_elseif>

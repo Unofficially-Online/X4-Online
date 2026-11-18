@@ -366,6 +366,7 @@ static int world_nav_live_prefixes(void) {
 #include "lockstep_area_jobs.h"        /* a sector's resource area job runs at the tick of its request (native_gate_area_jobs) */
 #include "lockstep_pilot_foot_body.h"   /* slots 2..N in the world tree at their seats (native_gate_pilot_foot_bodies) */
 #include "lockstep_pilot_foot_transport.h"   /* slots 2..N take X4's transporter (with the bodies' room change) */
+#include "lockstep_foot_figure.h"      /* a client does not draw its own stand-in figure */
 #include "lockstep_ui_holds.h"         /* a client's UI holds no temporary component in the simulation (native_gate_ui_holds) */
 #include "lockstep_pilot_foot_slots.h"  /* slots 2..N get up and walk (native_gate_pilot_foot_slots) */
 #include "lockstep_pilot_join.h"        /* a join save inside the window: the bodies off around it, P_k's IDs (W3) */
@@ -822,7 +823,7 @@ static void finish(unsigned reason) {
     shape_restore();
     velocity_restore();
     ss_restore();
-    mrng_restore();uih_restore();
+    mrng_restore();uih_restore();ffig_restore();
     pt_restore();
     wr_restore();
     trr_restore();
@@ -1856,6 +1857,15 @@ static int lua_body_clock_row(lua_State *L) {
 static int lua_ui_holds(lua_State *L) {
     double on=p_lua_tonumber(L,1);
     p_lua_pushnumber(L,accept_ui() && on==1 && uih_arm());return 1;
+}
+/* gate.foot_figure_own(id): this client's own player's stand-in figure (0: none), not drawn here (lockstep_foot_figure.h). */
+static int lua_foot_figure_own(lua_State *L) {
+    double id=p_lua_tonumber(L,1);
+    p_lua_pushnumber(L,accept_ui() && isfinite(id) && id>=0 && id<9007199254740992.0 && floor(id)==id && ffig_own((uint64_t)id));return 1;
+}
+static int lua_foot_figure_status(lua_State *L) {
+    char out[96];int n=accept_ui()?ffig_status(out,sizeof(out)):0;
+    if(n) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);return 1;
 }
 static int lua_ui_holds_status(lua_State *L) {
     char out[192];int n=accept_ui()?uih_status(out,sizeof(out)):0;
@@ -4753,7 +4763,7 @@ __declspec(dllexport) int luaopen_x4lan_gate(lua_State *L) {
     METHOD(character_play);METHOD(character_play_status);METHOD(character_play_row);
     METHOD(nav_octree);METHOD(nav_octree_status);METHOD(nav_octree_row);METHOD(nav_octree_report);METHOD(nav_octree_agree);METHOD(nav_octree_lookup_row);METHOD(nav_octree_sites);METHOD(nav_octree_sites_status);METHOD(nav_octree_site_row);METHOD(nav_mesh);METHOD(nav_mesh_status);METHOD(nav_mesh_frame);METHOD(nav_mesh_row);
     METHOD(camera_offset);METHOD(camera_offset_status);METHOD(camera_anchor);METHOD(camera_anchor_keys);METHOD(camera_anchor_status);
-    METHOD(ui_holds);METHOD(ui_holds_status);METHOD(move_rng);METHOD(move_rng_status);METHOD(move_rng_rows);METHOD(move_rng_row);METHOD(body_clock);METHOD(body_clock_rows);METHOD(body_clock_row);
+    METHOD(ui_holds);METHOD(ui_holds_status);METHOD(foot_figure_own);METHOD(foot_figure_status);METHOD(move_rng);METHOD(move_rng_status);METHOD(move_rng_rows);METHOD(move_rng_row);METHOD(body_clock);METHOD(body_clock_rows);METHOD(body_clock_row);
     METHOD(mass_traffic);METHOD(mass_traffic_status);METHOD(region_pass);METHOD(region_pass_status);METHOD(gravidar_digest);METHOD(gravidar_digest_frame);METHOD(gravidar_digest_row);
     METHOD(gravidar_deadlines);METHOD(gravidar_deadlines_status);
     METHOD(economy_load_rng);METHOD(economy_load_rng_status);METHOD(build_rows);METHOD(build_rows_status);METHOD(build_rows_row);METHOD(flight_faults);METHOD(flight_fault_row);METHOD(play_mode);METHOD(unowned);METHOD(ui_exports);METHOD(ui_lazy_callers);METHOD(ui_exports_status);METHOD(ui_exports_row);METHOD(ui_exports_relay);METHOD(ui_exports_block);METHOD(ui_exports_relay_kinds);METHOD(ui_exports_take);METHOD(ui_exports_name);METHOD(runtime_of);METHOD(key_of);METHOD(ui_exports_address);METHOD(observer_status);METHOD(npc_action_rows);METHOD(interrupt_faults);METHOD(interrupt_fault_row);METHOD(wire);METHOD(propose);METHOD(relay_host);METHOD(lookahead);METHOD(lookahead_status);METHOD(tick_rate);METHOD(fast_reads);METHOD(path_budget);METHOD(path_budget_status);METHOD(path_transforms);METHOD(path_transforms_status);METHOD(path_transforms_row);METHOD(body_pose);METHOD(body_pose_status);METHOD(body_pose_row);METHOD(pass_stride);METHOD(render_frames);METHOD(render_frames_status);METHOD(render_split);METHOD(lookahead_adaptive);METHOD(adaptive_status);METHOD(adaptive_plan);METHOD(wire_crypto);METHOD(wire_crypto_status);METHOD(render_camera);METHOD(render_motion);METHOD(render_display_rows);METHOD(render_display_status);METHOD(render_display_row);METHOD(peer_links);METHOD(peer_status);
@@ -4814,7 +4824,7 @@ __declspec(dllexport) int luaopen_x4lan_gate(lua_State *L) {
     METHOD(player_launch_enable);METHOD(player_launch_event);
     METHOD(pilot_inputs);METHOD(pilot_inputs_status);METHOD(pilot_why);METHOD(pilot_absent);METHOD(pilot_handover);METHOD(pilot_seat_live_pose);METHOD(pilot_present_walk_hud);METHOD(pilot_slots_post);METHOD(pilot_first_stores);METHOD(pilot_abort);METHOD(pilot_absent_state);METHOD(pilot_slots_max);METHOD(pilot_absent_restore);METHOD(pilot_join_park_at);METHOD(pilot_players_state);METHOD(pilot_join_state);METHOD(pilot_join_in_window);METHOD(pilot_join_slotk_quats);METHOD(pilot_join_slotk_words);METHOD(pilot_dump);METHOD(join_passes_admit);METHOD(join_passes_status);METHOD(join_specdrop);METHOD(join_specdrop_status);METHOD(join_pctl);METHOD(join_pctl_state);METHOD(join_pctl_status);METHOD(pilot_join_status);METHOD(pilot_inputs_frame);METHOD(pilot_capture);METHOD(pilot_apply);METHOD(pilot_pending);
     METHOD(pilot_device);METHOD(pilot_camera_follow);METHOD(pilot_camera);METHOD(pilot_camera_status);METHOD(pilot_ship);METHOD(pilot_native_capture);
-    METHOD(pilot_foot_walking);METHOD(pilot_foot_floor);
+    METHOD(pilot_foot_walking);METHOD(pilot_foot_floor);METHOD(pilot_foot_place);
     METHOD(pilot_native);METHOD(pilot_native_refusals);METHOD(pilot_stock);METHOD(pilot_stock_pins);METHOD(pilot_stock_callers);METHOD(pilot_present);METHOD(pilot_present_pause);METHOD(pilot_present_resume);METHOD(pilot_present_diff);METHOD(pilot_death);METHOD(pilot_foot);METHOD(pilot_foot_bodies);METHOD(pilot_foot_slots);METHOD(pilot_death_frame);METHOD(pilot_death_ship);METHOD(pilot_death_suit);METHOD(pilot_death_home);METHOD(pilot_death_range);METHOD(pilot_death_out);METHOD(crash_note);METHOD(arm_early);METHOD(cutscene_ready);METHOD(cutscene_ready_status);METHOD(cutscene_ready_row);METHOD(pilot_death_status);METHOD(pilot_stock_capture);METHOD(pilot_stock_apply);METHOD(pilot_stock_inject);METHOD(pilot_stock_local);METHOD(pilot_stock_frame);
     METHOD(virtual_players);METHOD(virtual_players_status);METHOD(virtual_players_regions);METHOD(virtual_players_undeclared);METHOD(virtual_players_map);METHOD(virtual_players_hashes);METHOD(virtual_players_raw);METHOD(virtual_players_neighbours);
     METHOD(ui_replay);METHOD(ui_replay_pins);METHOD(ui_replay_take);METHOD(ui_replay_stage);METHOD(ui_replay_push);METHOD(ui_replay_ref);METHOD(ui_replay_resolve);METHOD(ui_replay_lua);METHOD(ui_replay_bypass);METHOD(ui_replay_result);METHOD(ui_replay_frame);METHOD(ui_replay_status);METHOD(ui_replay_refusals);METHOD(ui_replay_fail);METHOD(ui_replay_saved);METHOD(ui_replay_missile_hold);METHOD(ui_replay_queue_run);METHOD(ui_replay_queue_seen);METHOD(ui_replay_queue_index);METHOD(ui_replay_local);

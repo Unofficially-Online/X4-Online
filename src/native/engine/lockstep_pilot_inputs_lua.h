@@ -421,6 +421,26 @@ static int lua_pilot_foot_floor(lua_State *L) {
     if(length) p_lua_pushlstring(L,name,length);else p_lua_pushnil(L);
     return 1;
 }
+/* gate.pilot_foot_place(slot, space): x, y, z of that slot's walking player in the component `space` (a station:
+ * the game's GetTransformRelativeTo at the thread's game time), or nil. Read only, for the test ops: a walking
+ * player's figure walks after it, so the figure's place is not the player's while it moves, and for a slot 2..N
+ * the UI's own player is not that slot's player object. */
+static int lua_pilot_foot_place(lua_State *L) {
+    double slot=p_lua_tonumber(L,1),space=p_lua_tonumber(L,2);int ok=0;__attribute__((aligned(16))) float m[16];
+    if(accept_ui() && pftr_relative && isfinite(slot) && floor(slot)==slot && slot>=1 && slot<=PILOT_SLOTS &&
+       isfinite(space) && space>=1 && space<9007199254740992.0 && floor(space)==space) {
+        const unsigned k=(unsigned)slot;double now=0;
+        unsigned char *player=k==1?(pfoot_armed && pfoot_state==PFOOT_WALKING?pslot_p1:NULL):(pfslot_walking_fpc(k)?pslots[k].player:NULL);
+        unsigned char *where=uirep_component((uint64_t)space);
+        if(player && where && pnat_fn.time && pnat_fn.time(&now)) {
+            memset(m,0,sizeof(m));m[4]=m[9]=m[14]=1.0f;
+            __try {pftr_relative(player,m,now,where,0);ok=1;}
+            __except(GetExceptionCode()==EXCEPTION_ACCESS_VIOLATION?EXCEPTION_EXECUTE_HANDLER:EXCEPTION_CONTINUE_SEARCH) {ok=0;}
+        }
+    }
+    if(!ok || !isfinite(m[0]) || !isfinite(m[1]) || !isfinite(m[2])) {p_lua_pushnil(L);return 1;}
+    p_lua_pushnumber(L,m[0]);p_lua_pushnumber(L,m[1]);p_lua_pushnumber(L,m[2]);return 3;
+}
 static int lua_pilot_foot_walking(lua_State *L) {
     double slot=p_lua_tonumber(L,1);int walking=0;
     if(accept_ui() && isfinite(slot) && floor(slot)==slot && slot>=1 && slot<=PILOT_SLOTS) {

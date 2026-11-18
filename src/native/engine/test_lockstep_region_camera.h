@@ -1072,6 +1072,10 @@ static void test_rc_field_fill(void) {
 }
 /* traffic_rows: rows for queue growth inside and outside Zone::Move, the render pass's late and early queue, the thunk. */
 static int test_tq_sims,test_tq_checks,test_tq_lates;static unsigned char *test_tq_grow;static char test_tq_member_says=1;
+static unsigned test_tq_arrive_calls;
+static void test_tq_arrive(void *ship,float *out,double time,void *space,unsigned char flag) {
+    (void)ship;(void)time;(void)space;(void)flag;++test_tq_arrive_calls;out[0]=4.0f;out[1]=5.0f;out[2]=6.0f;
+}
 static void test_tq_sim(void *network,void *zone) {(void)network;(void)zone;++test_tq_sims;if(test_tq_grow) ++*(uint64_t *)(test_tq_grow+0x2b8);}
 static char test_tq_check(void *network) {(void)network;++test_tq_checks;return 1;}
 static void **test_tq_late(void *tree,void **out,void *record) {(void)tree;++test_tq_lates;*out=record;return out;}
@@ -1119,6 +1123,18 @@ static void test_rc_traffic_rows(void) {
     char status[3072];const unsigned saved_armed=rc_armed_groups;rc_armed_groups=1u<<RC_TRAFFIC_ROWS;
     assert(rc_status(status,sizeof(status))>0 && strstr(status," traffic_rows=early:1,late:2,sim:1,outside:2 "));
     rc_armed_groups=0;assert(rc_status(status,sizeof(status))>0 && strstr(status," traffic_rows=off "));rc_armed_groups=saved_armed;
+    /* The arrival test's row (site 113): the call passes through; with rows on, place - ship and the three float words. */
+    {   __declspec(align(16)) float frame[32];memset(frame,0,sizeof(frame));frame[0]=10.0f;frame[1]=20.0f;frame[2]=30.0f;
+        static unsigned char ship[32];rc_pick_rows_ticks=10;rc_pick_rows_from=0;stats.issued=4;const LONG64 before=rc_pick_rows;
+        tq_arrive_native=test_tq_arrive;tq_arrive_count=0;
+        tq_arrive(ship,frame+16,2.5,(void*)7,0);
+        assert(test_tq_arrive_calls==1 && frame[16]==4.0f && tq_arrive_count==1 && rc_pick_rows==before+1);
+        const rc_pick_row_t *r=&rc_pick_ring[(uint64_t)before%RC_PICK_ROWS];float at;memcpy(&at,&r->a,4);
+        assert(r->site==0x113u && r->has_pos && r->pos[0]==6.0f && r->pos[1]==15.0f && r->pos[2]==24.0f && r->has_ab && at==2.5f);
+        const LONG held=(LONG)rc_pick_rows_ticks;rc_pick_rows_ticks=0;tq_arrive(ship,frame+16,2.5,(void*)7,0);
+        assert(test_tq_arrive_calls==2 && tq_arrive_count==1);rc_pick_rows_ticks=(unsigned)held;       /* rows off: nothing recorded */
+        tq_arrive_native=NULL;tq_arrive_count=0;
+    }
     tq_sim_native=NULL;tq_check_native=NULL;tq_late_native=NULL;tq_reset();rc_pick_rows=rows;rc_pick_rows_ticks=ticks;stats.issued=issued;
     puts("traffic rows: network objects, growth inside and outside Zone::Move, render late and early queue, thunk and status verified");
 }

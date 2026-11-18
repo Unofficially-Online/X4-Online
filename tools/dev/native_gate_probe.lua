@@ -3104,7 +3104,14 @@ function pilot_view.arm_ui_replay(slot,window)
  -- (X4's GetPositionalOffset: x, y, z, yaw), nil while it is in no room. The same answer on every client.
  tools.foot_figures={}
  for k=1,#cfg.native_gate_pilot_slots do
-  RegisterEvent('X4LAN_FootAvatar'..k,function(_,object) tools.foot_figures[k]=ConvertIDTo64Bit(object) end)
+  RegisterEvent('X4LAN_FootAvatar'..k,function(_,object)
+   tools.foot_figures[k]=ConvertIDTo64Bit(object)
+   -- This client's own figure is not drawn here: a player does not see itself (lockstep_foot_figure.h).
+   if tostring(k)==tostring(slot) and gate.foot_figure_own then
+    local id=tonumber((tostring(tools.foot_figures[k]):gsub('ULL$','')))
+    log('FOOT_FIGURE_OWN slot='..k..' id='..tostring(id)..' hidden='..tostring(id and gate.foot_figure_own(id)))
+   end
+  end)
  end
  tools.foot_pose=function(k)
   local figure=tools.foot_figures[k]
@@ -3114,6 +3121,13 @@ function pilot_view.arm_ui_replay(slot,window)
   local id=ffi.new('UniverseID',ConvertStringTo64Bit(tostring(figure)))
   local ok,station=pcall(ffi.C.GetContextByClass,id,'station',false)
   if not ok or tonumber(station)==0 then return nil end
+  -- This client's own place is its player's, read by the gate, not its figure's: the figure walks after the player
+  -- (17 Nov) and is a step or two behind while the player moves, which misled the steering of foot_meet. (The UI's
+  -- own player object is slot 1's on every client, so GetPositionalOffset of it is not a slot 2..N's place.)
+  if tools.own_slot and tostring(k)==tostring(tools.own_slot) and gate.pilot_foot_place then
+   local x,y,z=gate.pilot_foot_place(k,tonumber((tostring(station):gsub('ULL$',''))))
+   if x then return {x=x,y=y,z=z,yaw=0} end
+  end
   local ok2,p=pcall(ffi.C.GetPositionalOffset,id,station)
   if not ok2 then return nil end
   return {x=p.x,y=p.y,z=p.z,yaw=p.yaw}

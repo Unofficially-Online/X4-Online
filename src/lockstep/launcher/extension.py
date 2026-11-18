@@ -91,6 +91,24 @@ def plot_copies(overlay, target, game, cache=None):
         raise SystemExit(f'plot copies: {error}') from None
 
 
+def figure_macros(target, game, cache=None):
+    """The walking players' figures look like the players (tools/dev/native_gate_figure_macros.py): an NPC twin of
+    every player character of this PC's installed game, made here from its own game files and written into the
+    composed extension. A view without the game's catalogs (a test tree) gets none: the figures are crew characters
+    then. Returns the file written, or None."""
+    import sys
+    dev = Path(__file__).resolve().parents[3] / 'tools/dev'
+    if str(dev) not in sys.path:
+        sys.path.insert(0, str(dev))
+    import native_gate_figure_macros as figures
+    from . import gamedata
+    try:
+        root = gamedata.unpack(game, cache or gamedata.default_cache(), log=lambda *_: None)
+    except (SystemExit, OSError, ValueError):
+        return None
+    return figures.write(figures.generate(root), target)
+
+
 def compose(overlay, extensions, slot, port, token, clients, extra=None, config_tail='', profile_id=None):
     """Write <extensions>/x4_lan_lab for client `slot` (1-based).
 
@@ -111,6 +129,7 @@ def compose(overlay, extensions, slot, port, token, clients, extra=None, config_
     if missing:
         raise SystemExit(f'overlay lists missing ui files: {missing}')
     plot_copies(overlay, target, Path(extensions).parent)
+    figure_macros(target, Path(extensions).parent)
     config = config_text(overlay, slot, port, token, clients, profile_id=profile_id, config_tail=config_tail)
     for name, source in (extra or {}).items():
         shutil.copyfile(source, target / name)
