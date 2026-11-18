@@ -259,6 +259,10 @@ static void test_ui_build(void) {
     tub_take_queue();
     {unsigned parts=0;for(unsigned i=0;i<tub_wire_count;i++) if(tub_wire[i].op==UIBUILD_OP_PART) {assert(i==parts);++parts;}
      assert(parts>=2 && tub_wire[tub_wire_count-1].op==UIREP_OP_LUA_CALL);
+     /* every part leaves in a tick whose blob also carries the slot's stock section: what the mux then gives this
+      * section is 240 - 2 - (2 + PSTK_HEAD) - 2 bytes (a 200-byte part never left: the queue stood for good) */
+     for(unsigned i=0;i<parts;i++) assert(tub_wire[i].length<=UIREP_EVENT_FIT && UIREP_HEAD+2u+tub_wire[i].length<=240u-2u-(2u+PSTK_HEAD)-2u);
+     assert(tub_wire[0].length==UIREP_EVENT_FIT);   /* a full part is exactly what fits */
      /* the wire's section check accepts the parts, refuses a part without the families */
      const char *why=NULL;assert(uirep_event_ok(1,UIBUILD_OP_PART,tub_wire[0].data,tub_wire[0].length,&why));
      unsigned f=uirep_families;uirep_families=UIREP_FAMILY_TRAVEL;assert(!uirep_event_ok(1,UIBUILD_OP_PART,tub_wire[0].data,tub_wire[0].length,&why) && !strcmp(why,"ui_build"));uirep_families=f;

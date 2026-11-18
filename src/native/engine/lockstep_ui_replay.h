@@ -73,6 +73,17 @@ static int mpp_armed;static void mpp_restore_hook(void);   /* lockstep_mission_o
 #define UIREP_HEAD 4u
 #define UIREP_SECTION_MAX 236u      /* INPUT_MUX_MAX less the container and this section's header */
 #define UIREP_EVENT_MAX 200u
+/* The longest event this client QUEUES. Every tick a playing client's blob (240 bytes) first holds its stock record:
+ * 43 bytes and 6 for every key or button that changed in the tick. The room left for this section is then at most 191
+ * bytes, of which an event can have 185. A queued event of 186..200 bytes never fitted: it stayed at the queue's head
+ * for the rest of the session and with it everything that player did afterwards (run t2, 17 Nov 2026: a person
+ * extended a plot and confirmed a station plan whose batch needed a full part of 200 bytes; from then on the client's
+ * 64 queue places filled up and no click of that player reached the game). 160 leaves room for four changed keys in
+ * the same tick; with more the event waits a tick. Staging takes events up to UIREP_EVENT_MAX as before. (The same
+ * evening tools/dev/action_tests.py shipbuy met it with a ship purchase, whose first part was 200 bytes: captured=4
+ * taken=0 waits=826 and no build task at the wharf on either client.) */
+#define UIREP_EVENT_FIT 160u
+_Static_assert(UIREP_EVENT_FIT<=UIREP_EVENT_MAX && 2u+(2u+43u)+2u+UIREP_HEAD+2u+UIREP_EVENT_FIT<=240u,"an event of that length fits a tick's blob beside the stock section");
 #define UIREP_EVENTS_MAX 32u
 #define UIREP_QUEUE 64u
 #define UIREP_RING 64u
@@ -132,7 +143,7 @@ enum {UIREP_H_UI=0,UIREP_H_START,UIREP_H_STOP,UIREP_H_CLEAR,UIREP_H_CLEAR2,UIREP
     UIREP_H_LAUNCH_LASERTOWER,UIREP_H_LAUNCH_MINE,UIREP_H_LAUNCH_NAVBEACON,UIREP_H_LAUNCH_PROBE,UIREP_H_LAUNCH_SATELLITE,
     UIREP_H_WEAPON_ARMED,UIREP_H_WEAPON_AMMO,UIREP_H_TGROUP_MODE,UIREP_H_TGROUP_ARMED,UIREP_H_TURRETS_MODE,UIREP_H_TURRETS_ARMED,UIREP_H_MTURRETS_MODE,UIREP_H_MTURRETS_ARMED,
     UIREP_H_NTURRETS_MODE,UIREP_H_NTURRETS_ARMED,UIREP_H_DRONE_SET_MODE,UIREP_H_DRONE_TYPE_ARMED,UIREP_H_DRONES_ARMED,UIREP_H_ACTIVATE,UIREP_H_SELF_DESTRUCT,UIREP_H_DROP_CARGO,
-    UIREP_H_CS_SINGLE,UIREP_H_CS_MULTI,UIREP_H_SCAN_START,UIREP_HOOKS};
+    UIREP_H_CS_SINGLE,UIREP_H_CS_MULTI,UIREP_H_SCAN_START,UIREP_H_RESET_LOOP,UIREP_HOOKS};
 #define UIREP_ARGS 8u
 #define UIREP_STRING_MAX 48u
 #define UIREP_AUTOPILOT 0x2f4b7d8u        /* the input bank's autopilot target (SIM, per slot) */
@@ -258,6 +269,7 @@ UIREP_GUARD(planned_remove,UIREP_H_PLANNED_REMOVE,0)
 UIREP_GUARD(deploy,UIREP_H_DEPLOY,0)
 UIREP_GUARD(loop,UIREP_H_LOOP,c&0xff)                  /* (controllable, idx, checkonly) */
 UIREP_GUARD(loop_current,UIREP_H_LOOP_CURRENT,e&0xff)  /* (controllable, idx, enabled, forcestates, checkonly) */
+UIREP_GUARD(reset_loop,UIREP_H_RESET_LOOP,0)           /* (controllable) */
 #define UIREP_QUEUE_HOOK (UIREP_FAMILY_ORDERS|UIREP_FAMILY_QUEUE)
 #define UIREP_NUM_ORDERS 0x1f7370u           /* GetNumOrders (the queue editor family) */
 #define UIREP_ENTRY5 {0x48,0x89,0x5c,0x24,0x08}   /* mov [rsp+8],rbx */
@@ -322,6 +334,10 @@ static const struct {const char *name;unsigned rva,prefix,family;unsigned char b
     /* the player's scan of a target (lockstep_scan_mode.h): U::Player's start 0x735000(player, target, the action's data, force),
      * called by the scan action of the client's UI (ScanAction::Perform 0x3581f0) */
     {"StartScan",0x735000u,8,UIREP_FAMILY_FLIGHT,{0x40,0x53,0x56,0x57,0x48,0x83,0xec,0x60},(void*)uirep_call_scan_start,0x323,"77d7e5ae354ab8fb3d1bc5eaa87ab1d43ee81a1686ed3e1801f4341887c9069a"},
+    /* the queue editor again: ResetOrderLoop, which the behaviour page's confirm calls before it enables the planned
+     * default order (MapMenu.buttonDefaultOrderConfirm). Uncaptured, the guard refused it and that button stayed
+     * blocked: no player could change a ship's default behaviour in a session (17 Nov). */
+    {"ResetOrderLoop",0x1ff090u,5,UIREP_FAMILY_QUEUE,UIREP_ENTRY5,(void*)uirep_guard_reset_loop,0x7e,"8800e327a812255a5709edd66da0ecfb4120fcbf9114fbd2f26bccc11efd363e"},
 };
 /* The generic calls: argument spec (P the player, C a component pointer, I a UniverseID, b a byte, w a word, V a
  * pointer to 16 bytes, s a string, k the check-only flag: set, the call is a query and passes; - passed through as 0),
@@ -379,7 +395,8 @@ static const uirep_call_spec uirep_queue_specs[]={
     {UIREP_H_PLANNED_ENABLE,"Ik",UIREP_RET_PREDICT},
     {UIREP_H_PLANNED_REMOVE,"I",UIREP_RET_VOID},
     {UIREP_H_LOOP,"Iqk",UIREP_RET_PREDICT},
-    {UIREP_H_LOOP_CURRENT,"Iqbbk",UIREP_RET_VOID}};
+    {UIREP_H_LOOP_CURRENT,"Iqbbk",UIREP_RET_VOID},
+    {UIREP_H_RESET_LOOP,"I",UIREP_RET_VOID}};
 static const uirep_call_spec *uirep_queue_spec_of(unsigned hook) {
     for(unsigned i=0;i<sizeof(uirep_queue_specs)/sizeof(*uirep_queue_specs);i++) if(uirep_queue_specs[i].hook==hook) return &uirep_queue_specs[i];
     return NULL;
@@ -502,7 +519,7 @@ static int uirep_push(unsigned op,const unsigned char *data,unsigned length) {
     const char *why=NULL;
     uibuild_before_push(op);
     if(!uirep_armed || !pstk_capturing) why="not_capturing";
-    else if(length>UIREP_EVENT_MAX) why="too_long";
+    else if(length>UIREP_EVENT_FIT) why="too_long";
     else if(!pstk_capture_start || stats.issued<pstk_capture_start || stats.issued>pilot_stop) why="not_live";
     else if(uirep_queue_count>=UIREP_QUEUE) why="queue_full";
     if(why) {uirep_note_refusal(uirep_op_name(op),why);return 0;}
@@ -850,6 +867,13 @@ static unsigned uirep_take(uint64_t tick,unsigned budget,unsigned char *out) {
     if(!uirep_queue_count) return 0;
     if(!pilot_slot_present(stats.slot,tick)) {InterlockedIncrement64(&uirep_waits);return 0;}   /* absent (hot join): queued until H */
     unsigned at=UIREP_HEAD,count=0;
+    /* An event at the head that no tick has room for (see UIREP_EVENT_FIT; the push refuses them) is given up, with a
+     * refusal row, instead of holding everything behind it for good. */
+    while(uirep_queue_count && uirep_queue[uirep_queue_head].length>UIREP_EVENT_FIT) {
+        uirep_note_refusal(uirep_op_name(uirep_queue[uirep_queue_head].op),"never_fits");
+        uirep_queue_head=(uirep_queue_head+1u)%UIREP_QUEUE;--uirep_queue_count;
+    }
+    if(!uirep_queue_count) return 0;
     while(count<uirep_queue_count && count<UIREP_EVENTS_MAX) {
         const uirep_event *e=&uirep_queue[(uirep_queue_head+count)%UIREP_QUEUE];
         if(at+2u+e->length>budget) break;

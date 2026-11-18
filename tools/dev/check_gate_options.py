@@ -80,6 +80,7 @@ PROBE_OPTIONS = {
     'native_gate_cutscene_ready': (('true',), (), None),
     'native_gate_viewpoint_policy': (('sector',), (), None),
     'native_gate_effect_rows': (('true',), (), None),
+    'native_gate_swarm_seed': (('true',), (), None),
     'native_gate_motion_watch_orders': (('true',), (), None),
     'native_gate_motion_watch_digest': (('true',), (), None),
     'native_gate_rng_rows': (('true',), (), None),
@@ -513,7 +514,7 @@ def ui_replay_rules(config_text, enabled):
             failures.append(dict(rule='native_gate_ui_guard must be all or a list of ' + ', '.join(UI_GUARD_GROUPS), bits=[guard]))
         if value in (None, 'false', 'nil'):
             failures.append(dict(rule='native_gate_ui_guard needs native_gate_ui_replay', bits=['native_gate_ui_replay']))
-    for option in ('native_gate_ui_replay_script', 'native_gate_ui_replay_fleet', 'native_gate_ui_replay_min_hull', 'native_gate_ui_trade_fund'):
+    for option in ('native_gate_ui_replay_script', 'native_gate_ui_replay_console', 'native_gate_ui_replay_fleet', 'native_gate_ui_replay_min_hull', 'native_gate_ui_trade_fund'):
         if lua_value(config_text, option) not in (None, 'nil', 'false') and value in (None, 'false', 'nil'):
             failures.append(dict(rule=f'{option} needs native_gate_ui_replay', bits=['native_gate_ui_replay']))
     # Test protection of the slot ships (native_gate_ui_replay.xml, MinHull): a whole hull percentage.

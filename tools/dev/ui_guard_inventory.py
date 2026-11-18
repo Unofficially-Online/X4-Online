@@ -74,11 +74,11 @@ for part in (
     # P1, commanding ships.
     _ffi('orders', '''CreateOrder CreateOrder3 EnableOrder AdjustOrder RemoveOrder RemoveOrder2 ResetOrder
         EnablePlannedDefaultOrder RemovePlannedDefaultOrder CreateDeployToStationOrder''', ORDERS | QUEUE),
-    _ffi('orders', 'SetOrderLoop SetCurrentLoopOrder', QUEUE),
+    _ffi('orders', 'SetOrderLoop SetCurrentLoopOrder ResetOrderLoop', QUEUE),
     _ffi('orders', 'RemoveAllOrders RemoveAllOrders2', ORDERS),
     _lua('orders', 'CreateOrder', ORDERS),
     _lua('orders', 'SetOrderParam RemoveOrderListParam', ORDERS | QUEUE),
-    _ffi('orders', '''ResetOrderLoop RemoveOrderFailure RemoveDefaultOrderFailure SetOrderSyncPointID RemoveOrderSyncPointID
+    _ffi('orders', '''RemoveOrderFailure RemoveDefaultOrderFailure SetOrderSyncPointID RemoveOrderSyncPointID
         ReleaseOrderSyncPoint ReleaseOrderSyncPointFromOrder SetSyncPointAutoRelease SetSyncPointAutoReleaseFromOrder'''),
     _lua('orders', 'CopyDefaultOrderParamsForPlanning'),
     _ffi('fleet', '''RemoveCommander2 SetSubordinateGroupAssignment SetSubordinateGroupAttackOnSight SetSubordinateGroupDockAtCommander

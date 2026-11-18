@@ -3570,9 +3570,10 @@ static void test_join_resv(void) {
     printf("join RESV: the reservation tree in order (count checked), the capture by zone/owner/index, the admission's box and expiry writes, missing and extra PASS\n");
 }
 /* ZREF (lockstep_join_world.h): the zone reference table walked in order and found by a zone's ID; the capture by the zones'
- * portable keys (a zone without one left out); the admission makes the joiner's table the session's: other counts and times
- * written, an entry it lacks made by the game's own call and set, an entry no record names cleared, a zone the joiner does
- * not have counted missing; off, or with a package without the table, nothing is touched. */
+ * portable keys (a zone without one left out); the admission gives the joiner the session's: a higher count and the time
+ * written, a count of its own that is higher kept, an entry it lacks made by the game's own call and set, an entry no record
+ * names left as it is, a zone the joiner does not have counted missing; off, or with a package without the table, nothing
+ * is touched. */
 static _Alignas(16) unsigned char tzref_head[0x30],tzref_node[5][0x38],tzref_zone[4][0x20];
 static unsigned tzref_adds,tzref_locks,tzref_depth;
 static void tzref_lock(int enter) {++tzref_locks;if(enter) ++tzref_depth;else {assert(tzref_depth);--tzref_depth;}}
@@ -3621,9 +3622,10 @@ static void test_join_zref(void) {
     assert(t.nzref==2 && t.zref[0].zone==(0x30ull|0x100000ull) && t.zref[0].count==2 && t.zref[0].time==10.5 && !t.zref[0].pad &&
            t.zref[1].zone==(0x40ull|0x100000ull) && t.zref[1].count==0 && t.zref[1].time==20.25 && tzref_locks==2 && !tzref_depth);
     free(t.zref);
-    /* the admission. The session: zone 0x30 with another count and time, 0x40 as the joiner has it, 0x70 the joiner has no entry
-     * for, and a zone the joiner does not have; the joiner's entry of 0x50 is in no record */
-    tzref_build();
+    /* the admission. The session: zone 0x30 with a higher count and another time, 0x40 with its time and no count where the
+     * joiner holds three, 0x70 the joiner has no entry for, and a zone the joiner does not have; the joiner's entry of 0x50 is
+     * in no record */
+    tzref_build();tzref_set(tzref_node[1],0x40ull,3,20.25);
     static join_zref_rec recs[4];memset(recs,0,sizeof(recs));
     recs[0].zone=0x100030ull;recs[0].count=5;recs[0].time=99.5;recs[1].zone=0x100040ull;recs[1].count=0;recs[1].time=20.25;
     recs[2].zone=0x100070ull;recs[2].count=4;recs[2].time=12.0;recs[3].zone=0x100080ull;recs[3].count=1;recs[3].time=1.0;
@@ -3632,22 +3634,23 @@ static void test_join_zref(void) {
     mine.ids=mine_ids;mine.nids=5;   /* sorted by portable; 0x80 has a key and no object */
     int32_t count;double time;
     join_zref_on=0;join_admit_zref(&s,&mine);
-    assert(!join_zref_written && !join_zref_equal && !join_zref_made && !join_zref_missing && !join_zref_cleared && !tzref_adds);
+    assert(!join_zref_written && !join_zref_equal && !join_zref_made && !join_zref_missing && !join_zref_extra && !join_zref_higher && !tzref_adds);
     tzref_get(tzref_node[0],&count,&time);assert(count==2 && time==10.5);   /* off: nothing touched */
     join_zref_on=1;
     {join_tables none;memset(&none,0,sizeof(none));none.version=JOIN_PACKAGE_VERSION;join_admit_zref(&none,&mine);}   /* a package without the table */
-    tzref_get(tzref_node[2],&count,&time);assert(count==7 && time==0.0 && !join_zref_cleared);
+    tzref_get(tzref_node[2],&count,&time);assert(count==7 && time==0.0 && !join_zref_extra);
     join_admit_zref(&s,&mine);
-    assert(join_zref_written==2 && join_zref_equal==1 && join_zref_made==1 && join_zref_missing==1 && join_zref_cleared==1 && tzref_adds==1 && !tzref_depth);
+    assert(join_zref_written==2 && join_zref_equal==1 && join_zref_made==1 && join_zref_missing==1 && join_zref_extra==1 && join_zref_higher==1 &&
+           tzref_adds==1 && !tzref_depth);
     tzref_get(tzref_node[0],&count,&time);assert(count==5 && time==99.5);
-    tzref_get(tzref_node[1],&count,&time);assert(count==0 && time==20.25);
+    tzref_get(tzref_node[1],&count,&time);assert(count==3 && time==20.25);                /* its own higher count kept */
     tzref_get(tzref_node[3],&count,&time);assert(count==4 && time==12.0);                 /* made by the game's call, then set */
-    tzref_get(tzref_node[2],&count,&time);assert(count==0 && time==JOIN_ZREF_PAST);       /* in no record: as good as absent */
+    tzref_get(tzref_node[2],&count,&time);assert(count==7 && time==0.0);                  /* in no record: the joiner's own */
     join_admit_zref(&s,&mine);                                                           /* again: nothing left to do */
-    assert(!join_zref_written && join_zref_equal==3 && !join_zref_made && join_zref_missing==1 && !join_zref_cleared && tzref_adds==1);
-    {char status[8192];assert(join_status(status,sizeof(status)) && strstr(status," zref=1:0:3:0:1:0 zref_cap="));}
+    assert(!join_zref_written && join_zref_equal==3 && !join_zref_made && join_zref_missing==1 && join_zref_extra==1 && join_zref_higher==1 && tzref_adds==1);
+    {char status[8192];assert(join_status(status,sizeof(status)) && strstr(status," zref=1:0:3:0:1:1:1 zref_cap="));}
     join_zref_on=0;join_zref_head_test=NULL;join_zref_lock=lock;join_zref_add=add;join_key=key;join_world_find=find;join_world_map=map;
-    printf("join ZREF: the zone reference table in order and by ID, the capture by portable keys inside the lock, the admission's writes, made, missing and cleared entries PASS\n");
+    printf("join ZREF: the zone reference table in order and by ID, the capture by portable keys inside the lock, the admission's writes, kept higher counts, made, missing and extra entries PASS\n");
 }
 /* OMGS admission write (lockstep_join_world.h join_omgs_write): the raw runs land, the masked words and the vector triples are not
  * written raw; an empty session vector empties the joiner's own (its begin and capacity kept), a non-empty one leaves it. */

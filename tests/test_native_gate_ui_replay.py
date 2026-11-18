@@ -277,7 +277,17 @@ class SessionTests(unittest.TestCase):
         self.assertTrue(any('result=applied what=EnableOrder=1' in l for l in values(g.logs)))
         self.assertIsNone(g.FAILED)
         self.assertTrue(g.S.unblocked['MapMenu.buttonNewOrder'])
-        self.assertIsNone(g.S.unblocked['MapMenu.buttonDefaultOrderConfirm'])
+        self.assertTrue(g.S.unblocked['MapMenu.buttonDefaultOrderConfirm'])   # its ResetOrderLoop is captured (17 Nov)
+        # a parameter of the planned default order (the behaviour page) names its order by X4's word, not an index:
+        # the word reaches the stock function as it was captured
+        lua.execute('''
+          env.X4LAN_UI_REPLAY_STOCK.SetOrderParam=function(id,idx,param,list,value)
+            stock_calls[#stock_calls+1]='SetOrderParam:'..tostring(ids[id])..':'..tostring(idx)..':'..param..':'..tostring(list)..':'..tostring(value);return true end
+          pushed={};stock_calls={};mapped=nil
+          env.SetOrderParam(make_id('100'),'planneddefault',1,nil,true)
+          DUE={[60]='1:69:'..pushed[1][2]};S.apply(60)''')
+        self.assertEqual(values(g.stock_calls), ['SetOrderParam:100:planneddefault:1:nil:true'])
+        self.assertIsNone(g.mapped)
 
     def test_queue_script_ops_call_the_entries_as_the_map_rows_do(self):
         lua, g = client()

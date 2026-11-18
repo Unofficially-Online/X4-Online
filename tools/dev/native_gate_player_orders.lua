@@ -236,8 +236,10 @@ local function hook_menus()
    hooked[menu.name]=true
    local wrappers,blocked=build(menu)
    local seen={}
+   -- not what is named order... and orders nothing (the trade menu's amount helper, the interact menu's icon text)
+   local harmless=({MapMenu={orderAmountHelper=true},InteractMenu={orderIconText=true}})[menu.name] or {}
    for name,value in pairs(menu) do
-    if type(value)=='function' and name:match('^order%u') then seen[name]=true end
+    if type(value)=='function' and name:match('^order%u') and not harmless[name] then seen[name]=true end
    end
    for _,name in ipairs(blocked) do if type(menu[name])=='function' then seen[name]=true end end
    for name in pairs(wrappers) do if type(menu[name])=='function' then seen[name]=true end end

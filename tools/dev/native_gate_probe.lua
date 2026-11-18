@@ -2429,6 +2429,11 @@ local ORDER_BLOCK={
   'buttonStartOrders','checkboxOrderPlayerOverride','checkboxOrderPlayerOverrideValue','dropdownBehaviourFormation',
   'dropdownChangeOverrideOrder','dropdownNewSyncPoint','removeOrder','setOrderParamFromMode','slidercellSetOrderParam'},
 }
+-- Functions of those menus that are named order... and order nothing: the trade menu's amount helper (it notes the
+-- amounts the sliders set; Confirm sends them) and the interact menu's icon text for its entries. Refused like the
+-- order entries, the sliders set nothing and every entry's text began with the refusal's 0 (found 17 Nov by
+-- tools/dev/action_tests.py trade --by menu).
+local ORDER_LOCAL={MapMenu={orderAmountHelper=true},InteractMenu={orderIconText=true}}
 -- Map hotkeys that start autopilot, travel mode or SETA on the player ship.
 local HOTKEY_BLOCK={INPUT_ACTION_ADDON_DETAILMONITOR_A_SHIFT=true,INPUT_ACTION_ADDON_DETAILMONITOR_TRAVELMODE=true,INPUT_ACTION_ADDON_DETAILMONITOR_SETA=true}
 local orders_blocked={}
@@ -2443,7 +2448,8 @@ local function block_orders()
    -- UI replay: what it captures stays open, everything else refuses as before.
    local open=pilot_view.ui_replay and pilot_view.ui_replay.unblocked or {}
    local seen={}
-   for name,value in pairs(menu) do if type(value)=='function' and name:match('^order%u') then seen[name]=true end end
+   local harmless=ORDER_LOCAL[menu_name] or {}
+   for name,value in pairs(menu) do if type(value)=='function' and name:match('^order%u') and not harmless[name] then seen[name]=true end end
    for _,name in ipairs(names) do if type(menu[name])=='function' then seen[name]=true end end
    local sorted={};for name in pairs(seen) do sorted[#sorted+1]=name end
    table.sort(sorted)
@@ -2922,6 +2928,176 @@ function pilot_view.arm_ui_replay(slot,window)
   local dock=GetComponentData(ConvertStringToLuaID(string.format('%.0f',ship)),'assigneddock')
   return dock and tostring(dock)~='0' and dock or nil
  end
+ -- A ship as a test's checks need it (core.script ship_look, read only): a slot number or a saved ID. Its owner, its
+ -- pilot (the entity on the pilot post, 0 for none), docked or not, its place in its sector, its order queue (how
+ -- many, the current one's index, each order's definition/state), its default order, and its people: how many, then
+ -- each person's role and seed (the crew list of the map's information page).
+ tools.ship_look=function(ref)
+  local runtime
+  if type(ref)=='number' then runtime=gate.pilot_ship(ref) and string.format('%.0f',gate.pilot_ship(ref)) else runtime=gate.ui_replay_saved(ref) end
+  if not runtime then return 'state=gone' end
+  local id=ConvertStringTo64Bit(runtime)
+  if not ffi.C.IsComponentOperational(id) then return 'state=dead ship='..runtime end
+  local lua=ConvertStringToLuaID(runtime)
+  local owner,pilot,docked=GetComponentData(lua,'owner','assignedpilot','isdocked')
+  local p=ffi.C.GetObjectPositionInSector(id)
+  local parts={'state=ok','ship='..runtime,'owner='..tostring(owner),'pilot='..(pilot and tostring(ConvertIDTo64Bit(pilot)):gsub('ULL$','') or '0'),
+   'docked='..tostring(docked and true or false),string.format('at=%.0f/%.0f/%.0f',p.x,p.y,p.z)}
+  local count=tonumber(ffi.C.GetNumOrders(id))
+  local queue={tostring(count)}
+  if count>0 then
+   local orders=ffi.new('Order3[?]',count)
+   count=tonumber(ffi.C.GetOrders3(orders,count,id))
+   queue[#queue+1]=tostring(tonumber(ffi.C.GetOrderQueueCurrentIdx(id)))
+   for i=0,count-1 do queue[#queue+1]=ffi.string(orders[i].orderdef)..'/'..ffi.string(orders[i].state) end
+  end
+  parts[#parts+1]='orders='..table.concat(queue,',')
+  pcall(ffi.cdef,'bool GetDefaultOrder(Order* result, UniverseID controllableid);')
+  local ok,default=pcall(function() local buf=ffi.new('Order');return ffi.C.GetDefaultOrder(buf,id) and ffi.string(buf.orderdef) or '-' end)
+  parts[#parts+1]='default='..(ok and default or 'err')
+  for _,line in ipairs({'uint32_t GetNumPeopleAfterOrders(UniverseID controllableid, int32_t numorders);',
+    'uint32_t GetPeopleAfterOrders(NPCInfo* result, uint32_t resultlen, UniverseID controllableid, int32_t numorders);',
+    'uint32_t GetPeopleCapacity(UniverseID controllableid, const char* macroname, bool includepilot);'}) do pcall(ffi.cdef,line) end
+  local fine,people=pcall(function()
+   local n=tonumber(ffi.C.GetNumPeopleAfterOrders(id,0))
+   local list={tostring(n)..'/'..tostring(tonumber(ffi.C.GetPeopleCapacity(id,'',false)))}
+   if n>0 then
+    local buf=ffi.new('NPCInfo[?]',n)
+    n=tonumber(ffi.C.GetPeopleAfterOrders(buf,n,id,0))
+    for i=0,n-1 do list[#list+1]=ffi.string(buf[i].roleid)..':'..(tostring(buf[i].seed):gsub('ULL$','')) end
+   end
+   return table.concat(list,',')
+  end)
+  parts[#parts+1]='people='..(fine and people or 'err')
+  return table.concat(parts,' ')
+ end
+ -- Whether a person's click on a stock menu entry is offered in this session (core.script menu_entry, read only). A
+ -- scripted op makes the entry's calls itself, so it also runs where the order block (native_gate_pilot_block_orders)
+ -- refuses the entry to a person: a test asks here whether the click it stands for is open. 'open why=no_block' (the
+ -- block is off), 'open why=not_listed' (never blocked), 'open why=shared' (the UI replay shares its calls), 'blocked'.
+ tools.menu_entry=function(menu_name,name)
+  if not cfg.native_gate_pilot_block_orders then return 'open why=no_block' end
+  local names=ORDER_BLOCK[menu_name]
+  local listed=names~=nil and tostring(name):match('^order%u')~=nil and not (ORDER_LOCAL[menu_name] or {})[name]
+  for _,n in ipairs(names or {}) do if n==name then listed=true end end
+  if not listed then return 'open why=not_listed' end
+  local open=pilot_view.ui_replay and pilot_view.ui_replay.unblocked or {}
+  return open[menu_name..'.'..name] and 'open why=shared' or 'blocked'
+ end
+ -- Reads for the ship purchase and refit tests (core.script fleet_look, build_look, fit_look), as the stock menus ask:
+ -- the player faction's ships (how many, their names, sorted; a ship on the slip counts from its order on); a
+ -- station's build tasks of the player (in progress / queued, each task's macro, '+waits' when it waits for
+ -- resources); a ship's fitted equipment per slot type (the macro of each slot's component, '-' for an empty slot).
+ tools.fleet_look=function()
+  for _,line in ipairs({'uint32_t GetNumAllFactionShips(const char* factionid);','uint32_t GetAllFactionShips(UniverseID* result, uint32_t resultlen, const char* factionid);',
+    'const char* GetComponentName(UniverseID componentid);'}) do pcall(ffi.cdef,line) end
+  local n=tonumber(ffi.C.GetNumAllFactionShips('player'))
+  local names={}
+  if n>0 then
+   local buf=ffi.new('UniverseID[?]',n)
+   n=tonumber(ffi.C.GetAllFactionShips(buf,n,'player'))
+   for i=0,n-1 do names[#names+1]=(ffi.string(ffi.C.GetComponentName(buf[i])):gsub('%s','_')) end
+  end
+  table.sort(names)
+  return 'ships='..n..' names='..table.concat(names,'|')
+ end
+ tools.build_look=function(saved)
+  for _,line in ipairs({'uint32_t GetNumBuildTasks(UniverseID,UniverseID,bool,bool);','uint32_t GetBuildTasks(BuildTaskInfo*,uint32_t,UniverseID,UniverseID,bool,bool);'}) do pcall(ffi.cdef,line) end
+  local station=tools.saved_id(saved)
+  local parts={}
+  for _,progress in ipairs({true,false}) do
+   local n=tonumber(ffi.C.GetNumBuildTasks(station,0,progress,true))
+   local rows={}
+   if n>0 then
+    local tasks=ffi.new('BuildTaskInfo[?]',n)
+    n=tonumber(ffi.C.GetBuildTasks(tasks,n,station,0,progress,true))
+    for i=0,n-1 do
+     if ffi.string(tasks[i].factionid)=='player' then
+      rows[#rows+1]=ffi.string(tasks[i].macro)..(tasks[i].ismissingresources and '+waits' or '')
+     end
+    end
+   end
+   parts[#parts+1]=(progress and 'building=' or 'queued=')..#rows..(#rows>0 and ':'..table.concat(rows,',') or '')
+  end
+  return table.concat(parts,' ')
+ end
+ tools.fit_look=function(ref)
+  for _,line in ipairs({'size_t GetNumUpgradeSlots(UniverseID destructibleid, const char* macroname, const char* upgradetypename);',
+    'UniverseID GetUpgradeSlotCurrentComponent(UniverseID destructibleid, const char* upgradetypename, size_t slot);'}) do pcall(ffi.cdef,line) end
+  local id=tools.ship_id(ref)
+  local parts={}
+  for _,kind in ipairs({'engine','shield','weapon','turret','thruster'}) do
+   local n=tonumber(ffi.C.GetNumUpgradeSlots(id,'',kind))
+   local fitted={}
+   for i=1,n do
+    local component=ffi.C.GetUpgradeSlotCurrentComponent(id,kind,i)
+    fitted[#fitted+1]=tonumber(component)~=0 and tostring(GetComponentData(ConvertStringToLuaID((tostring(component):gsub('ULL$',''))),'macro')) or '-'
+   end
+   parts[#parts+1]=kind..'='..(#fitted>0 and table.concat(fitted,',') or 'none')
+  end
+  return table.concat(parts,' ')
+ end
+ -- The player faction's stations as the map's property list asks for them (core.script station_look, read only): per
+ -- station its code, the modules that stand (with those under construction), the planned ones, the build tasks in
+ -- progress / waiting, the construction vessels assigned, the build storage's money and wares, and whether it has a
+ -- manager. Sorted by code, so two clients' rows compare.
+ tools.station_look=function()
+  for _,line in ipairs({'size_t GetNumStationModules(UniverseID stationid, bool includeconstructions, bool includewrecks);',
+    'size_t GetNumPlannedStationModules(UniverseID defensibleid, bool includeall);','uint32_t GetNumAssignedConstructionVessels(UniverseID containerid);',
+    'uint32_t GetNumBuildTasks(UniverseID,UniverseID,bool,bool);'}) do pcall(ffi.cdef,line) end
+  local rows={}
+  for _,station in ipairs(GetContainedStationsByOwner('player',nil,true) or {}) do
+   local ok,row=pcall(function()
+    local id=ConvertIDTo64Bit(station)
+    local code,storage,manager=GetComponentData(station,'idcode','buildstorage','tradenpc')
+    local parts={tostring(code),'built='..tonumber(ffi.C.GetNumStationModules(id,false,false)),'standing='..tonumber(ffi.C.GetNumStationModules(id,true,false)),
+     'planned='..tonumber(ffi.C.GetNumPlannedStationModules(id,true)),
+     'tasks='..tonumber(ffi.C.GetNumBuildTasks(id,0,true,false))..'/'..tonumber(ffi.C.GetNumBuildTasks(id,0,false,false)),
+     'builders='..tonumber(ffi.C.GetNumAssignedConstructionVessels(id)),'manager='..tostring(manager and true or false)}
+    if storage then
+     local money,cargo=GetComponentData(storage,'money','cargo')
+     local wares={}
+     for ware,amount in pairs(type(cargo)=='table' and cargo or {}) do wares[#wares+1]=ware..':'..tostring(amount) end
+     table.sort(wares)
+     parts[#parts+1]='budget='..string.format('%.0f',tonumber(money) or -1)
+     parts[#parts+1]='stored='..(#wares>0 and table.concat(wares,',') or '-')
+    end
+    return table.concat(parts,'/')
+   end)
+   rows[#rows+1]=ok and row or 'err:'..tostring(row):sub(1,80)
+  end
+  table.sort(rows)
+  return 'stations='..#rows..(#rows>0 and ' '..table.concat(rows,' ') or '')..' money='..string.format('%.0f',GetPlayerMoney())
+ end
+ -- A stock menu's table by its name (core.script menu_call, menu_look, trade_menu_amount), nil when there is none.
+ tools.menu=function(name)
+  for _,menu in ipairs(type(Menus)=='table' and Menus or {}) do
+   if type(menu)=='table' and menu.name==name then return menu end
+  end
+ end
+ -- The crew ops' reads (core.script crew_fire, crew_promote, captain_fire): a ship by slot number or saved ID as a
+ -- 64-bit ID, and its people as the map's crew list gives them: {seed (64-bit), role}, optionally of one role.
+ tools.ship_id=function(ref)
+  local runtime
+  if type(ref)=='number' then runtime=gate.pilot_ship(ref) and string.format('%.0f',gate.pilot_ship(ref)) else runtime=gate.ui_replay_saved(ref) end
+  return ConvertStringTo64Bit((assert(runtime,'ui replay script: ship unresolved')))
+ end
+ tools.ship_people=function(ref,role)
+  for _,line in ipairs({'uint32_t GetNumPeopleAfterOrders(UniverseID controllableid, int32_t numorders);',
+    'uint32_t GetPeopleAfterOrders(NPCInfo* result, uint32_t resultlen, UniverseID controllableid, int32_t numorders);'}) do pcall(ffi.cdef,line) end
+  local id=tools.ship_id(ref)
+  local n=tonumber(ffi.C.GetNumPeopleAfterOrders(id,0))
+  local out={}
+  if n>0 then
+   local buf=ffi.new('NPCInfo[?]',n)
+   n=tonumber(ffi.C.GetPeopleAfterOrders(buf,n,id,0))
+   for i=0,n-1 do
+    local r=ffi.string(buf[i].roleid)
+    if not role or r==role then out[#out+1]={seed=buf[i].seed,role=r} end
+   end
+  end
+  return out
+ end
  -- Where this client's player is, in X4's own answers (core.script foot_where, in the presentation scope): the
  -- player, what contains it, the ship it sits in or stands in, its room, its place in the sector.
  -- The stand-in figures (MD cue Avatar tells their IDs): where a walking player's figure stands in its station
@@ -3099,6 +3275,8 @@ function pilot_view.arm_ui_replay(slot,window)
   fleet=cfg.native_gate_ui_replay_fleet,fleet_tick=window[1]-4,saved_lua=tools.saved_lua,queue_of=queue_of,
   local_mark=(cfg.native_gate_runtime_ids_local or guard or math.floor(mask/core.FAMILY.events)%2==1 or math.floor(mask/core.FAMILY.trade)%2==1) and gate.runtime_ids_probe or nil,present=present,
   min_hull=min_hull,slots=#cfg.native_gate_pilot_slots,slot_lua=tools.slot_lua,own_slot=slot,guard=guard,pss=pss,pss_spawn=pss_spawn,
+  -- the test console's file of this client (native_gate_ui_replay_console: a path with %d for the slot), and what its chunk gets
+  console=type(cfg.native_gate_ui_replay_console)=='string' and function() local chunk=loadfile(string.format(cfg.native_gate_ui_replay_console,slot));if chunk then return chunk() end end or nil,console_tools=tools,
   mpp=cfg.native_gate_missions_per_player==true,   -- slots 2+ capture the events and missions families, applied in their own scope
   -- Generic mission offers for slots 2+ (lockstep_mission_owners.h 'offers'): first 15 s into the window, then every 3
   -- minutes, the slots 3 s apart. native_gate_missions_per_player_offers = false leaves the offers to slot 1's sector.
@@ -3252,8 +3430,10 @@ function pilot_view.arm_ui_replay(slot,window)
   assert(bplan==nil or bplan==false or type(bplan)=='table','ui build refused: invalid native_gate_ui_build_script')
   bplan=bplan and bplan[slot] or nil
   local btools={gate=gate,C=ffi.C,env=_G,ffi=ffi,slot_id=tools.slot_id,slot_lua=tools.slot_lua,saved_id=tools.saved_id,saved_lua=tools.saved_lua,own_slot=slot,
-   loadout=function(station,macro)   -- the station's generated loadout for the macro, as the ship configuration's presets
-    local ok,l=pcall(Helper.getLoadoutHelper2,ffi.C.GenerateShipLoadout2,ffi.C.GenerateShipLoadoutCounts2,'UILoadout2',station,0,macro,0.5)
+   -- the station's generated loadout for the macro, as the ship configuration's presets (level 0..1: low to high); with
+   -- `object`, for that existing ship (an upgrade)
+   loadout=function(station,macro,object,level)
+    local ok,l=pcall(Helper.getLoadoutHelper2,ffi.C.GenerateShipLoadout2,ffi.C.GenerateShipLoadoutCounts2,'UILoadout2',station,object or 0,macro,level or 0.5)
     if ok and l then return l end
     ticklog.loud('UI_BUILD_LOADOUT_EMPTY','macro='..tostring(macro)..' why='..tostring(ok and 'no loadout' or l),false)   -- the scripted plan gets an empty loadout
     return ffi.new('UILoadout2')
@@ -3262,6 +3442,7 @@ function pilot_view.arm_ui_replay(slot,window)
    local_mark=gate.runtime_ids_probe,script=bcore.script(bplan,window[1],btools),fund=fund and {tick=window[1]-4,amount=fund} or nil,
    menus=function() return type(Menus)=='table' and Menus or {} end}
   pilot_view.ui_build=B
+  tools.build={session=B,tools=btools,script=bcore.script}   -- the replay script's op `build` runs this core's script ops
   log('UI_BUILD_ARMED slot='..slot..' families='..mask..' coop='..tostring(coop)..' missing='..table.concat(missing,',')..' script='..tostring(bplan and #bplan or 0))
  end
  pilot_view.ui_replay=S
@@ -5205,7 +5386,7 @@ local function frame()
    assert(cfg.native_gate_gravidar_posts==true and cfg.native_gate_gravidar_key_all and gate.gravidar_posts and gate.gravidar_posts_status and
     gate.gravidar_post_row and gate.gravidar_posts()==1,'Gravidar posts refused')
    log('GRAVIDAR_POSTS_ARMED')
-   -- Diagnostic: native_gate_gravidar_posts_probe={unit,contact} (saved IDs): every apply of the unit logs a probe row with
+   -- Diagnostic: native_gate_gravidar_posts_probe={unit,contact} (saved IDs; the contact may be a created ID): every apply of the unit logs a probe row with
    -- the contact's scan entry, posted or not.
    local probe=cfg.native_gate_gravidar_posts_probe
    if probe~=nil then
@@ -5919,6 +6100,15 @@ local function frame()
      assert(cfg.native_gate_area_jobs==true and gate.area_jobs(1)==1,'area jobs refused '..tostring(gate.area_jobs_status and gate.area_jobs_status()))
      log('AREA_JOBS_ARMED '..tostring(gate.area_jobs_status()))
     end
+    -- Swarm missiles in the same formation on every client (lockstep_swarm_seed.h; a session default, Windows gate):
+    -- X4 seeds a swarm's member offsets with the address of the formation shape, so each client flew its missiles
+    -- elsewhere. Seen in a played sequence too (17 Nov): a player that jumped to another sector met a fight with
+    -- eight swarm missiles there, and the clients parted about 300 ticks after the launch, in every run.
+    if cfg.native_gate_swarm_seed and gate.swarm_seed then
+     assert(cfg.native_gate_swarm_seed==true and gate.swarm_seed(1)==1,
+      'swarm seed refused '..tostring(gate.swarm_seed_status and gate.swarm_seed_status()))
+     log('SWARM_SEED_ARMED '..tostring(gate.swarm_seed_status()))
+    end
    else
     assert(cfg.native_gate_pilot_respawn==nil,'pilot respawn refused: needs native_gate_pilot_death')
     assert(cfg.native_gate_pilot_death_suit==nil,'pilot death suit refused: needs native_gate_pilot_death')
@@ -6543,6 +6733,7 @@ local function frame()
   if gate.view_points_frame(tick)~=1 then error('view points frame failed '..tostring(gate.view_points_status()),0) end
   if X4LAN_NATIVE_HYBRID then X4LAN_NATIVE_HYBRID.frame(tick) end
   ticklog.status('VIEW_POINTS',tick,gate.view_points_status,'view points status unavailable')
+  if cfg.native_gate_swarm_seed and gate.swarm_seed_status then ticklog.status('SWARM_SEED',tick,gate.swarm_seed_status,'swarm seed status unavailable') end
   if cfg.native_gate_view_cameras and gate.view_cameras_status then ticklog.status('VIEW_CAMERAS',tick,gate.view_cameras_status,'view cameras status unavailable') end
   if cfg.native_gate_scan_long and gate.scan_long_status then ticklog.status('SCAN_LONG',tick,gate.scan_long_status,'scan long status unavailable') end
   if cfg.native_gate_scan_mode and gate.scan_mode_status then ticklog.status('SCAN_MODE',tick,gate.scan_mode_status,'scan mode status unavailable') end

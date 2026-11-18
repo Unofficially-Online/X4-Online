@@ -116,6 +116,9 @@ class MirrorTests(unittest.TestCase):
         families = sum(int(v) for v in re.search(r'UIREP_FAMILIES=([0-9|]+)', INPUTS_H).group(1).split('|'))
         self.assertEqual(families & 1024, 1024)   # implemented (bits: docs/LOCKSTEP-REGISTRY.txt)
         self.assertEqual(inv.TRADE, 1024)
+        # the trade menu's Confirm is open to a person when the family shares its calls, and only then
+        self.assertTrue(lua.eval("X4LAN_UI_REPLAY_CORE.unblocked(1024)['MapMenu.buttonConfirmTrade']"))
+        self.assertIsNone(lua.eval("X4LAN_UI_REPLAY_CORE.unblocked(1+4+128)['MapMenu.buttonConfirmTrade']"))
         self.assertIn('trade', uirep.options.UI_REPLAY_FAMILIES)
         self.assertIn('trade', uirep.players.UI_REPLAY_FAMILIES)
         self.assertEqual(lua.eval('X4LAN_UI_TRADE.OP_LUA'), int(re.search(r'#define UITRADE_OP_LUA (0x[0-9a-f]+)u', REPLAY_H).group(1), 16))

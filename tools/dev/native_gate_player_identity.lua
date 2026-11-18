@@ -149,6 +149,8 @@ local ORDER_MUTATORS={
   'buttonStartOrders','checkboxOrderPlayerOverride','checkboxOrderPlayerOverrideValue','dropdownBehaviourFormation',
   'dropdownChangeOverrideOrder','dropdownNewSyncPoint','removeOrder','setOrderParamFromMode','slidercellSetOrderParam'},
 }
+-- ...and what is named order... and orders nothing (the trade menu's amount helper, the interact menu's icon text).
+local ORDER_LOCAL={MapMenu={orderAmountHelper=true},InteractMenu={orderIconText=true}}
 local hooked={}
 local function block_orders()
  if cfg.native_gate_player_identity_block_orders~=true or (hooked.InteractMenu and hooked.MapMenu) then return end
@@ -157,7 +159,8 @@ local function block_orders()
   if names and not hooked[menu.name] then
    hooked[menu.name]=true
    local seen={}
-   for name,value in pairs(menu) do if type(value)=='function' and name:match('^order%u') then seen[name]=true end end
+   local harmless=ORDER_LOCAL[menu.name] or {}
+   for name,value in pairs(menu) do if type(value)=='function' and name:match('^order%u') and not harmless[name] then seen[name]=true end end
    for _,name in ipairs(names) do if type(menu[name])=='function' then seen[name]=true end end
    local list={};for name in pairs(seen) do list[#list+1]=name end
    table.sort(list)

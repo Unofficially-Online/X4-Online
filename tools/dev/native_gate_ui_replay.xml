@@ -102,6 +102,87 @@
     </do_else>
    </actions>
   </cue>
+  <!-- Test only (script op wallet, in every client's plan at the same tick): money for the player's account, so a
+       scripted run can buy (a trade, a ship, a crew member's fee). -->
+  <cue name="Wallet" instantiate="true">
+   <conditions><event_ui_triggered screen="'X4LAN_UiReplay'" control="'Wallet'"/></conditions>
+   <actions>
+    <set_value name="$Before" exact="player.money"/>
+    <reward_player money="(event.param3.$credits)Cr"/>
+    <debug_text text="'[X4LAN] UI_REPLAY_WALLET credits=%s money=%s->%s time=%s'.[event.param3.$credits, $Before, player.money, player.age]"/>
+   </actions>
+  </cue>
+  <!-- Test only (script op station_kit, in every client's plan at the same tick): what a player needs before the stock
+       menus let it build a station: the blueprints of a few station modules for the player faction and, when asked
+       for, a construction vessel of its own with a captain and building drones, 5 km from the given ship. -->
+  <cue name="StationKit" instantiate="true">
+   <conditions><event_ui_triggered screen="'X4LAN_UiReplay'" control="'StationKit'"/></conditions>
+   <actions>
+    <!-- the modules of the test: connection pieces (built within a minute), a small container storage, a dock, an
+         energy cell production, a small habitat, a pier, a defence platform -->
+    <set_value name="$Wares" exact="[ware.module_arg_conn_base_01, ware.module_arg_conn_cross_01, ware.module_arg_stor_container_s_01, ware.module_arg_dock_m_01,
+                                      ware.module_gen_prod_energycells_01, ware.module_arg_hab_s_01, ware.module_arg_pier_l_01, ware.module_arg_def_claim_01]"/>
+    <add_blueprints wares="$Wares"/>
+    <set_value name="$Ship" exact="event.param3.$ship"/>
+    <set_value name="$Builder" exact="null"/>
+    <do_if value="event.param3.$builder and @$Ship.isoperational">
+     <create_ship name="$Builder" macro="macro.ship_arg_xl_builder_01_a_macro" sector="$Ship.sector">
+      <owner exact="faction.player" overridenpc="true"/>
+      <pilot><select faction="faction.argon" tags="tag.aipilot"/></pilot>
+      <units><unit category="unitcategory.build" mk="1" exact="20"/></units>
+      <safepos object="$Ship" min="4km" max="6km"/>
+     </create_ship>
+    </do_if>
+    <debug_text text="'[X4LAN] UI_REPLAY_STATION_KIT blueprints=%s builder=%s pilot=%s time=%s'.[$Wares.count, @$Builder.idcode, @$Builder.pilot, player.age]"/>
+   </actions>
+  </cue>
+  <!-- Test only (script op builder_warp, in every client's plan at the same tick): every construction vessel of the
+       player faction that is on its way to a station of the player faction is put 3 km from that station, so a test
+       does not wait for the flight (the test snapshots' players start 100 km above the sector's plane). -->
+  <cue name="BuilderWarp" instantiate="true">
+   <conditions><event_ui_triggered screen="'X4LAN_UiReplay'" control="'BuilderWarp'"/></conditions>
+   <actions>
+    <find_ship name="$Builders" owner="faction.player" primarypurpose="purpose.build" space="player.galaxy" multiple="true"/>
+    <set_value name="$Moved" exact="0"/>
+    <do_all exact="$Builders.count" counter="$i">
+     <set_value name="$B" exact="$Builders.{$i}"/>
+     <set_value name="$To" exact="if @$B.order.id == 'DeployToStation' then @$B.order.$station else null"/>
+     <do_if value="$To and @$To.exists and $B.distanceto.{$To} gt 5km">
+      <warp object="$B" zone="$To.zone">
+       <safepos object="$To" min="2500m" max="3500m"/>
+      </warp>
+      <set_value name="$Moved" operation="add"/>
+      <debug_text text="'[X4LAN] UI_REPLAY_BUILDER_WARP builder=%s station=%s distance=%s time=%s'.[$B.idcode, $To.idcode, $B.distanceto.{$To}, player.age]"/>
+     </do_if>
+    </do_all>
+    <debug_text text="'[X4LAN] UI_REPLAY_BUILDER_WARPS builders=%s moved=%s time=%s'.[$Builders.count, $Moved, player.age]"/>
+   </actions>
+  </cue>
+  <!-- Test only (script op station_wares, in every client's plan at the same tick): building material in the build
+       storage of every station of the player faction, so a planned module is built within the test instead of after
+       hours of deliveries. -->
+  <cue name="StationWares" instantiate="true">
+   <conditions><event_ui_triggered screen="'X4LAN_UiReplay'" control="'StationWares'"/></conditions>
+   <actions>
+    <find_station name="$Stations" owner="faction.player" space="player.galaxy" checkoperational="false" multiple="true"/>
+    <set_value name="$Filled" exact="0"/>
+    <do_all exact="$Stations.count" counter="$i">
+     <set_value name="$Storage" exact="@$Stations.{$i}.buildstorage"/>
+     <do_if value="$Storage">
+      <!-- up to the amount, so the op can be in the plan every minute without piling the storage up -->
+      <do_all exact="3" counter="$w">
+       <set_value name="$Ware" exact="[ware.energycells, ware.hullparts, ware.claytronics].{$w}"/>
+       <set_value name="$Have" exact="$Storage.cargo.{$Ware}.count"/>
+       <do_if value="$Have lt event.param3.$amount">
+        <add_cargo object="$Storage" ware="$Ware" exact="event.param3.$amount - $Have"/>
+        <set_value name="$Filled" operation="add"/>
+       </do_if>
+      </do_all>
+     </do_if>
+    </do_all>
+    <debug_text text="'[X4LAN] UI_REPLAY_STATION_WARES stations=%s filled=%s amount=%s time=%s'.[$Stations.count, $Filled, event.param3.$amount, player.age]"/>
+   </actions>
+  </cue>
   <!-- Test only (script op probe_far, in every client's plan at the same tick): a resource probe where there is something
        to measure. A probe launched in a sector without resource areas asks for no scan, and the slot ships of the test
        snapshots sit in such sectors. This takes the first sector of the galaxy with ore (the search looks in its

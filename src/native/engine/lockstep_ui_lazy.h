@@ -50,23 +50,53 @@
  * keyed=cargo/trade/units, unkeyed= (no portable key or no TLS word: native).
  * Pins: each function's first bytes. Written by CAS at arm (before
  * the snapshot load), re-checked every gate tick (stop reason 170), restored at
- * stop. */
-#define UL_TARGETS 3u
+ * stop.
+ *
+ * Fourth target, 'build' (17 Nov 2026): a container's builds are brought up to a game time the same lazy way, by
+ * 0x4280e0(container, time, force): without force it returns when +0xa58 (the time it was last brought to) is not
+ * older, else it stores the time and works through the container's build tasks (a station's construction, a shipyard's
+ * ships): what can start starts, building material is taken from the storage. The simulation asks at its own moments;
+ * the station menu asks every frame through GetCurrentBuildProgress (0x1e4580 -> BuildProcessor 0x38c100(update) ->
+ * 0x38dd40 -> here). Run sb2 (two clients, each player building a station by real clicks): the client whose menu showed
+ * the station took every 60 s portion of the material one portion earlier than the other and finished the module 1,800
+ * ticks earlier; the first digest part to differ was the runtime IDs, 4,600 ticks after the builder's order. A UI query
+ * is blocked as the other three are (the menu shows the progress the simulation last brought the station to); a
+ * replayed call, which every client runs at the same tick, runs. Not keyed: simulation calls run as they are.
+ *
+ * Fifth target, 'map' (17 Nov 2026): the open map refreshes the ships it shows. U::UniverseMapBehavior (vfunc144
+ * 0xdc3a00 and 0xdc8dd0, six call sites) calls 0xdcaa00(behavior, ship) for every shown object whose attention is
+ * below 7 (not next to a player): it removes the ship's pending U::UpdateEngineParametersEvent (type 0x20f) and posts
+ * one due now. The NavigationController's handler 0xea1d70 then copies the ship's and its engine's parameters (speed,
+ * boost, travel mode) into the written flight slot at once and re-posts its own periodic event with a draw from the
+ * thread's random word. Without a map that refresh comes every 1 to 2 s (lockstep_nav_cadence.h). Run play5 (two
+ * clients; player 2 opened the map, nothing else): on that client four moving ships of the watched zone were
+ * refreshed every tick from the map's first frame (1,138 times against 18 on the other client), one took its travel
+ * mode flag at tick 3660 where the other client's copy waited for the periodic refresh, and the world check 540 ticks
+ * later had two ships at other places. The same in every earlier run where a second player opened the map while a
+ * ship flew near a station under construction, and in another session's runs with a map left open on one client.
+ * The routine has no caller but the map, so in a session it does nothing: the map shows the parameters the
+ * simulation last refreshed. Status map=<blocked>/<passed>. */
+#define UL_TARGETS 5u
 #define UL_STOP_REASON 170u /* 155 stock piloting, 160-164 virtual players, 165 Jolt, 166-169 camera */
 #define UL_RING 16384u
 #define UL_CHAIN 6u
 #define UL_STUB 0x40u
 enum {UL_OFF=0,UL_OBSERVE=1,UL_BLOCK=2,UL_KEY=3};
 #define UL_KEY_DOMAIN 0x58344c554c4b4559ULL /* "X4LULKEY" */
-enum {UL_CARGO=0,UL_TRADE=1,UL_UNITS=2};
+enum {UL_CARGO=0,UL_TRADE=1,UL_UNITS=2,UL_BUILD=3,UL_MAP=4};
 static const struct {uint32_t rva,stolen,pin_size;const char *sha,*name;} ul_targets[UL_TARGETS]={
     {0x41a910u,7u,0x70u,"5b94da94f107e9c097551381a91e1ff9868ace79480c4cbaf7958292f77f666a","cargo"},
     {0x4079e0u,7u,0x60u,"ed89bcfb65a436f4e90ab33fea2493352ab953f8c6df8ec3d3fa6c07815b45e7","trade"},
     {0x4d8110u,5u,0x40u,"43aa700d29d4015a81690be9b8847b50f6db872c42dd133e7029fc69430027b4","units"},
+    {0x4280e0u,7u,0x60u,"28158cae28c0e6a97f4b43565063d3cd89b8825a3ffa6444ea0f9f59bba6fbcd","build"},
+    {0xdcaa00u,5u,0x8au,"08d888bafa3fa417939add8ff0ad7c4611cba9f19590235c1bbb61ba648fb58c","map"},
 };
 typedef void (*ul_cargo_fn)(void *,double,uint64_t);
 typedef uint64_t (*ul_trade_fn)(void *,uint64_t,uint64_t,uint64_t);
 typedef uint64_t (*ul_units_fn)(void *,void *,uint64_t);
+typedef void (*ul_build_fn)(void *,double,uint64_t);
+typedef void (*ul_map_fn)(void *,void *);
+static uint64_t ul_map_blocked,ul_map_passed;
 typedef struct {volatile LONG64 ready;uint64_t tick,key,a1,a2,state;uint32_t chain[UL_CHAIN];uint8_t target,klass,blocked,lua,other;} ul_row_t;
 static uint64_t ul_window_from,ul_window_to; /* every call of these ticks is a row; 0/0: UI queries only */
 static int ul_mode,ul_installed,ul_restored;
@@ -110,6 +140,8 @@ static uint64_t ul_state_of(unsigned target,const void *container) {
     if(!c) return 0;
     if(target==UL_CARGO) read_local(c+0xa18,&v,8);
     else if(target==UL_TRADE) read_local(c+0x928,&v,8);
+    else if(target==UL_BUILD) read_local(c+0xa58,&v,8);
+    else if(target==UL_MAP) v=0;
     else {read_local(c+0x680,&total,4);read_local(c+0x684,&pending,1);v=total|((uint64_t)pending<<32);}
     return v;
 }
@@ -142,7 +174,7 @@ static int ul_callers_text(char *out,size_t cap) {
     qsort(sorted,n,sizeof(sorted[0]),ul_caller_order);
     int w=snprintf(out,cap,"sites=%u full=%llu",n,(unsigned long long)ul_callers_full);
     for(unsigned i=0;i<n && w>0 && (size_t)w<cap;i++)
-        w+=snprintf(out+w,cap-(size_t)w," %c:%x/%x=%u","ctu"[sorted[i].target<3?sorted[i].target:0],sorted[i].c0,sorted[i].c1,sorted[i].count);
+        w+=snprintf(out+w,cap-(size_t)w," %c:%x/%x=%u","ctubm"[sorted[i].target<5?sorted[i].target:0],sorted[i].c0,sorted[i].c1,sorted[i].count);
     return w>0 && (size_t)w<cap?w:0;
 }
 /* 1: a UI query in an admitted frame that 'block' skips; 0: run natively. */
@@ -164,8 +196,10 @@ static int ul_ui_query(unsigned target,const void *container,uint64_t a1,uint64_
      * update is the simulation's own step, not a query of one client's UI: X4's StartResearch ends with
      * 0x41a910(station, now, 1), which starts the queued item. Blocked, a research module that nothing else brings up
      * never starts (hq7, 16 Nov: the headquarters of slot 2's faction kept its queue for good; X4's own player's started
-     * only because a story script asked that station for something). It runs keyed like a simulation call. */
-    if(target==UL_CARGO && (a2&0xff) && InterlockedCompareExchange(&uirep_replaying,0,0)) {
+     * only because a story script asked that station for something). It runs keyed like a simulation call. A replayed
+     * call that reaches a container's builds (a plan commit, a cancelled construction, a ship order) is such a step too,
+     * forced or not. */
+    if(((target==UL_CARGO && (a2&0xff)) || target==UL_BUILD) && InterlockedCompareExchange(&uirep_replaying,0,0)) {
         ++ul_replayed;
         if(window) ul_record(target,container,chain,0,1,a1,a2,ul_state_of(target,container));
         return 0;
@@ -223,7 +257,18 @@ static uint64_t ul_units(void *container,void *filter,uint64_t flag) {
     __finally {*word=saved;}
     return result;
 }
-static void *const ul_entries[UL_TARGETS]={(void*)ul_cargo,(void*)ul_trade,(void*)ul_units};
+static void ul_build(void *container,double now,uint64_t force) {
+    uint64_t bits;memcpy(&bits,&now,8);
+    if(ul_ui_query(UL_BUILD,container,bits,force&0xff)) return;
+    ((ul_build_fn)(void *)ul_trampoline(UL_BUILD))(container,now,force);
+}
+/* The map's refresh of a shown ship: nothing in a session ('block' and 'key'); 'observe' counts and runs it. */
+static void ul_map(void *behavior,void *ship) {
+    if(ul_mode>=UL_BLOCK && stats.active && boot_phase==3) {++ul_map_blocked;return;}
+    ++ul_map_passed;
+    ((ul_map_fn)(void *)ul_trampoline(UL_MAP))(behavior,ship);
+}
+static void *const ul_entries[UL_TARGETS]={(void*)ul_cargo,(void*)ul_trade,(void*)ul_units,(void*)ul_build,(void*)ul_map};
 /* Trampoline: the stolen bytes, then jmp [rip] back; entry stub (+0x20): jmp [rip] to the C entry. */
 static void ul_write_code(unsigned char *p,unsigned i,const unsigned char *stolen) {
     static const unsigned char jmp[6]={0xff,0x25,0,0,0,0};
@@ -286,7 +331,7 @@ static int ul_arm(int mode) {
     for(unsigned i=0;i<UL_TARGETS;i++) ul_write_code(ul_page+UL_STUB*i,i,image+ul_targets[i].rva);
     if(!VirtualProtect(ul_page,0x1000,PAGE_EXECUTE_READ,&ignored)) {ul_stage="page";return 0;}
     FlushInstructionCache(GetCurrentProcess(),ul_page,0x1000);
-    memset(ul_lua,0,sizeof(ul_lua));memset(ul_sim,0,sizeof(ul_sim));memset(ul_callers,0,sizeof(ul_callers));ul_callers_full=0;for(unsigned i=0;i<UL_TARGETS;i++) ul_other[i]=0;ul_blocked=ul_unmapped=ul_unkeyed=0;memset(ul_keyed,0,sizeof(ul_keyed));ul_rows=0;ul_failures=0;ul_restored=0;
+    memset(ul_lua,0,sizeof(ul_lua));memset(ul_sim,0,sizeof(ul_sim));memset(ul_callers,0,sizeof(ul_callers));ul_callers_full=0;for(unsigned i=0;i<UL_TARGETS;i++) ul_other[i]=0;ul_blocked=ul_unmapped=ul_unkeyed=0;memset(ul_keyed,0,sizeof(ul_keyed));ul_rows=0;ul_failures=0;ul_restored=0;ul_map_blocked=ul_map_passed=0;
     ul_mode=mode;ul_installed=1;
     for(unsigned i=0;i<UL_TARGETS;i++) {
         unsigned char orig[5],patch[5]={0xe9};int32_t d=ul_rel(i);memcpy(orig,image+ul_targets[i].rva,5);memcpy(patch+1,&d,4);
@@ -320,9 +365,11 @@ static int ul_row(uint64_t index,char *out,size_t cap) {
 }
 static int ul_status(char *out,size_t cap) {
     static const char *const modes[4]={"off","observe","block","key"};
-    int n=snprintf(out,cap,"installed=%d mode=%s frame=%llu lua=%llu/%llu/%llu sim=%llu/%llu/%llu other=%lld/%lld/%lld blocked=%llu unmapped=%llu rows=%lld window=%llu-%llu restored=%d stage=%s failures=%lld keyed=%llu/%llu/%llu unkeyed=%llu",
+    int n=snprintf(out,cap,"installed=%d mode=%s frame=%llu lua=%llu/%llu/%llu sim=%llu/%llu/%llu other=%lld/%lld/%lld blocked=%llu unmapped=%llu rows=%lld window=%llu-%llu restored=%d stage=%s failures=%lld keyed=%llu/%llu/%llu unkeyed=%llu build=%llu/%llu/%lld map=%llu/%llu",
         ul_installed,modes[ul_mode>=0 && ul_mode<4?ul_mode:0],(unsigned long long)stats.issued,(unsigned long long)ul_lua[0],(unsigned long long)ul_lua[1],
         (unsigned long long)ul_lua[2],(unsigned long long)ul_sim[0],(unsigned long long)ul_sim[1],(unsigned long long)ul_sim[2],(long long)ul_other[0],(long long)ul_other[1],(long long)ul_other[2],(unsigned long long)ul_blocked,
-        (unsigned long long)ul_unmapped,(long long)ul_rows,(unsigned long long)ul_window_from,(unsigned long long)ul_window_to,ul_restored,ul_stage,(long long)ul_failures,(unsigned long long)ul_keyed[0],(unsigned long long)ul_keyed[1],(unsigned long long)ul_keyed[2],(unsigned long long)ul_unkeyed);
+        (unsigned long long)ul_unmapped,(long long)ul_rows,(unsigned long long)ul_window_from,(unsigned long long)ul_window_to,ul_restored,ul_stage,(long long)ul_failures,(unsigned long long)ul_keyed[0],(unsigned long long)ul_keyed[1],(unsigned long long)ul_keyed[2],(unsigned long long)ul_unkeyed,
+        (unsigned long long)ul_lua[UL_BUILD],(unsigned long long)ul_sim[UL_BUILD],(long long)ul_other[UL_BUILD],   /* build: UI queries / simulation calls / other threads */
+        (unsigned long long)ul_map_blocked,(unsigned long long)ul_map_passed);
     return n>0 && (size_t)n<cap?n:0;
 }

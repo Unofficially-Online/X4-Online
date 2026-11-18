@@ -4984,10 +4984,15 @@ static void join_admit_resv(const join_tables *s,const join_tables *mine) {
  * stamped with its load; after the handover 25 of 891 common zones with other counts, up to 228 against 148), and the
  * states the other sections write into the joiner's objects bring no references with them, though their holders give
  * them back later.
- * The capture takes every entry of a zone with a session key: count and time. With the opt-in the admission makes the
- * joiner's table the session's: an entry it lacks is made by X4's own 0x843810 and then set, an entry no record names is
- * set to no count and a time long past (as good as absent to the kill check; the tree is not cut). Status
- * zref=on:written:equal:made:missing:cleared (missing: a zone the joiner does not have). */
+ * The capture takes every entry of a zone with a session key: count and time. With the opt-in the admission gives the
+ * joiner the session's: an entry it lacks is made by X4's own 0x843810 and then set; an entry it has takes the session's
+ * time, and the session's count when that is the higher one. A count is never lowered: a count stands for holders that
+ * keep a plain pointer to the zone, and the joiner's load may have made holders the session does not have; a zone removed
+ * under one of them would leave that pointer behind (run hq38, 17 Nov: a joiner with the first form, which wrote the
+ * session's count whatever its own was, stopped 470 ticks after its join in a script's walk over a list that held an
+ * object already gone; not shown to come from this, and not to be risked). An entry no record names stays the
+ * joiner's own. Status zref=on:written:equal:made:missing:extra:higher (missing: a zone the joiner does not have; extra:
+ * the joiner's entries no record names; higher: its counts kept above the session's). */
 #define JOIN_ZREF_HEAD 0x2f5e400u
 #define JOIN_ZREF_LOCK 0x3949be8u
 #define JOIN_ZREF_ENTER 0x1bc1408u         /* the image's import cells: EnterCriticalSection, LeaveCriticalSection */
@@ -4999,10 +5004,9 @@ static void join_admit_resv(const join_tables *s,const join_tables *mine) {
 #define JOIN_ZREF_COUNT 0x28u
 #define JOIN_ZREF_TIME 0x30u
 #define JOIN_ZREF_MAX 1000000u
-#define JOIN_ZREF_PAST (-1.0e9)
 static int join_u64_cmp(const void *a,const void *b);   /* below */
 static int join_zref_on;
-static uint64_t join_zref_written,join_zref_equal,join_zref_made,join_zref_missing,join_zref_cleared;
+static uint64_t join_zref_written,join_zref_equal,join_zref_made,join_zref_missing,join_zref_extra,join_zref_higher;
 static unsigned char *join_zref_head_test;   /* tests: the table's header */
 static unsigned char *join_zref_head(void) {return join_zref_head_test?join_zref_head_test:image+JOIN_ZREF_HEAD;}
 static void join_zref_lock_native(int enter) {
@@ -5055,16 +5059,14 @@ static void join_capture_zref(join_tables *t) {
 }
 typedef struct {const uint64_t *kept;uint32_t nkept;} join_zref_clear_ctx;
 static int join_zref_clear_visit(unsigned char *node,void *p) {
-    const join_zref_clear_ctx *c=(const join_zref_clear_ctx*)p;uint64_t runtime=0;const int32_t none=0;const double past=JOIN_ZREF_PAST;
+    const join_zref_clear_ctx *c=(const join_zref_clear_ctx*)p;uint64_t runtime=0;
     if(!join_read(node+JOIN_ZREF_KEY,&runtime,8)) return 1;
     if(c->nkept && bsearch(&runtime,c->kept,c->nkept,8,join_u64_cmp)) return 1;
-    int changed=join_poke((uintptr_t)(node+JOIN_ZREF_COUNT),&none,4);
-    changed|=join_poke((uintptr_t)(node+JOIN_ZREF_TIME),&past,8);
-    if(changed) ++join_zref_cleared;
+    ++join_zref_extra;   /* the joiner's own: left as it is */
     return 1;
 }
 static void join_admit_zref(const join_tables *s,const join_tables *mine) {
-    join_zref_written=join_zref_equal=join_zref_made=join_zref_missing=join_zref_cleared=0;
+    join_zref_written=join_zref_equal=join_zref_made=join_zref_missing=join_zref_extra=join_zref_higher=0;
     if(!join_zref_on || !s->nzref) return;   /* a package without the table: the joiner keeps its own */
     uint64_t *kept=malloc((size_t)s->nzref*8u);uint32_t nkept=0;
     if(!kept) return;
@@ -5072,13 +5074,13 @@ static void join_admit_zref(const join_tables *s,const join_tables *mine) {
     for(uint32_t i=0;i<s->nzref;i++) {
         const join_zref_rec *r=&s->zref[i];const uint64_t runtime=join_runtime_of(mine,r->zone);unsigned char *zone=join_object(runtime);
         if(!zone) {++join_zref_missing;continue;}
-        unsigned char *node=join_zref_find(runtime);
+        unsigned char *node=join_zref_find(runtime);int32_t count=r->count,own=0;
         if(!node) {
             join_zref_add(zone);node=join_zref_find(runtime);
             if(!node) {++join_zref_missing;continue;}
-            ++join_zref_made;
-        }
-        int changed=join_poke((uintptr_t)(node+JOIN_ZREF_COUNT),&r->count,4);
+            ++join_zref_made;   /* its count is our own call's, not a holder's: the session's replaces it */
+        } else if(join_read(node+JOIN_ZREF_COUNT,&own,4) && own>count) {count=own;++join_zref_higher;}
+        int changed=join_poke((uintptr_t)(node+JOIN_ZREF_COUNT),&count,4);
         changed|=join_poke((uintptr_t)(node+JOIN_ZREF_TIME),&r->time,8);
         if(changed) ++join_zref_written; else ++join_zref_equal;
         kept[nkept++]=runtime;

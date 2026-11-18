@@ -35,7 +35,7 @@
  * the cdefs), a malformed batch, references that differ, a fault in a replayed call: arming refused or stop 164. */
 /* UIBUILD_OP_PART (0x50, a Lua-run op) is defined in lockstep_ui_replay.h, whose section check names it. */
 #define UIBUILD_PART_HEAD 3u                               /* seq, index, count */
-#define UIBUILD_PART_DATA (UIREP_EVENT_MAX-UIBUILD_PART_HEAD)
+#define UIBUILD_PART_DATA (UIREP_EVENT_FIT-UIBUILD_PART_HEAD)       /* a part is an event the queue takes (lockstep_ui_replay.h) */
 #define UIBUILD_PARTS_MAX 48u                              /* of UIREP_QUEUE: room for the slot's other events */
 #define UIBUILD_BATCH_MAX (UIBUILD_PARTS_MAX*UIBUILD_PART_DATA)
 #define UIBUILD_VERSION 1u

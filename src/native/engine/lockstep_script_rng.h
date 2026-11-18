@@ -87,7 +87,10 @@
 #define SCRIPT_RNG_CONTEXT_SCRIPT 0xd8 /* the context's script descriptor */
 #endif
 #define SCRIPT_RNG_DEPTH 256u
-#define SCRIPT_RNG_TABLE 16384u
+/* Per-tick (owner, stream, detail) ordinals. A played session enters about 14,000 scopes in its first tick; a session whose
+ * whole universe is raised to high attention entered 31,000 to 44,000 a tick in ticks 1-6 and 13,660 of them found the
+ * 16,384 slots full (table_full), ran on the natural word and so drew by execution order (17 Nov, floor20). */
+#define SCRIPT_RNG_TABLE 262144u
 #define SCRIPT_RNG_PROBES 128u
 #define SCRIPT_RNG_NAMES 4096u
 #define SCRIPT_RNG_RING 32768u /* boot phase 2 alone keys about 12,300 scopes (long-L8) */
@@ -312,7 +315,7 @@ static unsigned script_rng_resolve(unsigned source,void *object,void *program,ui
 }
 /* Per-tick (owner, stream, detail) ordinals; 0 when the bounded table is
  * exhausted. A slot of an older epoch is empty, so a new tick clears the
- * table with one increment instead of a 384 KB memset. */
+ * table with one increment instead of a 6 MB memset. */
 static uint64_t script_rng_ordinal(uint64_t owner,uint64_t stream,uint64_t detail) {
     stream=lockstep_mix(stream^lockstep_mix(detail));
     unsigned first=(unsigned)(lockstep_mix(owner^lockstep_mix(stream))&(SCRIPT_RNG_TABLE-1));

@@ -491,6 +491,23 @@ python tools/x4ls.py new-session --base-start x4ep1_gamestart_discover --players
   differently is the next thing to find; the reading above that the joiner takes zone references again in its
   first step is not confirmed: a counter on the game's eight calls that take a reference showed none of them
   running on either client in 6,000 ticks, so the counts change some other way.
+- Object by object (17 Nov night, runs hq38 and hq39, `native_gate_world_pages_window` on both sides): at the
+  joiner's first tick every object the session had changed since its last capture, 10,379 of them, reads the
+  same on the joiner in every field; the only difference is the zones the join save left out (11, all of them
+  temporary zones on their way out). 550 ticks later 149 ships in 95 zones differ in their motion and nothing
+  else; at tick 7200 about 6,700 do, and 25 have another parent. The raw navigation rows differ for every ship,
+  but only in the buffer indices that are each client's own, and no more for the ships that drifted than for the
+  others. So after a late join ships drift apart one by one for a reason the census does not hold; which state
+  that is, is not found.
+- A joiner with the zone table stopped twice in a walk over a list that held an object already gone (hq38, 470
+  ticks after its join, in a script; hq42, 133 ticks after, in the radar's worker), three times it did not
+  (hq32, hq37, hq39). The first form wrote the session's count over the joiner's own; it now never lowers a
+  count and leaves the joiner's own extra entries alone. hq42 ran with that and stopped all the same, so the
+  cause is not shown to be the table, and not ruled out: a reason more to leave the option off.
+- Other ends of a late join in these runs, none looked into: in hq45 the joiner stopped itself eight ticks after
+  its join with the pathing budget check (stop reason 79), and hq44 ended at the same point; in hq43 it was
+  dropped for falling behind when both sides saved every 600 ticks. None of the night's late joins reached a
+  clean handover.
 - A joiner started on the same PC beside freshly started clients of other sessions twice stayed at 90 MB without
   a log (hq20, the first control run). `x4ls join --same-pc` now frees X4's instance lock in the other launcher
   clients before it starts its client, as `x4ls play` does; in the second control run it freed one and the joiner
@@ -771,8 +788,19 @@ python tools/dev/mission_matrix.py report CLIENT1.log CLIENT2.log [--run RUNDIR]
   jumps away with a stock offer. Read from both clients' memory after each: a ship that arrives has its physics
   in the scene of the sector it is in; when player 1 arrives where player 2 is, the sector keeps its scene and
   both ships are in it; when player 1 leaves a sector player 2 stays in, that sector keeps its scene and player
-  1's new sector gets one of its own at the moment the ship arrives. No desync in any of them. Not covered: a
-  flight through a gate instead of the test's jump, and more than two players.
+  1's new sector gets one of its own at the moment the ship arrives. Not covered: a flight through a gate
+  instead of the test's jump, and more than two players.
+  These tests first ended about ten seconds after the jump. Run longer, the one where player 1 leaves parted
+  every time, twenty seconds after the jump: a ship in the arrival sector fires eight swarm missiles, and X4
+  places the members of a swarm with a number it takes from a memory address, so each client flew the same
+  missiles along other paths and removed them at other ticks. Fixed (`native_gate_swarm_seed`, a default; one
+  byte of X4's formation code, so two swarms in the air at once now weave alike): the same sequences then ran
+  2,500 ticks in sync, with player 2 parked at player 1's old place and without. How it was found: with
+  `native_gate_created_rows` on, the two clients' rows were equal until the missiles' `retire` rows.
+- Seen once in three full runs of the matrix (17 Nov, tick 14085, during player 2's station scan), not
+  explained: client 2 alone rebuilt one station's interior walk mesh six times in one tick, and the clients
+  parted from there. X4 asks for that rebuild from a docking bay when the bay's platform has finished moving;
+  what made six bays do so on one client is not found, and the run does not repeat on demand.
 - A new type: an `Mt<Name>` cue beside the others (its `_Ref` cue names the library), a row in `TYPES` and, when the
   player has to act through the UI, a row in `OPS`.
 - What it found on its first run: every step behind a `<delay>` of player 2's mission ran as player 1 (the MD
@@ -842,6 +870,136 @@ In the integration branch since 17 Nov. Run with scripted input, not by people.
   each client, the other player's figure three metres away. `walk`: get up, a few steps, player 2 sits down and
   undocks. `undock`: both undock from their seats and fly off. The snapshot is the two-player one (both ships side by
   side).
+
+## Building a station (17 Nov; two clients on one PC, the stock menus clicked with the real mouse)
+
+Not in the integration branch yet (branch `contrib/ferrite-station-build`). The menus were clicked by a test rig that
+moves the real cursor (`tools/dev/ui_clicks.py`), and in part by a person.
+
+- **What was clicked, by both players, each for a station of its own:** the map, Manage Plots, "Create new plot", a
+  click in the sector, the plot's size arrows, "Buy licence", "Continue", modules from the left list put into the
+  plot, "Confirm module changes", "Assign or hire a Builder", the player's own construction vessel, "Select". Every
+  one of these ran on both clients at the same tick with the same answer (the new plot's ID, the fee, the plan, the
+  vessel's order).
+- **Found and fixed on the way:**
+  - A station was built at different times on the two clients. The station menu asks for the build's progress
+    every frame, and that question itself moved the build forward, on the client that had the menu open: it took each
+    portion of building material one minute before the other client and finished the module a minute earlier. A
+    menu's question no longer moves a build (a shipyard's build queue is the same routine). With both players'
+    station menus open, 112 readings of the stations (modules, tasks, the storage's wares) were the same on both
+    clients and the module stood at the same reading.
+  - After "Confirm module changes" the menu showed the station without the modules just confirmed, and the builder
+    button stayed grey: the menu redrew before the shared step had happened. The same with a plot's new size and its
+    fee. The menus now redraw when the step has happened, a few ticks after the click.
+  - A player's clicks stopped working for the rest of the session after one large action (a person's plan of
+    several modules after a plot extension): an action too long for one tick's room was never sent and held every
+    later one back. Long actions now travel in smaller parts. Seen again afterwards with a plan of three modules:
+    two parts, applied on both clients.
+  - The right-click menu's rows began with a "0" where an order's icon belongs.
+  - **An open map moved ships.** In several sessions a few moving ships (a construction vessel, freighters passing)
+    were at different places on the two clients from one world check on. It needed nothing of the station: player 2
+    opening the map was enough. While a map is open the game brings every ship it shows, and that is not next to a
+    player, up to date with its engine every frame; without a map that happens every one to two seconds. So the
+    client with the map open saw a ship switch its travel drive at once and the other client a little later, and
+    the ship flew differently from then on. In a session the map no longer does this (it shows what the simulation
+    last refreshed). The same was behind another test's ships that parted while a "Hire Staff" map stood open on
+    one client. Mouse steering of the other player's ship and a resized window were tried on the way and did not
+    part the clients.
+  - **The session with all of these fixes** (run play6, 17 Nov): player 1 built a station, player 2 opened the map
+    and left it open for 80 seconds, then built a station too; both kept their station menus open. The world was
+    compared every ten seconds. Both clients agreed in every part at every one of 30,522 ticks, both modules stood
+    at the same reading on both clients (ticks 25240 and 28840), and the map's refresh had been held back 9,554
+    times on the client with the map.
+- **Not run:** a hired (not owned) construction vessel and its fee, cancelling a construction, removing a plot, the
+  station's budget, a second plan on a standing station, a manager, the station's trade settings, a faction per player.
+- **The test:** `python tools/dev/station_build_test.py run --snapshot SAVE.xml.gz --gate-dll x4lan_gate_64.dll`
+  starts two clients, clicks both players through and compares them until the modules stand. It takes the mouse and
+  the keyboard of the PC for each click; the click places are measured for 1600x900 windows. Nobody should use the
+  PC's mouse in those windows while it runs: a resized window moved every later click off its button.
+
+## Player actions, tested without a person (built 17 Nov; two scripted clients on one PC)
+
+`tools/dev/action_tests.py` runs one scenario in a live two-client session: both players do a chain of player
+actions, and the test checks that each action happened in the game and that the two clients stayed in sync.
+
+```
+python tools/dev/action_tests.py list
+python tools/dev/action_tests.py run trade --snapshot SAVE.xml.gz --gate-dll x4lan_gate_64.dll [--first-profile N --lanes DIR --display N --tile-skip N]
+python tools/dev/action_tests.py report trade CLIENT1.log CLIENT2.log [--run RUNDIR]
+python tools/dev/action_tests.py plan trade
+```
+
+- **How a scenario runs.** Every client's plan holds the fixtures (X4's docking computer on the players' ships,
+  money, fleet ships handed to the player faction) and one chain for its own player: steps that each begin when the
+  one before has ended, because flying and docking take as long as they take. A step makes the call a stock menu
+  makes, or presses the menu's own handler (the function a button's click runs). Nobody moves a mouse: what a
+  person sees on the way is covered only as far as the handlers go. (`tools/dev/station_build_test.py` clicks
+  with a real mouse.)
+- **What every run checks.** No client's gate stopped; each chain ran to its last step; the same readings taken at
+  the same ticks on both clients are the same text; the world, the players' records and their inputs agree at every
+  tick. Every world capture is logged per object, so a run whose world differs names the objects that differ; every
+  tick's runtime ID allocations are logged by caller. Each scripted action also asks whether the menu entry it
+  stands for is open to a person in the session: a script's own calls pass where the session refuses the click.
+- **The scenarios** (the snapshot is the two-player one; exit code 0 when every check passed; runs of 17 Nov):
+  - `trade` (passes): each player flies to the food factory MMJ-623, docks, opens the trade menu with the dock
+    menu's Trade button, sets 20 food rations and presses Confirm, undocks when X4 grants it, flies to the shipyard
+    NLN-075, docks and sells them the same way. Both players' holds and the account read the same on both clients;
+    in sync at all 8,174 ticks of the run.
+  - `orders` (passes): each player tells a fleet fighter to fly to a place 28 km off, to explore the sector, to
+    patrol it (the order queue), sets Patrol as its default behaviour, and sends a second ship to dock.
+  - `shipbuy` (passes): each player buys a scout at the wharf AVK-777 as the ship configuration's Confirm does;
+    both are paid for and built (about 160 s of game time), in sync at all 5,071 ticks.
+  - `crew` (the crew page's part passes for both players, the hire for player 1): fire a crew member, fire the
+    captain, promote the crew member that is left to captain; then dock at a station and hire a person of the
+    station for the fleet ship (the comm, the Hire choice, the map's Hire button; the fee was 479,200 Cr). Player
+    2's hire is refused: a conversation and the Hire button are player 1's only in a session today, and the test
+    says so (`refused` names what each client was refused).
+  - `refit` (passes for player 1): dock at the wharf, order the wharf's high preset for the docked ship (travel
+    engines mk2 to combat mk3, shield mk1 to mk3, lasers mk1 to mk2), undock when it is done.
+  - `mapopen` (a diagnostic, passes): one client keeps the map open for 100 seconds and nothing else happens.
+- **What the tests found and what was changed for it:**
+  - The trade menu's Confirm button was refused to a person: it stood on the list of blocked order entries and
+    nothing reopened it. The scripted trade passed all the same, because it made the button's calls itself. Open
+    now with the trade family.
+  - Two functions of the stock menus are named like order entries and order nothing: the trade menu's amount
+    helper and the interact menu's icon text. Both were refused with the order entries, so the trade sliders set no
+    amount and every order entry's text began with a 0 where its icon belongs. Both are left alone now.
+  - The interact menu's Explore, Protect, Collect, Mining and the other order entries that make only the calls the
+    orders family shares were refused to a person. Open now (of these only Explore has run).
+  - Setting a ship's default behaviour did nothing: the parameter of the planned behaviour went to the wrong
+    order, and the confirm's reset of the order loop was refused. Both fixed (the second in the gate DLL); the
+    behaviour page's Confirm is open.
+  - A ship purchase jammed the buyer's actions for good: its record went out in 200-byte parts, and beside the
+    player's flight record only 185 bytes of a tick's packet are left for one. The part stayed first in line and
+    nothing behind it was ever sent (found the same evening by the station test with a station plan; fixed there).
+  - X4 answers "trade computer busy" to an undock for about three seconds after a docked trade. An undock sent
+    in that time is still replayed and goes through if the computer is free by then; the dock menu itself does not
+    offer the button that early.
+- **Two desyncs these scenarios reproduced, and their fixes** (both fixes are the station test's; the scenarios
+  proved them):
+  - `refit`: only client 1 read the wharf's build tasks, and at the capture of tick 5400 a ship at the wharf
+    existed on client 1 only. With the build update kept out of a menu's read (the fourth lazy target) the same
+    run agrees at all 9,293 ticks.
+  - `crew`: player 1's hire conversation opened the "Hire Staff" map on player 2's screen, where it stayed open,
+    and from the capture of tick 3600 two or three NPC ships of one zone flew differently on the two clients, three
+    runs of three. An open map refreshed the engine settings of every ship it showed, on that client only. With
+    that refresh kept out of a session's steps (the fifth lazy target) the same run agrees at all 9,306 ticks.
+- **Known faults.**
+  - The second player to arrive at the wharf AVK-777 never gets into its dock: while the first is docked there,
+    the second ship stops two to three kilometres off its granted dock for the rest of the run (six runs of `crew`
+    and `refit`; with `refit --lead 2` player 2 docks and player 1 hangs). At the food factory and at the shipyard
+    both players dock on neighbouring pads. The `crew` scenario sends player 2 to the shipyard for its hire.
+  - `refit --lead 2`: the wharf took player 2's refit and left it queued for the remaining 8,000 ticks (player
+    1's, in the other runs, starts after about 350 ticks). And in that run, the longest so far, one drone-sized
+    ship in the wharf's zone differed in its motion from the capture of tick 10800. Both open.
+  - Hiring is player 1's only (the comm with a station's person, the Hire choice and the Hire button are refused to
+    players 2..N), and player 1's hire conversation opens the "Hire Staff" map on every client: on player 2's screen
+    it stays until that player closes it.
+  - `trade`, one run of five: the world differed from the capture of tick 3600 with the PC loaded by other
+    sessions; not reproduced, objects not logged in that run, and it was before the two fixes above.
+  - A fleet ship that is part of the snapshot's battle fixture stops every client when it begins to dock (the
+    fixture's state sampling has no docking state in a play session). The dock order is tested on other ships.
+  - Not tried: three or more players, factions mode, a hot join during any of this, the Linux gate, two PCs.
 
 ## Not yet
 

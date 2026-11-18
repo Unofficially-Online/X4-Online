@@ -237,13 +237,28 @@ end
 K.UNBLOCKED={
  travel={'InteractMenu.buttonTravelMode','hotkey.INPUT_ACTION_ADDON_DETAILMONITOR_TRAVELMODE'},
  orders={'InteractMenu.orderAttack','InteractMenu.orderMoveWait','InteractMenu.orderDock','InteractMenu.orderFollow',
-  'MapMenu.orderMoveWait','MapMenu.orderAttack','MapMenu.orderFollow'},
+  'MapMenu.orderMoveWait','MapMenu.orderAttack','MapMenu.orderFollow',
+  -- The other order entries that make the same calls and no other (a selectable check, RemoveAllOrders2, the Lua
+  -- CreateOrder: all captured; an order whose parameters the capture cannot carry is refused whole, as before).
+  -- Opened 17 Nov; of these only Explore has run live (tools/dev/action_tests.py orders).
+  'InteractMenu.orderAttackInRange','InteractMenu.orderAttackSurfaceElements','InteractMenu.orderCollect','InteractMenu.orderCollectDeployable',
+  'InteractMenu.orderCollectLockbox','InteractMenu.orderCollectRadius','InteractMenu.orderDeployAtPosition','InteractMenu.orderDepositInventoryAtHQ',
+  'InteractMenu.orderExplore','InteractMenu.orderExploreUpdate','InteractMenu.orderGetSupplies','InteractMenu.orderMining',
+  'InteractMenu.orderPlayerDockToTrade','InteractMenu.orderProtect','InteractMenu.orderRescueInRange','InteractMenu.orderRescueShip',
+  'InteractMenu.orderSalvageCollect','InteractMenu.orderSalvageCrush','InteractMenu.orderSalvageInRadius','InteractMenu.orderTacticalAttack',
+  'MapMenu.orderWithdrawFromCombat','MapMenu.orderAttackMultiple'},
  autopilot={'hotkey.INPUT_ACTION_ADDON_DETAILMONITOR_A_SHIFT'},
- -- The map's order rows and the interact menu's queue entries whose calls are all captured (not the default order's
- -- confirm: ResetOrderLoop is not; not ProceedWithOrders).
+ -- The map's order rows and the interact menu's queue entries whose calls are all captured (not ProceedWithOrders).
+ -- The behaviour page's confirm (buttonDefaultOrderConfirm: ResetOrderLoop, EnablePlannedDefaultOrder; for a loop
+ -- RemoveAllOrders, a default Wait, SetOrderLoop) is one of them since ResetOrderLoop is captured (17 Nov).
  queue={'MapMenu.buttonNewOrder','MapMenu.buttonOrderUp','MapMenu.buttonOrderDown','MapMenu.removeOrder','MapMenu.buttonSetOrderParam',
   'MapMenu.setOrderParamFromMode','MapMenu.slidercellSetOrderParam','MapMenu.buttonStartOrders','MapMenu.buttonDockToTrade',
+  'MapMenu.buttonDefaultOrderConfirm',
   'InteractMenu.buttonRemoveOrder','InteractMenu.setOrderImmediate'},
+ -- The trade menu's "Confirm" (the docked trade with the own ship, a trade order for a fleet ship): every call it makes
+ -- is the trade family's (AddTradeToShipQueue, the docked trade's signal). Until 17 Nov it stayed blocked: a person's
+ -- click on it did nothing in a session, while the scripted trade_buy / trade_sell (the same calls, no menu) traded.
+ trade={'MapMenu.buttonConfirmTrade'},
 }
 function K.unblocked(mask)
  local out={}
@@ -552,7 +567,11 @@ function K.session(p)
    local call={}
    for i=2,n do call[i-1]=args[i] end
    if is_slot_ship(call[1]) then return false,'slot_ship' end
-   call[2]=gate.ui_replay_queue_index(slot,decimal(call[1]),call[2],args[1])
+   -- The order a parameter belongs to is an index of the queue (mapped to where X4 put that create) or one of X4's
+   -- words for the orders outside the queue ('default', 'planneddefault': the behaviour page's order). A word stays
+   -- as it is: mapped like an index it became 0, the parameter went nowhere and the planned behaviour's confirm
+   -- failed for want of it (17 Nov, action_tests.py orders: Patrol as the default order).
+   if type(call[2])=='number' then call[2]=gate.ui_replay_queue_index(slot,decimal(call[1]),call[2],args[1]) end
    local name=op==K.OP_QUEUE_PARAM and 'SetOrderParam' or 'RemoveOrderListParam'
    local ok,result=pcall(stock[name],unpack(call,1,n-1))
    return ok,ok and name..'@'..tostring(call[2]) or tostring(result)
@@ -747,6 +766,8 @@ function K.session(p)
    local ok,what=run(tonumber(slot),tonumber(op),hex,tick)
    gate.ui_replay_result(tick,ok and 1 or 0)
    S.applied=S.applied+1
+   -- what changed the game for a menu that is open (not a UI notice, not a 'known' mark): the build core redraws the station menu
+   if ok and not tostring(what):find('^AddUITriggeredEvent') and not tostring(what):find('^known ') then S.applied_world=(S.applied_world or 0)+1 end
    log(string.format('UI_REPLAY_APPLIED tick=%d slot=%s op=%s result=%s what=%s',tick,slot,op,ok and 'applied' or 'refused',tostring(what)))
   end
   gate.ui_replay_bypass(0);S.replaying=false
@@ -784,6 +805,24 @@ function K.session(p)
    if not (e.quiet and ok and result==nil) then log(string.format('UI_REPLAY_SCRIPT tick=%d op=%s ok=%s result=%s%s',tick,tostring(e.op),tostring(ok),tostring(result),
      e.scoped and (scoped and ' scope=1' or ' scope=0') or '')) end
   end
+ end
+ -- Test console (native_gate_ui_replay_console, default off): p.console() loads a Lua file of this client that the
+ -- person at the test rig rewrites while the session runs: `return {n=NUMBER, run=function(tools,S) ... end}`. A
+ -- number above the last one seen runs once, where a scripted op runs: as a person's click (not the probe's own
+ -- frame), in the presentation scope. One client only, so it may read anything but must change the game only through
+ -- the stock entries, which are captured and replayed like a click's. Row UI_REPLAY_CONSOLE.
+ local console_seen=0
+ local function run_console(tick)
+  if not p.console or tick%3~=0 then return end
+  local loaded,cmd=pcall(p.console)
+  if not loaded or type(cmd)~='table' or type(cmd.n)~='number' or cmd.n<=console_seen or type(cmd.run)~='function' then return end
+  console_seen=cmd.n
+  if p.local_mark and not cmd.canonical then p.local_mark(0) end
+  local scoped=not cmd.unscoped and p.present and p.present(true) or false
+  local ok,result=pcall(cmd.run,p.console_tools,S)
+  if scoped then p.present(false) end
+  if p.local_mark and not cmd.canonical then p.local_mark(1) end
+  log(string.format('UI_REPLAY_CONSOLE tick=%d n=%d ok=%s result=%s',tick,cmd.n,tostring(ok),tostring(result)))
  end
  -- Test protection (native_gate_ui_replay_min_hull): every slot ship keeps at least this hull percentage, set by MD
  -- on every client at the same tick (the fleet's tick), so the missile run's hits do not end the player's ship.
@@ -865,6 +904,7 @@ function K.session(p)
   S.apply(tick)
   protect(tick)
   run_script(tick)
+  run_console(tick)
   guard_frame(tick)
   local refusals=gate.ui_replay_refusals()
   if refusals then log('UI_REPLAY_REFUSED_NATIVE tick='..tick..' '..refusals) end
@@ -887,7 +927,7 @@ end
 K.SCOPED={foot_where=true,transport_list=true,transport_to=true,transport_named=true,target_slot=true,target_none=true,target_home=true,dock_home=true,suit_home=true,guidance_slot=true,guidance_end=true,inv_read=true,inv_drop=true,inv_research_seen=true,inv_research_hqs=true}
 -- A canonical op is the probe's own call, not a person's click: a test fixture that every client's plan holds at the same
 -- tick (MD runs it on every client alike, nothing is captured).
-K.CANONICAL={mis_fixture=true,mt_offer=true,gm_limit=true,slot_kill=true,slot_airlock=true,launch_stock=true,dock_kit=true,probe_far=true,groups_look=true,inv_seed=true,inv_look=true,inv_join_state=true,inv_join_give=true}
+K.CANONICAL={mis_fixture=true,mt_offer=true,gm_limit=true,slot_kill=true,slot_airlock=true,launch_stock=true,dock_kit=true,wallet=true,probe_far=true,groups_look=true,inv_seed=true,inv_look=true,inv_join_state=true,inv_join_give=true}
 -- Refused entries the stock HUD calls by itself, not on a person's action: logged, no info line. AddKnownItem: the
 -- encyclopedia entry the HUD adds for whatever comes into view (45 refusals and their info lines in a playtest of 9 Nov).
 K.GUARD_QUIET={AddKnownItem=true}
@@ -1107,6 +1147,83 @@ function K.foot_walk(tools,slot,distance)
  F.release=release
  return F
 end
+-- A chain of script ops (the op chain): steps one after the other, each begun when the one before it has ended, for
+-- runs whose steps wait for the game (fly and dock, then buy, then undock, then dock elsewhere...). A step is
+--   {NAME,'wait',TICKS}
+--   {NAME,'op',OP,...}                        the op, once (an op that runs over many ticks: to its last tick)
+--   {NAME,'until',PATTERN,OP,...}             a many-tick op (dock_station, foot_meet) to its first answer that holds
+--                                             PATTERN (a Lua pattern); none by its last tick ends the chain
+--   {NAME,'poll',PATTERN,EVERY,TICKS,OP,...}  a reading op every EVERY ticks until its answer holds PATTERN; none within
+--                                             TICKS ends the chain
+--   {NAME,'try',PATTERN,EVERY,TICKS,OP,...}   the same, but none within TICKS is a row 'gave_up' and the chain goes on
+--                                             (a check of something the later steps do not need)
+-- Every answer is a row part 'step=NAME n=K at=I ok=true|false ANSWER' (I: ticks since the chain's start); the end is
+-- 'chain_end ok=true steps=N/N' or 'chain_end ok=false steps=K/N why=NAME:error|never|limit'. A chain's ops run in the
+-- presentation scope, where a person's click runs; a canonical op (a fixture of every client's plan) cannot be a step.
+function K.chain(tools,steps,limit)
+ local C={at=1,since=0,done=false}
+ local compiled={}
+ local function compile(step,from)
+  local e={0}
+  for i=from,#step do e[#e+1]=step[i] end
+  if K.CANONICAL[e[2]] then error('ui replay script: a chain holds no canonical op ('..tostring(e[2])..')') end
+  local by=K.script({e},0,tools)
+  local last=0
+  for t in pairs(by) do if t>last then last=t end end
+  return by,last
+ end
+ for n,step in ipairs(steps or {}) do
+  local kind,c=step[2],nil
+  if kind=='wait' then c={ticks=step[3]}
+  elseif kind=='op' then c={};c.by,c.last=compile(step,3)
+  elseif kind=='until' then c={pattern=step[3]};c.by,c.last=compile(step,4)
+  elseif kind=='poll' or kind=='try' then c={pattern=step[3],every=math.max(1,step[4]),ticks=step[5],polls=true,goes_on=kind=='try'};c.by=compile(step,6)
+  else error('ui replay script: unknown chain step kind '..tostring(kind)) end
+  c.kind,c.name=kind,tostring(step[1])
+  compiled[n]=c
+ end
+ function C.step(i)
+  if C.done then return nil end
+  local out={}
+  local function stop(why)
+   C.done=true
+   out[#out+1]='chain_end ok='..(why and 'false' or 'true')..' steps='..(why and C.at-1 or #compiled)..'/'..#compiled..(why and ' why='..why or '')
+  end
+  local c=compiled[C.at]
+  if not c then stop()
+  else
+   local j,finished,failed=C.since,false,nil
+   C.since=j+1
+   if c.kind=='wait' then finished=j>=c.ticks
+   else
+    local due
+    if c.polls then due=j%c.every==0 and c.by[0] or nil else due=c.by[j] end
+    for _,x in ipairs(due or {}) do
+     local ok,value=pcall(x.call)
+     local hit=c.pattern and ok and value~=nil and tostring(value):find(c.pattern) and true or false
+     if not ok then failed='error' end
+     if hit then finished=true end
+     -- a poll's misses: every tenth is a row, so a wait that never ends shows what it saw
+     if not (x.quiet and ok and value==nil) and (not c.polls or hit or not ok or j%(c.every*10)==0) then
+      out[#out+1]=string.format('step=%s n=%d at=%d ok=%s %s',c.name,C.at,i,tostring(ok),tostring(value))
+     end
+    end
+    if c.kind=='op' then finished=j>=c.last
+    elseif c.kind=='until' and not finished and j>=c.last then failed='never'
+    elseif c.polls and not finished and j>=c.ticks then
+     if c.goes_on then finished=true;out[#out+1]=string.format('step=%s n=%d at=%d ok=true gave_up',c.name,C.at,i) else failed='never' end
+    end
+   end
+   if failed then stop(c.name..':'..failed)
+   elseif finished then
+    C.at,C.since=C.at+1,0
+    if C.at>#compiled then stop() end
+   elseif i>=limit then stop(c.name..':limit') end
+  end
+  return #out>0 and table.concat(out,' | ') or nil
+ end
+ return C
+end
 -- Named script actions for runs without people; arguments are saved IDs or slots, resolved when they run.
 -- plan: list of {tick, op, ...}, ticks relative to the pilot window start.
 function K.script(plan,start,tools)
@@ -1194,6 +1311,43 @@ function K.script(plan,start,tools)
     end
   elseif op=='dock_kit' then call=function()
     tools.env.AddUITriggeredEvent('X4LAN_UiReplay','DockKit',{ship=tools.slot_lua(e[3])});return 'lua' end
+  -- {tick,'chain',LIMIT,{STEP,...}}: K.chain, one step action a tick for at most LIMIT ticks.
+  elseif op=='chain' then
+    local chain=K.chain(tools,e[4],e[3])
+    call=function() return 'steps='..#(e[4] or {}) end
+    for i=1,e[3] do
+     by[at+i]=by[at+i] or {};by[at+i][#by[at+i]+1]={op='chain',quiet=true,scoped=true,call=function() return chain.step(i) end}
+    end
+  -- Test fixture, canonical ({tick,'wallet',CREDITS} in every client's plan at the same tick): that much money for the
+  -- player's account, paid by MD on every client (cue Wallet), so a scripted run can buy.
+  elseif op=='wallet' then call=function()
+    tools.env.AddUITriggeredEvent('X4LAN_UiReplay','Wallet',{credits=e[3]});return 'lua' end
+  -- Test fixtures of the station tests, canonical (in every client's plan at the same tick), by MD on every client:
+  --  {tick,'station_kit',SLOT[,BUILDER]}: the blueprints of a few station modules for the player faction
+  --    and, with BUILDER true, a construction vessel of the player's near that slot's ship (cue StationKit).
+  --  {tick,'station_wares',AMOUNT}: that much building material in every player station's build storage (StationWares).
+  --  {tick,'station_look'}: read only: the player faction's stations as the map lists them (tools.station_look).
+  elseif op=='station_kit' then call=function()
+    tools.env.AddUITriggeredEvent('X4LAN_UiReplay','StationKit',{ship=tools.slot_lua(e[3]),builder=e[4] and 1 or 0});return 'lua' end
+  elseif op=='station_wares' then call=function()
+    tools.env.AddUITriggeredEvent('X4LAN_UiReplay','StationWares',{amount=e[3]});return 'lua' end
+  --  {tick,'builder_warp'}: every construction vessel of the player's that is on its way to a player station is put
+  --    3 km from it (cue BuilderWarp).
+  elseif op=='builder_warp' then call=function()
+    tools.env.AddUITriggeredEvent('X4LAN_UiReplay','BuilderWarp',{});return 'lua' end
+  elseif op=='station_look' then call=function() return tools.station_look() end
+  -- Read only: what a player's ship carries: {tick,'cargo'[,WARE[,SLOT]]} (this client's own without a slot). The row
+  -- begins with that ware's amount ('amount=N ware=WARE', 0 when the ship has none), then every ware, then the account.
+  elseif op=='cargo' then call=function()
+    local ship=tools.slot_lua(e[4] or tools.own_slot)
+    local cargo=tools.env.GetComponentData(ship,'cargo')
+    if type(cargo)~='table' then cargo={} end
+    local names,parts={},{}
+    for ware in pairs(cargo) do names[#names+1]=tostring(ware) end
+    table.sort(names)
+    for _,ware in ipairs(names) do parts[#parts+1]=ware..'='..tostring(cargo[ware]) end
+    return (e[3] and 'amount='..tostring(cargo[e[3]] or 0)..' ware='..tostring(e[3])..' ' or '')..'wares='..#names..' '..table.concat(parts,' ')..
+     (#parts>0 and ' ' or '')..'money='..tostring(tools.env.GetPlayerMoney()) end
   -- The transporter (menu_transporter.lua's calls) for this client's own player: {tick,'transport_list'} logs the
   -- targets X4 offers from where the player is; {tick,'transport_to',N} is the menu's "Travel to" on target N of that
   -- list (TransportPlayerToTarget); {tick,'transport_named',TEXT}: the first target whose name or class holds TEXT.
@@ -1218,6 +1372,9 @@ function K.script(plan,start,tools)
   -- Where this client's player is: tools.foot_where() (the probe's text: the player's room and place in it).
   elseif op=='foot_where' then call=function() return tools.foot_where() end
   elseif op=='undock' then call=function() return ffi.string(tools.C.UndockPlayerShip(false)) end
+  -- Read only: X4's answer to "may this client's player undock now" ({tick,'undock_check'}: 'granted', or why not,
+  -- e.g. 'tradecomputerbusy' for some seconds after a docked trade), as the dock menu asks before it offers the button.
+  elseif op=='undock_check' then call=function() return ffi.string(tools.C.UndockPlayerShip(true)) end
   elseif op=='wgroup' then call=function() return tools.C.SetDefensibleActiveWeaponGroup(tools.slot_id(tools.own_slot),e[3]==1,e[4]) end
   elseif op=='wkey' then call=function() return tools.gate.pilot_stock_inject('action',e[3],0) end
   -- Guidance as the map's and the interact menu's "Set guidance" / "End guidance": the client's own, never captured
@@ -1247,6 +1404,149 @@ function K.script(plan,start,tools)
   elseif op=='attack' then call=function() return tools.env.CreateOrder(tools.saved_lua(e[3]),'Attack',{primarytarget=tools.saved_lua(e[4])},false,false,false,nil,nil,nil,true) end
   elseif op=='move' then call=function() return tools.env.CreateOrder(tools.saved_lua(e[3]),'MoveWait',{destination={tools.saved_lua(e[4]),{e[5],e[6],e[7]}}},false,false,false,nil,nil,nil,true) end
   elseif op=='dock' then call=function() return tools.env.CreateOrder(tools.saved_lua(e[3]),'DockAndWait',{destination=tools.saved_lua(e[4])},false,false,false) end
+  -- More orders for a `player` ship (a saved ID), as the stock menus give them:
+  --  {tick,'explore',ship,sector[,x,y,z]}: the interact menu's "Explore" on a sector (menu.orderExplore).
+  --  {tick,'q_patrol',ship,sector}: the map's order row "Patrol": the new order, its space, the start (buttonNewOrder,
+  --    the parameter's set, buttonStartOrders).
+  --  {tick,'behaviour',ship,orderdef[,space]}: the map's behaviour page: a new default order and its first parameter
+  --    (buttonNewOrder with default, the parameter's set); {tick,'behaviour_confirm',ship}: its Confirm
+  --    (buttonDefaultOrderConfirm: ResetOrderLoop, EnablePlannedDefaultOrder), a click later as a person's is.
+  elseif op=='explore' then call=function()
+    local sector=tools.saved_lua(e[4])
+    return tools.env.CreateOrder(tools.saved_lua(e[3]),'Explore',{targetspace=sector,destination={sector,{e[5] or 0,e[6] or 0,e[7] or 0}}},false,false,false,nil,nil,nil,true) end
+  elseif op=='q_patrol' then call=function()
+    local id=tools.saved_id(e[3]);local idx=tools.C.CreateOrder(id,'Patrol',false)
+    if idx>0 then tools.env.SetOrderParam(tools.saved_lua(e[3]),idx,1,nil,tools.saved_lua(e[4]));tools.C.EnableOrder(id,idx) end
+    return idx end
+  elseif op=='behaviour' then call=function()
+    local id=tools.saved_id(e[3])
+    local idx=tools.C.CreateOrder(id,e[4],true)
+    if e[5] then tools.env.SetOrderParam(tools.saved_lua(e[3]),'planneddefault',1,nil,tools.saved_lua(e[5])) end
+    return tostring(idx) end
+  elseif op=='behaviour_confirm' then call=function()
+    for _,line in ipairs({'void ResetOrderLoop(UniverseID controllableid);','bool EnablePlannedDefaultOrder(UniverseID controllableid, bool checkonly);'}) do pcall(ffi.cdef,line) end
+    local id=tools.saved_id(e[3])
+    tools.C.ResetOrderLoop(id)
+    return tostring(tools.C.EnablePlannedDefaultOrder(id,false)) end
+  -- {tick,'move_by',ship,sector,dx,dy,dz}: the interact menu's "Fly to" (menu.orderMoveWait) on a place of the ship's
+  -- sector that far from where the ship is now; the place is kept for {tick,'ship_arrived',ship,metres} (read only:
+  -- 'near=true|false distance=N').
+  elseif op=='move_by' then call=function()
+    local p=tools.C.GetObjectPositionInSector(tools.saved_id(e[3]))
+    local x,y,z=p.x+(e[5] or 0),p.y+(e[6] or 0),p.z+(e[7] or 0)
+    tools.move_targets=tools.move_targets or {}
+    tools.move_targets[e[3]]={x,y,z}
+    local idx=tools.env.CreateOrder(tools.saved_lua(e[3]),'MoveWait',{destination={tools.saved_lua(e[4]),{x,y,z}}},false,false,false,nil,nil,nil,true)
+    return string.format('order=%s from=%.0f/%.0f/%.0f to=%.0f/%.0f/%.0f',tostring(idx),p.x,p.y,p.z,x,y,z) end
+  elseif op=='ship_arrived' then call=function()
+    local target=assert(tools.move_targets and tools.move_targets[e[3]],'ui replay script: no move_by for that ship yet')
+    local p=tools.C.GetObjectPositionInSector(tools.saved_id(e[3]))
+    local d=math.sqrt((p.x-target[1])^2+(p.y-target[2])^2+(p.z-target[3])^2)
+    return string.format('near=%s distance=%.0f',tostring(d<=(e[4] or 1000)),d) end
+  -- The stock menus by their own handlers, where a person's click arrives (a button's onClick names a function of its
+  -- menu's table; Menus holds the tables). Whatever the session put in a handler's place runs too (the order block's
+  -- refusal answers 0), so a click that is refused to a person is refused here.
+  --  {tick,'menu_call',MENU,FUNCTION[,arg...]}: that handler, e.g. 'DockedMenu','buttonTrade',false (the dock menu's
+  --    "Trade with station"), 'DockedMenu','buttonUndock'. Answers 'called', 'called answer=0' (the block's refusal:
+  --    'blocked'), or what failed.
+  --  {tick,'menu_look',MENU}: read only: on screen or not, its mode, its context menu's mode; for the map's trade
+  --    context also the trading ship, the trade computer flag and the amounts set.
+  --  {tick,'trade_menu_amount',WARE,AMOUNT}: the open trade menu's amount slider of that ware's row, AMOUNT units into
+  --    the ship (negative: out of it): menu.orderAmountHelper with the station's offer, as the slider's handler calls.
+  elseif op=='menu_call' then call=function()
+    local menu=tools.menu(e[3])
+    if not menu then return 'no_menu' end
+    if type(menu[e[4]])~='function' then return 'no_function' end
+    local answer=menu[e[4]](unpack(e,5,#e))
+    if answer==0 then return 'blocked answer=0' end
+    return 'called'..(answer~=nil and ' answer='..tostring(answer) or '') end
+  -- {tick,'trade_menu_open',STATION}: the trade menu for the station this client's player is docked at: the dock menu's
+  -- "Trade with station" button when that menu is on screen ('via=dock_menu'); when it is not, the menu that button
+  -- opens, opened the same way ('via=open_menu').
+  elseif op=='trade_menu_open' then call=function()
+    local dock=tools.menu('DockedMenu')
+    if dock and dock.shown and type(dock.buttonTrade)=='function' then dock.buttonTrade(false);return 'via=dock_menu' end
+    tools.env.OpenMenu('MapMenu',{0,0,true,nil,nil,'tradecontext',{tools.saved_lua(e[3]),nil,false}},nil)
+    return 'via=open_menu dock_menu='..tostring(dock and dock.shown and true or false) end
+  -- {tick,'menu_open',MENU}: that stock menu on this client's screen as its hotkey opens it (OpenMenu with the plain
+  -- parameter; 'MapMenu': the map); {tick,'menu_close',MENU}: closed as Escape closes it (Helper.closeMenu).
+  elseif op=='menu_open' then call=function() tools.env.OpenMenu(e[3],{0,0,true},nil);return 'opened' end
+  elseif op=='menu_close' then call=function()
+    local menu=tools.menu(e[3])
+    if not menu then return 'no_menu' end
+    tools.env.Helper.closeMenu(menu,'close')
+    if type(menu.cleanup)=='function' then menu.cleanup() end
+    return 'closed' end
+  elseif op=='menu_look' then call=function()
+    local menu=tools.menu(e[3])
+    if not menu then return 'no_menu' end
+    local c=type(menu.contextMenuData)=='table' and menu.contextMenuData or {}
+    local parts={'shown='..tostring(menu.shown and true or false),'mode='..tostring(menu.mode),'context='..tostring(menu.contextMenuMode)}
+    if menu.contextMenuMode=='trade' then
+     local orders={}
+     for id,amount in pairs(type(c.orders)=='table' and c.orders or {}) do if amount~=0 then orders[#orders+1]=tostring(amount) end end
+     table.sort(orders)
+     parts[#parts+1]='ship='..(tostring(c.currentShip):gsub('ULL$',''))..' immediate='..tostring(c.immediate)..' amounts='..(#orders>0 and table.concat(orders,',') or '-')
+    end
+    return table.concat(parts,' ') end
+  elseif op=='trade_menu_amount' then call=function()
+    local menu=tools.menu('MapMenu')
+    if not menu or menu.contextMenuMode~='trade' or type(menu.contextMenuData)~='table' then return 'no_trade_menu' end
+    local station=tools.env.ConvertStringToLuaID((tostring(menu.contextMenuData.component):gsub('ULL$','')))
+    local sell,buy
+    for _,td in ipairs(tools.env.GetTradeList(station) or {}) do
+     if td.ware==e[3] and not td.ismissionoffer then
+      if td.isselloffer then sell=sell or td.id elseif td.isbuyoffer then buy=buy or td.id end
+     end
+    end
+    if e[4]>0 and not sell then return 'no_sell_offer' end
+    if e[4]<0 and not buy then return 'no_buy_offer' end
+    menu.orderAmountHelper(sell,buy,-e[4])
+    return 'set' end
+  -- {tick,'build',OP,...}: a script op of the build and assets families (native_gate_ui_build_core.lua K.script: buy,
+  -- refit, exchange, plot, ...), run through that core's session as its own script runs it, so a chain can hold one.
+  elseif op=='build' then call=function()
+    local b=assert(tools.build,'ui replay script: the build family is not armed')
+    local entry={0}
+    for i=3,#e do entry[#entry+1]=e[i] end
+    return b.script({entry},0,b.tools)[0][1].call(b.session) end
+  -- Read only: {tick,'fleet_look'}: the player faction's ships; {tick,'build_look',STATION}: the player's build tasks at
+  -- a shipyard or wharf; {tick,'fit_look',SHIP}: a ship's fitted engines, shields, weapons, turrets and thruster.
+  elseif op=='fleet_look' then call=function() return tools.fleet_look() end
+  elseif op=='build_look' then call=function() return tools.build_look(e[3]) end
+  elseif op=='fit_look' then call=function() return tools.fit_look(e[3]) end
+  -- Read only: {tick,'menu_entry',MENU,FUNCTION}: whether a person's click on that stock menu entry is offered in this
+  -- session (tools.menu_entry: 'open why=...' or 'blocked'), e.g. 'MapMenu','buttonConfirmTrade'.
+  elseif op=='menu_entry' then call=function() return tools.menu_entry(e[3],e[4])..' entry='..tostring(e[3])..'.'..tostring(e[4]) end
+  -- A ship's people, as the map's crew page and the personnel page change them (SHIP: a slot number or a saved ID):
+  --  {tick,'crew_fire',SHIP[,ROLE]}: "Fire" on the first crew member (of that role): RemovePerson.
+  --  {tick,'captain_fire',SHIP}: "Fire" on the ship's pilot: the entity's signal npc__control_dismissed.
+  --  {tick,'crew_promote',SHIP[,ROLE]}: "Promote best crew member to captain" with the first crew member (of that
+  --    role; the menu takes the best of service and marines): AssignHiredActor to the pilot's post.
+  elseif op=='crew_fire' then call=function()
+    pcall(ffi.cdef,'void RemovePerson(UniverseID controllableid, NPCSeed person);')
+    local person=tools.ship_people(e[3],e[4])[1]
+    if not person then return 'nobody' end
+    tools.C.RemovePerson(tools.ship_id(e[3]),person.seed)
+    return 'fired='..(tostring(person.seed):gsub('ULL$',''))..' role='..person.role end
+  elseif op=='captain_fire' then call=function()
+    local id=tools.ship_id(e[3])
+    local pilot=tools.env.GetComponentData(tools.env.ConvertStringToLuaID((tostring(id):gsub('ULL$',''))),'assignedpilot')
+    if not pilot then return 'no_pilot' end
+    local entity=tools.env.ConvertIDTo64Bit(pilot)
+    tools.env.SignalObject(tools.env.ConvertStringTo64Bit(tostring(entity)),'npc__control_dismissed')
+    return 'dismissed='..(tostring(entity):gsub('ULL$','')) end
+  elseif op=='crew_promote' then call=function()
+    pcall(ffi.cdef,'const char* AssignHiredActor(GenericActor actor, UniverseID targetcontrollableid, const char* postid, const char* roleid, bool checkonly);')
+    local person=tools.ship_people(e[3],e[4])[1]
+    if not person then return 'nobody' end
+    local id=tools.ship_id(e[3])
+    local actor=ffi.new('GenericActor',{entity=0,personcontrollable=id,personseed=person.seed})
+    local reason=ffi.string(tools.C.AssignHiredActor(actor,id,'aipilot',nil,false))
+    return 'promoted='..(tostring(person.seed):gsub('ULL$',''))..' role='..person.role..' answer='..(reason=='' and '-' or reason) end
+  -- Read only: {tick,'ship_look',SHIP}: a slot's ship (a number) or a saved one: tools.ship_look (owner, pilot, docked,
+  -- place, order queue, default order, people).
+  elseif op=='ship_look' then call=function() return tools.ship_look(e[3]) end
   -- The UI guard and the events family (reports/LOCKSTEP-UI-GUARD-20261101.txt): stock entries as a menu calls them. With the
   -- guard each is refused in the local phase (nothing runs, a UI_GUARD_REFUSED row); with events slot 1's MD calls replay.
   elseif op=='ui_event' then call=function() tools.env.AddUITriggeredEvent('X4LAN_UiGuard',e[3],e[4]);return 'lua' end
@@ -1535,7 +1835,7 @@ T.SUBJECT={AddTradeToShipQueue=2,TransferPlayerMoneyTo=2,TransferMoneyToPlayer=2
 T.SIGNALS={docked_player_trade_added=true}
 T.BUY,T.SELL,T.MISSION,T.EXCHANGE=1,2,4,8
 T.STATUS_TICKS=120
-T.SCRIPT_OPS={trade_to_ship=true,trade_from_ship=true,trade_loop=true,trade_buy=true,trade_sell=true,trade_price=true,trade_budget=true}
+T.SCRIPT_OPS={trade_to_ship=true,trade_from_ship=true,trade_loop=true,trade_buy=true,trade_sell=true,trade_price=true,trade_budget=true,trade_look=true}
 local function trade_hex(b) return string.format('%02x',b) end
 -- A component or offer ID as decimal text, from a number, a 64-bit cdata, a Lua ID or decimal text; nil when it is none.
 function T.id_text(env,v)
@@ -1819,6 +2119,16 @@ function T.script_call(e,tools)
  if op=='trade_price' then return function() tools.env.SetContainerWarePriceOverride(tools.saved_id(e[3]),e[4],e[5]==1,e[6]);return 'lua' end end
  if op=='trade_budget' then return function()
    tools.env.SetMaxBudget(tools.saved_id(e[3]),e[4]*3/2);tools.env.SetMinBudget(tools.saved_id(e[3]),e[4]);return 'lua' end end
+ -- Read only: {tick,'trade_look',station,ware}: that ware's offers at the station as this client's menus list them
+ -- (sell: the station sells, we buy), each price/amount, and the account.
+ if op=='trade_look' then return function()
+   local parts={}
+   for _,td in ipairs(trade_items(tools.env.GetTradeList(tools.saved_lua(e[3])))) do
+    if td.ware==e[4] and not td.ismissionoffer then
+     parts[#parts+1]=(td.isselloffer and 'sell=' or 'buy=')..tostring(td.price)..'/'..tostring(td.amount)
+    end
+   end
+   return 'offers='..#parts..' '..table.concat(parts,' ')..(#parts>0 and ' ' or '')..'money='..tostring(tools.env.GetPlayerMoney()) end end
  error('unknown trade script op '..tostring(op))
 end
 

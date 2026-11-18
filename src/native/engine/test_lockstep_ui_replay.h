@@ -345,6 +345,24 @@ static void test_ui_replay(void) {
      assert(!uirep_push(UIREP_OP_LUA_CALL,big,1) && uirep_queue_count==UIREP_QUEUE);
      unsigned n=uirep_take(201,UIREP_SECTION_MAX,section);assert(n && section[3]==UIREP_EVENTS_MAX && uirep_queue_count==UIREP_QUEUE-UIREP_EVENTS_MAX);
      uirep_queue_head=uirep_queue_count=0;}
+    /* The longest event the queue takes leaves with a playing client's blob: the stock record's 43 bytes and four
+     * changed keys take 240-2-(2+43+24)-2 = 167 bytes of room for this section. One byte more is refused at the push
+     * (before 17 Nov it was queued up to 200 bytes and then stood at the head for good, with every later event of
+     * that player behind it). An event that long at the head anyway is given up with a refusal, not waited for. */
+    {static unsigned char fit[UIREP_EVENT_MAX];const unsigned room=240u-2u-(2u+43u+4u*6u)-2u;LONG64 refused=uirep_refused,waits=uirep_waits;
+     assert(!uirep_push(UIREP_OP_LUA_CALL,fit,UIREP_EVENT_FIT+1) && !uirep_queue_count && uirep_refused==refused+1);
+     assert(uirep_push(UIREP_OP_LUA_CALL,fit,UIREP_EVENT_FIT) && uirep_push(UIREP_OP_LUA_CALL,fit,5));
+     unsigned n=uirep_take(202,room,section);assert(n==UIREP_HEAD+2+UIREP_EVENT_FIT && section[3]==1 && uirep_queue_count==1 && uirep_waits==waits);
+     n=uirep_take(203,room,section);assert(n==UIREP_HEAD+2+5 && !uirep_queue_count);
+     /* with eight changed keys in the tick it waits for the next one */
+     assert(uirep_push(UIREP_OP_LUA_CALL,fit,UIREP_EVENT_FIT));
+     assert(!uirep_take(204,room-24u,section) && uirep_waits==waits+1 && uirep_queue_count==1);
+     assert(uirep_take(205,room,section)==UIREP_HEAD+2+UIREP_EVENT_FIT && !uirep_queue_count);
+     /* an oversized head (put there by hand) is dropped; the event behind it leaves in the same tick */
+     uirep_event *e=&uirep_queue[uirep_queue_head];e->op=UIREP_OP_LUA_CALL;e->length=UIREP_EVENT_FIT+1;uirep_queue_count=1;refused=uirep_refused;
+     assert(uirep_push(UIREP_OP_LUA_CALL,fit,7));
+     n=uirep_take(206,room,section);assert(n==UIREP_HEAD+2+7 && section[3]==1 && !uirep_queue_count && uirep_refused==refused+1);
+     uirep_queue_head=uirep_queue_count=0;}
     /* Generic calls: autopilot, dock and weapon hooks capture by their spec and apply through the trampoline with the
      * slot's player. A fake Universe: slot 1's player, swapped for slot 2's inside its scope. */
     {   static unsigned char universe[0x400];test_uirep_universe=universe;

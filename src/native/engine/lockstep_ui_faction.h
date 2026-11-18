@@ -39,7 +39,7 @@
  * entity setters, the trade family's scope pins), a malformed record, references that differ, a fault in a replayed call. */
 /* UIFAC_OP_PART (0x5a, a Lua-run op) is defined in lockstep_ui_replay.h, whose section check names it. */
 #define UIFAC_PART_HEAD 3u                                /* seq, index, count */
-#define UIFAC_PART_DATA (UIREP_EVENT_MAX-UIFAC_PART_HEAD)
+#define UIFAC_PART_DATA (UIREP_EVENT_FIT-UIFAC_PART_HEAD)        /* a part is an event the queue takes (lockstep_ui_replay.h) */
 #define UIFAC_PARTS_MAX 24u
 #define UIFAC_RECORD_MAX (UIFAC_PARTS_MAX*UIFAC_PART_DATA)
 #define UIFAC_STRING_MAX 254u                             /* 0xff tags NULL */

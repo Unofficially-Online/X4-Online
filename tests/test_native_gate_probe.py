@@ -815,8 +815,10 @@ class SnapshotProbeTests(unittest.TestCase):
           stock={}
           local function entry(name) return function() stock[#stock+1]=name;return 1 end end
           interact={name='InteractMenu',orderAttack=entry('orderAttack'),orderMoveWait=entry('orderMoveWait'),
-            buttonTravelMode=entry('buttonTravelMode'),buttonExternal=entry('buttonExternal'),ordering=entry('ordering')}
+            buttonTravelMode=entry('buttonTravelMode'),buttonExternal=entry('buttonExternal'),ordering=entry('ordering'),
+            orderIconText=entry('orderIconText')}
           map={name='MapMenu',orderMoveWait=entry('map.orderMoveWait'),buttonNewOrder=entry('buttonNewOrder'),
+            orderAmountHelper=entry('orderAmountHelper'),
             hotkey=function(action) stock[#stock+1]='hotkey:'..action end}
           Menus={interact,map,{name='OptionsMenu',orderAttack=entry('options')}}
         ''')
@@ -827,9 +829,14 @@ class SnapshotProbeTests(unittest.TestCase):
           map.hotkey('INPUT_ACTION_ADDON_DETAILMONITOR_A_SHIFT');map.hotkey('INPUT_ACTION_ADDON_DETAILMONITOR_TRAVELMODE')
           map.hotkey('INPUT_ACTION_ADDON_DETAILMONITOR_SETA');map.hotkey('INPUT_ACTION_ADDON_DETAILMONITOR_T')
           Menus[3].orderAttack()
+          helpers={interact.orderIconText('Attack'),map.orderAmountHelper(1,2,3)}
         ''')
         # Blocked entries return 0 and never reach the stock code; others still run.
-        self.assertEqual(list(self.lua.globals().stock.values()),['buttonExternal','ordering','hotkey:INPUT_ACTION_ADDON_DETAILMONITOR_T','options'])
+        self.assertEqual(list(self.lua.globals().stock.values()),['buttonExternal','ordering','hotkey:INPUT_ACTION_ADDON_DETAILMONITOR_T','options',
+                                                                  'orderIconText','orderAmountHelper'])
+        # ...and what is named order... and orders nothing stays the menu's own: the interact menu's icon text, the
+        # trade menu's amount helper (blocked until 17 Nov: entries began with a 0, the trade sliders set nothing)
+        self.assertEqual(list(self.lua.globals().helpers.values()),[1,1])
         self.assertEqual(list(self.lua.globals().results.values()),[0,0,0,1,1,0,0])
         lines=list(self.lua.globals().logs.values())
         self.assertEqual(sum('PILOT_ORDERS_BLOCKED menu=InteractMenu entries=3' in line for line in lines),1)  # wrapped once

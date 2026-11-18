@@ -156,6 +156,7 @@ static void gpost_walk(gpost_row_t *r,const uintptr_t groups[2],const gpost_scan
 enum {GPOST_PROBE=2};
 static uint64_t gpost_probe_unit,gpost_probe_contact,gpost_probe_runtime;
 static uint64_t pilot_reverse(uint64_t saved);   /* lockstep_pilot_inputs.h */
+static uint64_t created_runtime_of(uint64_t id); /* lockstep_world_created.h */
 static void gpost_push(const gpost_row_t *r) {
     if(gpost_tick!=r->tick) {gpost_tick=r->tick;gpost_tick_rows=0;}
     if(++gpost_tick_rows>GPOST_TICK_ROWS) ++gpost_dropped;
@@ -164,7 +165,9 @@ static void gpost_push(const gpost_row_t *r) {
 static void gpost_probe_note(void *unit,void *result,uint64_t saved,unsigned klass) {
     if(InterlockedExchange(&gpost_busy,1)) {++gpost_failures;return;}
     DWORD error=GetLastError();unsigned now=0,old=0;double scan=0;
-    if(!gpost_probe_runtime) gpost_probe_runtime=pilot_reverse(gpost_probe_contact);
+    /* The contact as a saved ID or, with the created bit, the created ID of an object made after the load (17 Nov: a station's
+     * scan took a created 0.9 m object at 99.6% of its bound on one client only). */
+    if(!gpost_probe_runtime) gpost_probe_runtime=(gpost_probe_contact>>63)?created_runtime_of(gpost_probe_contact):pilot_reverse(gpost_probe_contact);
     if(!gpost_read_set((unsigned char*)unit+0x68,gpost_new,&now) || !gpost_read_set((unsigned char*)result+0x10,gpost_old,&old) ||
        !read_local((unsigned char*)unit+0xa8,&scan,8)) {++gpost_failures;InterlockedExchange(&gpost_busy,0);SetLastError(error);return;}
     gpost_sort(gpost_new,now);gpost_sort(gpost_old,old);

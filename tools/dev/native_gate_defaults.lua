@@ -212,6 +212,7 @@ D.ON={
  {'native_gate_scan_long',true,'native_gate_pilot_stock_slots','the long-range scan for every player: the mode for players 2+, the charge on the secondary trigger, the send at its release'},
  {'native_gate_scan_mode',true,'native_gate_pilot_stock_slots','the scan mode for every player: its key is shared, players 2+ get the mode on their own player'},
  {'native_gate_area_jobs',true,'native_gate_pilot_stock_slots','a sector resource area job runs at the tick of its request on every client (its finish on a job thread decided the tick before)'},
+ {'native_gate_swarm_seed',true,'native_gate_pilot_stock_slots','swarm missiles keep the same formation on every client (X4 seeds the offsets of a swarm with a memory address, so each client flew its missiles elsewhere)'},
  {'native_gate_shared_listeners',true,'native_gate_pilot_stock_slots','a script no player owns (world plots, story activators, statistics) hears the events of every player, each inside that player scope'},
  {'native_gate_ui_reload_hold',true,'native_gate_ui_guard','a window resize, a UI scale change or a controller-mode switch no longer ends a player session: X4 reloads its UI after the session'},
  {'native_gate_ui_compslot',true,'native_gate_ui_guard native_gate_pilot_foot_slots','on foot a click works: the pilot seat (sit down) and the transporter terminal (its menu, Use Spacesuit) for every player'},
@@ -505,6 +506,7 @@ D.EXCLUDED={
  {'native_gate_pilot_stock_script','scripted controls for runs without people'},
  {'native_gate_pilot_local_script','scripted local keys for runs without people'},
  {'native_gate_ui_replay_script','scripted UI plan for runs without people'},
+ {'native_gate_ui_replay_console','test console: a Lua file of each client (a path with %d for the slot) run as a click while the session goes'},
  {'native_gate_ui_build_script','scripted build plan for runs without people'},
  {'native_gate_ui_replay_fleet','test fleet handed to the player at the setup tick'},
  {'native_gate_ui_replay_min_hull','test protection of the slot ships'},
@@ -833,7 +835,8 @@ end
 -- Degraded paths in module statuses: a counter of WATCH that grows is an ERROR row (every growth), in the log only. The in-game
 -- info line it also showed is gone (user, 3 Nov): the counters seen in every session (build rng fallback, find order unmapped,
 -- created identities macro_unknown) are deterministic paths the census confirms equal, and a player cannot act on them.
-D.WATCH={failures=true,unmapped=true,fallback=true,unknown=true,unsupported=true,refused=true,swap_refused=true,lost=true,torn=true}
+-- table_full (SCRIPT_RNG and the other per-tick key tables): a scope that found its table full draws from the shared word.
+D.WATCH={failures=true,unmapped=true,fallback=true,unknown=true,unsupported=true,refused=true,swap_refused=true,lost=true,torn=true,table_full=true}
 D.WATCH_SUFFIX={'_failures','_unmapped','_refused','_unknown'}
 -- 'lua=a/b/c/d' composites of the UI families (native_gate_ui_replay_core.lua): the names of their parts.
 D.WATCH_LUA={UI_TRADE_STATUS={'captured','applied','skipped','refused'},UI_FACTION_STATUS={'applied','skipped','parts','dropped','refused'}}

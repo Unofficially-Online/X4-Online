@@ -6,6 +6,8 @@ static uint64_t *test_ul_word_ptr;
 static uint64_t *test_ul_word(void) {return test_ul_word_ptr;}
 static uint64_t test_ul_seen;
 static uint64_t test_ul_trade_native(void *c,uint64_t f,uint64_t a3,uint64_t a4) {(void)c;(void)f;(void)a3;(void)a4;test_ul_seen=*test_ul_word_ptr;*test_ul_word_ptr^=1;return 0x55;}
+static unsigned test_ul_map_calls;static void *test_ul_map_ship;
+static void test_ul_map_native(void *behavior,void *ship) {(void)behavior;++test_ul_map_calls;test_ul_map_ship=ship;}
 static void test_ui_lazy(void) {
     uint64_t saved_issued=stats.issued;DWORD saved_ui=ui_thread;uint32_t saved_active=stats.active;int saved_boot=boot_mode,saved_phase=boot_phase;
     int saved_ids=world_identity_installed;
@@ -42,6 +44,37 @@ static void test_ui_lazy(void) {
         assert(!ul_ui_query(UL_CARGO,station,0,1) && ul_replayed==replayed0+1 && ul_lua[UL_CARGO]==lua0 && ul_blocked==blocked0);
         InterlockedExchange(&uirep_replaying,replaying);}
     assert(ul_status(out,sizeof(out))>0 && strstr(out,"mode=block frame=1077 lua=2/1/1 sim=0/1/0 other=0/0/1 blocked=3 unmapped=1 "));
+    /* A container's builds (0x4280e0): a menu's question does not bring them up to date; the simulation's does; a
+     * replayed call's does, forced or not; the row's state is the time the builds were last brought to (+0xa58). */
+    {   const uint64_t blocked0=ul_blocked,replayed0=ul_replayed;uint64_t bits;double t=40.5;memcpy(&bits,&t,8);*(double*)(station+0xa58)=40.0;
+        LONG64 rows=ul_rows;test_ul_lua=1;
+        assert(ul_ui_query(UL_BUILD,station,bits,0) && ul_lua[UL_BUILD]==1 && ul_blocked==blocked0+1 && ul_rows==rows+1);
+        assert(ul_row((uint64_t)rows,out,sizeof(out))>0 && strstr(out," target=build class=saved key=000000000001f2df lua=1 blocked=1 a1=4044400000000000 a2=0 state=4044000000000000 "));
+        assert(ul_ui_query(UL_BUILD,station,bits,1) && ul_lua[UL_BUILD]==2);                    /* a forced question of a menu too */
+        ul_build(station,t,0);assert(ul_lua[UL_BUILD]==3 && *(double*)(station+0xa58)==40.0);   /* the entry: nothing ran */
+        const LONG replaying=InterlockedExchange(&uirep_replaying,1);
+        assert(!ul_ui_query(UL_BUILD,station,bits,0) && ul_replayed==replayed0+1 && ul_lua[UL_BUILD]==3);
+        InterlockedExchange(&uirep_replaying,replaying);
+        test_ul_lua=0;assert(!ul_ui_query(UL_BUILD,station,bits,0) && ul_sim[UL_BUILD]==1);test_ul_lua=1;
+        assert(ul_status(out,sizeof(out))>0 && strstr(out," build=3/1/0"));
+        ul_blocked=blocked0;ul_replayed=replayed0;ul_lua[UL_BUILD]=0;ul_sim[UL_BUILD]=0;memset(ul_callers,0,sizeof(ul_callers));
+    }
+    /* The map's refresh of a shown ship (0xdcaa00): nothing in a session's admitted frames, whoever is on the stack
+     * (the map's update is native code); outside them, and in 'observe', X4's routine runs. */
+    {
+        unsigned char *saved_page=ul_page;ul_page=VirtualAlloc(NULL,0x1000,MEM_COMMIT|MEM_RESERVE,PAGE_EXECUTE_READWRITE);assert(ul_page);
+        /* the trampoline jumps to a stand-in that notes its arguments */
+        {void *to=(void*)test_ul_map_native;unsigned char *t=ul_trampoline(UL_MAP);t[0]=0xff;t[1]=0x25;memset(t+2,0,4);memcpy(t+6,&to,8);}
+        test_ul_map_calls=0;ul_map_blocked=ul_map_passed=0;
+        ul_mode=UL_BLOCK;test_ul_lua=0;ul_map(station,ship);assert(ul_map_blocked==1 && !ul_map_passed && !test_ul_map_calls);
+        test_ul_lua=1;ul_map(station,ship);assert(ul_map_blocked==2 && !test_ul_map_calls);
+        ul_mode=UL_KEY;ul_map(station,ship);assert(ul_map_blocked==3 && !test_ul_map_calls);
+        boot_phase=2;ul_map(station,ship);assert(ul_map_blocked==3 && ul_map_passed==1 && test_ul_map_calls==1 && test_ul_map_ship==ship);boot_phase=3;
+        ul_mode=UL_OBSERVE;ul_map(station,ship);assert(ul_map_blocked==3 && ul_map_passed==2 && test_ul_map_calls==2);
+        ul_mode=UL_BLOCK;assert(ul_status(out,sizeof(out))>0 && strstr(out," map=3/2"));
+        ul_map_blocked=ul_map_passed=0;test_ul_lua=1;
+        VirtualFree(ul_page,0,MEM_RELEASE);ul_page=saved_page;
+    }
     /* Row window: simulation calls in it are rows with their arguments and state. */
     {
         int saved_installed=ul_installed;ul_installed=0;
@@ -117,6 +150,26 @@ static void test_ui_lazy_native_image(const char *path) {
     /* The stolen bytes are whole, position-independent instructions: mov rax,rsp; mov [rax+8/0x10],rbx; mov [rsp+0x10],rbx. */
     assert(!memcmp(image+0x41a910,"\x48\x8b\xc4\x48\x89\x58\x08",7) && !memcmp(image+0x4079e0,"\x48\x8b\xc4\x48\x89\x58\x10",7));
     assert(!memcmp(image+0x4d8110,"\x48\x89\x5c\x24\x10",5));
+    /* The build update 0x4280e0: mov rax,rsp; mov [rax+8],rbx; without force it compares +0xa58 with the time and
+     * leaves, else stores the time there. BuildProcessor 0x38dd40 forwards to it; GetCurrentBuildProgress (0x1e4580)
+     * asks the build processor with the update flag set (mov dl,1; call 0x38c100). */
+    assert(!memcmp(image+0x4280e0,"\x48\x8b\xc4\x48\x89\x58\x08",7) && !memcmp(image+0x42812e,"\xf2\x0f\x10\x81\x58\x0a\x00\x00",8));
+    assert(!memcmp(image+0x428146,"\xf2\x44\x0f\x11\x81\x58\x0a\x00\x00",9));
+    assert(image[0x38dd98]==0xe8 && 0x38dd9du+*(int32_t*)(image+0x38dd99)==0x4280e0u);
+    assert(image[0x1e4635]==0xb2 && image[0x1e4636]==1 && image[0x1e463a]==0xe8 && 0x1e463fu+*(int32_t*)(image+0x1e463b)==0x38c100u);
+    assert(image[0x38c13e]==0xe8 && 0x38c143u+*(int32_t*)(image+0x38c13f)==0x38dd40u);
+    image[0x4280e0+0x30]^=1;assert(ul_state(UL_BUILD)<0);image[0x4280e0+0x30]^=1;assert(ul_state(UL_BUILD)==0);
+    /* The map's refresh 0xdcaa00: mov [rsp+0x10],rbx; it removes the ship's pending event 0x20f (0x99aa90), builds a
+     * U::UpdateEngineParametersEvent (vtable 0x2baf650) and posts it for now (jmp 0x99a720). Its six callers are in
+     * U::UniverseMapBehavior's two update routines; the first tests the object's attention against 7 before it. */
+    assert(!memcmp(image+0xdcaa00,"\x48\x89\x5c\x24\x10",5) && !memcmp(image+0xdcaa0d,"\xba\x0f\x02\x00\x00",5));
+    assert(image[0xdcaa15]==0xe8 && 0xdcaa1au+*(int32_t*)(image+0xdcaa16)==0x99aa90u);
+    assert(!memcmp(image+0xdcaa61,"\x48\x8d\x0d",3) && 0xdcaa68u+*(int32_t*)(image+0xdcaa64)==0x2baf650u);
+    assert(image[0xdcaa85]==0xe9 && 0xdcaa8au+*(int32_t*)(image+0xdcaa86)==0x99a720u);
+    {static const uint32_t sites[6]={0xdc52d8u,0xdc55fbu,0xdc691fu,0xdc9384u,0xdc9697u,0xdc98fcu};
+     for(unsigned i=0;i<6;i++) assert(image[sites[i]]==0xe8 && sites[i]+5u+*(int32_t*)(image+sites[i]+1)==0xdcaa00u);}
+    assert(!memcmp(image+0xdc52cc,"\x83\xf8\x07\x7d",4));
+    image[0xdcaa00+0x40]^=1;assert(ul_state(UL_MAP)<0);image[0xdcaa00+0x40]^=1;assert(ul_state(UL_MAP)==0);
     /* 0x4d8110 is Defensible slot 1105 in the Container/BuildStorage/Station vtables; its fast path returns +0x680. */
     assert(*(uint64_t*)(image+0x2a91478)==0x140000000ULL+0x4d8110u && !memcmp(image+0x4d813e,"\x8b\x81\x80\x06\x00\x00",6));
     /* The trade offer query 0x40a3f0 (script property lookups) calls UpdateTradeOffers without force. */

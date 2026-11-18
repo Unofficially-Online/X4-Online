@@ -38,6 +38,14 @@ K.ORDER_FAMILY={orders=4,queue=128,trade=1024}   -- lockstep_pilot_inputs.h UIRE
 -- The order entries native_gate_pilot_block_orders would refuse, opened when their calls are all captured.
 K.UNBLOCK={['MapMenu.orderDeployToStation']={'orders','queue'},['InteractMenu.orderDeployToStation']={'orders'}}
 K.NOTICE_TICKS=90
+-- What a stock menu does right after its commit call assumes the call has happened. Here it happens a few ticks later,
+-- at the apply, on every client. So the menu's own follow-up is held back at the click (K.AFTER) and made at the apply
+-- on the clicking player's client (K.applied below): without this the station menu reloaded the plan 0.1 s after
+-- Confirm, before the commit had landed, and showed the station without the modules just confirmed (run sb1, 17 Nov).
+K.AFTER={
+ -- Confirm module changes: the menu's timed reload of the station's plan waits for the apply
+ ['StationConfigurationMenu.buttonConfirm']=function(menu,S) menu.updatePlan=nil;S.plan_pending=true end,
+}
 -- The stock struct layouts the native half reads and builds: size and the offsets it relies on (the menus' ffi.cdef;
 -- a difference refuses the arming, a type no menu declared yet is only reported).
 K.LAYOUTS={
@@ -67,6 +75,66 @@ K.LAYOUTS={
  {'UILoadoutGroupData',32,{macro=0,path=8,group=16,count=24,optional=28}},
  {'UILoadoutCounts',36,{numweapons=0,numturrets=4,numshields=8,numengines=12,numturretgroups=16,numshieldgroups=20,numammo=24,numunits=28,numsoftware=32}},
 }
+-- A stock menu's table by name, when it is on screen.
+function K.shown_menu(p,name)
+ for _,menu in ipairs(p.menus and p.menus() or {}) do
+  if type(menu)=='table' and menu.name==name then return menu.shown and menu or nil end
+ end
+end
+-- After a batch of `slot` ran here (seen: what each record did), this client's open menus catch up; display only,
+-- nothing here reaches the game. The station menu: a plan commit of this client's own player reloads the station's
+-- plan (the stock menu's own timed reload, held back at the click); another player's commit does the same while this
+-- player has no unconfirmed changes, and is told to this player when it has (its own Confirm would replace that plan
+-- with one that does not hold the other player's modules). Money and builders: the plan side is drawn again. The
+-- map's plot list: this player's new plot is selected as the stock map selects it when ReserveBuildPlot answers.
+function K.applied(S,p,slot,seen)
+ local own=slot==(p.own_slot or 1)
+ local now=p.env.getElapsedTime and p.env.getElapsedTime() or 0
+ local plan,other,plot=false,false,nil
+ for _,what in ipairs(seen) do
+  if what:find('^SetConstructionSequenceFromConstructionMap') or what:find('^CancelConstruction') then plan=true
+  elseif what:find('^ReserveBuildPlot=') then plot=what:match('^ReserveBuildPlot=(%d+)$')
+  else
+   other=true
+   -- a plot was resized, paid or removed: the open menus read the plot again once the calls have stopped coming
+   -- (a person holds a size arrow: every step is its own call, applied a few ticks after its click)
+   if what:find('^ExtendBuildPlot') or what:find('^PayBuildPlotSize') or what:find('^RemoveBuildPlot') then S.plot_settle=now+0.4 end
+  end
+ end
+ local station=K.shown_menu(p,'StationConfigurationMenu')
+ if station then
+  if plan then
+   if own then S.plan_pending=nil end
+   if own or not station.haschanges then station.updatePlan=now
+   elseif p.notify then pcall(p.notify,'Multiplayer: another player changed the plan of this station. Cancel your module changes to see it.') end
+  elseif other then station.refresh=station.refresh or now end
+ end
+ local map=K.shown_menu(p,'MapMenu')
+ if map and own and plot and plot~='0' and map.mode=='selectbuildlocation' and type(map.updatePlotData)=='function' then
+  map.updatePlotData(p.env.ConvertStringTo64Bit(plot),true)
+  map.refreshInfoFrame()
+ elseif map and map.infoTableMode=='plots' and (plot or other) and type(map.refreshInfoFrame)=='function' then
+  map.over=true      -- the stock map's own "draw the info frame again" flag (updatePlotData sets it)
+ end
+end
+-- The open menus read a plot again (K.applied's plot_settle): the stock menus do it right after ExtendBuildPlot and
+-- PayBuildPlotSize answer, when in a session the plot is still the old one: the box in the picture did not grow, the
+-- size and the fee stayed, "Buy" seemed to do nothing (a person's report of run t2, 17 Nov), while the calls did land
+-- on every client a few ticks later. Display only: the holomap's box, the menu's own plot record, a redraw.
+function K.plot_settled(S,p,now)
+ local station=K.shown_menu(p,'StationConfigurationMenu')
+ if station and type(station.plotData)=='table' and station.plotData.component and station.holomap and station.holomap~=0 then
+  p.C.UpdateConstructionMapBuildPlot(station.holomap)
+  station.updatePlotData(station.plotData.component)
+  station.refresh=station.refresh or now
+ end
+ local map=K.shown_menu(p,'MapMenu')
+ if map and map.infoTableMode=='plots' and type(map.plotData)=='table' and map.plotData.placed and map.plotData.component and map.holomap and map.holomap~=0 then
+  p.C.UpdateMapBuildPlot(map.holomap)
+  map.updatePlotData(map.plotData.component,true)
+  map.refreshInfoFrame()
+ end
+end
 -- Every layout that exists checked: true and the missing type names, or nil and the first difference.
 function K.check_layouts(ffi_)
  local missing={}
@@ -199,7 +267,12 @@ function K.session(p)
      local orig=menu[name]
      if type(orig)=='function' then
       local scope=menu.name..'.'..name
-      menu[name]=function(...) return S.with_scope(scope,orig,...) end
+      local after=K.AFTER[scope]
+      menu[name]=function(...)
+       local results=pack(S.with_scope(scope,orig,...))
+       if after and gate.ui_replay_local()==1 then pcall(after,menu,S) end
+       return unpack(results,1,results.n)
+      end
       count=count+1
      end
     end
@@ -225,13 +298,14 @@ function K.session(p)
   if whole==nil then log('UI_BUILD_DROPPED tick='..tick..' slot='..slot..' why='..tostring(why));return false,'dropped '..tostring(why) end
   if whole==0 then return true,'part' end
   S.applying=true
-  local summary,ok=nil,true
+  local summary,ok,seen=nil,true,{}
   while true do
    local kind,a,b,scope=gate.ui_build_step(slot,tick)
    if kind=='ran' then
     log('UI_BUILD_APPLIED tick='..tick..' slot='..slot..' what='..tostring(a))
     local plot=tostring(a):match('^ReserveBuildPlot=(%d+)$')   -- the slot's newest plot (every client the same)
     if plot and plot~='0' then S.plots[slot]=plot end
+    seen[#seen+1]=tostring(a)
    elseif kind=='lua' then
     -- factions mode, a construction record of slot 2+: its stock call runs in the slot's faction scope (the trade family's)
     local done,what,opened=false,K.LUA[a]..' scope',nil
@@ -240,11 +314,14 @@ function K.session(p)
     if opened and opened>=0 and gate.ui_trade_scope_end then gate.ui_trade_scope_end() end
     gate.ui_build_lua_done(slot,done and 1 or 0)
     log('UI_BUILD_APPLIED tick='..tick..' slot='..slot..' what='..tostring(what)..(opened==1 and ' scope' or '')..(done and '' or ' result=error'))
+    seen[#seen+1]=tostring(what)
    elseif kind=='done' then summary=a;break
    else ok=false;summary='stop '..tostring(a);break end
   end
   S.applying=false
   S.batches=S.batches+1
+  local shown,why=pcall(K.applied,S,p,slot,seen)
+  if not shown then log('UI_BUILD_MENU_ERROR tick='..tick..' slot='..slot..' why='..tostring(why)) end
   return ok,summary
  end
  if R then
@@ -272,6 +349,18 @@ function K.session(p)
  function S.frame(tick)
   wrap_menus()
   fund(tick)
+  -- an order or another replayed call landed (a builder sent to the station, a builder fired): the open station menu
+  -- shows it a moment later, as it shows its own calls in the stock game
+  if S.plot_settle and env.getElapsedTime and env.getElapsedTime()>=S.plot_settle then
+   S.plot_settle=nil
+   local settled,why=pcall(K.plot_settled,S,p,env.getElapsedTime())
+   if not settled then log('UI_BUILD_MENU_ERROR tick='..tick..' plot why='..tostring(why)) end
+  end
+  if R and R.applied_world~=S.world_seen then
+   S.world_seen=R.applied_world
+   local station=K.shown_menu(p,'StationConfigurationMenu')
+   if station and env.getElapsedTime then station.refresh=station.refresh or (env.getElapsedTime()+0.2) end
+  end
   run_script(tick)
   gate.ui_build_flush()
   local rows=gate.ui_build_refusals()
@@ -312,6 +401,23 @@ function K.script(plan,start,tools)
      local id=tools.C.AddBuildTask6(station,0,e[4],loadout,price,crew,false,e[6] or '',info)
      if id~=0 then tools.C.SetBuildTaskTransferredMoney(id,price) end
      return tostring(id)   -- exact: the token is above 2^53
+    end) end
+  -- The same button for a ship that is docked at the shipyard, wharf or equipment dock ("Upgrade / repair ship"):
+  -- {t,'refit',station,ship,price[,level]}: the station's generated loadout for that hull at `level` (1: the high
+  -- preset) as the upgrade plan, paid and ordered as buttonConfirm does (menu.repairandupgrade's AddBuildTask6 with the
+  -- ship as its object). ship: a slot number or a saved ID.
+  elseif op=='refit' then call=function(S)
+    return S.with_scope('script.buy',function()
+     local station=tools.saved_id(e[3]);local price=e[5]
+     local ship=type(e[4])=='number' and tools.slot_id(e[4]) or tools.saved_id(e[4])
+     local macro=tools.env.GetComponentData(type(e[4])=='number' and tools.slot_lua(e[4]) or tools.saved_lua(e[4]),'macro')
+     tools.env.TransferPlayerMoneyTo(price,station)
+     local loadout=tools.loadout(station,macro,ship,e[6] or 1)
+     local crew=tools.ffi.new('CrewTransferInfo2')
+     local info=tools.ffi.new('AddBuildTask6Container')
+     local id=tools.C.AddBuildTask6(station,ship,macro,loadout,price,crew,false,'',info)
+     if id~=0 then tools.C.SetBuildTaskTransferredMoney(id,price) end
+     return tostring(id)..' macro='..tostring(macro)
     end) end
   -- the map's plot placement: ReserveBuildPlot (answers 0 here, the plot appears at the apply)
   elseif op=='plot' then call=function()

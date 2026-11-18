@@ -1077,6 +1077,7 @@ static void test_dynamic_registry(void) {
 #include "test_lockstep_runtime_ids.h"
 #include "test_lockstep_join_ids.h"
 #include "test_lockstep_guidance_local.h"
+#include "test_lockstep_swarm_seed.h"
 #include "test_lockstep_portable_created.h"
 #include "test_lockstep_created_load.h"
 #include "test_lockstep_spawn_rng.h"
@@ -1127,6 +1128,7 @@ int main(int argc,char **argv) {
     if(argc==2)test_wq_image_path=argv[1];
     if(argc==2) test_runtime_ids_native_image(argv[1]);
     if(argc==2) test_guidance_local_native_image(argv[1]);
+    if(argc==2) test_swarm_seed_native_image(argv[1]);
     if(argc==2) test_ui_replay_native_image(argv[1]);
     if(argc==2) test_ui_guard_native_image(argv[1]);
     if(argc==2) test_ui_build_native_image(argv[1]);
