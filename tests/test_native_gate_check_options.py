@@ -145,7 +145,7 @@ class PathTransformsOptionTests(unittest.TestCase):
         return [f['rule'] for f in module.check(text)[1] if 'path_transforms' in f['rule']]
 
     def test_sim_or_observe_with_serial_pathing_and_the_snapshot_boot(self):
-        for value in ("'sim'", '"observe"'):
+        for value in ("'sim'", '"observe"', "'all'"):
             with self.subTest(value=value):
                 self.assertEqual(self.failures(BASE+self.SERIAL+'X4LAN_CONFIG.native_gate_path_transforms = %s\n' % value), [])
         self.assertEqual(len(self.failures(BASE+"X4LAN_CONFIG.native_gate_path_transforms = 'sim'\n")), 1)
@@ -476,6 +476,18 @@ class FpEnvOptionTests(unittest.TestCase):
         self.assertEqual(len(self.failures(BASE+"X4LAN_CONFIG.native_gate_fp_env = 'ftz'\n")), 1)
         self.assertEqual(len(self.failures(BASE+'X4LAN_CONFIG.native_gate_fp_env = true\n')), 1)
         self.assertEqual(len(self.failures("X4LAN_CONFIG.native_gate_fp_env = 'default'\n")), 1)
+
+    def test_a_required_mode_option_counts_when_set_to_a_mode(self):
+        # 19 Nov, the laptop hunt kd: the dock rows need native_gate_path_transforms, a default set to 'sim', and every run
+        # stopped at the overlay ("needs native_gate_path_transforms") because only `true` counted as on.
+        dock = lambda text: [f['rule'] for f in module.check(text)[1] if 'dock_rows' in f['rule']]
+        on = BASE+'X4LAN_CONFIG.native_gate_serial_pathing = true\nX4LAN_CONFIG.native_gate_path_transforms_dock_rows = true\n'
+        for mode in ("'sim'", "'observe'", "'all'"):
+            self.assertEqual(dock(on+'X4LAN_CONFIG.native_gate_path_transforms = %s\n' % mode), [])
+        self.assertEqual(len(dock(on+'X4LAN_CONFIG.native_gate_path_transforms = false\n')), 1)
+        self.assertEqual(len(dock(on)), 1)
+        rate = lambda text: [f['rule'] for f in module.check(text)[1] if 'tick_pace' in f['rule']]
+        self.assertEqual(rate(BASE+'X4LAN_CONFIG.native_gate_tick_hz = 30\nX4LAN_CONFIG.native_gate_tick_pace = true\n'), [])
 
 
 class DecimalOptionTests(unittest.TestCase):

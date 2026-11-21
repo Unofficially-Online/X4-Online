@@ -438,7 +438,7 @@ def golden_v13():
             join.SEC_NPCA: [(0x2001, 3, 12, bytes(range(48)))],
             join.SEC_JOBG: [(0x2001, 0x1234)],
             join.SEC_CODE: [(77, 0x123456)],
-            join.SEC_ENGR: [(0x2001, 37.25, 0x13f800000)],
+            join.SEC_ENGR: [(0x2001, 37.25, 0x13f800000, 36.5, 0x410c0000, 0)],
             join.SEC_SHGR: [(0x2001, 0x2002, 7, 0, 888.0, 7.25)],
             join.SEC_BNDS: [(0x2001,) + tuple(range(51)) + (0,)],
             join.SEC_OMGS: [(0x2001, 0, 0, bytes(i & 0xff for i in range(8760)))],
@@ -455,10 +455,24 @@ def golden_v13():
             join.SEC_CUEI: [(0x162569, 690475, 0)],
             join.SEC_ANIS: [(0x2001, 3, 1, 1, 0, 2, 0x12345678, 0x40857c0000000000, 0, 0xbff0000000000000, 0xbff0000000000000, 0x1111, 0, 0, 0, 0, 0, 0, 0, 0x1111, 0x2222)],
             join.SEC_ANIL: [(0x2001, 3, 0, 1, 0, 0x2c78290, 0, 0x2003)],
-            join.SEC_ZREF: [(0x2001, 3, 0, 0x4044c00000000000), (0x2004, 0, 0, 0x401d000000000000)]}
+            join.SEC_ZREF: [(0x2001, 3, 0, 0x4044c00000000000), (0x2004, 0, 0, 0x401d000000000000)],
+            join.SEC_SREF: [(1, 0, bytes(range(48))), (2, 0, bytes(range(0x80, 0x90)) + bytes(32))],
+            join.SEC_PMOD: [(0x2002, 0x406a400000000000, 0x4067c00000000000), (0x2005, 0x4069000000000000, 0)],
+            join.SEC_NEED: [(0x2003, 0x2b764d8, 0, 0, 3, 0), (0x2003, 0x1111, -25, 1, 0, 0), (0x2003, 0x2222, 7, 1, 0, 0)],
+            join.SEC_ACCT: [(0x2002, 0x124), (0x2004, 0xb0)],
+            join.SEC_KIDS: [(0x2002, 0x8000000000000011, 5, 0), (0x2002, 0x8000000000000012, 5, 1)],
+            join.SEC_DOOR: [(0x2002, 1), (0x2005, 3)],
+            join.SEC_DRON: [(0x2002, 0x12, 0x12, 0x12, 0x12), (0x2006, 0, 0, 0x11, 0x10)],
+            join.SEC_REFP: [(0x2002, 0x1111, 518, 0, 1, 0), (0x2002, 0x2222, 95, 0, 1, 0)],
+            join.SEC_SPWN: [(0x2002, 0x3001, 0x4001, 3, 21, 3, 0)],
+            join.SEC_DKEY: [(0x2002, 0x3001), (0x2002, 0x3002)],
+            join.SEC_DEFR: [(0x2002, join.DEFR_ARRIVED, 0, 0x406a1fb0cf87d87f, 0x406961d2f1a9fab1, 0, 0x2002, 0x2005, 0x2002, 500, 1),
+                            (0x2005, join.DEFR_RETURN, 1, 0x406a22e402bb0bb2, 0, 0x20db55294400, 0, 0, 0, 0, 2)],
+            join.SEC_BCLK: [(0x2001, 0, 0xee000001, 17, 0x4069800000000000, 0x4011800000000000),
+                            (0x2005, 6100, 0x07000002, 900, 0x4069700000000000, 0xbff0000000000000)]}
 
 
-GOLDEN_SHA = '500019bde1567e2d607d54cbe59981509b974911d3c085246e3454c9ea335d9d'
+GOLDEN_SHA = '1de70b9300ba4ff32f70dd6139a0b21bfa5055032371088f3b5d9eb95f14122a'
 GOLDEN_SHA_V12 = '67459b50e3057be54939b69aae43c7fc8ba426523b78274f70eb2702beaff7ef'   # a version 12 package (before JOBE)
 GOLDEN_SHA_V11 = 'f0874152607c013ff72febfbf675b20f64b391fb5a9d431795bd302fc0964e7f'   # a version 11 package (before SPLM..GRAVP)
 GOLDEN_SHA_V10 = '1a324e00b49dbc814f757c26ad28741675b7d8e0b9df120c63d52594724e27bd'   # a version 10 package (before GRAV, GRAVC, GRAVS)
@@ -484,7 +498,7 @@ class Package(unittest.TestCase):
                                        'spline': 2, 'agent': 2, 'route': 3, 'param': 2, 'dock': 1, 'steer': 1, 'steerpt': 1, 'solver': 1,
                                        'bullet': 2, 'grav': 2, 'gravc': 3, 'gravs': 4, 'splm': 1, 'splme': 1,
                                        'splmseg': 4, 'gravn': 3, 'gravp': 3, 'gravq': 3, 'jobe': 1, 'evqt': 3, 'gravd': 2,
-                                       'viewk': 2, 'viewkc': 2, 'viewf': 2, 'viewp': 1, 'shoot': 1, 'attk': 1, 'livef': 1, 'spec': 2, 'navc': 1, 'jobs': 1, 'gone': 2, 'body': 1, 'bupd': 2, 'ldc': 1, 'navt': 1, 'nmesh': 4, 'noct': 4, 'agtt': 2, 'agcb': 1, 'pbnk': 1, 'pend': 2, 'gravb': 2, 'viewl': 2, 'ikv': 2, 'rcnt': 1, 'ecos': 1, 'shpw': 1, 'trdn': 1, 'npca': 1, 'jobg': 1, 'code': 1, 'engr': 1, 'shgr': 1, 'bnds': 1, 'omgs': 1, 'resv': 1, 'pcsv': 1, 'conn': 1, 'warp': 1, 'ares': 1, 'lstn': 1, 'undk': 1, 'srcs': 1, 'fobj': 1, 'cuei': 1, 'anis': 1, 'anil': 1, 'zref': 2})
+                                       'viewk': 2, 'viewkc': 2, 'viewf': 2, 'viewp': 1, 'shoot': 1, 'attk': 1, 'livef': 1, 'spec': 2, 'navc': 1, 'jobs': 1, 'gone': 2, 'body': 1, 'bupd': 2, 'ldc': 1, 'navt': 1, 'nmesh': 4, 'noct': 4, 'agtt': 2, 'agcb': 1, 'pbnk': 1, 'pend': 2, 'gravb': 2, 'viewl': 2, 'ikv': 2, 'rcnt': 1, 'ecos': 1, 'shpw': 1, 'trdn': 1, 'npca': 1, 'jobg': 1, 'code': 1, 'engr': 1, 'shgr': 1, 'bnds': 1, 'omgs': 1, 'resv': 1, 'pcsv': 1, 'conn': 1, 'warp': 1, 'ares': 1, 'lstn': 1, 'undk': 1, 'srcs': 1, 'fobj': 1, 'cuei': 1, 'anis': 1, 'anil': 1, 'zref': 2, 'sref': 2, 'pmod': 2, 'need': 3, 'acct': 2, 'kids': 2, 'door': 2, 'dron': 2, 'refp': 2, 'spwn': 1, 'dkey': 2, 'defr': 2, 'bclk': 2})
         self.assertEqual(s['version'], 13)
         self.assertEqual(s['save_sha'], bytes(range(32)).hex())
         # The MD heap enters the portable digest in pop order (time, then seq) and without its seq.
@@ -1056,15 +1070,17 @@ class Package(unittest.TestCase):
         # Version 13 (report 1.17): JOBE after GRAVQ, in the digest whole; the reader refuses its shape faults and a version 12 header
         # with it.
         v13 = join.read_package(golden())
-        self.assertEqual((v13['sha'], v13['header']['version'], v13['header']['sections']), (GOLDEN_SHA, 13, 86))
+        self.assertEqual((v13['sha'], v13['header']['version'], v13['header']['sections']), (GOLDEN_SHA, 13, 98))
         self.assertEqual(join.portable_text(v13['sections']).splitlines()[-1].split('|')[:2], ['JOBE', '1'])   # EVQT: not in the digest
         other = dict(v13['sections']);other['evqt'] = []
         self.assertEqual(join.portable_digest(other), join.portable_digest(v13['sections']))
         ev = golden_v13()[join.SEC_EVQT]
         self.assertEqual(v13['sections']['evqt'], ev)
         self.assertTrue(join.evqt_shape(ev) and join.evqt_shape([]))
-        for bad in ([ev[1], ev[0], ev[2]], [ev[0], ev[2], ev[1]], [ev[0][:4]+(0,)+ev[0][5:]]+ev[1:], [ev[0], ev[1][:4]+(2,)+ev[1][5:], ev[2]]):
+        for bad in ([ev[1], ev[0], ev[2]], [ev[0], ev[2], ev[1]], [ev[0][:4]+(0,)+ev[0][5:]]+ev[1:], [ev[0], ev[1][:4]+(4,)+ev[1][5:], ev[2]],
+                    [ev[0], ev[1][:4]+(join.EVQT_UNMAPPED | join.EVQT_RUNTIME,)+ev[1][5:], ev[2]]):
             self.assertFalse(join.evqt_shape(bad))
+        self.assertTrue(join.evqt_shape([ev[0], ev[1][:4]+(join.EVQT_RUNTIME,)+ev[1][5:], ev[2]]))   # a source by its runtime ID
         d = golden_v13()[join.SEC_GRAVD]
         self.assertEqual(v13['sections']['gravd'], d)
         self.assertTrue(join.gravd_shape(d) and join.gravd_shape([]))

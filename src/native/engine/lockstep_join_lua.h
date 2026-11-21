@@ -94,6 +94,28 @@ static int lua_join_engr(lua_State *L) {join_engr_on=p_lua_tonumber(L,1)!=0.0;p_
 static int lua_join_resv(lua_State *L) {join_resv_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
 /* gate.join_zref(on): a joiner's zone reference table is made the session's (ZREF, default off). */
 static int lua_join_zref(lua_State *L) {join_zref_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
+/* gate.join_sref(on): script positions and rotations keep the session's bits through a join (SREF, lockstep_join_sref.h). */
+static int lua_join_sref(lua_State *L) {join_sref_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
+/* gate.join_pmod(on): a joiner's processing modules take the session's due times (PMOD, lockstep_join_world.h). */
+static int lua_join_pmod(lua_State *L) {join_pmod_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
+/* gate.join_need(on): a joiner's containers take the session's resource needs (NEED, lockstep_join_world.h). */
+static int lua_join_need(lua_State *L) {join_need_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
+/* gate.join_acct(on): a joiner's containers take the session's accounts (ACCT, lockstep_join_world.h). */
+static int lua_join_acct(lua_State *L) {join_acct_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
+/* gate.join_kids(on): a joiner's objects list their children in the session's order (KIDS, lockstep_join_world.h). */
+static int lua_join_kids(lua_State *L) {join_kids_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
+/* gate.join_door(on): a joiner's containers have their dock doors set up where the session's have (DOOR, lockstep_join_world.h). */
+static int lua_join_door(lua_State *L) {join_door_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
+/* gate.join_dron(on): a joiner's containers take the session's pending and user drone modes (DRON, lockstep_join_world.h). */
+static int lua_join_dron(lua_State *L) {join_dron_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
+/* gate.join_refp(on): a joiner's containers take the session's price lists to the hundredth (REFP, lockstep_join_world.h). */
+static int lua_join_refp(lua_State *L) {join_refp_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
+/* gate.join_spwn(on): a joiner's field-spawned objects take the field and resource area they came from (SPWN, lockstep_join_world.h). */
+static int lua_join_spwn(lua_State *L) {join_spwn_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
+/* gate.join_defr(on): a joiner posts the session's deferred events of T again: drone flights that landed in its last pass (DEFR). */
+static int lua_join_defr(lua_State *L) {join_defr_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
+/* gate.join_bclk(on): a joiner takes the session's body clock notes, so the animations running at T end at its ticks (BCLK). */
+static int lua_join_bclk(lua_State *L) {join_bclk_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
 /* gate.join_pcsv(on): a joiner takes the session's PlayerControllers' own motion solvers (PCSV, default off). */
 static int lua_join_pcsv(lua_State *L) {join_pcsv_on=p_lua_tonumber(L,1)!=0.0;p_lua_pushnumber(L,1);return 1;}
 /* gate.join_conn(on): a joiner connects the NPC connections the session has connected and its load left without a partner

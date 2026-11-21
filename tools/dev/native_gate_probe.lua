@@ -375,6 +375,39 @@ if cfg.native_gate_join then
  if cfg.native_gate_join_zref then   -- a joiner's zone reference table (what a temporary zone's kill check asks) is the session's (ZREF)
   assert(gate.join_zref and gate.join_zref(1)==1,'join zref refused')
  end
+ if cfg.native_gate_join_sref then   -- script positions and rotations keep the session's bits through a join (SREF)
+  assert(gate.join_sref and gate.join_sref(1)==1,'join sref refused')
+ end
+ if cfg.native_gate_join_pmod then   -- a joiner's processing modules take the session's due times (PMOD)
+  assert(gate.join_pmod and gate.join_pmod(1)==1,'join pmod refused')
+ end
+ if cfg.native_gate_join_need then   -- a joiner's containers take the session's resource needs (NEED)
+  assert(gate.join_need and gate.join_need(1)==1,'join need refused')
+ end
+ if cfg.native_gate_join_acct then   -- a joiner's containers take the session's accounts (ACCT)
+  assert(gate.join_acct and gate.join_acct(1)==1,'join acct refused')
+ end
+ if cfg.native_gate_join_kids then   -- a joiner's objects list their children in the session's order (KIDS)
+  assert(gate.join_kids and gate.join_kids(1)==1,'join kids refused')
+ end
+ if cfg.native_gate_join_door then   -- a joiner's containers have their dock doors set up where the session's have (DOOR)
+  assert(gate.join_door and gate.join_door(1)==1,'join door refused')
+ end
+ if cfg.native_gate_join_dron then   -- a joiner's containers take the session's pending and user drone modes (DRON)
+  assert(gate.join_dron and gate.join_dron(1)==1,'join dron refused')
+ end
+ if cfg.native_gate_join_refp then   -- a joiner's containers take the session's price lists to the hundredth (REFP)
+  assert(gate.join_refp and gate.join_refp(1)==1,'join refp refused')
+ end
+ if cfg.native_gate_join_spwn then   -- a joiner's field-spawned objects take the field and area they came from (SPWN)
+  assert(gate.join_spwn and gate.join_spwn(1)==1,'join spwn refused')
+ end
+ if cfg.native_gate_join_defr then   -- a joiner posts the session's deferred events of T again (DEFR)
+  assert(gate.join_defr and gate.join_defr(1)==1,'join defr refused')
+ end
+ if cfg.native_gate_join_bclk then   -- a joiner takes the session's body clock notes (BCLK)
+  assert(gate.join_bclk and gate.join_bclk(1)==1,'join bclk refused')
+ end
  if cfg.native_gate_join_pcsv then   -- a joiner takes the session's PlayerControllers' own motion solvers (PCSV)
   assert(gate.join_pcsv and gate.join_pcsv(1)==1,'join pcsv refused')
  end
@@ -2918,6 +2951,339 @@ function pilot_view.arm_ui_replay(slot,window)
   end
   return out
  end
+ -- A ship's weapon and drone settings as the docked menu and the map's loadout page read them (core.script
+ -- systems_look and the ops that set them; read only). Weapons and single turrets in slot order, turret groups sorted
+ -- by group name, drone types in the docked menu's order.
+ tools.systems=function(ref)
+  for _,line in ipairs({
+    'typedef struct { bool primary; uint32_t idx; } UIWeaponGroup;',
+    'typedef struct { const char* path; const char* group; } UpgradeGroup;',
+    'typedef struct { UniverseID contextid; const char* path; const char* group; } UpgradeGroup2;',
+    'typedef struct { UniverseID currentcomponent; const char* currentmacro; const char* slotsize; uint32_t count; uint32_t operational; uint32_t total; } UpgradeGroupInfo;',
+    'typedef struct { const char* id; const char* name; bool possible; } DroneModeInfo;',
+    'size_t GetNumUpgradeSlots(UniverseID destructibleid, const char* macroname, const char* upgradetypename);',
+    'UniverseID GetUpgradeSlotCurrentComponent(UniverseID destructibleid, const char* upgradetypename, size_t slot);',
+    'UpgradeGroup GetUpgradeSlotGroup(UniverseID destructibleid, const char* macroname, const char* upgradetypename, size_t slot);',
+    'uint32_t GetNumUpgradeGroups(UniverseID destructibleid, const char* macroname);',
+    'uint32_t GetUpgradeGroups2(UpgradeGroup2* result, uint32_t resultlen, UniverseID destructibleid, const char* macroname);',
+    'UpgradeGroupInfo GetUpgradeGroupInfo2(UniverseID destructibleid, const char* macroname, UniverseID contextid, const char* path, const char* group, const char* upgradetypename);',
+    'uint32_t GetDefensibleActiveWeaponGroup(UniverseID defensibleid, bool primary);',
+    'uint32_t GetNumWeaponGroupsByWeapon(UniverseID defensibleid, UniverseID weaponid);',
+    'uint32_t GetWeaponGroupsByWeapon(UIWeaponGroup* result, uint32_t resultlen, UniverseID defensibleid, UniverseID weaponid);',
+    'const char* GetWeaponMode(UniverseID weaponid);','bool IsWeaponArmed(UniverseID weaponid);',
+    'const char* GetTurretGroupMode2(UniverseID defensibleid, UniverseID contextid, const char* path, const char* group);',
+    'bool IsTurretGroupArmed(UniverseID defensibleid, UniverseID contextid, const char* path, const char* group);',
+    'uint32_t GetNumStoredUnits(UniverseID defensibleid, const char* cat, bool virtualammo);',
+    'uint32_t GetNumDroneModes(UniverseID defensibleid, const char* dronetype);',
+    'uint32_t GetDroneModes(DroneModeInfo* result, uint32_t resultlen, UniverseID defensibleid, const char* dronetype);',
+    'const char* GetCurrentDroneMode(UniverseID defensibleid, const char* dronetype);',
+    'bool IsDroneTypeArmed(UniverseID defensibleid, const char* dronetype);',
+    'float GetDefensibleLoadoutLevel(UniverseID defensibleid);',
+    'const char* GetDefaultResponseToSignalForControllable(const char* signalid, UniverseID controllableid);',
+  }) do pcall(ffi.cdef,line) end
+  local C,id=ffi.C,tools.ship_id(ref)
+  local s={id=id,weapons={},turrets={},groups={},drones={},
+   active={tonumber(C.GetDefensibleActiveWeaponGroup(id,true)),tonumber(C.GetDefensibleActiveWeaponGroup(id,false))}}
+  for j=1,tonumber(C.GetNumUpgradeSlots(id,'','weapon')) do
+   local weapon=C.GetUpgradeSlotCurrentComponent(id,'weapon',j)
+   if weapon~=0 then
+    local n=tonumber(C.GetNumWeaponGroupsByWeapon(id,weapon))
+    local buf=ffi.new('UIWeaponGroup[?]',math.max(n,1));n=tonumber(C.GetWeaponGroupsByWeapon(buf,n,id,weapon))
+    local member={}
+    for i=0,n-1 do member[#member+1]=(buf[i].primary and 'p' or 's')..tonumber(buf[i].idx) end
+    table.sort(member)
+    s.weapons[#s.weapons+1]={id=weapon,groups=table.concat(member,'.')}
+   end
+  end
+  for j=1,tonumber(C.GetNumUpgradeSlots(id,'','turret')) do
+   local g=C.GetUpgradeSlotGroup(id,'','turret',j)
+   if ffi.string(g.path)=='..' and ffi.string(g.group)=='' then
+    local turret=C.GetUpgradeSlotCurrentComponent(id,'turret',j)
+    if turret~=0 then s.turrets[#s.turrets+1]={id=turret,mode=ffi.string(C.GetWeaponMode(turret)),armed=C.IsWeaponArmed(turret)} end
+   end
+  end
+  local n=tonumber(C.GetNumUpgradeGroups(id,''))
+  local buf=ffi.new('UpgradeGroup2[?]',math.max(n,1));n=tonumber(C.GetUpgradeGroups2(buf,n,id,''))
+  for i=0,n-1 do
+   local context,path,group=buf[i].contextid,ffi.string(buf[i].path),ffi.string(buf[i].group)
+   if path~='..' or group~='' then
+    local info=C.GetUpgradeGroupInfo2(id,'',context,path,group,'turret')
+    if info.count>0 then
+     s.groups[#s.groups+1]={context=context,path=path,group=group,operational=tonumber(info.operational),
+      mode=ffi.string(C.GetTurretGroupMode2(id,context,path,group)),armed=C.IsTurretGroupArmed(id,context,path,group)}
+    end
+   end
+  end
+  table.sort(s.groups,function(a,b) if a.group~=b.group then return a.group<b.group end return a.path<b.path end)
+  for _,kind in ipairs({'orecollector','gascollector','defence','transport'}) do
+   local stored=tonumber(C.GetNumStoredUnits(id,kind,false))
+   if stored>0 then
+    local m=tonumber(C.GetNumDroneModes(id,kind))
+    local modes=ffi.new('DroneModeInfo[?]',math.max(m,1));m=tonumber(C.GetDroneModes(modes,m,id,kind))
+    local list,mode,at={},ffi.string(C.GetCurrentDroneMode(id,kind)),0
+    for i=0,m-1 do
+     local one=ffi.string(modes[i].id)
+     if one~='trade' then list[#list+1]=one;if one==mode then at=#list end end
+    end
+    s.drones[#s.drones+1]={kind=kind,stored=stored,modes=list,mode=mode,at=at,armed=C.IsDroneTypeArmed(id,kind)}
+   end
+  end
+  s.resupply=tonumber(C.GetDefensibleLoadoutLevel(id))
+  -- the ship's own answers to the faction's signals (the behaviour page's standing orders), where they differ from none
+  s.responses={}
+  pcall(function()
+   local count=C.GetNumAllSignals()
+   local all=ffi.new('SignalInfo[?]',math.max(count,1));count=C.GetAllSignals(all,count)
+   for i=0,count-1 do
+    local signal=ffi.string(all[i].id)
+    s.responses[#s.responses+1]=signal..':'..ffi.string(C.GetDefaultResponseToSignalForControllable(signal,id))
+   end
+  end)
+  return s
+ end
+ -- 'active=P/S weapons=N:GROUPS,.. turrets=N:MODE/ARMED,.. groups=N:NAME/MODE/ARMED,.. first=MODE/ARMED allmode=M allarmed=B
+ -- (first: the ship's first turret part, turret group 1 when it has groups, else single turret 1)
+ -- drones=N:KIND/MODE#POSITION/ARMED/STORED,.. resupply=L responses=SIGNAL:RESPONSE,..' (allmode and allarmed over the
+ -- single turrets and the turret groups that work: one value, 'mixed' or 'none')
+ tools.systems_look=function(ref)
+  local s=tools.systems(ref)
+  local function list(rows,text)
+   local out={}
+   for i,row in ipairs(rows) do out[i]=text(row) end
+   return #rows..(#out>0 and ':'..table.concat(out,',') or '')
+  end
+  local mode,armed
+  local function fold(m,a)
+   mode=mode==nil and m or (mode==m and m or 'mixed')
+   a=tostring(a)
+   armed=armed==nil and a or (armed==a and a or 'mixed')
+  end
+  for _,t in ipairs(s.turrets) do fold(t.mode,t.armed) end
+  for _,g in ipairs(s.groups) do if g.operational>0 then fold(g.mode,g.armed) end end
+  return table.concat({'active='..s.active[1]..'/'..s.active[2],
+   'weapons='..list(s.weapons,function(w) return w.groups~='' and w.groups or '-' end),
+   'turrets='..list(s.turrets,function(t) return t.mode..'/'..tostring(t.armed) end),
+   'groups='..list(s.groups,function(g) return (g.group~='' and g.group or g.path)..'/'..g.mode..'/'..tostring(g.armed) end),
+   'first='..(s.groups[1] and s.groups[1].mode..'/'..tostring(s.groups[1].armed) or s.turrets[1] and s.turrets[1].mode..'/'..tostring(s.turrets[1].armed) or 'none'),
+   'allmode='..(mode or 'none'),'allarmed='..(armed or 'none'),
+   'drones='..list(s.drones,function(d) return d.kind..'/'..d.mode..'#'..d.at..'/'..tostring(d.armed)..'/'..d.stored end),
+   string.format('resupply=%.2f',s.resupply),'responses='..(#s.responses>0 and table.concat(s.responses,',') or 'none'),''},' ')
+ end
+ -- Where a docked ship stands (core.script storage_look, store, retrieve; read only): docked or not, at an outside dock
+ -- or in the container's internal storage, being fetched from it, the container, and whether the interact menu's
+ -- "Put into storage" would be active.
+ tools.storage_look=function(ref)
+  for _,line in ipairs({'bool IsShipAtExternalDock(UniverseID shipid);','bool IsShipBeingRetrieved(UniverseID shipid);',
+    'UniverseID GetContextByClass(UniverseID componentid, const char* classname, bool includeself);',
+    'bool HasContainerFreeInternalShipStorage(UniverseID containerid, UniverseID shipid);',
+    'bool CanPutShipIntoStorage(UniverseID containerid, UniverseID shipid);'}) do pcall(ffi.cdef,line) end
+  local C,id=ffi.C,tools.ship_id(ref)
+  local lua=ConvertStringToLuaID((tostring(id):gsub('ULL$','')))
+  local docked=GetComponentData(lua,'isdocked') and true or false
+  local container=C.GetContextByClass(id,'container',false)
+  local parts={'docked='..tostring(docked),'outside='..tostring(C.IsShipAtExternalDock(id)),'fetched='..tostring(C.IsShipBeingRetrieved(id)),
+   'container='..(tostring(container):gsub('ULL$',''))}
+  if docked and container~=0 then
+   parts[#parts+1]='room='..tostring(C.HasContainerFreeInternalShipStorage(container,id))
+   parts[#parts+1]='can_store='..tostring(C.CanPutShipIntoStorage(container,id))
+  end
+  return table.concat(parts,' ')..' '
+ end
+ -- A ship by its name among the ownerless and the player's objects (core.script claim, wreck_look): the ship the MD
+ -- fixture Abandoned made. Returns the Lua ID, the owner it was found under and the 64-bit ID.
+ tools.named_ship=function(name)
+  for _,owner in ipairs({'ownerless','player'}) do
+   for _,object in ipairs(GetContainedObjectsByOwner(owner) or {}) do
+    if GetComponentData(object,'name')==name then return object,owner,ConvertIDTo64Bit(object) end
+   end
+  end
+ end
+ tools.wreck_look=function(name)
+  local object,owner,id=tools.named_ship(name)
+  if not object then return 'state=gone ' end
+  local claimable,pilot=GetComponentData(object,'canbeclaimed','assignedpilot')
+  return 'state=ok owner='..owner..' claimable='..tostring(claimable and true or false)..' pilot='..tostring(pilot and true or false)..
+   ' ship='..(tostring(id):gsub('ULL$',''))..' '
+ end
+ -- A place of a sector where the interact menu would offer a ware for mining (core.script mine_spot, mine, the order
+ -- value 'spot'): the point nearest to a ship, on a grid across the sector at the ship's height, whose yield of that
+ -- ware is above the menu's threshold of 10. nil when no point of the grid yields it.
+ tools.mine_scan=function(sector,ref,reach,step)
+  for _,line in ipairs({'typedef struct { const char* wareid; int32_t amount; } YieldInfo;',
+    'uint32_t GetNumMineablesAtSectorPos(UniverseID sectorid, Coord3D position);',
+    'uint32_t GetMineablesAtSectorPos(YieldInfo* result, uint32_t resultlen, UniverseID sectorid, Coord3D position);'}) do pcall(ffi.cdef,line) end
+  local C=ffi.C
+  local sid=ConvertStringTo64Bit((assert(gate.ui_replay_saved(sector),'ui replay script: sector unresolved')))
+  local p=C.GetObjectPositionInSector(tools.ship_id(ref))
+  reach,step=reach or 200000,step or 10000
+  local best={}
+  for dx=-reach,reach,step do
+   for dz=-reach,reach,step do
+    local d=dx*dx+dz*dz
+    local pos=ffi.new('Coord3D',{x=p.x+dx,y=p.y,z=p.z+dz})
+    local n=tonumber(C.GetNumMineablesAtSectorPos(sid,pos))
+    if n>0 then
+     local buf=ffi.new('YieldInfo[?]',n);n=tonumber(C.GetMineablesAtSectorPos(buf,n,sid,pos))
+     for i=0,n-1 do
+      local ware=ffi.string(buf[i].wareid)
+      if buf[i].amount>10 and (not best[ware] or d<best[ware].d) then
+       best[ware]={d=d,x=tonumber(pos.x),y=tonumber(pos.y),z=tonumber(pos.z),amount=tonumber(buf[i].amount)}
+      end
+     end
+    end
+   end
+  end
+  return best
+ end
+ tools.mine_spot=function(sector,ware,ref,reach,step) return tools.mine_scan(sector,ref,reach,step)[ware] end
+ -- One group of a commander's wing as the map's subordinate list and the interact menu read it (core.script wing_look;
+ -- read only): the group's role, its five switches, the fleet's name.
+ tools.wing_look=function(ref,group)
+  for _,line in ipairs({'const char* GetSubordinateGroupAssignment(UniverseID controllableid, int group);',
+    'bool ShouldSubordinateGroupAttackOnSight(UniverseID controllableid, int group);','bool ShouldSubordinateGroupDockAtCommander(UniverseID controllableid, int group);',
+    'bool ShouldSubordinateGroupReinforceFleet(UniverseID controllableid, int group);','bool ShouldSubordinateGroupRespondToDistressCalls(UniverseID controllableid, int group);',
+    'bool ShouldSubordinateGroupResupplyAtFleet(UniverseID controllableid, int group);','const char* GetFleetName(UniverseID controllableid);'}) do pcall(ffi.cdef,line) end
+  local C,id=ffi.C,tools.ship_id(ref)
+  local parts={}
+  local function add(key,read)
+   local ok,value=pcall(read)
+   parts[#parts+1]=key..'='..(ok and (tostring(value):gsub('%s','_')) or 'err')
+  end
+  add('role',function() local role=ffi.string(C.GetSubordinateGroupAssignment(id,group));return role~='' and role or '-' end)
+  add('sight',function() return C.ShouldSubordinateGroupAttackOnSight(id,group) end)
+  add('dock',function() return C.ShouldSubordinateGroupDockAtCommander(id,group) end)
+  add('reinforce',function() return C.ShouldSubordinateGroupReinforceFleet(id,group) end)
+  add('distress',function() return C.ShouldSubordinateGroupRespondToDistressCalls(id,group) end)
+  add('resupply',function() return C.ShouldSubordinateGroupResupplyAtFleet(id,group) end)
+  add('fleet',function() local name=ffi.string(C.GetFleetName(id));return name~='' and name or '-' end)
+  return table.concat(parts,' ')..' '
+ end
+ -- This client's own pilot: flight assist and the activity (travel, scan, long range scan, SETA or none), as the HUD
+ -- and the docked menu read them. Local to the client: never in a reading both clients compare.
+ tools.pilot_look=function()
+  pcall(ffi.cdef,'bool IsFlightAssistActive(void);')
+  return 'assist='..tostring(ffi.C.IsFlightAssistActive())..' activity='..tostring(GetPlayerActivity())..' '
+ end
+ -- The faction's settings as the player information menu reads them (core.script settings_look; read only).
+ tools.settings_look=function()
+  for _,line in ipairs({'bool ShouldPlayerShipsWaitForPlayer(void);','float GetPlayerGlobalLoadoutLevel(void);',
+    'const char* GetFactionDefaultWeaponMode(const char* factionid);','const char* GetPlayerFactionName(bool userawname);',
+    'const char* GetPlayerPaintTheme(void);','const char* GetPlayerClothingTheme(void);',
+    'const char* GetDefaultResponseToSignalForFaction2(const char* signalid, const char* factionid, const char* purposeid);'}) do pcall(ffi.cdef,line) end
+  local C=ffi.C
+  local parts={}
+  local function add(key,read)
+   local ok,value=pcall(read)
+   parts[#parts+1]=key..'='..(ok and (tostring(value):gsub('%s','_')) or 'err')
+  end
+  add('ships_wait',function() return C.ShouldPlayerShipsWaitForPlayer() end)
+  add('loadout',function() return string.format('%.2f',C.GetPlayerGlobalLoadoutLevel()) end)
+  add('weapon_mode',function() return ffi.string(C.GetFactionDefaultWeaponMode('player')) end)
+  add('name',function() return ffi.string(C.GetPlayerFactionName(true)) end)
+  add('paint',function() return ffi.string(C.GetPlayerPaintTheme()) end)
+  add('clothing',function() return ffi.string(C.GetPlayerClothingTheme()) end)
+  add('logo',function() local logo=C.GetCurrentPlayerLogo();return logo.file~=nil and ffi.string(logo.file) or '-' end)
+  add('responses',function()
+   local count=C.GetNumAllSignals()
+   local all=ffi.new('SignalInfo[?]',math.max(count,1));count=C.GetAllSignals(all,count)
+   local out={}
+   for i=0,count-1 do
+    local signal=ffi.string(all[i].id)
+    out[#out+1]=signal..':'..ffi.string(C.GetDefaultResponseToSignalForFaction2(signal,'player',''))
+   end
+   return #out>0 and table.concat(out,',') or 'none'
+  end)
+  return table.concat(parts,' ')..' '
+ end
+ -- How far this client's own ship is from the dock the station assigned to it, in metres (nil: no dock assigned).
+ -- dock_state's distance is to the station's centre, which says little at a station two kilometres across.
+ tools.dock_gap=function()
+  local dock=tools.assigned_dock()
+  if not dock then return nil end
+  local ship=ffi.new('UniverseID',(assert(gate.pilot_ship(slot),'ui replay script: slot ship unresolved')))
+  -- both in the sector's frame: a dock is a part of its station, and GetObjectPositionInSector of a part answers
+  -- its place in the station (the first try read 88 km for a ship that was about to dock, 18 Nov)
+  pcall(ffi.cdef,'UIPosRot GetPositionalOffset(UniverseID positionalid, UniverseID spaceid);')
+  pcall(ffi.cdef,'UniverseID GetContextByClass(UniverseID componentid, const char* classname, bool includeself);')
+  local sector=ffi.C.GetContextByClass(ship,'sector',false)
+  local p,q=ffi.C.GetPositionalOffset(ship,sector),ffi.C.GetPositionalOffset(ConvertIDTo64Bit(dock),sector)
+  return math.sqrt((q.x-p.x)^2+(q.y-p.y)^2+(q.z-p.z)^2)
+ end
+ -- Where this client's own ship is in the frame of the dock the station assigned to it, and where the station's centre
+ -- is in that frame (metres along the dock's own x/y/z), as text 'X/Y/Z centre=X/Y/Z'; nil: no dock. It tells whether
+ -- a stalled approach stopped in front of the pad, beside it or behind its module (the second pad of the wharf
+ -- AVK-777: the approach ends 300 m off, the first pad's 74 m off and lands).
+ tools.dock_rel=function()
+  local dock=tools.assigned_dock()
+  if not dock then return nil end
+  pcall(ffi.cdef,'UIPosRot GetPositionalOffset(UniverseID positionalid, UniverseID spaceid);')
+  pcall(ffi.cdef,'UniverseID GetContextByClass(UniverseID componentid, const char* classname, bool includeself);')
+  local ship=ffi.new('UniverseID',(assert(gate.pilot_ship(slot),'ui replay script: slot ship unresolved')))
+  local d64=ConvertIDTo64Bit(dock)
+  local p=ffi.C.GetPositionalOffset(ship,d64)
+  local c=ffi.C.GetPositionalOffset(ffi.C.GetContextByClass(d64,'container',false),d64)
+  return string.format('%.0f/%.0f/%.0f centre=%.0f/%.0f/%.0f',p.x,p.y,p.z,c.x,c.y,c.z)
+ end
+ -- The frames a hop steers by (K.dock_fly's hop): this client's own ship and the station's centre in the frame of the
+ -- dock assigned to it, the dock and the station's centre in the ship's frame ({x,y,z} each: right, up, ahead for the
+ -- ship), and when a detour chose another ship, that ship in both frames (a check of the mapping). Nil: no dock.
+ tools.dock_frames=function()
+  local dock=tools.assigned_dock()
+  if not dock then return nil end
+  pcall(ffi.cdef,'UIPosRot GetPositionalOffset(UniverseID positionalid, UniverseID spaceid);')
+  pcall(ffi.cdef,'UniverseID GetContextByClass(UniverseID componentid, const char* classname, bool includeself);')
+  local ship=ffi.new('UniverseID',(assert(gate.pilot_ship(slot),'ui replay script: slot ship unresolved')))
+  local d64=ConvertIDTo64Bit(dock)
+  local station=ffi.C.GetContextByClass(d64,'container',false)
+  local function v(a,b) local o=ffi.C.GetPositionalOffset(a,b);return {o.x,o.y,o.z} end
+  local other=tools.detour_ship
+  local nd,ns
+  if other and ffi.C.IsComponentOperational(other) then nd,ns=v(other,d64),v(other,ship) end
+  return v(ship,d64),v(station,d64),v(d64,ship),v(station,ship),nd,ns
+ end
+ -- A detour for a dock approach that stalls (core.script dock_station): the ship docked at the same station nearest to
+ -- the dock assigned to this client's own ship, not this ship. X4's autopilot to a ship in the same zone steers
+ -- straight to it and ends beside it, which is next to the pad when that ship is docked on the same module (the
+ -- autopilot to a dock flies to a free place first, and at the wharf AVK-777 that place was 3.5 km short of the
+ -- second dock and the approach ended there every time, 17-19 Nov). Returns the ship (a Lua ID) and a row text, or
+ -- nil and why. Both readings are this client's own, in the frame of the zone the ship is in.
+ tools.dock_neighbour=function()
+  local dock=tools.assigned_dock()
+  if not dock then return nil,'no_dock' end
+  for _,line in ipairs({'UIPosRot GetPositionalOffset(UniverseID positionalid, UniverseID spaceid);',
+    'UniverseID GetContextByClass(UniverseID componentid, const char* classname, bool includeself);',
+    'uint32_t GetNumDockedShips(UniverseID dockingbayorcontainerid, const char* factionid);',
+    'uint32_t GetDockedShips(UniverseID* result, uint32_t resultlen, UniverseID dockingbayorcontainerid, const char* factionid);'}) do pcall(ffi.cdef,line) end
+  local ship=ffi.new('UniverseID',(assert(gate.pilot_ship(slot),'ui replay script: slot ship unresolved')))
+  local d64=ConvertIDTo64Bit(dock)
+  local zone=ffi.C.GetContextByClass(ship,'zone',false)
+  local station=ffi.C.GetContextByClass(d64,'container',false)
+  local n=tonumber(ffi.C.GetNumDockedShips(station,nil)) or 0
+  if n<1 then return nil,'none_docked' end
+  local list=ffi.new('UniverseID[?]',n)
+  n=tonumber(ffi.C.GetDockedShips(list,n,station,nil)) or 0
+  local d=ffi.C.GetPositionalOffset(d64,zone)
+  local best,gap
+  for i=0,n-1 do
+   if list[i]~=ship and ffi.C.GetContextByClass(list[i],'zone',false)==zone then
+    local q=ffi.C.GetPositionalOffset(list[i],zone)
+    local g=math.sqrt((q.x-d.x)^2+(q.y-d.y)^2+(q.z-d.z)^2)
+    if not gap or g<gap then best,gap=list[i],g end
+   end
+  end
+  if not best then return nil,'none_in_zone docked='..n end
+  tools.detour_ship=best
+  return ConvertStringToLuaID(tostring(best)),string.format('via=%s via_dock=%.0f docked=%d',tostring(best),gap,n)
+ end
+ -- How far this client's own ship is from the detour's ship (metres; nil: none).
+ tools.detour_left=function()
+  local best=tools.detour_ship
+  if not best or not ffi.C.IsComponentOperational(best) then return nil end
+  local ship=ffi.new('UniverseID',(assert(gate.pilot_ship(slot),'ui replay script: slot ship unresolved')))
+  local zone=ffi.C.GetContextByClass(ship,'zone',false)
+  local s,q=ffi.C.GetPositionalOffset(ship,zone),ffi.C.GetPositionalOffset(best,zone)
+  return math.sqrt((s.x-q.x)^2+(s.y-q.y)^2+(s.z-q.z)^2)
+ end
  tools.galaxy_lua=function()
   pcall(ffi.cdef,'UniverseID GetPlayerGalaxyID(void);')
   return ConvertStringTo64Bit(tostring(ffi.C.GetPlayerGalaxyID()))
@@ -2931,7 +3297,8 @@ function pilot_view.arm_ui_replay(slot,window)
  -- A ship as a test's checks need it (core.script ship_look, read only): a slot number or a saved ID. Its owner, its
  -- pilot (the entity on the pilot post, 0 for none), docked or not, its place in its sector, its order queue (how
  -- many, the current one's index, each order's definition/state), its default order, and its people: how many, then
- -- each person's role and seed (the crew list of the map's information page).
+ -- each person's role and seed (the crew list of the map's information page); then its hull and shield in percent,
+ -- its commander (0 for none) and how many subordinates it has, and its name.
  tools.ship_look=function(ref)
   local runtime
   if type(ref)=='number' then runtime=gate.pilot_ship(ref) and string.format('%.0f',gate.pilot_ship(ref)) else runtime=gate.ui_replay_saved(ref) end
@@ -2969,6 +3336,136 @@ function pilot_view.arm_ui_replay(slot,window)
    return table.concat(list,',')
   end)
   parts[#parts+1]='people='..(fine and people or 'err')
+  local seen,more=pcall(function()
+   local hull,shield,name=GetComponentData(lua,'hullpercent','shieldpercent','name')
+   local commander=GetCommander(lua)
+   local subordinates=GetSubordinates(lua)
+   return string.format('hull=%.0f shield=%.0f commander=%s subs=%d name=%s',tonumber(hull) or -1,tonumber(shield) or -1,
+    commander and (tostring(ConvertIDTo64Bit(commander)):gsub('ULL$','')) or '0',type(subordinates)=='table' and #subordinates or 0,(tostring(name):gsub('%s','_')))
+  end)
+  parts[#parts+1]=seen and more or 'hull=err'
+  -- people= lists the crew as the map does, with those still on their way to the ship (a transfer, a hire); aboard= is
+  -- X4's count without them
+  for _,line in ipairs({'typedef struct { const char* id; const char* name; const char* desc; uint32_t amount; uint32_t numtiers; bool canhire; } PeopleInfo;',
+    'uint32_t GetNumAllRoles(void);','uint32_t GetPeople2(PeopleInfo* result, uint32_t resultlen, UniverseID controllableid, bool includearriving);'}) do pcall(ffi.cdef,line) end
+  local counted,aboard=pcall(function()
+   local n=tonumber(ffi.C.GetNumAllRoles())
+   local buf=ffi.new('PeopleInfo[?]',n)
+   n=tonumber(ffi.C.GetPeople2(buf,n,id,false))
+   local total=0
+   for i=0,n-1 do total=total+tonumber(buf[i].amount) end
+   return total
+  end)
+  parts[#parts+1]='aboard='..(counted and tostring(aboard) or 'err')
+  -- the docking bay a docked ship sits in (its runtime ID, 0 when it is not docked): the pad a station gave it
+  pcall(ffi.cdef,'UniverseID GetContextByClass(UniverseID componentid, const char* classname, bool includeself);')
+  local placed,bay=pcall(function() return (tostring(ffi.C.GetContextByClass(id,'dockingbay',false)):gsub('ULL$','')) end)
+  parts[#parts+1]='bay='..(placed and bay or 'err')
+  return table.concat(parts,' ')
+ end
+ -- The player faction's deployables as the map's property list finds them (core.script deploy_look, read only): how
+ -- many, then each macro with its count, sorted; with a ship (a slot number or a saved ID) also what that ship still
+ -- holds to launch (satellites, nav beacons, resource probes, mines, laser towers).
+ -- tools.deploy_held(ship, kind): how many units of one kind ('Satellites', 'NavBeacons', 'ResourceProbes', 'Mines',
+ -- 'LaserTowers') the ship holds: the sum over X4's list (GetNumAll... counts the list's entries: the macros).
+ local DEPLOY_KINDS={'Satellites','NavBeacons','ResourceProbes','Mines','LaserTowers'}
+ tools.deploy_held=function(ref,kind)
+  pcall(ffi.cdef,'typedef struct { const char* macro; const char* ware; uint32_t amount; uint32_t capacity; } AmmoData;')
+  pcall(ffi.cdef,'uint32_t GetNumAll'..kind..'(UniverseID defensibleid);')
+  pcall(ffi.cdef,'uint32_t GetAll'..kind..'(AmmoData* result, uint32_t resultlen, UniverseID defensibleid);')
+  local id=tools.ship_id(ref)
+  local n=tonumber(ffi.C['GetNumAll'..kind](id))
+  local total=0
+  if n>0 then
+   local buf=ffi.new('AmmoData[?]',n)
+   n=tonumber(ffi.C['GetAll'..kind](buf,n,id))
+   for i=0,n-1 do total=total+tonumber(buf[i].amount) end
+  end
+  return total
+ end
+ -- The player faction's rules as the stock menus list them (core.script rules_look, rules_has; read only): the
+ -- blacklists, fight rules and trade rules, each ID:name ('*' marks a default of the faction), sorted by ID.
+ tools.rules=function()
+  local out={}
+  local function take(kind,list,default)
+   for _,r in ipairs(type(list)=='table' and list or {}) do
+    out[#out+1]={kind=kind,id=(tostring(r.id):gsub('U?LL$','')),name=(tostring(r.name):gsub('%s','_')),default=default(r) and true or false}
+   end
+  end
+  take('blacklists',Helper.getBlackLists(),function(r) return r.defaults and (r.defaults.civilian or r.defaults.military) end)
+  take('fightrules',Helper.getFightRules(),function(r) return r.defaults and r.defaults.attack end)
+  -- the helper keeps the trade rules as its dropdown's options ({id, text}; -1 is "no rule")
+  Helper.updateTradeRules()
+  local traderules={}
+  for _,option in ipairs(type(Helper.traderuleOptions)=='table' and Helper.traderuleOptions or {}) do
+   if tonumber(option.id)~=-1 then traderules[#traderules+1]={id=option.id,name=option.text} end
+  end
+  take('traderules',traderules,function() return false end)
+  return out
+ end
+ tools.rules_look=function()
+  local by,order={},{'blacklists','fightrules','traderules'}
+  for _,r in ipairs(tools.rules()) do
+   by[r.kind]=by[r.kind] or {}
+   by[r.kind][#by[r.kind]+1]=r.id..':'..r.name..(r.default and '*' or '')
+  end
+  local parts={}
+  for _,kind in ipairs(order) do parts[#parts+1]=kind..'='..#(by[kind] or {})..(by[kind] and ':'..table.concat(by[kind],',') or '') end
+  return table.concat(parts,' ')
+ end
+ -- tools.deployed(macro, n): the n-th of the player faction's deployables of that macro in space, by ascending ID
+ -- (a Lua ID; the same object on every client), or nil.
+ tools.deployed=function(macro,n)
+  local found={}
+  for _,object in ipairs(GetContainedObjectsByOwner('player') or {}) do
+   local deployable,its=GetComponentData(object,'isdeployable','macro')
+   if deployable and tostring(its)==macro then found[#found+1]=object end
+  end
+  table.sort(found,function(a,b) return tonumber((tostring(ConvertIDTo64Bit(a)):gsub('ULL$','')))<tonumber((tostring(ConvertIDTo64Bit(b)):gsub('ULL$',''))) end)
+  return found[n or 1]
+ end
+ -- One deployable of the player's that a script launched (core.script deploy_mark, deployable_look, deployable_active,
+ -- deployable_destroy): deploy_mark notes the newest one of a macro (the highest ID) right after the launch; the
+ -- others read and act on that one. Returns the Lua ID and the 64-bit ID, or nil when it is gone.
+ tools.deploy_marked={}
+ tools.deploy_mark=function(macro)
+  local newest,top
+  for _,object in ipairs(GetContainedObjectsByOwner('player') or {}) do
+   local deployable,its=GetComponentData(object,'isdeployable','macro')
+   if deployable and tostring(its)==macro then
+    local id=tonumber((tostring(ConvertIDTo64Bit(object)):gsub('ULL$','')))
+    if not top or id>top then newest,top=object,id end
+   end
+  end
+  tools.deploy_marked[macro]=top and string.format('%.0f',top) or nil
+  return tools.deploy_marked[macro]
+ end
+ tools.deploy_own=function(macro)
+  local id=tools.deploy_marked[macro]
+  if not id then return nil end
+  local id64=ConvertStringTo64Bit(id)
+  if not ffi.C.IsComponentOperational(id64) then return nil end
+  return ConvertStringToLuaID(id),id64
+ end
+ tools.deploy_look=function(ref)
+  local counts,total={},0
+  for _,object in ipairs(GetContainedObjectsByOwner('player') or {}) do
+   local deployable,macro=GetComponentData(object,'isdeployable','macro')
+   if deployable then counts[tostring(macro)]=(counts[tostring(macro)] or 0)+1;total=total+1 end
+  end
+  local names={}
+  for macro in pairs(counts) do names[#names+1]=macro end
+  table.sort(names)
+  local parts={'deployed='..total}
+  for _,macro in ipairs(names) do parts[#parts+1]=macro..'='..counts[macro] end
+  if ref~=nil then
+   local held={}
+   for _,kind in ipairs(DEPLOY_KINDS) do
+    local ok,n=pcall(tools.deploy_held,ref,kind)
+    held[#held+1]=kind:lower()..':'..(ok and tostring(n) or 'err')
+   end
+   parts[#parts+1]='holds='..table.concat(held,',')
+  end
   return table.concat(parts,' ')
  end
  -- Whether a person's click on a stock menu entry is offered in this session (core.script menu_entry, read only). A
@@ -3046,7 +3543,15 @@ function pilot_view.arm_ui_replay(slot,window)
     'size_t GetNumPlannedStationModules(UniverseID defensibleid, bool includeall);','uint32_t GetNumAssignedConstructionVessels(UniverseID containerid);',
     'uint32_t GetNumBuildTasks(UniverseID,UniverseID,bool,bool);'}) do pcall(ffi.cdef,line) end
   local rows={}
-  for _,station in ipairs(GetContainedStationsByOwner('player',nil,true) or {}) do
+  -- every player faction's: `player` alone in coop, each slot's own in factions mode (those rows end in owner=)
+  local owners,owner_slot,seen={},{},{}
+  for k=1,tools.slots or 1 do
+   local ok,ship=pcall(tools.slot_lua,k)
+   local owner=ok and GetComponentData(ship,'owner') or nil
+   if owner and not seen[owner] then seen[owner]=true;owners[#owners+1]=owner;owner_slot[#owners]=k end
+  end
+  if #owners==0 then owners={'player'};owner_slot={1} end
+  for _,owner in ipairs(owners) do for _,station in ipairs(GetContainedStationsByOwner(owner,nil,true) or {}) do
    local ok,row=pcall(function()
     local id=ConvertIDTo64Bit(station)
     local code,storage,manager=GetComponentData(station,'idcode','buildstorage','tradenpc')
@@ -3062,12 +3567,20 @@ function pilot_view.arm_ui_replay(slot,window)
      parts[#parts+1]='budget='..string.format('%.0f',tonumber(money) or -1)
      parts[#parts+1]='stored='..(#wares>0 and table.concat(wares,',') or '-')
     end
+    if owner~='player' then parts[#parts+1]='owner='..owner end
     return table.concat(parts,'/')
    end)
    rows[#rows+1]=ok and row or 'err:'..tostring(row):sub(1,80)
-  end
+  end end
   table.sort(rows)
-  return 'stations='..#rows..(#rows>0 and ' '..table.concat(rows,' ') or '')..' money='..string.format('%.0f',GetPlayerMoney())
+  -- each faction's account as the simulation holds it (the same text on every client: GetPlayerMoney answers a client
+  -- with a faction of its own that faction's money); money= the first faction's, money<k>= slot k's own
+  local money=''
+  for i,k in ipairs(owner_slot) do
+   local cents=gate.ui_trade_money and gate.ui_trade_money(k)
+   money=money..(i==1 and ' money=' or ' money'..k..'=')..string.format('%.0f',cents and cents/100 or GetPlayerMoney())
+  end
+  return 'stations='..#rows..(#rows>0 and ' '..table.concat(rows,' ') or '')..money
  end
  -- A stock menu's table by its name (core.script menu_call, menu_look, trade_menu_amount), nil when there is none.
  tools.menu=function(name)
@@ -3292,6 +3805,7 @@ function pilot_view.arm_ui_replay(slot,window)
   -- the test console's file of this client (native_gate_ui_replay_console: a path with %d for the slot), and what its chunk gets
   console=type(cfg.native_gate_ui_replay_console)=='string' and function() local chunk=loadfile(string.format(cfg.native_gate_ui_replay_console,slot));if chunk then return chunk() end end or nil,console_tools=tools,
   mpp=cfg.native_gate_missions_per_player==true,   -- slots 2+ capture the events and missions families, applied in their own scope
+  conv_slots=cfg.native_gate_conversation_slots==true,   -- a conversation belongs to the slot that started it (lockstep_conversation_owner.h)
   -- Generic mission offers for slots 2+ (lockstep_mission_owners.h 'offers'): first 15 s into the window, then every 3
   -- minutes, the slots 3 s apart. native_gate_missions_per_player_offers = false leaves the offers to slot 1's sector.
   offers=cfg.native_gate_missions_per_player==true and cfg.native_gate_missions_per_player_offers~=false and
@@ -3363,6 +3877,20 @@ function pilot_view.arm_ui_replay(slot,window)
   if gate.md_presentation then
    assert(gate.md_presentation(1)==1,'owner presentation refused: '..tostring(gate.md_presentation_status()))
    log('OWNER_PRESENTATION_ARMED slot='..slot..' '..tostring(gate.md_presentation_status()))
+  end
+  -- A conversation's owner slot (lockstep_conversation_owner.h; native_gate_conversation_slots, opt-in until a run shows it):
+  -- players 2..N start and answer their own conversations; one conversation in the world at a time.
+  if cfg.native_gate_conversation_slots then
+   assert(cfg.native_gate_conversation_slots==true and math.floor(mask/core.FAMILY.conversation)%2==1 and gate.conversation_owner and gate.conversation_owner(1)==1,
+    'conversation slots refused: needs the conversation family and missions per player '..tostring(gate.conversation_owner_status and gate.conversation_owner_status()))
+   log('CONVERSATION_OWNER_ARMED slot='..slot..' '..tostring(gate.conversation_owner_status()))
+   if X4LAN_JOIN_CORE and gate.conversation_owner_state then
+    X4LAN_JOIN_CORE.provide('conversation_owner',function() return assert(gate.conversation_owner_state(),'conversation owner: no join state') end,
+     function(text)
+      assert(gate.conversation_owner_restore(text)==1,'join: conversation owner refused the saver state '..tostring(text):sub(1,60))
+      log('CONVERSATION_OWNER_RESTORED '..tostring(gate.conversation_owner_status()))
+     end)
+   end
   end
   -- Hot join: the claims at T ride the package; the joiner takes them before its first tick (lockstep_mission_owners.h).
   if X4LAN_JOIN_CORE and gate.mpp_state then
@@ -3452,7 +3980,7 @@ function pilot_view.arm_ui_replay(slot,window)
     ticklog.loud('UI_BUILD_LOADOUT_EMPTY','macro='..tostring(macro)..' why='..tostring(ok and 'no loadout' or l),false)   -- the scripted plan gets an empty loadout
     return ffi.new('UILoadout2')
    end}
-  local B=bcore.session{gate=gate,C=ffi.C,env=_G,log=ticklog.write,mask=mask,replay=S,own_slot=slot,factions=not coop,notify=function(text) ffi.C.ShowInfoLine(text,4) end,
+  local B=bcore.session{gate=gate,C=ffi.C,env=_G,log=ticklog.write,mask=mask,replay=S,own_slot=slot,factions=not coop,notify=function(text) ffi.C.ShowInfoLine(text,4) end,present=present,
    local_mark=gate.runtime_ids_probe,script=bcore.script(bplan,window[1],btools),fund=fund and {tick=window[1]-4,amount=fund} or nil,
    menus=function() return type(Menus)=='table' and Menus or {} end}
   pilot_view.ui_build=B
@@ -3770,6 +4298,12 @@ local function pilot_frame(s,tick)
  -- player's runtime ID with that player (MD resolves "the player" through it)? Every 600 ticks: k:id:found (1 yes).
  if cfg.native_gate_pilot_slots_registry and tick%600==0 and gate.pilot_slots_registry then
   log('PILOT_SLOTS_REGISTRY tick='..tick..' '..tostring(gate.pilot_slots_registry()))
+ end
+ if cfg.native_gate_conversation_slots and cfg.native_gate_missions_per_player then
+  local owner=gate.conversation_owner_frame()
+  assert(owner>=0,'conversation owner: a dispatch slot is not ours any more '..tostring(gate.conversation_owner_status()))
+  if tick%150==0 or owner~=pilot_view.conversation_owner_last then log('CONVERSATION_OWNER tick='..tick..' '..gate.conversation_owner_status()) end
+  pilot_view.conversation_owner_last=owner
  end
  if cfg.native_gate_missions_per_player and tick%150==0 and gate.mpp_status then log('MISSIONS_PER_PLAYER tick='..tick..' '..gate.mpp_status()) end
  if cfg.native_gate_missions_per_player and tick%600==0 and gate.md_presentation_status then log('OWNER_PRESENTATION tick='..tick..' '..gate.md_presentation_status()) end
@@ -4308,11 +4842,23 @@ local function frame()
    log('SPLINE_CALC_WATCH_ARMED '..tostring(gate.spline_calc_watch_status()))
   end
   -- native_gate_spline_phase = true: the spline route calculator runs at the frame's phase points only (before the pathing
-  -- pass and after its join), on every client, so each route reads the same world (lockstep_spline_calc_watch.h).
+  -- pass and after its join), on every client, so each route reads the same world (lockstep_spline_calc_watch.h; the Linux
+  -- gate's twin linux/gate_spline_phase.h).
   if cfg.native_gate_spline_phase then
    assert(cfg.native_gate_spline_phase==true and gate.spline_phase and gate.spline_phase(1)==1,
     'spline phase refused '..tostring(gate.spline_calc_watch_status and gate.spline_calc_watch_status()))
    log('SPLINE_PHASE_ARMED '..tostring(gate.spline_calc_watch_status()))
+  end
+  -- native_gate_spline_calc_delay = {slot, ms} (test only): on the client of that slot alone the route calculator's worker
+  -- sleeps ms at every job, as on a busy PC (lockstep_spline_calc_watch.h). Without native_gate_spline_phase the routes of
+  -- that client read a later world; with it nothing changes.
+  if cfg.native_gate_spline_calc_delay~=nil then
+   local d=cfg.native_gate_spline_calc_delay
+   assert(type(d)=='table' and #d==2 and type(d[1])=='number' and type(d[2])=='number' and gate.spline_calc_delay,'spline calc delay refused')
+   if tonumber(tostring(cfg.slot or ''):match('%d+'))==d[1] then
+    assert(gate.spline_calc_delay(d[2])==1,'spline calc delay refused '..tostring(gate.spline_calc_watch_status and gate.spline_calc_watch_status()))
+    log('SPLINE_CALC_DELAY_ARMED '..tostring(gate.spline_calc_watch_status()))
+   end
   end
   -- RCPSS/RSQRTSS in X4.exe to exactly rounded division and square root (1,272
   -- instructions, 824 windows): vendor-independent results. Before the load. Default off.
@@ -4381,11 +4927,18 @@ local function frame()
   -- join. Default off.
   if cfg.native_gate_path_transforms then
    local mode,window=cfg.native_gate_path_transforms,cfg.native_gate_path_transforms_rows -- window: {first, last tick}, every formation call a row
+   -- native_gate_path_transforms_dock_rows = true (diagnostic): a row per dock site call of a Steering update, with the
+   -- stepping ship and the inputs of its dock range test (PATH_TRANSFORMS_ROW ... dock=1); every row names its ship
+   -- (ship=) and all are written every tick
+   if cfg.native_gate_path_transforms_dock_rows then
+    assert(cfg.native_gate_path_transforms_dock_rows==true and gate.path_transforms_dock_rows and gate.path_transforms_dock_rows()==1,
+     'path transforms dock rows refused')
+   end
    assert((mode=='sim' or mode=='observe' or mode=='all') and snapshot and cfg.native_gate_serial_pathing and gate.path_transforms and
     gate.path_transforms_status and gate.path_transforms_row and
     (window and gate.path_transforms(mode,window[1],window[2]) or not window and gate.path_transforms(mode))==1,
     'path transforms refused '..tostring(gate.path_transforms_status and gate.path_transforms_status()))
-   log('PATH_TRANSFORMS_ARMED mode='..mode)
+   log('PATH_TRANSFORMS_ARMED mode='..mode..(cfg.native_gate_path_transforms_dock_rows and ' dock_rows=1' or ''))
   end
   -- Physics body poses (lockstep_body_pose.h): U::Destructible::CreateBody takes a new body's pose from 0x3dde10, the
   -- published component view cache (the pose of an object's last publication, client-local: a wreck without a body
@@ -4604,6 +5157,14 @@ local function frame()
     gate.warp_rng_status and gate.warp_rng_row and gate.warp_rng(mode)==1,'warp RNG refused')
    log('WARP_RNG_ARMED mode='..mode)
   end
+  -- Island contacts (lockstep_island_order.h): the velocity solve's contact sort keyed by what every client holds alike
+  -- (the bodies' owners' portable IDs, normals, points), not by BodyIDs, which a joiner's load hands out in its own order.
+  -- Needs the world identities. A default.
+  if cfg.native_gate_island_order then
+   assert(cfg.native_gate_island_order==true and snapshot and cfg.native_gate_world_identities and gate.island_order and
+    gate.island_order_status and gate.island_order()==1,'island order refused')
+   log('ISLAND_ORDER_ARMED')
+  end
   -- Read-only: one TRANSITION_ROW per TransitionEvent delivered to a gate
   -- (highway entries): gate and ship keys, the event's post time, the delivery
   -- time. Needs the world identities. Default off.
@@ -4677,6 +5238,13 @@ local function frame()
   if cfg.native_gate_pursuit_speed and gate.platform and gate.platform()=='linux' then
    assert(snapshot and gate.pursuit_speed and gate.pursuit_speed_status and gate.pursuit_speed()==1,'pursuit speed refused '..tostring(gate.pursuit_speed_status and gate.pursuit_speed_status()))
    log('PURSUIT_SPEED_ARMED')
+  end
+  -- The frame's pending physics work runs in every frame (linux/gate_zone_pending.h, the twin of lockstep_zone_pending.h):
+  -- the Windows gate arms it with the pilot modules, the Linux gate here, before the first tick.
+  if cfg.native_gate_zone_pending and gate.platform and gate.platform()=='linux' then
+   assert(cfg.native_gate_zone_pending==true and gate.zone_pending and gate.zone_pending_status and gate.zone_pending(1)==1,
+    'zone pending refused '..tostring(gate.zone_pending_status and gate.zone_pending_status()))
+   log('ZONE_PENDING_ARMED '..tostring(gate.zone_pending_status()))
   end
   -- Linux-only keys of the mixed-platform preset: on Windows only a note (its build is already that order).
   if not (gate.platform and gate.platform()=='linux') then
@@ -4776,6 +5344,19 @@ local function frame()
     assert(cfg.native_gate_view_points~='observe' and type(mask)=='number' and mask>=0 and mask<=15 and math.floor(mask)==mask and
      gate.view_points_mask and gate.view_points_mask(mask)==1,'view points mask refused')
     log('VIEW_POINTS_MASK_ARMED mask='..mask)
+   end
+   -- Measurement switch: phantom players (lockstep_view_points.h). native_gate_phantom_players = {hop=ticks, stagger=ticks,
+   -- routes={{'<saved id>',..},..}}: one more view point per route, riding the route's objects in turn (tools/dev/
+   -- pick_phantom_players.py picks them from a session save). The universe around each takes a player's attention on
+   -- every client alike; nothing else of a player exists there. Default off.
+   if cfg.native_gate_phantom_players~=nil and cfg.native_gate_phantom_players~=false then
+    local vp=cfg.native_gate_phantom_players
+    assert(cfg.native_gate_view_points~='observe' and type(vp)=='table' and type(vp.routes)=='table' and #vp.routes>=1 and #vp.routes<=16 and
+     gate.view_phantoms and gate.view_phantom_route and gate.view_phantoms(vp.hop or 300,vp.stagger or 0)==1,'phantom players refused')
+    for k,route in ipairs(vp.routes) do
+     assert(type(route)=='table' and #route>=1 and #route<=8 and gate.view_phantom_route(table.concat(route,','))==1,'phantom player route '..k..' refused')
+    end
+    log('PHANTOM_PLAYERS_ARMED players='..#vp.routes..' hop='..(vp.hop or 300)..' stagger='..(vp.stagger or 0))
    end
    if X4LAN_NATIVE_HYBRID then X4LAN_NATIVE_HYBRID.arm() end
   end
@@ -5018,7 +5599,11 @@ local function frame()
     for _,id in ipairs(zones) do
      assert(type(id)=='string' and #id==16 and id:match('^[0-9a-f]+$') and gate.motion_watch_zone(id)==1,'motion watch zones refused '..tostring(id))
     end
-    log('MOTION_WATCH_ZONES_ARMED zones='..#zones)
+    -- native_gate_motion_watch_zones_xs = true: the members are the zones' XS ships (real traffic: police) instead of S..XL
+    if cfg.native_gate_motion_watch_zones_xs then
+     assert(cfg.native_gate_motion_watch_zones_xs==true and gate.motion_watch_zone_xs and gate.motion_watch_zone_xs()==1,'motion watch zones xs refused')
+    end
+    log('MOTION_WATCH_ZONES_ARMED zones='..#zones..(cfg.native_gate_motion_watch_zones_xs and ' xs=1' or ''))
    end
    -- One MOTION_DIGEST line per watched ship and tick, written at once (field group digests).
    if cfg.native_gate_motion_watch_digest then
@@ -6126,6 +6711,22 @@ local function frame()
       'anim listeners refused '..tostring(gate.anim_listeners_status and gate.anim_listeners_status()))
      log('ANIM_LISTENERS_ARMED '..tostring(gate.anim_listeners_status()))
     end
+    -- The frame's pending physics work runs in every frame (lockstep_zone_pending.h; a session default, Windows gate):
+    -- X4 skips it when another thread holds a lock at that moment, and two clients then build the same bodies a tick apart.
+    if cfg.native_gate_zone_pending and gate.zone_pending and not (gate.platform and gate.platform()=='linux') then
+     assert(cfg.native_gate_zone_pending==true and gate.zone_pending(1)==1,
+      'zone pending refused '..tostring(gate.zone_pending_status and gate.zone_pending_status()))
+     log('ZONE_PENDING_ARMED '..tostring(gate.zone_pending_status()))
+    end
+    -- A player's own faction as "the player faction" in its own menus and HUD (lockstep_faction_present.h; a session
+    -- default, Windows gate; it acts in factions mode only, for slots 2..N): the stock UI asks for the faction named
+    -- "player" and for "the player's", which is player 1's on every client, so player 2's map listed player 1's
+    -- stations and ships as its property and drew its own station as a foreign one (run fa1, 19 Nov).
+    if cfg.native_gate_faction_present and gate.faction_present then
+     assert(cfg.native_gate_faction_present==true and gate.faction_present(1)==1,
+      'faction present refused '..tostring(gate.faction_present_status and gate.faction_present_status()))
+     log('FACTION_PRESENT_ARMED '..tostring(gate.faction_present_status()))
+    end
     if cfg.native_gate_swarm_seed and gate.swarm_seed then
      assert(cfg.native_gate_swarm_seed==true and gate.swarm_seed(1)==1,
       'swarm seed refused '..tostring(gate.swarm_seed_status and gate.swarm_seed_status()))
@@ -6460,6 +7061,7 @@ local function frame()
   if cfg.native_gate_ship_sound_rng then log('SHIP_SOUND_RNG_STOP '..tostring(gate.ship_sound_rng_status())) end
   if cfg.native_gate_player_timer then log('PLAYER_TIMER_STOP '..tostring(gate.player_timer_status())) end
   if cfg.native_gate_warp_rng then log('WARP_RNG_STOP '..tostring(gate.warp_rng_status())) end
+  if cfg.native_gate_island_order then log('ISLAND_ORDER_STOP '..tostring(gate.island_order_status())) end
   if cfg.native_gate_transition_rows then log('TRANSITION_ROWS_STOP '..tostring(gate.transition_rows_status())) end
   if cfg.native_gate_tempzone_order then log('TEMPZONE_ORDER_STOP '..tostring(gate.tempzone_order_status())) end
   if cfg.native_gate_warp_exit and gate.warp_exit_status then log('WARP_EXIT_STOP '..tostring(gate.warp_exit_status())) end
@@ -6483,7 +7085,7 @@ local function frame()
   if cfg.native_gate_portable_math then log('PORTABLE_MATH_STOP '..tostring(gate.portable_math_status())) end
   if (cfg.native_gate_safe_pos_order or cfg.native_gate_safe_pos_dump~=nil) and gate.safe_pos_order_status then log('SAFE_POS_ORDER_STOP '..tostring(gate.safe_pos_order_status())) end
   if cfg.native_gate_nav_refresh_watch~=nil and gate.nav_refresh_watch_status then log('NAV_REFRESH_WATCH_STOP '..tostring(gate.nav_refresh_watch_status())) end
-  if (cfg.native_gate_spline_calc_watch~=nil or cfg.native_gate_spline_phase) and gate.spline_calc_watch_status then log('SPLINE_CALC_WATCH_STOP '..tostring(gate.spline_calc_watch_status())) end
+  if (cfg.native_gate_spline_calc_watch~=nil or cfg.native_gate_spline_phase or cfg.native_gate_spline_calc_delay~=nil) and gate.spline_calc_watch_status then log('SPLINE_CALC_WATCH_STOP '..tostring(gate.spline_calc_watch_status())) end
   if X4LAN_NATIVE_HYBRID then X4LAN_NATIVE_HYBRID.stop() end
   if cfg.native_gate_sample_profile then
    log('SAMPLE_PROFILE_STOP '..tostring(gate.sample_profile_status()))
@@ -6756,7 +7358,9 @@ local function frame()
   if X4LAN_NATIVE_HYBRID then X4LAN_NATIVE_HYBRID.frame(tick) end
   ticklog.status('VIEW_POINTS',tick,gate.view_points_status,'view points status unavailable')
   if cfg.native_gate_swarm_seed and gate.swarm_seed_status then ticklog.status('SWARM_SEED',tick,gate.swarm_seed_status,'swarm seed status unavailable') end
+  if cfg.native_gate_zone_pending and gate.zone_pending_status then ticklog.status('ZONE_PENDING',tick,gate.zone_pending_status,'zone pending status unavailable') end
   if cfg.native_gate_anim_listeners and gate.anim_listeners_status then ticklog.status('ANIM_LISTENERS',tick,gate.anim_listeners_status,'anim listeners status unavailable') end
+  if cfg.native_gate_faction_present and gate.faction_present_status then ticklog.status('FACTION_PRESENT',tick,gate.faction_present_status,'faction present status unavailable') end
   if cfg.native_gate_view_cameras and gate.view_cameras_status then ticklog.status('VIEW_CAMERAS',tick,gate.view_cameras_status,'view cameras status unavailable') end
   if cfg.native_gate_scan_long and gate.scan_long_status then ticklog.status('SCAN_LONG',tick,gate.scan_long_status,'scan long status unavailable') end
   if cfg.native_gate_scan_mode and gate.scan_mode_status then ticklog.status('SCAN_MODE',tick,gate.scan_mode_status,'scan mode status unavailable') end
@@ -6868,6 +7472,9 @@ local function frame()
  if cfg.native_gate_player_timer then
   ticklog.status('PLAYER_TIMER',tick,gate.player_timer_status,'player timer status unavailable')
  end
+ if cfg.native_gate_island_order then
+  ticklog.status('ISLAND_ORDER',tick,gate.island_order_status,'island order status unavailable')
+ end
  if cfg.native_gate_warp_rng then
   ticklog.status('WARP_RNG',tick,gate.warp_rng_status,'warp RNG status unavailable')
   for _=1,4096 do
@@ -6975,8 +7582,9 @@ local function frame()
   for _=1,4096 do
    local row=gate.path_transforms_row(row_cursors.path_transforms)
    if not row then break end
-   -- formation window rows (outcome=) are written on every tick, not only on written status ticks
-   if row:find(' outcome=',1,true) then ticklog.write('PATH_TRANSFORMS_ROW '..row) else log('PATH_TRANSFORMS_ROW '..row) end
+   -- formation window rows (outcome=) and every row of the dock rows' option (ship=) are written on every tick, not only
+   -- on written status ticks
+   if row:find(' outcome=',1,true) or row:find(' ship=',1,true) then ticklog.write('PATH_TRANSFORMS_ROW '..row) else log('PATH_TRANSFORMS_ROW '..row) end
    row_cursors.path_transforms=row_cursors.path_transforms+1
   end
  end
@@ -7494,7 +8102,7 @@ SetScript('onUpdate',function()
    if cfg.native_gate_portable_math then ticklog.try(function() log('PORTABLE_MATH_STOP '..tostring(gate.portable_math_status())) end) end
    if (cfg.native_gate_safe_pos_order or cfg.native_gate_safe_pos_dump~=nil) and gate.safe_pos_order_status then ticklog.try(function() log('SAFE_POS_ORDER_STOP '..tostring(gate.safe_pos_order_status())) end) end
    if cfg.native_gate_nav_refresh_watch~=nil and gate.nav_refresh_watch_status then ticklog.try(function() log('NAV_REFRESH_WATCH_STOP '..tostring(gate.nav_refresh_watch_status())) end) end
-   if (cfg.native_gate_spline_calc_watch~=nil or cfg.native_gate_spline_phase) and gate.spline_calc_watch_status then ticklog.try(function() log('SPLINE_CALC_WATCH_STOP '..tostring(gate.spline_calc_watch_status())) end) end
+   if (cfg.native_gate_spline_calc_watch~=nil or cfg.native_gate_spline_phase or cfg.native_gate_spline_calc_delay~=nil) and gate.spline_calc_watch_status then ticklog.try(function() log('SPLINE_CALC_WATCH_STOP '..tostring(gate.spline_calc_watch_status())) end) end
    if X4LAN_NATIVE_HYBRID then ticklog.try(X4LAN_NATIVE_HYBRID.stop) end
    if cfg.native_gate_sample_profile then ticklog.try(function()
     log('SAMPLE_PROFILE_STOP '..tostring(gate.sample_profile_status()))

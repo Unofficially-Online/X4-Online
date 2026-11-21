@@ -67,6 +67,7 @@
  *             an event that took on one client only shows at once, whatever it was.
  * Refused at capture (nothing ran anywhere, nothing diverged): counted and logged (UI_REPLAY_REFUSED). A
  * section or reference that fails, a hook lost, a fault in a replayed call: stop reason 164. */
+static void cvo_restore(void);   /* lockstep_conversation_owner.h */
 static int mpp_armed;static void mpp_restore_hook(void);   /* lockstep_mission_owners.h: slots 2+ apply the events family in their own scope when armed */
 #define UIREP_STOP_REASON 164u
 #define UIREP_VERSION 1u
@@ -1409,6 +1410,7 @@ static void uirep_restore(void) {
     uirep_stopped=1;
     rsch_restore();
     mpp_restore_hook();
+    cvo_restore();
     uiguard_restore();
     uitrade_restore();
     pss_restore();
@@ -1481,6 +1483,7 @@ static int uirep_status(char *out,size_t capacity) {
 #include "lockstep_mission_owners.h"   /* personal missions per player: slot k's calls and owned cue trees in slot k's scope */
 #include "lockstep_md_presentation.h"   /* what an owned cue shows (help, notifications, menus, music): on its owner's client only */
 #include "lockstep_md_media.h"          /* a mission's picture on the target monitor: started by the simulation, shown by its owner */
+#include "lockstep_conversation_owner.h" /* a conversation belongs to the slot that started it */
 /* The trade family of the replay (native_gate_ui_replay lists trade, default off). */
 #include "lockstep_ui_trade.h"
 /* The faction family: the player faction's settings for every slot (claims on the guard's hooks; uses the trade scope). */

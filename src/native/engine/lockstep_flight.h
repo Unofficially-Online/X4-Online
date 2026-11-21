@@ -222,7 +222,20 @@ static flight_sample *flight_sample_for(void *self,unsigned *actor) {
     }
     return NULL;
 }
+/* The Steering update this thread is in (the model and the pathing slot it writes), NULL outside one; nested updates (a
+ * docked ship moved by its carrier) put the outer one back. Read by the dock rows of lockstep_path_transforms.h, which
+ * name the ship whose step made a dock site's call and the inputs of its range test. */
+static _Thread_local void *flight_current_model,*flight_current_slot;
+static void flight_update_body(void *self,void *slot,float dt,double time,unsigned char cheap,unsigned char player);
+static void ptf_gate_note(const unsigned char *model,double time,unsigned char cheap);   /* lockstep_path_transforms.h: dock gate rows */
 static void flight_update(void *self,void *slot,float dt,double time,unsigned char cheap,unsigned char player) {
+    void *const outer_model=flight_current_model,*const outer_slot=flight_current_slot;
+    if(stats.active && boot_phase==3) ptf_gate_note((const unsigned char*)self,time,cheap);
+    flight_current_model=self;flight_current_slot=slot;
+    __try {flight_update_body(self,slot,dt,time,cheap,player);}
+    __finally {flight_current_model=outer_model;flight_current_slot=outer_slot;}
+}
+static void flight_update_body(void *self,void *slot,float dt,double time,unsigned char cheap,unsigned char player) {
     void *registry_agent;
     if(registry_is_observing() && read_local((unsigned char*)self+0x10,&registry_agent,8)) registry_observe_owner(registry_agent,0xef0,REGISTRY_FLIGHT);
     flight_fn original=(flight_fn)(image+FLIGHT_UPDATE);

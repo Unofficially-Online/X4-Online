@@ -61,6 +61,12 @@ static void test_mdv_remove(void *notes,int *id) {
     }
 }
 static void *test_mdv_make_fn(void *self) {return self;}
+/* The interaction handle table and the UI's answer: one descriptor of the test's, its ID at +8. */
+static unsigned char *test_mdv_ask;
+static int test_mdv_ask_id,test_mdv_raised_id;
+static unsigned test_mdv_raised;
+static void *test_mdv_interaction(int id) {return test_mdv_ask && id==test_mdv_ask_id?(void*)test_mdv_ask:NULL;}
+static void *test_mdv_raise(void *notes,void *text,int id) {assert(notes==(void*)test_mdv_notes && text);++test_mdv_raised;test_mdv_raised_id=id;return text;}
 /* The action: the target monitor branch makes the notification test_mdv_make_next-1 (0: another branch, none). */
 static void test_mdv_original(void *node,void *exec,void *frame) {
     (void)node;(void)exec;(void)frame;++test_mdv_original_ran;
@@ -103,6 +109,8 @@ static void test_md_media(void) {
     assert(mdv_arm() && mdv_armed && mdv_arm() && mdv_fn.action==(mdv_action_fn)(image+MDV_ACTION) && mdv_fn.start==(mdv_start_fn)(image+MDV_START));
     mdv_fn.action=test_mdv_original;mdv_fn.make=test_mdv_make_fn;mdv_fn.start=test_mdv_start;mdv_fn.stop=test_mdv_stop;mdv_fn.find=test_mdv_find;
     mdv_fn.remove=test_mdv_remove;mdv_fn.target=test_mdv_target;mdv_fn.now=test_mdv_now;test_mdv_time=100.0;
+    assert(mdv_fn.interaction==(mdv_interaction_fn)(image+MDV_INTERACTION) && mdv_fn.raise==(mdv_raise_fn)(image+MDV_RAISE));
+    mdv_fn.interaction=test_mdv_interaction;mdv_fn.raise=test_mdv_raise;test_mdv_ask=NULL;test_mdv_raised=0;
     /* Without the slots' near page nothing is installed (a session of one); the slot itself swaps both ways. */
     {unsigned char *const page=pslot_page;pslot_page=NULL;assert(mdv_frame()==0 && !mdv_install_tried && !mdv_slot_installed);pslot_page=page;}
     mdv_install_tried=1;   /* the call site is the site helper's own test's; nothing is installed here */
@@ -163,13 +171,29 @@ static void test_md_media(void) {
     /* The script's stop_cutscene removed a notification: its entry leaves the table and nothing is ours any more. */
     {int id=0x42;test_mdv_remove(test_mdv_notes,&id);}
     assert(mdv_frame()==2 && !mdv[1].used && mdv_gone==1 && !mdv_ui_note(0x42,0) && mdv_ui_cutscene(test_mdv_desc[1])==-1 && !mdv_ui_keep(0x701));
-    /* A notification with an interaction stays X4's; a key the manager does not know starts nothing and is not noted. */
-    test_mdv_plant(3,0x44,0.0f,1);test_mdv_make_next=4;mdv_action(NULL,NULL,NULL);assert(mdv_interactive==1 && mdv_started==3 && !mdv_ui_note(0x44,0));
+    /* A notification with an interaction (a fleet ship asks its player for orders) is the simulation's too: its picture
+     * starts in the action on every client, in nobody's frame it is everybody's, and it ends with the script's stop. */
+    test_mdv_plant(3,0x44,0.0f,1);test_mdv_make_next=4;mdv_action(NULL,NULL,NULL);
+    assert(mdv_interactive==1 && mdv_started==4 && mdv_replaced==3 && mdv_ui_note(0x44,0)==1 && mdv_ui_cutscene(test_mdv_desc[3])==0x703);
+    stats.slot=2;assert(mdv_ui_note(0x44,0)==1);stats.slot=1;
+    /* Its question: an interaction ID is this client's own, so the answer travels as the notification's place among the
+     * started ones (the fourth here) and every client raises the event for its own ID of that question. */
+    {static unsigned char ask[0x20];const int aid=0x5001;unsigned char *p=ask;
+     assert(!mdv_question() && !mdv_interaction_seq(0x5001));          /* the planted descriptor is not in the handle table */
+     memset(ask,0,sizeof(ask));memcpy(ask+8,&aid,4);memcpy(test_mdv_note[3]+0x80,&p,8);test_mdv_ask=ask;test_mdv_ask_id=aid;
+     assert(mdv_interaction_seq(0x5001)==4 && !mdv_interaction_seq(0x5002) && !mdv_interaction_seq(0) && mdv_question()==0x5001);
+     assert(mdv_answer(4)==1 && test_mdv_raised==1 && test_mdv_raised_id==0x5001 && mdv_answers==1);
+     assert(!mdv_answer(3) && !mdv_answer(9) && !mdv_answer(0) && test_mdv_raised==1 && mdv_answers_gone==2);   /* no question; no such one */
+     stats.active=0;assert(!mdv_interaction_seq(0x5001) && !mdv_answer(4) && !mdv_question());stats.active=1;}
+    {int id=0x44;test_mdv_remove(test_mdv_notes,&id);}
+    assert(!mdv_answer(4) && !mdv_question());                           /* the notification is gone: so is its question */
+    assert(mdv_frame()==2 && mdv_gone==2 && !mdv_ui_note(0x44,0) && mdv_ui_cutscene(test_mdv_desc[3])==-1);
+    /* A key the manager does not know starts nothing and is not noted. */
     test_mdv_plant(3,0x45,0.0f,0);test_mdv_next_scene=-1;mdv_action(NULL,NULL,NULL);test_mdv_next_scene=3;
-    {unsigned char *running=test_mdv_manager;memcpy(&running,test_mdv_manager+0xa8,8);assert(!running && mdv_failed==1 && mdv_started==3 && !mdv_ui_note(0x45,0));}
+    {unsigned char *running=test_mdv_manager;memcpy(&running,test_mdv_manager+0xa8,8);assert(!running && mdv_failed==1 && mdv_started==4 && !mdv_ui_note(0x45,0));}
     /* A timeout counts game time from the start: at its end the notification is removed (its cutscene stops). */
     test_mdv_time=200.0;test_mdv_plant(4,0x46,10.0f,0);test_mdv_make_next=5;{const unsigned removes=test_mdv_removes;mdv_action(NULL,NULL,NULL);
-    assert(mdv_started==4 && mdv[1].used && mdv[1].id==0x46 && mdv[1].end==210.0);
+    assert(mdv_started==5 && mdv[1].used && mdv[1].id==0x46 && mdv[1].end==210.0);
     test_mdv_time=209.9;assert(mdv_frame()==3 && test_mdv_removes==removes && mdv_ui_cutscene(test_mdv_desc[4])==0x703);
     test_mdv_time=210.0;assert(mdv_frame()==2 && test_mdv_removes==removes+1 && mdv_timeouts==1 && !test_mdv_alive[4] && test_mdv_scene[3][0x200]==1 &&
         test_mdv_int(test_mdv_scene[3]+0x204)==1 && mdv_ui_cutscene(test_mdv_desc[4])==-1);}
@@ -186,7 +210,7 @@ static void test_md_media(void) {
      for(unsigned i=0;i<MDV_MAX;i++) {mdv[i]=kept[0];}   /* sixteen entries of a live notification */
      test_mdv_plant(5,0x47,0.0f,0);test_mdv_make_next=6;{const unsigned starts=test_mdv_starts;mdv_action(NULL,NULL,NULL);assert(mdv_full==1 && test_mdv_starts==starts);}
      memcpy(mdv,kept,sizeof(kept));test_mdv_make_next=0;}
-    {char status[400];assert(mdv_status(status,sizeof(status))>0 && strstr(status,"armed=1 installed=0/0/0 live=2/1 ") && strstr(status," started=4 replaced=3 failed=1 interactive=1 full=1 timeouts=1 "));}
+    {char status[400];assert(mdv_status(status,sizeof(status))>0 && strstr(status,"armed=1 installed=0/0/0 live=2/1 ") && strstr(status," started=5 replaced=3 failed=1 interactive=1 full=1 timeouts=1 "));}
     /* The end: the table is empty and nothing is answered. */
     mdv_restore();assert(!mdv_armed && !mdv[0].used && !mdv_ui_note(0x41,0) && !strcmp(mdv_why,"-"));
     mdv_pin=mdv_pins;mdv_why="-";memset(&mdv_fn,0,sizeof(mdv_fn));mdv_install_tried=0;memset(mdv_ui_original,0,sizeof(mdv_ui_original));

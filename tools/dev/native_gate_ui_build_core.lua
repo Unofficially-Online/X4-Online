@@ -34,9 +34,44 @@ K.CONSTRUCTION={['StationConfigurationMenu.buttonConfirmMoney']=true,['StationCo
 -- CreateDeployToStationOrder, SetOrderParam, EnableOrder; the interact menu: RemoveAllOrders2, CreateOrder). Without the
 -- families the order needs the click is refused whole (a fee without its order would buy nothing).
 K.HIRE={['MapMenu.selectCV']={'orders','queue'},['InteractMenu.buttonDeployToStation']={'orders'},['script.hire']={'orders','queue'}}
-K.ORDER_FAMILY={orders=4,queue=128,trade=1024}   -- lockstep_pilot_inputs.h UIREP_FAMILY_ORDERS / _QUEUE / _TRADE
+K.ORDER_FAMILY={orders=4,queue=128,trade=1024,faction=32768}   -- lockstep_pilot_inputs.h UIREP_FAMILY_ORDERS / _QUEUE / _TRADE / _FACTION
 -- The order entries native_gate_pilot_block_orders would refuse, opened when their calls are all captured.
-K.UNBLOCK={['MapMenu.orderDeployToStation']={'orders','queue'},['InteractMenu.orderDeployToStation']={'orders'}}
+K.UNBLOCK={['MapMenu.orderDeployToStation']={'orders','queue'},['InteractMenu.orderDeployToStation']={'orders'},
+ -- "Assign Role" of the interact menu (a ship becomes a station's trader, miner or defender, or a ship's wingman):
+ -- ResetOrderLoop, CreateOrder "AssignCommander", its SetOrderParam calls, EnableOrder, AdjustOrder, all captured by
+ -- the two order families. Until 18 Nov the entry was refused: the click on a subordinate group did nothing in a
+ -- session (run mg2). The branches that make other calls stay refused (K.GUARDS).
+ ['InteractMenu.buttonAssignCommander']={'orders','queue'},['InteractMenu.orderAssignCommander']={'orders','queue'},
+ -- "Remove Assignment" (the interact menu's entry of an assigned ship, the map's subordinate list): RemoveCommander2 is
+ -- a claim of the faction family, the default Wait order after it (CreateOrder, EnablePlannedDefaultOrder) the queue
+ -- family's. Refused until 18 Nov: the click did nothing in a session.
+ ['InteractMenu.buttonRemoveAssignment']={'orders','queue','faction'},['MapMenu.buttonRemoveAssignment']={'orders','queue','faction'},
+ -- "Change assignment" of the interact menu (a wing's ships get another role or another group): an AssignCommander
+ -- order per ship, the order families'; the group's own role (SetSubordinateGroupAssignment) is a claim of the faction
+ -- family since 19 Nov, as are the group's switches and a fleet's name. Refused until then.
+ ['InteractMenu.buttonChangeAssignment']={'orders','queue','faction'}}
+-- Entries opened above whose other branches make calls nothing captures: refused there, by what the menu holds at the
+-- click. A fleet unit (the fleet's replacement slots: SetFleetUnitSubordinateGroupAssignment, AddFleetUnitSubordinate)
+-- and the position defence assignment (Helper.setIntersectorDefence).
+K.GUARDS={
+ InteractMenu={buttonAssignCommander=function(menu,assignment)
+  if menu.fleetunit then return 'fleet_unit' end
+  if assignment=='positiondefence' then return 'position_defence' end
+ end,
+ buttonChangeAssignment=function(menu,assignment)
+  if menu.fleetunit then return 'fleet_unit' end
+  if assignment=='positiondefence' then return 'position_defence' end
+  if type(menu.shipswithcurrentcommander)=='table' and #menu.shipswithcurrentcommander>0 then return end
+  if type(menu.groupShips)=='table' and #menu.groupShips>0 then
+   for _,entry in ipairs(menu.groupShips) do if not entry.component then return 'fleet_unit' end end
+   return
+  end
+  -- one ship: a commander that is a fleet unit takes calls nothing captures (SetFleetUnitSubordinateGroupAssignment,
+  -- ReassignControllableToFleetUnit); a commander that cannot be read is refused as one
+  local ok,unit=pcall(function() return tonumber(require('ffi').C.GetCommander(menu.componentSlot.component,0).fleetunitid) end)
+  if not ok or unit~=0 then return 'fleet_unit' end
+ end},
+}
 K.NOTICE_TICKS=90
 -- What a stock menu does right after its commit call assumes the call has happened. Here it happens a few ticks later,
 -- at the apply, on every client. So the menu's own follow-up is held back at the click (K.AFTER) and made at the apply
@@ -75,11 +110,52 @@ K.LAYOUTS={
  {'UILoadoutGroupData',32,{macro=0,path=8,group=16,count=24,optional=28}},
  {'UILoadoutCounts',36,{numweapons=0,numturrets=4,numshields=8,numengines=12,numturretgroups=16,numshieldgroups=20,numammo=24,numunits=28,numsoftware=32}},
 }
+-- A stock menu function called from the probe's own frame runs where the menu's own calls run: inside this client's
+-- presentation scope (p.present; the probe's frame is outside it, there X4's player and player faction are player 1's
+-- on every client, and a list drawn from there would be player 1's).
+function K.viewed(p,fn,...)
+ local opened=p.present and p.present(true) or false
+ local results={pcall(fn,...)}
+ if opened then p.present(false) end
+ if not results[1] then error(results[2],0) end
+ return results[2]
+end
 -- A stock menu's table by name, when it is on screen.
 function K.shown_menu(p,name)
  for _,menu in ipairs(p.menus and p.menus() or {}) do
   if type(menu)=='table' and menu.name==name then return menu.shown and menu or nil end
  end
+end
+-- The station overview (Logical Station Overview) draws its open node, or the whole chart, right after each of its
+-- calls (a ticked box, Confirm of the account, the trade wares): in a session the call lands a few ticks later, so the
+-- menu drew the state from before it: "Automatic pricing" stayed ticked and no price slider came, although the
+-- override was set on every client (run mg2, 18 Nov). The menu's own draw functions are noted (wrapped once); when a
+-- station call of this client's own player lands shortly after such a draw, the menu draws again, by its own flags.
+-- A slider's own steps make no draw in the stock menu and make none here (a draw would take the slider from the hand).
+K.OVERVIEW_WINDOW=0.75
+function K.overview_frame(S,p,R,now)
+ local menu=K.shown_menu(p,'StationOverviewMenu')
+ if not menu then return end
+ if not menu.x4lan_draw_noted then
+  menu.x4lan_draw_noted=true
+  for _,name in ipairs({'updateExpandedNode','display'}) do
+   local orig=menu[name]
+   if type(orig)=='function' then
+    menu[name]=function(...)
+     local t=p.env.getElapsedTime and p.env.getElapsedTime() or 0
+     if name=='display' then S.overview_whole=t else S.overview_node=t end
+     return orig(...)
+    end
+   end
+  end
+ end
+ if not R or R.applied_station==S.station_seen then return end
+ S.station_seen=R.applied_station
+ if S.overview_whole and now-S.overview_whole<K.OVERVIEW_WINDOW then
+  -- the chart's nodes are read by the menu's own setup, as its trade ware Confirm does before it draws
+  if type(menu.setupFlowchartData)=='function' then K.viewed(p,menu.setupFlowchartData) end
+  menu.refresh=true
+ elseif S.overview_node and now-S.overview_node<K.OVERVIEW_WINDOW then menu.refreshnode=now end
 end
 -- After a batch of `slot` ran here (seen: what each record did), this client's open menus catch up; display only,
 -- nothing here reaches the game. The station menu: a plan commit of this client's own player reloads the station's
@@ -111,8 +187,10 @@ function K.applied(S,p,slot,seen)
  end
  local map=K.shown_menu(p,'MapMenu')
  if map and own and plot and plot~='0' and map.mode=='selectbuildlocation' and type(map.updatePlotData)=='function' then
-  map.updatePlotData(p.env.ConvertStringTo64Bit(plot),true)
-  map.refreshInfoFrame()
+  K.viewed(p,function()
+   map.updatePlotData(p.env.ConvertStringTo64Bit(plot),true)
+   map.refreshInfoFrame()
+  end)
  elseif map and map.infoTableMode=='plots' and (plot or other) and type(map.refreshInfoFrame)=='function' then
   map.over=true      -- the stock map's own "draw the info frame again" flag (updatePlotData sets it)
  end
@@ -173,7 +251,7 @@ function K.session(p)
  local gate,env,log,R=p.gate,p.env,p.log,p.replay
  local build,assets=K.parts(p.mask)
  local core=assert(X4LAN_UI_REPLAY_CORE,'ui build: the replay core first')
- local S={applying=false,captured=0,refused=0,scopes=0,batches=0,wrapped={},build=build,assets=assets,plots={}}
+ local S={applying=false,captured=0,refused=0,scopes=0,batches=0,wrapped={},guarded={},build=build,assets=assets,plots={}}
  local function on(id) local f=K.LUA_FAMILY[id];return (f=='build' and build) or (f=='assets' and assets) end
  local own_slot=p.own_slot or 1
  local trade=math.floor(p.mask/K.ORDER_FAMILY.trade)%2==1
@@ -278,6 +356,21 @@ function K.session(p)
     end
     log('UI_BUILD_SCOPES menu='..menu.name..' functions='..count)
    end
+   local guards=type(menu)=='table' and K.GUARDS[menu.name]
+   if guards and not S.guarded[menu.name] then
+    S.guarded[menu.name]=true
+    for name,why in pairs(guards) do
+     local orig=menu[name]
+     if type(orig)=='function' then
+      local entry=menu.name..'.'..name
+      menu[name]=function(...)
+       local reason=gate.ui_replay_local()==1 and why(menu,...)
+       if reason then refuse(entry,reason,S.tick);return 0 end
+       return orig(...)
+      end
+     end
+    end
+   end
   end
  end
  -- A Lua record at its apply: the stock function with the decoded arguments (canonical, every client).
@@ -347,13 +440,14 @@ function K.session(p)
  end
  -- The families' part of the probe's frame (the replay core's S.frame, after its own): the receipt joins the pilot receipt.
  function S.frame(tick)
+  S.tick=tick
   wrap_menus()
   fund(tick)
   -- an order or another replayed call landed (a builder sent to the station, a builder fired): the open station menu
   -- shows it a moment later, as it shows its own calls in the stock game
   if S.plot_settle and env.getElapsedTime and env.getElapsedTime()>=S.plot_settle then
    S.plot_settle=nil
-   local settled,why=pcall(K.plot_settled,S,p,env.getElapsedTime())
+   local settled,why=pcall(K.viewed,p,K.plot_settled,S,p,env.getElapsedTime())
    if not settled then log('UI_BUILD_MENU_ERROR tick='..tick..' plot why='..tostring(why)) end
   end
   if R and R.applied_world~=S.world_seen then
@@ -361,6 +455,8 @@ function K.session(p)
    local station=K.shown_menu(p,'StationConfigurationMenu')
    if station and env.getElapsedTime then station.refresh=station.refresh or (env.getElapsedTime()+0.2) end
   end
+  local drawn,why=pcall(K.overview_frame,S,p,R,env.getElapsedTime and env.getElapsedTime() or 0)
+  if not drawn then log('UI_BUILD_MENU_ERROR tick='..tick..' overview why='..tostring(why)) end
   run_script(tick)
   gate.ui_build_flush()
   local rows=gate.ui_build_refusals()
@@ -418,6 +514,33 @@ function K.script(plan,start,tools)
      local id=tools.C.AddBuildTask6(station,ship,macro,loadout,price,crew,false,'',info)
      if id~=0 then tools.C.SetBuildTaskTransferredMoney(id,price) end
      return tostring(id)..' macro='..tostring(macro)
+    end) end
+  -- The map's "Sell ships" confirm for one ship that is docked at the shipyard or wharf (MapMenu.buttonSellShips, a
+  -- commit scope): {t,'sell',station,ship}: the ship's value from the station to the player, then SellPlayerShip.
+  -- ship: a slot number or a saved ID.
+  elseif op=='sell' then call=function(S)
+    return S.with_scope('script.sell',function()
+     pcall(tools.ffi.cdef,'void SellPlayerShip(UniverseID shipid, UniverseID shipyardid);')
+     local station=tools.saved_id(e[3])
+     local ship=type(e[4])=='number' and tools.slot_id(e[4]) or tools.saved_id(e[4])
+     local price=tools.env.GetTotalValue(ship,true,station)
+     tools.env.TransferMoneyToPlayer(price,station,'sellship')
+     tools.C.SellPlayerShip(ship,station)
+     return string.format('sold price=%.0f',tonumber(price) or -1)
+    end) end
+  -- The ship configuration's Confirm with a repair for a ship that is docked at the shipyard, wharf or equipment
+  -- dock (menu.repairandupgrade): {t,'repair',station,ship}: the repair's price to the station, then the station's
+  -- signal 'repairs_initiate' with the ship (the whole hull, no single components). ship: a slot or a saved ID.
+  elseif op=='repair' then call=function(S)
+    return S.with_scope('script.repair',function()
+     pcall(tools.ffi.cdef,'int64_t GetRepairPrice(UniverseID componenttorepairid, UniverseID containerid);')
+     local station=tools.saved_id(e[3])
+     local ship=type(e[4])=='number' and tools.slot_id(e[4]) or tools.saved_id(e[4])
+     local lua=type(e[4])=='number' and tools.slot_lua(e[4]) or tools.saved_lua(e[4])
+     local price=tonumber(tools.C.GetRepairPrice(ship,station))
+     tools.env.TransferPlayerMoneyTo(price,station)
+     tools.env.SignalObject(station,'repairs_initiate',lua,{100,{}})
+     return string.format('repair price=%.0f',price)
     end) end
   -- the map's plot placement: ReserveBuildPlot (answers 0 here, the plot appears at the apply)
   elseif op=='plot' then call=function()

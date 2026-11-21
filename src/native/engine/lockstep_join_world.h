@@ -20,6 +20,14 @@
  *          rebuilds another float rotation (turret 0x12b48 yaw="180" roll="-180" -> yaw="-179.99998" roll="179.99998",
  *          defence module 0x12bb6 yaw -179.08069 -> -179.08067); every differing turret, shield generator and station module
  *          whose offset the j1-11 analysis parsed had a changed rotation text, every one with an unchanged text was equal.
+ *          Form 3 [late joins hq67, hq68, 18 Nov]: a U::LinearAccelerationController (vtable 0x2c3eb28; a drone on its way
+ *          out of its ship) keeps its start transform at +0x20 too, with the start time +0x60 and the velocities +0x80 and
+ *          +0x90 its getter 0xe247a0 moves it by. The census claims no motion for it, so POSE left it out, and the joiner's
+ *          start rotation was the save's rounded one: an XS ship made in the session that took its navigation controller 25
+ *          to 43 ticks after the join came out of it with the position equal and seven matrix elements a few bits off, the
+ *          one object of 11,676 whose motion differed at the next census. Its four vectors are records as well; the
+ *          admission writes them only onto a start transform within 1e-4 (and 1e-6 of the value) of the session's, so a
+ *          controller the load started from another moment keeps its own (counted with pose_shape).
  * Navigation controllers (a ship's flight state: two banks, references, deadlines), dock controllers and unknown
  * controllers are not in POSE; objects of an unknown class are in neither (the census claims nothing for them either).
  * Records are sorted by portable ID and hold no pointer and no runtime ID. Each section enters the portable digest as one
@@ -73,6 +81,7 @@
 #define JOIN_CONTROLLER 0x200u
 #define JOIN_POSE_GETTER_10 0x10ba20u     /* four vectors at controller+0x10 */
 #define JOIN_POSE_GETTER_20 0x46ff70u     /* four vectors at controller+0x20 */
+#define JOIN_POSE_GETTER_LINEAR 0xe247a0u /* U::LinearAccelerationController: its start transform, four vectors at controller+0x20 */
 #define JOIN_NAV_VTABLE 0x2c51158u
 #define JOIN_WORLD_ROWS 2u                /* sampled rows per kind (health, pose, ...) at the admission */
 #define JOIN_ATTENTION 0x1ecu              /* the attention level (SetAttention 0x3d5660) */
@@ -127,8 +136,9 @@ static int join_shield_read(const unsigned char *object,unsigned char **group,ui
     }
     return 1;
 }
-/* A controller's pose form as the census reads it: 1 (getter 0x10ba20, vectors at +0x10), 2 (0x46ff70, +0x20), 0 none (a
- * navigation, dock or unknown controller); *kind its vtable RVA. -1: unreadable. */
+/* A controller's pose form as the census reads it: 1 (getter 0x10ba20, vectors at +0x10), 2 (0x46ff70, +0x20), 3 (0xe247a0, a
+ * linear acceleration's start transform at +0x20; no census motion), 0 none (a navigation, dock or unknown controller); *kind
+ * its vtable RVA. -1: unreadable. */
 static int join_pose_form(const unsigned char *controller,uint32_t *kind) {
     uintptr_t vtable=0,getter=0;*kind=0;
     if(!join_read(controller,&vtable,8)) return -1;
@@ -137,7 +147,16 @@ static int join_pose_form(const unsigned char *controller,uint32_t *kind) {
     *kind=(uint32_t)(vtable-(uintptr_t)image);
     if(*kind==JOIN_NAV_VTABLE || *kind==DOCK_CONTROLLER_VTABLE || *kind==UNDOCK_CONTROLLER_VTABLE) return 0;
     if(!join_read((void *)(vtable+0x30),&getter,8)) return -1;
-    return getter==(uintptr_t)(image+JOIN_POSE_GETTER_10)?1:getter==(uintptr_t)(image+JOIN_POSE_GETTER_20)?2:0;
+    return getter==(uintptr_t)(image+JOIN_POSE_GETTER_10)?1:getter==(uintptr_t)(image+JOIN_POSE_GETTER_20)?2:
+           getter==(uintptr_t)(image+JOIN_POSE_GETTER_LINEAR)?3:0;
+}
+/* Form 3: is the joiner's start transform the session's but for the save's rounding? */
+static int join_pose_near(const uint32_t mine[12],const uint32_t theirs[12]) {
+    for(unsigned i=0;i<12u;i++) {
+        float a,b;memcpy(&a,&mine[i],4);memcpy(&b,&theirs[i],4);
+        if(!(fabsf(a-b)<=1e-4f+1e-6f*fabsf(b))) return 0;
+    }
+    return 1;
 }
 static int join_pose_lanes(const unsigned char *controller,unsigned form,uint32_t xyz[12]) {
     uint32_t words[16];
@@ -1663,26 +1682,96 @@ static int join_gravp_views_equal(const join_tables *s,uint32_t i) {
     else if(i && s->gravp[i-1u].portable==a->portable) b=&s->gravp[i-1u];
     return b && b->rel!=a->rel && (a->flags&b->flags&JOIN_GRAVP_PRESENT) && !memcmp(a->pose,b->pose,sizeof(a->pose));
 }
-static uint64_t join_gravp_settled_extra;   /* status gravp_settled=on:entries beyond the low-attention ones */
+static uint64_t join_gravp_settled_extra;   /* status gravp_settled=on:entries beyond the low-attention ones:entries classed by the live attention */
+/* GRAVP stale (18 Nov, late joins at T about 6090, runs hq47 .. hq54): the classes above go by the attention the views publish,
+ * and a view that is not republished keeps that word as it keeps its pose. A fighter that had left a sector of high attention
+ * 14 s before T (portable 0x90f03) held in both views the attention 6 of that sector and a pose 33 km behind its place, at a
+ * live attention of 2; the session did not republish it in the 30 steps watched (JOIN_WATCH, no BuildCache row). Published 6
+ * made it the joiner's: its load published the live pose into one view at T+1 (BuildCache 0x3d4d0f, flags 0x19), no restore
+ * took it back, and from then on its two views were apart for good. The radar reads the view of the frame, so the joiner's
+ * units gained and dropped such ships with the frame's parity where the session's kept them (GRAVIDAR_POST_ROW: one unit's own
+ * place alternating between the two poses, 22 contacts against 7); event_gravidar_has_scanned ran the fight and movement
+ * scripts' handlers on the joiner alone from T+5 on (decoded from the script RNG rows: keyword 1286 and the ship), a ship
+ * took a target at T+6 in one run, and the runtime IDs parted with the first script that started for it (T+36 .. T+44 in four
+ * runs). So an object whose two views the session had equal is classed by its live attention at T as well (ATTN): below
+ * JOIN_VIEWF_KEEP it is restored like a low one, below JOIN_GRAVP_SETTLED_KEEP like a settled one. An object without an ATTN
+ * record, or one in flight, stays as it was. Rides on native_gate_join_gravp_settled. */
+static uint64_t join_gravp_stale;
+static uint64_t join_gravp_progress;   /* views left to the engine: a publication in progress at T (status gravp_settled's last number) */
+static uint32_t join_gravp_live_attention(const join_tables *s,uint64_t portable) {
+    uint32_t lo=0,hi=s->nattn;
+    while(lo<hi) {const uint32_t mid=lo+(hi-lo)/2u;if(s->attn[mid].portable<portable) lo=mid+1u;else hi=mid;}
+    return lo<s->nattn && s->attn[lo].portable==portable?s->attn[lo].level:UINT32_MAX;
+}
+/* Whether the session has a publication of the object in progress at T (SPEC, sorted by portable ID and kind): a one-shot
+ * cache specification (kind 7) started in the frame of T. A ship that changes its zone gets one (flags 0x19: the cached parent,
+ * the pose, 0x10) and BuildCache publishes it into the next frame's view, so at T its two views are apart and the session
+ * itself completes them at T+1; the joiner's publication of T+1 is then the same as the session's and must stay. Package of
+ * T=6069 (run hq59): 8 of 10,820 ships held different cached parents in their two views; 6 of them had such an entry with
+ * last = the time of T (interval -0.5), the other 2 none (the stuck kind); 4,366 older one-shots (interval -1, last long
+ * past) sat on components no BuildCache reaches. With the first form of GRAVD keep the six were put back to T's parents and
+ * poses: 112 radar posts the joiner's alone in 590 ticks. */
+#define JOIN_SPEC_ONE_SHOT 7u
+static int join_spec_in_progress(const join_tables *s,uint64_t portable) {
+    uint32_t lo=0,hi=s->nspec;double now=0,last=0;
+    while(lo<hi) {
+        const uint32_t mid=lo+(hi-lo)/2u;const join_spec_rec *r=&s->spec[mid];
+        if(r->portable<portable || (r->portable==portable && r->kind<JOIN_SPEC_ONE_SHOT)) lo=mid+1u;else hi=mid;
+    }
+    if(lo>=s->nspec || s->spec[lo].portable!=portable || s->spec[lo].kind!=JOIN_SPEC_ONE_SHOT) return 0;
+    memcpy(&now,&s->gate.game,8);memcpy(&last,&s->spec[lo].last,8);
+    return last>now-0.05 && last<now+0.05;   /* a frame is 1/30 s */
+}
+/* Whether the session's two views of a ship hold different cached parents (GRAVD, sorted by portable ID and view). */
+static int join_gravd_parents_apart(const join_tables *s,uint64_t portable) {
+    uint32_t lo=0,hi=s->ngravd;
+    while(lo<hi) {const uint32_t mid=lo+(hi-lo)/2u;if(s->gravd[mid].portable<portable) lo=mid+1u;else hi=mid;}
+    return lo+1u<s->ngravd && s->gravd[lo].portable==portable && s->gravd[lo+1u].portable==portable &&
+           !((s->gravd[lo].flags|s->gravd[lo+1u].flags)&JOIN_GRAVD_UNMAPPED) && s->gravd[lo].parent!=s->gravd[lo+1u].parent;
+}
+/* How the restore takes an object: 1 through the whole window, 2 at the first boundary only (extra), 0 not (the joiner's own).
+ * equal: the session's two views hold one pose. *stale: classed by the live attention where the published one left it out.
+ * A ship at a low live attention whose two views hold different cached parents is a publication that stopped half way (a
+ * fighter moved from a carrier's pad into its storage: one view the pad, the other the storage, for good); it is not in flight. */
+static int join_gravp_class(const join_tables *s,uint64_t portable,int equal,int *stale) {
+    *stale=0;
+    if(join_gravp_settled_on && join_spec_in_progress(s,portable)) {++join_gravp_progress;return 0;}   /* the session completes it at T+1 */
+    if(join_gravp_low_attention(s,portable)) return 1;
+    if(!join_gravp_settled_on) return 0;
+    if(!equal) {
+        if(join_gravp_live_attention(s,portable)<JOIN_VIEWF_KEEP && join_gravd_parents_apart(s,portable)) {*stale=1;return 1;}
+        return 0;
+    }
+    const uint32_t live=join_gravp_live_attention(s,portable);
+    if(live<JOIN_VIEWF_KEEP) {*stale=1;return 1;}
+    if(join_gravp_attention_below(s,portable,JOIN_GRAVP_SETTLED_KEEP)) return 2;
+    if(live<JOIN_GRAVP_SETTLED_KEEP) {*stale=1;return 2;}
+    return 0;
+}
 static void join_gravp_settled_build(const join_tables *s,const join_tables *mine) {
     const uint32_t cur=join_view_index();
     free(join_gravp_set);join_gravp_set=NULL;join_gravp_nset=join_gravp_setcap=0;join_gravp_restored=join_gravp_checked=join_gravp_gone=join_gravp_moved=0;
-    join_gravp_moved_pose=join_gravp_late=0;memset(join_gravp_first,0,sizeof(join_gravp_first));join_gravp_settled_extra=0;
+    join_gravp_moved_pose=join_gravp_late=0;memset(join_gravp_first,0,sizeof(join_gravp_first));join_gravp_settled_extra=join_gravp_stale=0;
+    join_gravp_progress=0;
     for(uint32_t i=0;i<s->ngravp;i++) {
-        const join_gravp_rec *a=&s->gravp[i];
+        const join_gravp_rec *a=&s->gravp[i];int stale=0;
         if(!(a->flags&JOIN_GRAVP_PRESENT) || a->rel>1u) continue;
-        const int low=join_gravp_low_attention(s,a->portable);
-        if(!low && !(join_gravp_settled_on && join_gravp_views_equal(s,i) && join_gravp_attention_below(s,a->portable,JOIN_GRAVP_SETTLED_KEEP))) continue;
+        const int klass=join_gravp_class(s,a->portable,join_gravp_low_attention(s,a->portable) || join_gravp_views_equal(s,i),&stale);
+        if(!klass) continue;
+        const int low=klass==1;
         const uint64_t runtime=join_runtime_of(mine,a->portable);
         join_gravp_settled e={runtime,cur^a->rel,0u,a->pose,NULL,{0},0,!low,0u};
         if(runtime && !JOIN_PUSH(join_gravp_set,join_gravp_nset,join_gravp_setcap,e)) {join_gravp_set_heads();return;}
         if(runtime && !low) ++join_gravp_settled_extra;
+        if(runtime && stale) ++join_gravp_stale;
     }
     for(uint32_t i=0;i<s->nviewp;i++) {   /* VIEWP: the other zone-held objects' settled poses, both slots */
-        const int low=join_gravp_low_attention(s,s->viewp[i].portable);
-        if(!low && !(join_gravp_settled_on && join_gravp_attention_below(s,s->viewp[i].portable,JOIN_GRAVP_SETTLED_KEEP))) continue;
+        int stale=0;const int klass=join_gravp_class(s,s->viewp[i].portable,1,&stale);
+        if(!klass) continue;
+        const int low=klass==1;
         const uint64_t runtime=join_runtime_of(mine,s->viewp[i].portable);
         if(runtime && !low) join_gravp_settled_extra+=2u;
+        if(runtime && stale) join_gravp_stale+=2u;
         for(uint32_t v=0;v<2u && runtime;v++) {
             join_gravp_settled e={runtime,v,0u,s->viewp[i].pose,NULL,{0},0,!low,0u};
             if(!JOIN_PUSH(join_gravp_set,join_gravp_nset,join_gravp_setcap,e)) {join_gravp_set_heads();return;}
@@ -1710,6 +1799,92 @@ static int join_viewf_write;
  * old one). */
 static uint32_t join_viewf_bits;
 /* Each entry's view's cached parent at the end of the admission (after GRAVD wrote the ships' ones). */
+/* A view's cached parent (view block +0) is a counted reference: PropagateCacheFlags 0x3d46ff .. 0x3d474f takes one on the live
+ * parent (the count +0x40 up; the state +0x44 from 1 to 2), stores it, and gives the old one back (the count down; at none the
+ * state from 2 to 3 and the release call of the counted part at +0x38). GRAVD's write of the session's cached parent was a plain
+ * store: the parent written held no reference of that view, and the engine's next republication of the view gave back one it
+ * had not taken. A count that runs out while an owner still lists the object is how a late joiner stopped twice in a walk over
+ * a list that held an object already gone (17 Nov, runs hq38 and hq42: 470 and 133 ticks after the join, the second in the radar
+ * worker's walk of published children); not shown to be this write, which is rare (19 a join in those runs). The store now takes
+ * the reference on the new parent as the engine does and gives the old one back unless it is its last: then it stays (status
+ * gravd_keep's last number), since a count too high only keeps an object's memory and a count too low frees it under an owner. */
+#define JOIN_REF_COUNT 0x40u
+#define JOIN_REF_STATE 0x44u
+#define JOIN_KEEP_LIVE_PARENT 0x70u   /* a component's live parent */
+#define JOIN_KEEP_VIEW_WORD 0x3cu     /* a view block's flags word */
+static uint64_t join_parent_last;
+static int join_view_parent_set(unsigned char *slot,unsigned char *want) {
+    unsigned char *have=NULL;LONG seen=0;
+    if(!join_read(slot,&have,8) || have==want) return 0;
+    if(want && !join_read(want+JOIN_REF_COUNT,&seen,4)) return 0;
+    if(want) {
+        (void)InterlockedCompareExchange((volatile LONG *)(want+JOIN_REF_STATE),2,1);
+        (void)InterlockedIncrement((volatile LONG *)(want+JOIN_REF_COUNT));
+    }
+    memcpy(slot,&want,8);
+    if(have && join_read(have+JOIN_REF_COUNT,&seen,4)) {
+        volatile LONG *count=(volatile LONG *)(have+JOIN_REF_COUNT);
+        for(;;) {
+            seen=*count;
+            if(seen<=1) {++join_parent_last;break;}
+            if(InterlockedCompareExchange(count,seen-1,seen)==seen) break;
+        }
+    }
+    return 1;
+}
+/* GRAVD keep (18 Nov, late join hq55/hq56, rides on native_gate_join_gravp_settled): the admission writes the session's cached
+ * parents, and the joiner's first publication after its load (BuildCache at T+1, flags 0x19) writes the live parent over the one
+ * of the view that is current then. Where the session's view was stale that undoes the admission: a fighter in a carrier's
+ * storage whose one view still held the pad (visible to the radar on every other frame, JOIN_WATCH on portable 0x11e01b) had
+ * the storage in both views on the joiner from T+1, and the carrier's units regained it on the session alone (69 radar posts
+ * in 180 ticks); which view the load takes goes by T's parity, so it showed in one join of two. The restore of the poses
+ * leaves such a view alone as republished by the engine. So for every ship at a low live attention (ATTN below JOIN_VIEWF_KEEP)
+ * the admission's cached parents are put back after the steps T+1 and T+2 where a publication changed them, with the view
+ * word the session's unpublished view had (VIEWK), unless the ship's live parent changed in that step: then the publication
+ * is the engine's own and the entry is dropped. Status gravd_keep=entries:put back:dropped:last references kept. */
+typedef struct {uint64_t runtime,want;unsigned char *live;uint32_t slot,word,has_word,dropped;} join_gravd_keep_rec;
+static join_gravd_keep_rec *join_gravd_keep;static uint32_t join_gravd_nkeep,join_gravd_keepcap;
+static uint64_t join_gravd_kept,join_gravd_keep_dropped;
+static int join_viewk_word(const join_tables *s,uint64_t portable,uint32_t rel,uint32_t *word) {
+    uint32_t lo=0,hi=s->nviewk;
+    while(lo<hi) {
+        const uint32_t mid=lo+(hi-lo)/2u;const join_viewk_rec *r=&s->viewk[mid];
+        if(r->portable<portable || (r->portable==portable && r->rel<rel)) lo=mid+1u;else hi=mid;
+    }
+    if(lo>=s->nviewk || s->viewk[lo].portable!=portable || s->viewk[lo].rel!=rel || s->viewk[lo].flags) return 0;
+    *word=s->viewk[lo].vflags;return 1;
+}
+static void join_gravd_keep_build(const join_tables *s,const join_tables *mine) {
+    const uint32_t cur=join_view_index();
+    free(join_gravd_keep);join_gravd_keep=NULL;join_gravd_nkeep=join_gravd_keepcap=0;join_gravd_kept=join_gravd_keep_dropped=0;
+    if(!join_gravp_settled_on) return;
+    for(uint32_t i=0;i<s->ngravd;i++) {
+        const join_gravd_rec *r=&s->gravd[i];join_gravd_keep_rec e;memset(&e,0,sizeof(e));
+        if((r->flags&JOIN_GRAVD_UNMAPPED) || r->rel>1u || join_gravp_live_attention(s,r->portable)>=JOIN_VIEWF_KEEP) continue;
+        if(join_spec_in_progress(s,r->portable)) continue;   /* the session completes this publication at T+1: the engine's */
+        e.runtime=join_runtime_of(mine,r->portable);e.slot=cur^r->rel;
+        unsigned char *object=join_object(e.runtime);
+        if(!object || !join_read(object+JOIN_KEEP_LIVE_PARENT,&e.live,8)) continue;
+        if(!(r->flags&JOIN_GRAVD_NONE) && !(e.want=join_runtime_of(mine,r->parent))) continue;
+        e.has_word=(uint32_t)join_viewk_word(s,r->portable,r->rel,&e.word);
+        if(!JOIN_PUSH(join_gravd_keep,join_gravd_nkeep,join_gravd_keepcap,e)) return;
+    }
+}
+/* After a step of the load's publications (T+1, T+2), before the poses' restore. */
+static void join_gravd_keep_apply(void) {
+    for(uint32_t i=0;i<join_gravd_nkeep;i++) {
+        join_gravd_keep_rec *e=&join_gravd_keep[i];unsigned char *live=NULL,*have=NULL;
+        if(e->dropped) continue;
+        unsigned char *object=join_object(e->runtime),*want=e->want?join_object(e->want):NULL;
+        if(!object || (e->want && !want) || !join_read(object+JOIN_KEEP_LIVE_PARENT,&live,8)) {e->dropped=1;continue;}
+        if(live!=e->live) {e->dropped=1;++join_gravd_keep_dropped;continue;}   /* the ship changed its parent in this step: the engine's own */
+        unsigned char *slot=object+JOIN_VIEW_SLOTS+(size_t)e->slot*0x80u;
+        if(!join_read(slot,&have,8) || have==want) continue;
+        if(!join_view_parent_set(slot,want)) continue;
+        ++join_gravd_kept;
+        if(e->has_word) (void)join_poke((uintptr_t)(slot+JOIN_KEEP_VIEW_WORD),&e->word,4);
+    }
+}
 static void join_gravp_settled_parents(void) {
     for(uint32_t i=0;i<join_gravp_nset;i++) {
         unsigned char *object=join_object(join_gravp_set[i].runtime),*parent=NULL;
@@ -2066,9 +2241,19 @@ static void join_evq_dump(char side,double now) {
 #define JOIN_EVQT_REMOVE 0x99a870u   /* (source, int type, double before; -1: all) */
 #define JOIN_EVQT_MAX 400000u
 /* The classes the joiner rebuilds: no payload (0x18 bytes from SMem: vtable, 0, the post's context) and posted at a time of their own,
- * the load scheduling its own (j1-50). */
+ * the load scheduling its own (j1-50). KillCheckEvent: every load posts one to each wreck an hour after its own time (0x36e1c0:
+ * 0x18 bytes, posted at now + 3600 s), and the save keeps the ones before; hq99, 19 Nov: both clients' saves of tick 12240 held
+ * the session's two per wreck (3600 and 3607.06), the joiner's 307 wrecks a third at its load + 3600 s, which would have fired an
+ * hour after the join on the joiner alone. */
 static const uint32_t join_evqt_rebuilt[]={0x2baf650u /* UpdateEngineParametersEvent 0x20f */,0x2ac1710u /* UpdateBuildEvent 0x20d */,
-                                           0x2ac17b8u /* UpdateTradeOffersEvent 0x215 */};
+                                           0x2ac17b8u /* UpdateTradeOffersEvent 0x215 */,0x2a36518u /* KillCheckEvent 0xec */};
+/* KillCheckEvent: a resource area keeps its own (`resourceareas > area > events`), its event source no object the join can look
+ * up; the save holds it whole and both loads keep it, so the joiner's is left [hq114: removed and never posted, it was gone on
+ * the joiner]. A source is an object when its runtime ID (+8) looks up to itself. */
+#define JOIN_EVQT_KILLCHECK 0x2a36518u
+static int join_evqt_source_is_object(unsigned char *source) {
+    uint64_t runtime=0;return source && join_read(source+8,&runtime,8) && runtime && join_object(runtime)==source;
+}
 static int join_evqt_is_rebuilt(uint32_t cls) {
     for(unsigned i=0;i<sizeof(join_evqt_rebuilt)/sizeof(*join_evqt_rebuilt);i++) if(join_evqt_rebuilt[i]==cls) return 1;
     return 0;
@@ -2109,7 +2294,7 @@ static void join_capture_evqt(join_tables *t) {
         for(uint32_t k=0;k<n && k<4096u && e;k++,e=join_evq_next(e)) {
             unsigned char *ev=NULL;uintptr_t v=0;join_evqt_rec r;memset(&r,0,sizeof(r));
             if(!join_read(e+0x28,&ev,8) || !ev || !join_read(ev,&v,8) || !join_read(e+0x20,&r.time,8)) {++join_cap.evq_fault;break;}
-            r.portable=key;r.flags=key?0u:JOIN_EVQT_UNMAPPED;r.index=k;
+            r.portable=key?key:runtime;r.flags=key?0u:runtime?JOIN_EVQT_RUNTIME:JOIN_EVQT_UNMAPPED;r.index=k;
             r.cls=v>=(uintptr_t)image && v-(uintptr_t)image<JOIN_FLIGHT_IMAGE?(uint32_t)(v-(uintptr_t)image):0u;r.type=join_evqt_type(r.cls);
             if(t->nevqt>=JOIN_EVQT_MAX || !JOIN_PUSH(t->evqt,t->nevqt,cap,r)) {++join_cap.evq_fault;return;}
         }
@@ -2119,7 +2304,8 @@ static void join_capture_evqt(join_tables *t) {
 /* Sorted by (portable, class, time, place), known flags, a portable source exactly without UNMAPPED. */
 static int join_evqt_shape(const join_evqt_rec *v,uint32_t n) {
     for(uint32_t i=0;i<n;i++) {
-        if((v[i].flags&~JOIN_EVQT_UNMAPPED) || !v[i].portable!=!!(v[i].flags&JOIN_EVQT_UNMAPPED) || (i && join_evqt_cmp(&v[i-1],&v[i])>0)) return 0;
+        if((v[i].flags&~(JOIN_EVQT_UNMAPPED|JOIN_EVQT_RUNTIME)) || (v[i].flags&JOIN_EVQT_UNMAPPED && v[i].flags&JOIN_EVQT_RUNTIME) ||
+           !v[i].portable!=!!(v[i].flags&JOIN_EVQT_UNMAPPED) || (i && join_evqt_cmp(&v[i-1],&v[i])>0)) return 0;
     }
     return 1;
 }
@@ -4692,7 +4878,13 @@ static void join_code_hold(int begin) {
  * (the load's stamp), so dt is 9.55 against 8.05 at 794 (1 + 0.32 * dt). The stamp belongs to the unintegrated value, so it is
  * carried (the load-time split: a past event's stamp, not the base time of a value the save writes as of T). The capture writes
  * +0x2f0 and +0x2f8 of every U::Engine; with the opt-in the admission writes the session's where they differ. Status
- * engr=on:written:equal:missing. */
+ * engr=on:written:equal:missing.
+ * The travel drive ramps the same way: 0x54e110 (from the engine parameter refresh 0x6dc660, an UpdateEngineParametersEvent)
+ * moves the travel factor +0x330 toward its target over dt = now - +0x338 and stamps +0x338 = now; a fresh engine's stamp
+ * (0x54a600) makes the first refresh stamp without integrating. The save writes the factor as of T and no stamp. [hq155/hq158,
+ * 20 Nov, join at 6058: 26 ships in travel; Paranid L BJL-112's factor 8.7535 at T was 3.3659 on the session at 6062 (its first
+ * refresh after T integrated the seconds since its last) and 8.7315 on the joiner (two ticks since its load); the world digest
+ * apart from 6059.] The record carries +0x338 and the factor too. */
 static int join_engr_on;
 static uint64_t join_engr_written,join_engr_equal,join_engr_missing;
 #define JOIN_ENGR_VTABLE 0x2ad58f8u   /* U::Engine */
@@ -4710,7 +4902,8 @@ static void join_capture_engr(join_tables *t) {
         unsigned char *o=join_object(t->ids[i].runtime);join_engr_rec r;
         if(!join_engr_type(o)) continue;
         memset(&r,0,sizeof(r));r.portable=t->ids[i].portable;
-        if(!join_read(o+0x2f0,&r.ramp_time,8) || !join_read(o+0x2f8,&r.ramp_word,8)) continue;
+        if(!join_read(o+0x2f0,&r.ramp_time,8) || !join_read(o+0x2f8,&r.ramp_word,8) || !join_read(o+0x338,&r.travel_time,8) ||
+           !join_read(o+0x330,&r.travel_factor,4)) continue;
         if(!JOIN_PUSH(t->engr,t->nengr,cap,r)) return;
     }
     if(t->nengr>1) qsort(t->engr,t->nengr,sizeof(*t->engr),join_engr_cmp);
@@ -4724,6 +4917,8 @@ static void join_admit_engr(const join_tables *s,const join_tables *mine) {
         if(!join_engr_type(o)) {++join_engr_missing;continue;}
         int changed=join_poke((uintptr_t)(o+0x2f0),&r->ramp_time,8);
         changed|=join_poke((uintptr_t)(o+0x2f8),&r->ramp_word,8);
+        changed|=join_poke((uintptr_t)(o+0x338),&r->travel_time,8);
+        changed|=join_poke((uintptr_t)(o+0x330),&r->travel_factor,4);
         if(changed) ++join_engr_written; else ++join_engr_equal;
     }
 }
@@ -5563,7 +5758,15 @@ static void join_admit_srcs(const join_tables *s,const join_tables *mine) {
  * recyclable on the joiner alone, its object code shifts every later one, and the 3318 job quotas (drawn from codes) part the
  * world by 3360. The saver records every list in order (region portable, field index, place, the object's portable; flags 1:
  * unmapped, object 0); the joiner appends the session's objects to a list it holds empty (nodes from SMem::Allocate 0x14b7140, as
- * std::list's), leaves an equal one, and counts any other (conflict). Status fobj=on:groups:written:equal:missing:conflict:inserted. */
+ * std::list's), leaves an equal one, and counts any other (conflict). Status fobj=on:groups:written:equal:missing:conflict:inserted.
+ * An entry is a counted reference (the count at the object's +0x40, as a view's cached parent; lockstep_join_world.h's
+ * join_view_parent_set): the field's pass 0xedc540 drops an entry whose object has no parent any more and gives its reference
+ * back (lock xadd -1 at 0xedc7a8 and 0xedc7fa; at zero the object's release), so a recyclable that was salvaged stays readable
+ * for the walks until that pass. The first form stored the bare pointer [hq63, hq66, 18 Nov: a late joiner through its handover
+ * stopped 322 and 560 ticks later, once in the salvage search's walk 0xedd187 over such a list, whose object's first word was
+ * 0xb, once at an address outside the image; and it fits the two stops of 17 Nov]: the object went with its last counted
+ * owner while the list still named it, and each entry the pass dropped gave back a reference nobody had taken, on an object
+ * other owners still used. The insertion now takes the reference as the engine does. */
 #define JOIN_FOBJ_FIELDS 0x288u
 #define JOIN_FOBJ_LIST 0x90u
 #define JOIN_FOBJ_SIZE 0x98u
@@ -5659,10 +5862,902 @@ static void join_admit_fobj(const join_tables *s,const join_tables *mine) {
             unsigned char **node=join_fobj_alloc(0x18u),*last=NULL;
             if(!node || !join_read(sent+8,&last,8) || !last) break;
             node[0]=sent;node[1]=last;node[2]=join_fobj_want[k];
+            (void)InterlockedCompareExchange((volatile LONG *)(join_fobj_want[k]+JOIN_REF_STATE),2,1);   /* the entry's reference */
+            (void)InterlockedIncrement((volatile LONG *)(join_fobj_want[k]+JOIN_REF_COUNT));
             *(unsigned char **)last=(unsigned char *)node;*(unsigned char **)(sent+8)=(unsigned char *)node;
             ++*(uint64_t *)(field+JOIN_FOBJ_SIZE);++join_fobj_inserted;
         }
         ++join_fobj_written;
+    }
+}
+/* PMOD (v13, section 88; native_gate_join_pmod on the joiner, a join default). A U::ProcessingModule (vtable 0x2acec88: a
+ * scrap works) is updated by 0x576b70: nothing while its due time +0x390 lies ahead, else due = now + the macro's interval
+ * and the work (0x57b530: what the time since lasttime +0x398 yields; the state +0x3bc and its time +0x3c0). The save holds
+ * lasttime and the state, and neither the due time nor the state's time; a loaded module is due at once. [hq73, 18 Nov: both
+ * clients' saves 67 ticks after a join at 6053: the five stations' scrap works had lasttime 190.42 on the session and 209.89,
+ * two seconds after the load, on the joiner.] From there the joiner's stations yield their wares at other ticks; the census
+ * hashes no cargo, and about 4,980 ticks after the join one trader found a trade on the session only. The saver records both
+ * times of every module, the joiner writes them. Status pmod=on:written:equal:missing. */
+#define JOIN_PMOD_VTABLE 0x2acec88u
+#define JOIN_PMOD_NEXT 0x390u
+#define JOIN_PMOD_SINCE 0x3c0u
+static int join_pmod_on;
+static uint64_t join_pmod_written,join_pmod_equal,join_pmod_missing;
+static uintptr_t join_pmod_vt;   /* tests: a synthetic vtable (0: the image's U::ProcessingModule) */
+static int join_pmod_is(unsigned char *o) {
+    uintptr_t vt=0;
+    return o && join_read(o,&vt,8) && vt==(join_pmod_vt?join_pmod_vt:(uintptr_t)image+JOIN_PMOD_VTABLE);
+}
+static int join_pmod_cmp(const void *a,const void *b) {
+    uint64_t x=((const join_pmod_rec *)a)->portable,y=((const join_pmod_rec *)b)->portable;return x<y?-1:x>y;
+}
+static void join_capture_pmod(join_tables *t) {
+    uint32_t cap=0;
+    for(uint32_t i=0;i<t->nids;i++) {
+        unsigned char *o=t->ids[i].portable?join_object(t->ids[i].runtime):NULL;join_pmod_rec r;
+        if(!join_pmod_is(o)) continue;
+        memset(&r,0,sizeof(r));r.portable=t->ids[i].portable;
+        if(!join_read(o+JOIN_PMOD_NEXT,&r.next,8) || !join_read(o+JOIN_PMOD_SINCE,&r.since,8)) continue;
+        if(!JOIN_PUSH(t->pmod,t->npmod,cap,r)) return;
+    }
+    if(t->npmod>1) qsort(t->pmod,t->npmod,sizeof(*t->pmod),join_pmod_cmp);
+    uint32_t n=0;   /* each module once */
+    for(uint32_t i=0;i<t->npmod;i++) if(!n || t->pmod[n-1].portable!=t->pmod[i].portable) t->pmod[n++]=t->pmod[i];
+    t->npmod=n;
+}
+static void join_admit_pmod(const join_tables *s,const join_tables *mine) {
+    join_pmod_written=join_pmod_equal=join_pmod_missing=0;
+    if(!join_pmod_on) return;
+    for(uint32_t i=0;i<s->npmod;i++) {
+        const join_pmod_rec *r=&s->pmod[i];unsigned char *o=join_object(join_runtime_of(mine,r->portable));uint64_t have[2];
+        if(!join_pmod_is(o) || !join_read(o+JOIN_PMOD_NEXT,&have[0],8) || !join_read(o+JOIN_PMOD_SINCE,&have[1],8)) {++join_pmod_missing;continue;}
+        if(have[0]==r->next && have[1]==r->since) {++join_pmod_equal;continue;}
+        memcpy(o+JOIN_PMOD_NEXT,&r->next,8);memcpy(o+JOIN_PMOD_SINCE,&r->since,8);++join_pmod_written;
+    }
+}
+/* NEED (v13, section 89; native_gate_join_need on the joiner, a join default). A U::Container (stations, ships, build storages)
+ * keeps what it needs of each resource in two ware maps (+0x940, +0x948) made by 0x420aa0 (container, a horizon in seconds from
+ * the game's parameters, 1, 0) the first time something asks, and a byte +0x931 that says they are up to date; whatever changes
+ * the inputs clears the byte and leaves the maps. No save holds them: a loaded container has none. Container::Update 0x41a910
+ * (it brings a container up to the game time whenever something asks) first settles the build shortages (0x43ed20: a ware of
+ * the build's resources stays in the shortage list while the first map says it is wanted; without a map the list is emptied)
+ * and only then, the byte clear, makes the maps. So the first question after a load empties the shortage list and the next one
+ * fills it again with the time of that moment; the session's containers keep theirs. [hq73, 18 Nov: both clients' saves 67
+ * ticks after a join: five resupply ships and a station had lost their shortages on the joiner; hq79: the maps of 920 stations
+ * were unset on the joiner, read from both clients with the session held.] The shortages price the buy offers, and a trader's
+ * search differed about 5,500 ticks after the join.
+ * The saver records, per container that has the byte or a map, a head and each map's entries (a map: +0x20 capacity, 2 = the
+ * two entries inline at +0, else a pointer at +0; +0x28 count; an entry 16 bytes: ware = its address ^ q0, amount = (the low
+ * dword of q0 without bit 31) ^ dword +8; the ware's ID is the std::string at +0x10). The joiner, per record: where the session
+ * had the first map and it has none, the engine's own 0x420aa0 makes its maps; then, the same wares in both maps, the amounts
+ * and the byte take the session's (a session map left from before its inputs changed is that, not what the joiner computes).
+ * Other wares: counted apart, nothing written. A container is one whose vtable holds Container's 0x41a260 in slot 1103, which
+ * no class of the game overrides. Status need=on:containers:filled:equal:patched:apart:missing. */
+#define JOIN_NEED_FILL 0x420aa0u
+#define JOIN_NEED_VALID 0x931u
+#define JOIN_NEED_MAP 0x940u
+#define JOIN_NEED_MAP2 0x948u
+#define JOIN_NEED_SLOT 1103u
+#define JOIN_NEED_SLOT_FN 0x41a260u
+#define JOIN_NEED_MAX 4096u
+static int join_need_on;
+static uint64_t join_need_seen,join_need_filled,join_need_equal,join_need_patched,join_need_apart,join_need_missing;
+static uintptr_t join_need_vt;   /* tests: a synthetic vtable (0: the image's container classes) */
+typedef void (*join_need_fill_fn)(void *container);
+static void join_need_fill_native(void *container) {
+    unsigned char *parameters=NULL;double horizon=0.0;
+    if(!join_read(image+0x6cf1538,&parameters,8) || !parameters || !join_read(parameters+0x5160,&horizon,8)) return;
+    ((void (*)(void *,double,unsigned char,int))(void *)(image+JOIN_NEED_FILL))(container,horizon,1,0);
+}
+static join_need_fill_fn join_need_fill=join_need_fill_native;   /* tests replace it */
+static int join_need_is(const unsigned char *o,uint32_t *kind) {
+    uintptr_t vt=0,fn=0;*kind=0;
+    if(!o || !join_read(o,&vt,8)) return 0;
+    if(join_need_vt) {*kind=1;return vt==join_need_vt;}
+    vt=pslot_canonical_vtable(vt);
+    if(vt<(uintptr_t)image || vt>=(uintptr_t)(image+0x6fa9000)-8u*(JOIN_NEED_SLOT+1u)) return 0;
+    *kind=(uint32_t)(vt-(uintptr_t)image);
+    return join_read((void *)(vt+8u*JOIN_NEED_SLOT),&fn,8) && fn==(uintptr_t)(image+JOIN_NEED_SLOT_FN);
+}
+/* A ware by the FNV-1a hash of its ID (never 0); 0: unreadable. */
+static uint64_t join_need_ware(const unsigned char *ware) {
+    unsigned char s[0x20];uint64_t size,cap;unsigned char text[64];const void *at;
+    if(!ware || !join_read(ware+0x10,s,sizeof(s))) return 0;
+    memcpy(&size,s+0x10,8);memcpy(&cap,s+0x18,8);
+    if(!size || size>sizeof(text) || cap<size) return 0;
+    if(cap<16u) memcpy(text,s,(size_t)size); else {memcpy(&at,s,8);if(!join_read(at,text,(size_t)size)) return 0;}
+    uint64_t h=0xcbf29ce484222325ull;
+    for(uint64_t i=0;i<size;i++) h=(h^text[i])*0x100000001b3ull;
+    return h?h:1;
+}
+/* A ware map's entries: 1 with *base and *n (a NULL map: none), 0 unreadable or not a map. */
+static int join_need_entries(unsigned char *map,unsigned char **base,uint64_t *n) {
+    uint64_t cap=0;*base=NULL;*n=0;
+    if(!map) return 1;
+    if(!join_read(map+0x20,&cap,8) || !join_read(map+0x28,n,8) || cap<2u || *n>cap || *n>JOIN_NEED_MAX) return 0;
+    if(cap==2u) *base=map; else if(!join_read(map,base,8) || !*base) return 0;
+    return 1;
+}
+static int join_need_entry(unsigned char *at,uint64_t *ware,int32_t *amount) {
+    uint64_t q0;uint32_t d8;
+    if(!join_read(at,&q0,8) || !join_read(at+8,&d8,4)) return 0;
+    *ware=join_need_ware((const unsigned char *)((uintptr_t)at^(uintptr_t)q0));*amount=(int32_t)(((uint32_t)q0&0x7fffffffu)^d8);
+    return *ware!=0;
+}
+static int join_need_cmp(const void *a,const void *b) {
+    const join_need_rec *x=a,*y=b;
+    if(x->portable!=y->portable) return x->portable<y->portable?-1:1;
+    if(x->which!=y->which) return x->which<y->which?-1:1;
+    return x->ware<y->ware?-1:x->ware>y->ware;
+}
+static int join_need_state(unsigned char *o,unsigned char *valid,unsigned char *maps[2]) {
+    return join_read(o+JOIN_NEED_VALID,valid,1) && join_read(o+JOIN_NEED_MAP,&maps[0],8) && join_read(o+JOIN_NEED_MAP2,&maps[1],8);
+}
+static void join_capture_need(join_tables *t) {
+    uint32_t cap=0;
+    for(uint32_t i=0;i<t->nids;i++) {
+        unsigned char *o=t->ids[i].portable?join_object(t->ids[i].runtime):NULL,*maps[2]={NULL,NULL},valid=0;uint32_t kind;join_need_rec r;
+        if(!join_need_is(o,&kind) || !join_need_state(o,&valid,maps)) continue;
+        if(!valid && !maps[0] && !maps[1]) continue;   /* as a load leaves it */
+        uint32_t first=t->nneed;int ok=1;
+        memset(&r,0,sizeof(r));r.portable=t->ids[i].portable;r.ware=kind;r.flags=(uint8_t)((valid?1u:0u)|(maps[0]?2u:0u)|(maps[1]?4u:0u));
+        if(!JOIN_PUSH(t->need,t->nneed,cap,r)) return;
+        for(unsigned m=0;m<2u && ok;m++) {
+            unsigned char *base;uint64_t n;
+            if(!join_need_entries(maps[m],&base,&n)) {ok=0;break;}
+            for(uint64_t e=0;e<n;e++) {
+                memset(&r,0,sizeof(r));r.portable=t->ids[i].portable;r.which=(uint8_t)(m+1u);
+                if(!join_need_entry(base+16u*e,&r.ware,&r.amount)) {ok=0;break;}
+                if(!JOIN_PUSH(t->need,t->nneed,cap,r)) return;
+            }
+        }
+        if(!ok) t->nneed=first;   /* unreadable: no record, the joiner keeps what its load left */
+    }
+    if(t->nneed>1) qsort(t->need,t->nneed,sizeof(*t->need),join_need_cmp);
+    uint32_t n=0;   /* each head and each ware of a map once */
+    for(uint32_t i=0;i<t->nneed;i++) if(!n || join_need_cmp(&t->need[n-1],&t->need[i])) t->need[n++]=t->need[i];
+    t->nneed=n;
+}
+/* One of the joiner's maps against the session's entries [a,b) of it: -1 other wares (or unreadable), else how many amounts
+ * differ; write: those take the session's. */
+static int join_need_map(unsigned char *map,int had,const join_need_rec *a,const join_need_rec *b,int write) {
+    unsigned char *base;uint64_t n;int differ=0;
+    if(had!=(map!=NULL) || !join_need_entries(map,&base,&n) || n!=(uint64_t)(b-a)) return -1;
+    for(uint64_t e=0;e<n;e++) {
+        unsigned char *at=base+16u*e;uint64_t ware;int32_t amount;const join_need_rec *r=a;
+        if(!join_need_entry(at,&ware,&amount)) return -1;
+        while(r<b && r->ware!=ware) ++r;
+        if(r==b) return -1;
+        if(r->amount==amount) continue;
+        ++differ;
+        if(write) {uint32_t q0,d8;memcpy(&q0,at,4);d8=(q0&0x7fffffffu)^(uint32_t)r->amount;memcpy(at+8,&d8,4);}
+    }
+    return differ;
+}
+static void join_admit_need(const join_tables *s,const join_tables *mine) {
+    join_need_seen=join_need_filled=join_need_equal=join_need_patched=join_need_apart=join_need_missing=0;
+    if(!join_need_on) return;
+    for(uint32_t i=0;i<s->nneed;) {
+        const join_need_rec *h=&s->need[i],*part[3];uint32_t end=i+1,kind;
+        while(end<s->nneed && s->need[end].portable==h->portable) ++end;
+        part[0]=h+1;part[1]=part[0];
+        while(part[1]<&s->need[end] && part[1]->which==1u) ++part[1];
+        part[2]=&s->need[end];i=end;++join_need_seen;
+        unsigned char *o=join_object(join_runtime_of(mine,h->portable)),*maps[2]={NULL,NULL},valid=0;
+        if(h->which || !join_need_is(o,&kind) || kind!=(uint32_t)h->ware || !join_need_state(o,&valid,maps)) {++join_need_missing;continue;}
+        if((h->flags&2u) && !maps[0]) {   /* nothing asked since the load: the engine's own maps */
+            join_need_fill(o);++join_need_filled;
+            if(!join_need_state(o,&valid,maps)) {++join_need_missing;continue;}
+        }
+        int d0=join_need_map(maps[0],(h->flags&2u)!=0,part[0],part[1],0),d1=join_need_map(maps[1],(h->flags&4u)!=0,part[1],part[2],0);
+        if(d0<0 || d1<0) {++join_need_apart;continue;}
+        unsigned char want=(unsigned char)(h->flags&1u);
+        if(!d0 && !d1 && (valid!=0)==(want!=0)) {++join_need_equal;continue;}
+        join_need_map(maps[0],(h->flags&2u)!=0,part[0],part[1],1);join_need_map(maps[1],(h->flags&4u)!=0,part[1],part[2],1);
+        if((valid!=0)!=(want!=0)) memcpy(o+JOIN_NEED_VALID,&want,1);
+        ++join_need_patched;
+    }
+}
+/* ACCT (v13, section 90; native_gate_join_acct on the joiner, a join default). A U::Container trades on an account: a handle
+ * at +0x700 (the accounts' table at image+0x6cf1760, resolved by 0x3178a0) and a byte +0x708 that says the account is its own.
+ * A ship or a build storage the game makes while it runs takes its faction's account; a loaded one that is not the owner of
+ * its account has the default handle 1, whatever it had when the save was written. [hq82, 18 Nov, read from both clients at
+ * tick 9,000: 721 ships and build storages on their faction's account on the session, 173 on the joiner, the ones made after
+ * its load; each faction's handle the same on both.] The trade code (0x40d370, pinned at 0x40d406) makes a deal's money
+ * virtual when both sides' accounts are one: a miner made during the session that sells to a station of the save is paid on
+ * the session and not on the joiner, the station's reference price counts the paid deal alone, and from there budgets and
+ * trade searches differ. [hq80: both clients' saves 88 ticks after a join: two stations' counts one apart; at tick 10200
+ * thirteen trade orders with the virtual money flags on the joiner only.]
+ * The saver records the handle of every container that is not on the default and does not own its account; the joiner's
+ * container takes it where the handle names an account of its own table (same test as 0x3178a0). Status
+ * acct=on:written:equal:missing:unknown. */
+#define JOIN_ACCT_HANDLE 0x700u
+#define JOIN_ACCT_OWNED 0x708u
+#define JOIN_ACCT_TABLE 0x6cf1760u
+#define JOIN_ACCT_RESOLVE 0x3178a0u
+static int join_acct_on;
+static uint64_t join_acct_written,join_acct_equal,join_acct_missing,join_acct_unknown;
+/* Does the handle name an account of this client's table? (0x3178a0: index = the low 18 bits - 1, eight blocks of 0x8000,
+ * groups of three in 0x20 bytes: three pointers, the generations of the first two at +0x18, the third's and the used bits
+ * (16 + 4 * entry) at +0x1c; the handle's bits 18..30 are the generation.) */
+static int join_acct_known_native(uint64_t handle) {
+    unsigned char *table=NULL,*block=NULL,*entry=NULL;uint32_t index=(uint32_t)handle&0x3ffffu,used=0,gens=0;
+    if(!index || !join_read(image+JOIN_ACCT_TABLE,&table,8) || !table) return 0;
+    --index;
+    if((index>>15)>=8u || !join_read(table+0x58u+8u*(index>>15),&block,8) || !block) return 0;
+    index&=0x7fffu;
+    unsigned char *group=block+0x20u*(index/3u);unsigned e=index%3u;
+    if(!join_read(group+8u*e,&entry,8) || !join_read(group+0x1cu,&used,4) || !join_read(group+0x18u+4u*(e>>1),&gens,4)) return 0;
+    if(!entry || !((used>>(4u*e+0x10u))&1u)) return 0;
+    return (uint16_t)(gens>>((e&1u)<<4))==(uint16_t)((handle>>18)&0x1fffu);
+}
+static int (*join_acct_known)(uint64_t)=join_acct_known_native;   /* tests replace it */
+static int join_acct_cmp(const void *a,const void *b) {
+    uint64_t x=((const join_acct_rec *)a)->portable,y=((const join_acct_rec *)b)->portable;return x<y?-1:x>y;
+}
+static void join_capture_acct(join_tables *t) {
+    uint32_t cap=0;
+    for(uint32_t i=0;i<t->nids;i++) {
+        unsigned char *o=t->ids[i].portable?join_object(t->ids[i].runtime):NULL,owned=0;uint32_t kind;join_acct_rec r;
+        if(!join_need_is(o,&kind)) continue;
+        memset(&r,0,sizeof(r));r.portable=t->ids[i].portable;
+        if(!join_read(o+JOIN_ACCT_HANDLE,&r.account,8) || !join_read(o+JOIN_ACCT_OWNED,&owned,1) || owned || r.account<2u) continue;
+        if(!JOIN_PUSH(t->acct,t->nacct,cap,r)) return;
+    }
+    if(t->nacct>1) qsort(t->acct,t->nacct,sizeof(*t->acct),join_acct_cmp);
+    uint32_t n=0;   /* each container once */
+    for(uint32_t i=0;i<t->nacct;i++) if(!n || t->acct[n-1].portable!=t->acct[i].portable) t->acct[n++]=t->acct[i];
+    t->nacct=n;
+}
+static void join_admit_acct(const join_tables *s,const join_tables *mine) {
+    join_acct_written=join_acct_equal=join_acct_missing=join_acct_unknown=0;
+    if(!join_acct_on) return;
+    for(uint32_t i=0;i<s->nacct;i++) {
+        const join_acct_rec *r=&s->acct[i];unsigned char *o=join_object(join_runtime_of(mine,r->portable)),owned=0;uint32_t kind;uint64_t have=0;
+        if(!join_need_is(o,&kind) || !join_read(o+JOIN_ACCT_HANDLE,&have,8) || !join_read(o+JOIN_ACCT_OWNED,&owned,1) || owned) {++join_acct_missing;continue;}
+        if(have==r->account) {++join_acct_equal;continue;}
+        if(!join_acct_known(r->account)) {++join_acct_unknown;continue;}
+        memcpy(o+JOIN_ACCT_HANDLE,&r->account,8);++join_acct_written;
+    }
+}
+/* KIDS (v13, section 91; native_gate_join_kids on the joiner, a join default). An object keeps its children by class: a table
+ * at +0xa8 (+8 begin, +0x10 end of 0x20-byte buckets, a bucket = {begin, end, capacity, count} of child pointers), in the order
+ * they were attached. A ship the game builds while it runs attaches its parts in the build's order; the same ship loaded from
+ * a save attaches them in the save's order. [hq86, 18 Nov, read from both clients with the session held: ship FMM-239's
+ * weapons were laser, laser, torpedo launcher, laser, laser on the session and laser x4, torpedo launcher on the joiner; 781
+ * of 33,296 buckets with two or more children were in another order, all on ships, in the buckets 0 and 5.] Stock scripts
+ * read the order: fight.attack.object.fighter's init walks weapons.operational.list and keeps `$firestorpedo` only when the
+ * LAST weapon is a torpedo launcher, and from that whether the ship fires missiles. On the session FMM-239 fired a torpedo at
+ * tick 11782 and its target answered with a flare; on the joiner neither: two draws apart there, the census of 12000 after.
+ * The saver records the order of every bucket of two or more children where the parent or one of the children is the
+ * session's (a portable ID with bit 63). The joiner, the same children in its bucket, writes the session's order there and to
+ * the same children in the object's two lists of all children (+0xf0, +0x170: {begin, end}). Other children: counted apart,
+ * nothing written. Status kids=on:written:equal:apart:missing (buckets). */
+#define JOIN_KIDS_TABLE 0xa8u
+#define JOIN_KIDS_LIST_A 0xf0u
+#define JOIN_KIDS_LIST_B 0x170u
+#define JOIN_KIDS_MAX 64u
+#define JOIN_KIDS_BUCKETS 128u
+#define JOIN_KIDS_LIST_MAX 2048u
+static int join_kids_on;
+static uint64_t join_kids_written,join_kids_equal,join_kids_apart,join_kids_missing;
+/* An object's buckets: their number and *begin; 0 none or unreadable. */
+static uint32_t join_kids_buckets(unsigned char *o,unsigned char **begin) {
+    unsigned char *table=NULL,*end=NULL;*begin=NULL;
+    if(!o || !join_read(o+JOIN_KIDS_TABLE,&table,8) || !table || !join_read(table+8,begin,8) || !join_read(table+0x10,&end,8)) return 0;
+    if(!*begin || end<*begin || (size_t)(end-*begin)%0x20u || (size_t)(end-*begin)/0x20u>JOIN_KIDS_BUCKETS) return 0;
+    return (uint32_t)((size_t)(end-*begin)/0x20u);
+}
+/* One bucket's child pointers: 1 with *at and *n (up to JOIN_KIDS_MAX), 0 none or unreadable. */
+static int join_kids_at(unsigned char *buckets,uint32_t bucket,unsigned char **at,uint32_t *n) {
+    unsigned char *b=NULL,*e=NULL;*at=NULL;*n=0;
+    if(!join_read(buckets+0x20u*bucket,&b,8) || !join_read(buckets+0x20u*bucket+8u,&e,8) || !b || e<b || (size_t)(e-b)%8u || (size_t)(e-b)/8u>JOIN_KIDS_MAX) return 0;
+    *at=b;*n=(uint32_t)((size_t)(e-b)/8u);
+    return 1;
+}
+static int join_kids_cmp(const void *a,const void *b) {
+    const join_kids_rec *x=a,*y=b;
+    if(x->parent!=y->parent) return x->parent<y->parent?-1:1;
+    if(x->bucket!=y->bucket) return x->bucket<y->bucket?-1:1;
+    return x->index<y->index?-1:x->index>y->index;
+}
+static void join_capture_kids(join_tables *t) {
+    uint32_t cap=0;
+    for(uint32_t i=0;i<t->nids;i++) {
+        unsigned char *o=t->ids[i].portable?join_object(t->ids[i].runtime):NULL,*buckets;uint32_t nb=join_kids_buckets(o,&buckets);
+        for(uint32_t k=0;k<nb;k++) {
+            unsigned char *at,*kid[JOIN_KIDS_MAX];uint64_t key[JOIN_KIDS_MAX];uint32_t n;int ours=(int)(t->ids[i].portable>>63),ok=1;
+            if(!join_kids_at(buckets,k,&at,&n) || n<2u || !join_read(at,kid,8u*n)) continue;
+            for(uint32_t e=0;e<n && ok;e++) {
+                uint64_t rt=0;unsigned klass;
+                ok=kid[e] && join_read(kid[e]+8,&rt,8) && rt && (key[e]=join_key(rt,&klass))!=0;
+                for(uint32_t d=0;ok && d<e;d++) if(key[d]==key[e]) ok=0;
+                if(ok) ours|=(int)(key[e]>>63);
+            }
+            if(!ok || !ours) continue;   /* a child without a key: no record; a bucket of the save alone: a load gives the same order */
+            for(uint32_t e=0;e<n;e++) {
+                join_kids_rec r;memset(&r,0,sizeof(r));r.parent=t->ids[i].portable;r.child=key[e];r.bucket=k;r.index=e;
+                if(!JOIN_PUSH(t->kids,t->nkids,cap,r)) return;
+            }
+        }
+    }
+    if(t->nkids>1) qsort(t->kids,t->nkids,sizeof(*t->kids),join_kids_cmp);
+    uint32_t n=0;   /* each place once */
+    for(uint32_t i=0;i<t->nkids;i++) if(!n || join_kids_cmp(&t->kids[n-1],&t->kids[i])) t->kids[n++]=t->kids[i];
+    t->nkids=n;
+}
+/* The session's order to the bucket's children in one of the object's lists of all children. */
+static void join_kids_list(unsigned char *vector,unsigned char **have,unsigned char **want,uint32_t m) {
+    unsigned char *b=NULL,*e=NULL;uint32_t pos[JOIN_KIDS_MAX],k=0;
+    if(!join_read(vector,&b,8) || !join_read(vector+8,&e,8) || !b || e<=b || (size_t)(e-b)%8u || (size_t)(e-b)/8u>JOIN_KIDS_LIST_MAX) return;
+    uint32_t n=(uint32_t)((size_t)(e-b)/8u);
+    for(uint32_t i=0;i<n;i++) {
+        unsigned char *p=NULL;
+        if(!join_read(b+8u*i,&p,8)) return;
+        for(uint32_t d=0;d<m;d++) if(p==have[d]) {if(k>=m) return;pos[k++]=i;break;}
+    }
+    if(k!=m) return;   /* not this list, or not all of them in it: left */
+    for(uint32_t j=0;j<m;j++) memcpy(b+8u*pos[j],&want[j],8);
+}
+static void join_admit_kids(const join_tables *s,const join_tables *mine) {
+    join_kids_written=join_kids_equal=join_kids_apart=join_kids_missing=0;
+    if(!join_kids_on) return;
+    for(uint32_t i=0;i<s->nkids;) {
+        const join_kids_rec *g=&s->kids[i];uint32_t m=1,n=0;
+        while(i+m<s->nkids && s->kids[i+m].parent==g->parent && s->kids[i+m].bucket==g->bucket) ++m;
+        i+=m;
+        unsigned char *o=join_object(join_runtime_of(mine,g->parent)),*buckets,*at,*have[JOIN_KIDS_MAX],*want[JOIN_KIDS_MAX];
+        if(m>JOIN_KIDS_MAX || g->bucket>=join_kids_buckets(o,&buckets) || !join_kids_at(buckets,g->bucket,&at,&n) || n!=m || !join_read(at,have,8u*n)) {++join_kids_missing;continue;}
+        int ok=1;
+        for(uint32_t e=0;e<m && ok;e++) {
+            int found=0;
+            want[e]=join_object(join_runtime_of(mine,g[e].child));
+            for(uint32_t d=0;want[e] && d<m;d++) if(have[d]==want[e]) found=1;
+            for(uint32_t d=0;d<e;d++) if(want[d]==want[e]) found=0;
+            ok=found;
+        }
+        if(!ok) {++join_kids_apart;continue;}
+        if(!memcmp(have,want,8u*m)) {++join_kids_equal;continue;}
+        memcpy(at,want,8u*m);
+        join_kids_list(o+JOIN_KIDS_LIST_A,have,want,m);join_kids_list(o+JOIN_KIDS_LIST_B,have,want,m);
+        ++join_kids_written;
+    }
+}
+/* DOOR (v13, section 92; native_gate_join_door on the joiner, a join default). A U::Container sets its dock doors up once
+ * (0x417350: a map at +0x9d0 of its doors, then the byte +0x9c9 = 1) and takes them down again (the byte 0) as a state of the
+ * container changes (vtable slot 143, 0x3f5cd0, the test at 0x3f5cf6); the doors' opening (0x42dce0: the map's close time,
+ * saved as <dockdoors closetime>) asks the byte first. The byte is not saved, and Container's load calls the set-up for
+ * every container. A ship the game builds while it runs out of that state has the byte 0 on the session and 1 on a joiner:
+ * its doors open at a trade on the joiner alone. [hq93, 18 Nov: the one object whose census differed at tick 12000 was the
+ * storage module of a medium ship the session made; hq94: both clients' saves of tick 12240 held a dock door close time on
+ * seven small and medium ships, on the joiner only.]
+ * And the map: an entry stands for a door that is open or closing and goes when the door is shut, so a session's map is
+ * mostly empty, while the set-up of a load puts an entry in for the container's own doors. [hq97, read from both clients with
+ * the session held: the seven ships' byte 1 on both, the map empty on the session and one entry, keyed by the ship itself,
+ * on the joiner.]
+ * The saver records every container whose byte is 0 (flags 1) or whose map is empty (flags 2: no first used entry, map +8).
+ * The joiner takes its map down where the session's is empty, and with the byte where that is 0, as the engine does (the code
+ * inlined at 0x3f5d24..0x3f5e52, pinned): the map's entries are 0x70 bytes in blocks {count, next, entries}; an entry: +0
+ * used, +0x10 the free chain, +0x28 a small vector's data with its capacity at +0x48 (4 = inline). The first block's entries
+ * go back on the free chain, their vectors and the further blocks are freed (0x174f74c: pointer, bytes rounded up to 0x40,
+ * alignment 0x40), the map's count is 0, and the byte is 0. [hq95: the byte alone was not enough; other door code finds the
+ * set-up's entries and the close times came back.] Status door=on:written:equal:missing (missing: no container, or a map
+ * that does not read as one: left). */
+#define JOIN_DOOR_READY 0x9c9u
+#define JOIN_DOOR_MAP 0x9d0u
+#define JOIN_DOOR_FREE 0x174f74cu
+#define JOIN_DOOR_ENTRY 0x70u
+#define JOIN_DOOR_MAX 4096u
+static int join_door_on;
+static uint64_t join_door_written,join_door_equal,join_door_missing;
+static void join_door_free_native(void *p,size_t bytes) {((void (*)(void *,size_t,unsigned))(void *)(image+JOIN_DOOR_FREE))(p,bytes,0x40u);}
+static void (*join_door_free)(void *,size_t)=join_door_free_native;   /* tests replace it */
+/* One block's entries: readable and sane? */
+static int join_door_block_ok(unsigned char *block,uint64_t *n,unsigned char **next) {
+    if(!block || !join_read(block,n,8) || *n>JOIN_DOOR_MAX || !join_read(block+8,next,8)) return 0;
+    for(uint64_t i=0;i<*n;i++) {
+        unsigned char *e=block+0x10u+JOIN_DOOR_ENTRY*i,*data;uint64_t used,cap;
+        if(!join_read(e,&used,8) || !join_read(e+0x28,&data,8) || !join_read(e+0x48,&cap,8) || (used && (cap<4u || cap>JOIN_DOOR_MAX || (cap!=4u && !data)))) return 0;
+    }
+    return 1;
+}
+static void join_door_block_vectors(unsigned char *block,uint64_t n) {
+    for(uint64_t i=0;i<n;i++) {
+        unsigned char *e=block+0x10u+JOIN_DOOR_ENTRY*i,*data;uint64_t used,cap;
+        memcpy(&used,e,8);memcpy(&data,e+0x28,8);memcpy(&cap,e+0x48,8);
+        if(used && cap!=4u) join_door_free(data,(size_t)((cap*8u+0x3fu)&~(uint64_t)0x3fu));
+    }
+}
+/* The doors' map taken down: 1 done (or empty already), 0 it does not read as the map (nothing written). */
+static int join_door_clear(unsigned char *m) {
+    uint64_t count=0,n=0,zero=0;unsigned char *first=NULL,*next=NULL,*null=NULL;
+    if(!join_read(m+8,&count,8)) return 0;
+    if(!count) return 1;
+    if(!join_read(m+0x38,&first,8) || !join_door_block_ok(first,&n,&next) || !n) return 0;
+    {unsigned blocks=0;uint64_t k;unsigned char *b=next,*after;   /* every further block read before anything is written */
+     while(b) {if(++blocks>64u || !join_door_block_ok(b,&k,&after)) return 0;b=after;}}
+    join_door_block_vectors(first,n);
+    for(uint64_t i=0;i<n;i++) {
+        unsigned char *e=first+0x10u+JOIN_DOOR_ENTRY*i,*link=i+1u<n?e+JOIN_DOOR_ENTRY:NULL;
+        memcpy(e,&zero,8);memcpy(e+8,&zero,8);memcpy(e+0x10,&link,8);
+    }
+    memcpy(first+8,&null,8);
+    while(next) {
+        uint64_t k;unsigned char *after;
+        memcpy(&k,next,8);memcpy(&after,next+8,8);
+        join_door_block_vectors(next,k);
+        join_door_free(next,(size_t)((k*JOIN_DOOR_ENTRY+0x4fu)&~(uint64_t)0x3fu));
+        next=after;
+    }
+    {unsigned char *head=first+0x10u;memcpy(m+8,&zero,8);memcpy(m+0x30,&n,8);memcpy(m+0x10,&head,8);memcpy(m+0x20,&m,8);memcpy(m+0x28,&zero,8);}
+    return 1;
+}
+static int join_door_cmp(const void *a,const void *b) {
+    uint64_t x=((const join_door_rec *)a)->portable,y=((const join_door_rec *)b)->portable;return x<y?-1:x>y;
+}
+static void join_capture_door(join_tables *t) {
+    uint32_t cap=0;
+    for(uint32_t i=0;i<t->nids;i++) {
+        unsigned char *o=t->ids[i].portable?join_object(t->ids[i].runtime):NULL,ready=1;uint32_t kind;uint64_t used=1;join_door_rec r;
+        if(!join_need_is(o,&kind) || !join_read(o+JOIN_DOOR_READY,&ready,1) || !join_read(o+JOIN_DOOR_MAP+8u,&used,8)) continue;
+        r.portable=t->ids[i].portable;r.flags=(ready?0u:1u)|(used?0u:2u);
+        if(!r.flags) continue;
+        if(!JOIN_PUSH(t->door,t->ndoor,cap,r)) return;
+    }
+    if(t->ndoor>1) qsort(t->door,t->ndoor,sizeof(*t->door),join_door_cmp);
+    uint32_t n=0;   /* each container once */
+    for(uint32_t i=0;i<t->ndoor;i++) if(!n || t->door[n-1].portable!=t->door[i].portable) t->door[n++]=t->door[i];
+    t->ndoor=n;
+}
+static void join_admit_door(const join_tables *s,const join_tables *mine) {
+    join_door_written=join_door_equal=join_door_missing=0;
+    if(!join_door_on) return;
+    for(uint32_t i=0;i<s->ndoor;i++) {
+        unsigned char *o=join_object(join_runtime_of(mine,s->door[i].portable)),ready=0,zero=0;uint32_t kind;uint64_t used=0;
+        int down=(int)(s->door[i].flags&1u),empty=(int)(s->door[i].flags&3u)!=0;   /* doors that are down have no map either */
+        if(!join_need_is(o,&kind) || !join_read(o+JOIN_DOOR_READY,&ready,1) || !join_read(o+JOIN_DOOR_MAP+8u,&used,8)) {++join_door_missing;continue;}
+        if(!(down && ready) && !(empty && used)) {++join_door_equal;continue;}
+        if(!join_door_clear(o+JOIN_DOOR_MAP)) {++join_door_missing;continue;}
+        if(down && ready) memcpy(o+JOIN_DOOR_READY,&zero,1);
+        ++join_door_written;
+    }
+}
+/* BCLK (v13, section 98; native_gate_join_bclk on the joiner, a join default). The gate's body clock (lockstep_move_rng.h,
+ * native_gate_body_clock, a session default) answers BodyClass::Move's questions about a person's running animation from a note
+ * it made when the animation was played: (the person's portable ID, the motion) -> the play's game time and the animation's
+ * whole time, in a table of the gate's own (bclk_entries). The joiner's load plays every person's current animation anew, and
+ * its table is empty, so those animations end by X4's own control: at the joiner's load time plus their length. [hq111/hq163/
+ * hq164, 20 Nov, join at 6046: two seated pilots (sit_pilot, the save keeps only the animation's name) played their next
+ * animation at 6111 and 6176 on the session, both at 6178 on the joiner, and from then on 2 to 70 ticks apart; NPCA (the
+ * NPC's idle stamps) did not change it.] The keys are the same in every process (a portable ID; a motion's key from its
+ * asset index), the slot follows from them and the table's own order, so the saver records every note the table holds with
+ * its slot, and the joiner's admission replaces its table with them: an animation running at T ends at the session's tick,
+ * and the next play (its pick and start offset keyed by the tick and the person) is the session's. Status
+ * bclk=on:written:own (own: notes the joiner held before, dropped) bclk_cap=notes. */
+static int join_bclk_on;
+static uint64_t join_bclk_written,join_bclk_own;
+static void join_capture_bclk(join_tables *t) {
+    uint32_t cap=0;
+    for(uint32_t i=0;i<BCLK_ENTRIES;i++) {
+        const bclk_entry_t *e=&bclk_entries[i];join_bclk_rec r;
+        if(!e->used || !e->id) continue;
+        memset(&r,0,sizeof(r));r.id=e->id;r.over_tick=e->over_tick;r.motion=e->motion;r.slot=i;
+        memcpy(&r.start,&e->start,8);memcpy(&r.whole,&e->whole,8);
+        if(!JOIN_PUSH(t->bclk,t->nbclk,cap,r)) return;
+    }
+}
+static void join_admit_bclk(const join_tables *s) {
+    join_bclk_written=join_bclk_own=0;
+    if(!join_bclk_on) return;
+    for(uint32_t i=0;i<BCLK_ENTRIES;i++) if(bclk_entries[i].used) ++join_bclk_own;
+    memset(bclk_entries,0,sizeof(bclk_entries));
+    for(uint32_t i=0;i<s->nbclk;i++) {   /* slots below BCLK_ENTRIES, each once: the package's shape check */
+        const join_bclk_rec *r=&s->bclk[i];bclk_entry_t *e=&bclk_entries[r->slot];
+        e->id=r->id;e->over_tick=r->over_tick;e->motion=r->motion;e->used=1;memcpy(&e->start,&r->start,8);memcpy(&e->whole,&r->whole,8);
+        ++join_bclk_written;
+    }
+}
+/* DEFR (v13, section 97; native_gate_join_defr on the joiner, a join default). Work off the main thread posts its events with
+ * U::EventSource::PostEventDeferred 0x99a720 (listener, event, time): {3, the listener's runtime ID, event, time} goes onto the
+ * pending list image+0x39943a8 (a std::list: the head node at +0, the count at +8; a node's next +0, type +0x10, ID +0x18,
+ * event +0x20, time +0x28), and the drain 0x99abe0 of the next frame moves each event into its listener's own time-ordered
+ * queue. The mass-traffic pass of a frame ends at the boundary, so what its workers posted is still on the list when the join
+ * captures at T: the save keeps none of it and EVQT reads the queues only. When a transport drone's flight ends
+ * (TransportTrafficQuota@MT slot 18, 0x89ea70) it posts a TradeCargoArrivedEvent (0x38 bytes: +0x18 the trade's ID, +0x20 the
+ * amount (32 bits), +0x28 a time) to both ends of the trade and a ReturnUnitEvent (0x20 bytes: +0x18 the unit's word, the same
+ * in every process) to each end that gets a drone back. [hq152, 20 Nov: the join at 6058 caught six flights of miner DIH-881's
+ * ice sale to station DPR-229 landing in that frame's pass: 20 posts, 12 TradeCargoArrived of 500 x5 + 209 = 2709 to each end,
+ * the trade's whole rest; the session completed the trade at 6059 and its pilot undocked at 6224, the joiner's flights were
+ * gone, its script began the transfer anew and the ship stayed (runtime IDs apart at 6225). The list was empty at every other
+ * boundary of 6050..6062.] A load gives each trade a new ID (0x6341 on the session was 0x4f2d on the joiner); a trade (vtable
+ * 0x2b97240, in the registry image+0x6cf1750 that 0x33d420 reads) names its seller +0x10, buyer +0x18 and partner +0x20 by
+ * runtime ID (its amounts are kept encoded with its address). The saver records the posts of those two classes in list order,
+ * the listener by portable ID and a trade by its three parties; the joiner finds its one trade of those parties (none or two:
+ * the record is left) and posts each event through the same call at the admission, so its next frame's drain moves the same
+ * events. Other posts are counted, the first other class kept for the status. Status
+ * defr=on:posted:unmatched:missing:alloc defr_cap=records:other:unkeyed:class. */
+#define JOIN_DEFR_LIST 0x39943a8u
+#define JOIN_DEFR_POST 0x99a720u
+#define JOIN_DEFR_REGISTRY 0x6cf1750u
+#define JOIN_DEFR_TRADE_VT 0x2b97240u
+#define JOIN_DEFR_MAX 4096u
+#define JOIN_DEFR_TRADES_MAX 262144u
+static void *(*join_flight_alloc)(size_t);   /* below (FLIGHT) */
+static int join_defr_on;
+static uint64_t join_defr_posted,join_defr_unmatched,join_defr_missing,join_defr_alloc;
+static uint32_t join_defr_cap_other,join_defr_cap_unkeyed,join_defr_cap_class;
+static unsigned char *join_defr_list_test,*join_defr_registry_test;   /* tests: a synthetic list header and registry */
+static uintptr_t join_defr_vt_test[3];                               /* tests: synthetic arrival, return and trade vtables */
+static uintptr_t join_defr_vt(unsigned k) {
+    static const uint32_t rva[3]={JOIN_DEFR_ARRIVED,JOIN_DEFR_RETURN,JOIN_DEFR_TRADE_VT};
+    return join_defr_vt_test[k]?join_defr_vt_test[k]:(uintptr_t)image+rva[k];
+}
+static void join_defr_post_native(void *listener,void *event,double time) {
+    ((void (*)(void *,void *,double))(void *)(image+JOIN_DEFR_POST))(listener,event,time);
+}
+static void (*join_defr_post)(void *,void *,double)=join_defr_post_native;   /* tests replace it */
+static unsigned char *join_defr_registry(void) {
+    unsigned char *m=NULL;
+    if(join_defr_registry_test) return join_defr_registry_test;
+    return join_read(image+JOIN_DEFR_REGISTRY,&m,8)?m:NULL;
+}
+/* A registry slot's object (0x33d420): banks of 0x8000 slots at registry +0x58 (at most 8), three slots in a 32-byte group, a
+ * slot's object at group + 8 * part, its occupied flag 16 + 4 * part in the group's +0x1c. */
+static unsigned char *join_defr_slot(unsigned char *bank,uint32_t slot) {
+    unsigned char *g=bank+(size_t)(slot/3u)*32u,*o=NULL;const unsigned part=slot%3u;uint32_t flags=0;
+    return join_read(g+0x1c,&flags,4) && (flags>>(16u+part*4u)&1u) && join_read(g+part*8u,&o,8)?o:NULL;
+}
+/* A trade by its ID (the low 18 bits: the slot + 1) and its three parties: NULL unless the slot holds a trade of that ID. */
+static unsigned char *join_defr_trade(uint64_t id,uint64_t parties[3]) {
+    const uint64_t low=id&0x3ffffu;unsigned char *reg=join_defr_registry(),*bank=NULL,*o;uintptr_t vt=0;uint64_t own=0;
+    if(!low || !reg || ((low-1u)>>15)>=8u || !join_read(reg+0x58+((low-1u)>>15)*8u,&bank,8) || !bank ||
+       !(o=join_defr_slot(bank,(uint32_t)((low-1u)&0x7fffu))) || !join_read(o,&vt,8) || vt!=join_defr_vt(2) ||
+       !join_read(o+8,&own,8) || own!=id || !join_read(o+0x10,parties,24)) return NULL;
+    return o;
+}
+/* The joiner's trades (ID and parties), from every bank of the registry. */
+typedef struct {uint64_t id,parties[3];} join_defr_trade_rec;
+static join_defr_trade_rec *join_defr_trades;static uint32_t join_defr_ntrades,join_defr_trades_cap;
+static void join_defr_trades_build(void) {
+    unsigned char *reg=join_defr_registry();join_defr_ntrades=0;
+    for(unsigned b=0;reg && b<8u;b++) {
+        unsigned char *bank=NULL;
+        if(!join_read(reg+0x58+b*8u,&bank,8) || !bank) continue;
+        for(uint32_t slot=0;slot<0x8000u;slot++) {
+            unsigned char *o=join_defr_slot(bank,slot);uintptr_t vt=0;join_defr_trade_rec r;
+            if(!o || !join_read(o,&vt,8) || vt!=join_defr_vt(2) || !join_read(o+8,&r.id,8) || !join_read(o+0x10,r.parties,24)) continue;
+            if(join_defr_ntrades>=JOIN_DEFR_TRADES_MAX || !JOIN_PUSH(join_defr_trades,join_defr_ntrades,join_defr_trades_cap,r)) return;
+        }
+    }
+}
+static void join_capture_defr(join_tables *t) {
+    unsigned char *list=join_defr_list_test?join_defr_list_test:image+JOIN_DEFR_LIST,*head=NULL,*node=NULL;uint64_t count=0;uint32_t cap=0;
+    join_defr_cap_other=join_defr_cap_unkeyed=join_defr_cap_class=0;
+    if(!join_read(list,&head,8) || !head || !join_read(list+8,&count,8) || !count || !join_read(head,&node,8)) return;
+    for(uint32_t i=0;i<count && i<JOIN_DEFR_MAX && node && node!=head;i++) {
+        uint32_t type=0;uint64_t id=0,time=0;unsigned char *ev=NULL;uintptr_t vt=0;unsigned klass;join_defr_rec r;memset(&r,0,sizeof(r));
+        if(!join_read(node+0x10,&type,4) || !join_read(node+0x18,&id,8) || !join_read(node+0x20,&ev,8) || !join_read(node+0x28,&time,8)) break;
+        if(type!=3u || !ev || !join_read(ev,&vt,8)) ++join_defr_cap_other;
+        else if(vt!=join_defr_vt(0) && vt!=join_defr_vt(1)) {
+            ++join_defr_cap_other;
+            if(!join_defr_cap_class) join_defr_cap_class=vt>=(uintptr_t)image && vt-(uintptr_t)image<JOIN_FLIGHT_IMAGE?(uint32_t)(vt-(uintptr_t)image):1u;
+        } else {
+            int keyed=(r.portable=id?join_key(id,&klass):0)!=0;r.index=i;r.time=time;
+            if(vt==join_defr_vt(0)) {
+                uint64_t trade=0,parties[3];r.cls=JOIN_DEFR_ARRIVED;r.flags=JOIN_DEFR_TRADE;
+                if(!join_read(ev+0x18,&trade,8) || !join_read(ev+0x20,&r.amount,4) || !join_read(ev+0x28,&r.stamp,8) || !join_defr_trade(trade,parties)) keyed=0;
+                else {
+                    uint64_t *to[3]={&r.seller,&r.buyer,&r.partner};
+                    for(unsigned k=0;k<3u;k++) if(parties[k] && !(*to[k]=join_key(parties[k],&klass))) keyed=0;
+                    if(!r.seller && !r.buyer) keyed=0;
+                }
+            } else {r.cls=JOIN_DEFR_RETURN;r.flags=JOIN_DEFR_UNIT;if(!join_read(ev+0x18,&r.word,8)) keyed=0;}
+            if(!keyed) ++join_defr_cap_unkeyed;
+            else if(t->ndefr>=JOIN_DEFR_MAX || !JOIN_PUSH(t->defr,t->ndefr,cap,r)) return;
+        }
+        if(!join_read(node,&node,8)) break;
+    }
+}
+static void join_admit_defr(const join_tables *s,const join_tables *mine) {
+    join_defr_posted=join_defr_unmatched=join_defr_missing=join_defr_alloc=0;
+    if(!join_defr_on || !s->ndefr) return;
+    int built=0;
+    for(uint32_t i=0;i<s->ndefr;i++) {
+        const join_defr_rec *r=&s->defr[i];unsigned char *o=join_object(join_runtime_of(mine,r->portable));uint64_t id=0;
+        if(!o) {++join_defr_missing;continue;}
+        if(r->flags&JOIN_DEFR_TRADE) {
+            const uint64_t keys[3]={r->seller,r->buyer,r->partner};uint64_t want[3];int mapped=1;unsigned n=0;
+            for(unsigned k=0;k<3u;k++) if(!(want[k]=keys[k]?join_runtime_of(mine,keys[k]):0) && keys[k]) mapped=0;
+            if(!mapped) {++join_defr_missing;continue;}
+            if(!built) {join_defr_trades_build();built=1;}
+            for(uint32_t k=0;k<join_defr_ntrades;k++) if(!memcmp(join_defr_trades[k].parties,want,sizeof(want))) {id=join_defr_trades[k].id;++n;}
+            if(n!=1u) {++join_defr_unmatched;continue;}
+        }
+        const size_t size=r->flags&JOIN_DEFR_TRADE?0x38u:0x20u;
+        unsigned char *ev=join_flight_alloc(size);
+        if(!ev) {++join_defr_alloc;continue;}
+        const uintptr_t vt=join_defr_vt(r->flags&JOIN_DEFR_TRADE?0u:1u);memset(ev,0,size);memcpy(ev,&vt,8);
+        if(r->flags&JOIN_DEFR_TRADE) {memcpy(ev+0x18,&id,8);memcpy(ev+0x20,&r->amount,4);memcpy(ev+0x28,&r->stamp,8);}
+        else memcpy(ev+0x18,&r->word,8);
+        double time;memcpy(&time,&r->time,8);
+        join_defr_post(o,ev,time);++join_defr_posted;
+    }
+    free(join_defr_trades);join_defr_trades=NULL;join_defr_ntrades=join_defr_trades_cap=0;
+}
+/* DKEY (v13, section 96; with native_gate_join_door). The doors' map at +0x9d0 is a tree keyed by a door's component (node +0
+ * parent, +8 left, +0x10 right, +0x20 the component's runtime ID; the root at map +8, the leftmost at +0x20, free nodes
+ * chained through +0x10 from map +0x10, the count at +0x28). A load's set-up puts in an entry for the container itself,
+ * which a session's map holds only while that door is open or closing. Where the session's map is not empty DOOR leaves the
+ * joiner's, and the joiner kept an entry the session did not have: its doors then closed on the joiner alone. [hq131, 19
+ * Nov: Paranid frigate MVX-838, built by the session eight seconds before the join; read at tick 15600, its map held one
+ * entry (a bay) on the session and that and the ship's own on the joiner; both clients' saves of tick 24000 held a dock
+ * door close time on the joiner only.] The saver records every key of every container whose map is not empty (the key's
+ * portable ID, 0 when it has none); the joiner removes each of its entries whose key the session's map lacks, through the
+ * engine's removal (0x42de30: finds the key's node, takes it out of the tree (0xb2cf0), frees its vector, chains the node
+ * free, count - 1; it reads the key at +8 of its argument). A container with a key the session or the joiner cannot name is
+ * left. Status dkey=on:removed:equal:lacking:missing (lacking: the session holds a key the joiner's map does not). */
+#define JOIN_DKEY_REMOVE 0x42de30u
+#define JOIN_DKEY_MAX 64u
+static uint64_t join_dkey_removed,join_dkey_equal,join_dkey_lacking,join_dkey_missing;
+static void join_dkey_remove_native(unsigned char *container,uint64_t key) {
+    unsigned char fake[16];memset(fake,0,sizeof(fake));memcpy(fake+8,&key,8);
+    ((void (*)(void *,void *))(void *)(image+JOIN_DKEY_REMOVE))(container,fake);
+}
+static void (*join_dkey_remove)(unsigned char *,uint64_t)=join_dkey_remove_native;   /* tests replace it */
+/* The keys (runtime IDs) of a container's door map in order: their count, -1 when the tree does not read as one. */
+static int join_dkey_keys(const unsigned char *o,uint64_t *keys,unsigned cap) {
+    unsigned char *stack[64],*node=NULL;unsigned depth=0,n=0,visits=0;
+    if(!join_read(o+JOIN_DOOR_MAP+8u,&node,8)) return -1;
+    while(node || depth) {   /* in order: the left subtree, the node, the right subtree */
+        if(++visits>4u*JOIN_DKEY_MAX) return -1;
+        if(node) {if(depth>=64u) return -1;stack[depth++]=node;if(!join_read(node+8,&node,8)) return -1;continue;}
+        node=stack[--depth];
+        uint64_t key=0;
+        if(!join_read(node+0x20,&key,8) || n>=cap) return -1;
+        keys[n++]=key;
+        if(!join_read(node+0x10,&node,8)) return -1;
+    }
+    return (int)n;
+}
+static int join_dkey_cmp(const void *a,const void *b) {
+    const join_dkey_rec *x=a,*y=b;
+    if(x->portable!=y->portable) return x->portable<y->portable?-1:1;
+    return x->key<y->key?-1:x->key>y->key;
+}
+static void join_capture_dkey(join_tables *t) {
+    uint32_t cap=0;
+    for(uint32_t i=0;i<t->nids;i++) {
+        unsigned char *o=t->ids[i].portable?join_object(t->ids[i].runtime):NULL;uint32_t kind;uint64_t root=0,keys[JOIN_DKEY_MAX];int n;
+        if(!join_need_is(o,&kind) || !join_read(o+JOIN_DOOR_MAP+8u,&root,8) || !root || (n=join_dkey_keys(o,keys,JOIN_DKEY_MAX))<=0) continue;
+        for(int k=0;k<n;k++) {
+            unsigned klass;join_dkey_rec r;r.portable=t->ids[i].portable;r.key=keys[k]?join_key(keys[k],&klass):0;
+            if(!JOIN_PUSH(t->dkey,t->ndkey,cap,r)) return;
+        }
+    }
+    if(t->ndkey>1) qsort(t->dkey,t->ndkey,sizeof(*t->dkey),join_dkey_cmp);
+    uint32_t n=0;   /* each (container, key) once */
+    for(uint32_t i=0;i<t->ndkey;i++) if(!n || join_dkey_cmp(&t->dkey[n-1],&t->dkey[i])) t->dkey[n++]=t->dkey[i];
+    t->ndkey=n;
+}
+static void join_admit_dkey(const join_tables *s,const join_tables *mine) {
+    join_dkey_removed=join_dkey_equal=join_dkey_lacking=join_dkey_missing=0;
+    if(!join_door_on) return;
+    for(uint32_t i=0,j;i<s->ndkey;i=j) {
+        for(j=i;j<s->ndkey && s->dkey[j].portable==s->dkey[i].portable;j++) {}   /* the container's keys [i, j), the unnamed (0) first */
+        unsigned char *o=join_object(join_runtime_of(mine,s->dkey[i].portable));uint32_t kind;uint64_t keys[JOIN_DKEY_MAX],drop[JOIN_DKEY_MAX];int n;
+        if(!s->dkey[i].key || !join_need_is(o,&kind) || (n=join_dkey_keys(o,keys,JOIN_DKEY_MAX))<0) {++join_dkey_missing;continue;}
+        unsigned found=0,ndrop=0;int unnamed=0;
+        for(int k=0;k<n;k++) {
+            unsigned klass;const uint64_t p=keys[k]?join_key(keys[k],&klass):0;int in=0;
+            if(!p) {unnamed=1;break;}
+            for(uint32_t q=i;q<j && !in;q++) in=s->dkey[q].key==p;
+            if(in) ++found;else drop[ndrop++]=keys[k];
+        }
+        if(unnamed) {++join_dkey_missing;continue;}
+        for(unsigned k=0;k<ndrop;k++) join_dkey_remove(o,drop[k]);   /* after the walk: a removal rebalances the tree */
+        if(found<j-i) ++join_dkey_lacking;
+        if(ndrop) ++join_dkey_removed;else ++join_dkey_equal;
+    }
+}
+/* DRON (v13, section 93; native_gate_join_dron on the joiner, a join default). A Defensible keeps three drone modes (defence
+ * +0x688, mining +0x68c, transport +0x690), one pending for each (+0x694, +0x698, +0x69c; 0x12 none) and the user's transport
+ * mode (+0x6a0). The save writes the current modes and, in the places of the pending ones and the user's, the current ones
+ * again (0x4cdaf3); the load reads them back (0x4cbec0), so after a load every pending mode is the current one and so is the
+ * user's. [hq106, 19 Nov, read from both clients at the admission: 34 ships and stations on the session had a pending or user
+ * mode apart from the current one, 2 on the joiner; miner DIH-881, docked, transport mode trade, pending and user none on the
+ * session and trade on the joiner; both clients' saves of tick 6120 then held collectselected on the session and trade on the
+ * joiner, for it and seven more large ships later.] The saver records every container whose pending or user modes are not its
+ * current ones; the joiner writes them there. Status dron=on:written:equal:missing. */
+#define JOIN_DRON_MODES 0x688u
+static int join_dron_on;
+static uint64_t join_dron_written,join_dron_equal,join_dron_missing;
+static int join_dron_cmp(const void *a,const void *b) {
+    uint64_t x=((const join_dron_rec *)a)->portable,y=((const join_dron_rec *)b)->portable;return x<y?-1:x>y;
+}
+static void join_capture_dron(join_tables *t) {
+    uint32_t cap=0;
+    for(uint32_t i=0;i<t->nids;i++) {
+        unsigned char *o=t->ids[i].portable?join_object(t->ids[i].runtime):NULL;uint32_t kind,w[7];join_dron_rec r;
+        if(!join_need_is(o,&kind) || !join_read(o+JOIN_DRON_MODES,w,sizeof(w))) continue;
+        if(w[3]==w[0] && w[4]==w[1] && w[5]==w[2] && w[6]==w[2]) continue;   /* as a load leaves it */
+        if(w[3]>=0x40u || w[4]>=0x40u || w[5]>=0x40u || w[6]>=0x40u) continue;
+        r.portable=t->ids[i].portable;memcpy(r.pending,w+3,12);r.user=w[6];
+        if(!JOIN_PUSH(t->dron,t->ndron,cap,r)) return;
+    }
+    if(t->ndron>1) qsort(t->dron,t->ndron,sizeof(*t->dron),join_dron_cmp);
+    uint32_t n=0;   /* each container once */
+    for(uint32_t i=0;i<t->ndron;i++) if(!n || t->dron[n-1].portable!=t->dron[i].portable) t->dron[n++]=t->dron[i];
+    t->ndron=n;
+}
+static void join_admit_dron(const join_tables *s,const join_tables *mine) {
+    join_dron_written=join_dron_equal=join_dron_missing=0;
+    if(!join_dron_on) return;
+    for(uint32_t i=0;i<s->ndron;i++) {
+        const join_dron_rec *r=&s->dron[i];unsigned char *o=join_object(join_runtime_of(mine,r->portable));uint32_t kind,w[4],want[4];
+        if(!join_need_is(o,&kind) || !join_read(o+JOIN_DRON_MODES+12u,w,sizeof(w))) {++join_dron_missing;continue;}
+        memcpy(want,r->pending,12);want[3]=r->user;
+        if(!memcmp(w,want,sizeof(w))) {++join_dron_equal;continue;}
+        memcpy(o+JOIN_DRON_MODES+12u,want,sizeof(want));++join_dron_written;
+    }
+}
+/* REFP (v13, section 94; native_gate_join_refp on the joiner, a join default). A container keeps two price lists, override
+ * (+0x798) and reference (+0x808): a small vector (capacity +0x60, 4 = the four entries inline at +0, else a pointer there;
+ * count +0x68) of 24-byte entries {ware, buy, sell}, prices in hundredths of a credit. The save writes each / 100 (0x4915c0,
+ * one `price` when buy and sell are equal) and the load reads it * 100 (0x4909b0), so a load drops the hundredths. [hq115, 19
+ * Nov: both clients' saves of tick 8160 differed in 14 reference entries of mined wares, the joiner's one credit lower or
+ * `price=0` for the session's buy=0 sell=0; live, refinery EQO-181's ore read 518 on the session.] The saver records every
+ * entry with hundredths; the joiner writes it where its entry holds what a load of the save gives. Status
+ * refp=on:written:equal:apart:missing. */
+#define JOIN_REFP_OVERRIDE 0x798u
+#define JOIN_REFP_REFERENCE 0x808u
+#define JOIN_REFP_MAX 1024u
+static int join_refp_on;
+static uint64_t join_refp_written,join_refp_equal,join_refp_apart,join_refp_missing;
+/* A container's price list: 1 with *base and *n, 0 unreadable. */
+static int join_refp_list(unsigned char *o,uint32_t which,unsigned char **base,uint64_t *n) {
+    unsigned char *v=o+(which?JOIN_REFP_REFERENCE:JOIN_REFP_OVERRIDE);uint64_t cap=0;*base=NULL;*n=0;
+    if(!join_read(v+0x60,&cap,8) || !join_read(v+0x68,n,8) || cap<4u || *n>cap || *n>JOIN_REFP_MAX) return 0;
+    if(cap==4u) *base=v; else if(!join_read(v,base,8) || !*base) return 0;
+    return 1;
+}
+static int join_refp_cmp(const void *a,const void *b) {
+    const join_refp_rec *x=a,*y=b;
+    if(x->portable!=y->portable) return x->portable<y->portable?-1:1;
+    if(x->which!=y->which) return x->which<y->which?-1:1;
+    return x->ware<y->ware?-1:x->ware>y->ware;
+}
+static void join_capture_refp(join_tables *t) {
+    uint32_t cap=0;
+    for(uint32_t i=0;i<t->nids;i++) {
+        unsigned char *o=t->ids[i].portable?join_object(t->ids[i].runtime):NULL;uint32_t kind;
+        if(!join_need_is(o,&kind)) continue;
+        for(uint32_t which=0;which<2u;which++) {
+            unsigned char *base;uint64_t n;
+            if(!join_refp_list(o,which,&base,&n)) continue;
+            for(uint64_t e=0;e<n;e++) {
+                unsigned char *w=NULL;join_refp_rec r;memset(&r,0,sizeof(r));
+                if(!join_read(base+24u*e,&w,8) || !join_read(base+24u*e+8u,&r.buy,8) || !join_read(base+24u*e+16u,&r.sell,8)) break;
+                if(!(r.buy%100) && !(r.sell%100)) continue;   /* whole credits: the save keeps it */
+                r.portable=t->ids[i].portable;r.which=which;r.ware=join_need_ware(w);
+                if(!r.ware) continue;
+                if(!JOIN_PUSH(t->refp,t->nrefp,cap,r)) return;
+            }
+        }
+    }
+    if(t->nrefp>1) qsort(t->refp,t->nrefp,sizeof(*t->refp),join_refp_cmp);
+    uint32_t n=0;   /* each entry once */
+    for(uint32_t i=0;i<t->nrefp;i++) if(!n || join_refp_cmp(&t->refp[n-1],&t->refp[i])) t->refp[n++]=t->refp[i];
+    t->nrefp=n;
+}
+static void join_admit_refp(const join_tables *s,const join_tables *mine) {
+    join_refp_written=join_refp_equal=join_refp_apart=join_refp_missing=0;
+    if(!join_refp_on) return;
+    for(uint32_t i=0;i<s->nrefp;i++) {
+        const join_refp_rec *r=&s->refp[i];unsigned char *o=join_object(join_runtime_of(mine,r->portable)),*base,*at=NULL;uint32_t kind;uint64_t n;
+        if(!join_need_is(o,&kind) || !join_refp_list(o,r->which,&base,&n)) {++join_refp_missing;continue;}
+        for(uint64_t e=0;e<n && !at;e++) {unsigned char *w=NULL;if(join_read(base+24u*e,&w,8) && join_need_ware(w)==r->ware) at=base+24u*e;}
+        if(!at) {++join_refp_missing;continue;}
+        int64_t have[2];
+        if(!join_read(at+8,have,16)) {++join_refp_missing;continue;}
+        if(have[0]==r->buy && have[1]==r->sell) {++join_refp_equal;continue;}
+        if(have[0]!=r->buy/100*100 || have[1]!=r->sell/100*100) {++join_refp_apart;continue;}   /* not what a load of it gives */
+        memcpy(at+8,&r->buy,8);memcpy(at+16,&r->sell,8);++join_refp_written;
+    }
+}
+/* SPWN (v13, section 95; native_gate_join_spwn on the joiner, a join default). An object spawned from a region's field (a
+ * wreck, debris) keeps its origin record at +0x3e0, a RegionSpawnSource (vtable 0x2c4d4c8, 0x28 bytes): +8 the region, +0x10
+ * the field (a DebrisField of the region's +0x288 vector), +0x18 the runtime ID of the resource area its yield is from (one of
+ * its sector's, the vector at sector +0x3f8; the area's sector at area +0x38), +0x20 persistent. The spawn sets all four
+ * (0xedf64b); the save writes region and persistent only (0xeef2ad) and the load leaves field and area zero (0xeef181). When
+ * the object enters a space (OnWarpEvent 0x6cf760, 0x6cfd2b) its recycling wares come off the area +0x18 names, so after a
+ * load nothing comes off. [hq124, 19 Nov: wreck SBE-256 at T in sector NSG-027; its warp at tick 7197 took 1154 from the
+ * area sphere_huge_rawscrap_veryhigh_slow on the session alone, and the yields stayed apart.] The saver records each such
+ * object's field and area by index; the joiner writes them where its record names the same region and holds neither. Status
+ * spwn=on:written:equal:apart:missing. */
+#define JOIN_SPWN_ORIGIN 0x3e0u
+#define JOIN_SPWN_VTABLE 0x2c4d4c8u
+#define JOIN_SPWN_AREA_VTABLE 0x2b1d870u
+#define JOIN_SPWN_AREA_SECTOR 0x38u
+#define JOIN_SPWN_SECTOR_AREAS 0x3f8u
+#define JOIN_SPWN_FIELD 1u
+#define JOIN_SPWN_AREA 2u
+#define JOIN_SPWN_MAX 4096u
+static uintptr_t join_spwn_vt,join_spwn_area_vt;   /* tests: synthetic vtables (0: the image's classes) */
+static int join_spwn_on;
+static uint64_t join_spwn_written,join_spwn_equal,join_spwn_apart,join_spwn_missing;
+/* A resource area by its runtime ID: the lookup OnWarpEvent makes (0xced70 with mode 0; join_object's mode 4 wants a flag
+ * the component table gives components only, not areas). */
+static unsigned char *join_spwn_lookup(uint64_t runtime) {
+    void *map=join_world_map;join_find_fn find=join_world_find;
+    if(!find) {find=(join_find_fn)(image+0xced70);map=NULL;if(!join_read(image+0x6cf1500,&map,8)) return NULL;}
+    if(!map || !runtime) return NULL;
+    unsigned char *object=find(map,runtime,0);uint64_t id=0;
+    return object && join_read(object+8,&id,8) && id==runtime?object:NULL;
+}
+static int join_spwn_class(const unsigned char *p,uintptr_t test,uint32_t rva) {
+    uintptr_t vt=0;return p && join_read(p,&vt,8) && vt==(test?test:(uintptr_t)image+rva);
+}
+/* An object's region spawn source: 1 with the record and its region, field, area and persistent words. */
+static int join_spwn_source(const unsigned char *o,unsigned char **src,uintptr_t v[4]) {
+    *src=NULL;
+    return o && join_read(o+JOIN_SPWN_ORIGIN,src,8) && join_spwn_class(*src,join_spwn_vt,JOIN_SPWN_VTABLE) && join_read(*src+8,v,32);
+}
+/* The index of p in the pointer vector [v[0], v[1]): UINT32_MAX when it is not there. */
+static uint32_t join_spwn_index(const uintptr_t v[2],const void *p) {
+    for(uintptr_t q=v[0];q<v[1];q+=8) {uintptr_t x=0;if(join_read((void *)q,&x,8) && x==(uintptr_t)p) return (uint32_t)((q-v[0])/8u);}
+    return UINT32_MAX;
+}
+/* A sector's resource areas: 1 with the vector's ends. */
+static int join_spwn_areas(const unsigned char *sector,uintptr_t a[2]) {
+    a[0]=a[1]=0;
+    return sector && join_read(sector+JOIN_SPWN_SECTOR_AREAS,a,16) && a[1]>=a[0] && !((a[1]-a[0])&7u) && (a[1]-a[0])/8u<=4096u;
+}
+static int join_spwn_cmp(const void *a,const void *b) {
+    const join_spwn_rec *x=a,*y=b;return x->portable<y->portable?-1:x->portable>y->portable;
+}
+static void join_capture_spwn(join_tables *t) {
+    uint32_t cap=0;
+    for(uint32_t i=0;i<t->nids;i++) {
+        unsigned char *o=t->ids[i].portable?join_object(t->ids[i].runtime):NULL,*src,*area,*sector=NULL;uintptr_t v[4],f[2],a[2];
+        uint64_t rt=0;unsigned klass;
+        if(!join_spwn_source(o,&src,v) || (!v[1] && !v[2])) continue;
+        join_spwn_rec r;memset(&r,0,sizeof(r));r.portable=t->ids[i].portable;
+        if(!join_fobj_fields((unsigned char *)v[0],f) || !join_read((unsigned char *)v[0]+8,&rt,8) || !rt || !(r.region=join_key(rt,&klass))) continue;
+        if(v[1]) {
+            if((r.field=join_spwn_index(f,(void *)v[1]))==UINT32_MAX) continue;
+            r.flags|=JOIN_SPWN_FIELD;
+        }
+        if(v[2]) {
+            area=join_spwn_lookup(v[2]);rt=0;
+            if(!join_spwn_class(area,join_spwn_area_vt,JOIN_SPWN_AREA_VTABLE) || !join_read(area+JOIN_SPWN_AREA_SECTOR,&sector,8) ||
+               !join_spwn_areas(sector,a) || !join_read(sector+8,&rt,8) || !rt || !(r.sector=join_key(rt,&klass)) ||
+               (r.area=join_spwn_index(a,area))==UINT32_MAX) continue;
+            r.flags|=JOIN_SPWN_AREA;
+        }
+        if(t->nspwn>=JOIN_SPWN_MAX || !JOIN_PUSH(t->spwn,t->nspwn,cap,r)) return;
+    }
+    if(t->nspwn>1) qsort(t->spwn,t->nspwn,sizeof(*t->spwn),join_spwn_cmp);
+    uint32_t n=0;   /* each object once */
+    for(uint32_t i=0;i<t->nspwn;i++) if(!n || t->spwn[n-1].portable!=t->spwn[i].portable) t->spwn[n++]=t->spwn[i];
+    t->nspwn=n;
+}
+static void join_admit_spwn(const join_tables *s,const join_tables *mine) {
+    join_spwn_written=join_spwn_equal=join_spwn_apart=join_spwn_missing=0;
+    if(!join_spwn_on) return;
+    for(uint32_t i=0;i<s->nspwn;i++) {
+        const join_spwn_rec *r=&s->spwn[i];unsigned char *o=join_object(join_runtime_of(mine,r->portable)),*src,*region=join_fobj_region(s,mine,r->region);
+        uintptr_t v[4],f[2],a[2],want[2]={0,0};
+        if(!join_spwn_source(o,&src,v) || (unsigned char *)v[0]!=region || !join_fobj_fields(region,f)) {++join_spwn_missing;continue;}
+        if(r->flags&JOIN_SPWN_FIELD && ((uint64_t)r->field>=(f[1]-f[0])/8u || !join_read((void *)(f[0]+8u*r->field),&want[0],8) || !want[0]))
+            {++join_spwn_missing;continue;}
+        if(r->flags&JOIN_SPWN_AREA) {
+            unsigned char *sector=join_fobj_region(s,mine,r->sector),*area=NULL;
+            if(!join_spwn_areas(sector,a) || (uint64_t)r->area>=(a[1]-a[0])/8u || !join_read((void *)(a[0]+8u*r->area),&area,8) ||
+               !join_spwn_class(area,join_spwn_area_vt,JOIN_SPWN_AREA_VTABLE) || !join_read(area+8,&want[1],8) || !want[1]) {++join_spwn_missing;continue;}
+        }
+        if(v[1]==want[0] && v[2]==want[1]) {++join_spwn_equal;continue;}
+        if(v[1] || v[2]) {++join_spwn_apart;continue;}   /* not what a load leaves */
+        memcpy(src+0x10,want,16);++join_spwn_written;
     }
 }
 static int join_bnds_on;
@@ -5715,10 +6810,27 @@ static void join_admit_bnds(const join_tables *s,const join_tables *mine) {
  * the ship's runtime ID (+0) and a second key (+8) and returns it]. Those groups were built by each client's own load and
  * stamped then (the session's boot load, the joiner's load at T); a new group would read 0. The capture writes, for every
  * container (isa 0x23) with such a list, each group's value +0x68 and changed time +0x70 by the container's and the ship's
- * portable IDs and the second key; with the opt-in the admission writes the session's where they differ. Status
- * shgr=on:written:equal:missing. */
+ * portable IDs and the second key; with the opt-in the admission writes the session's where they differ.
+ * Groups the joiner's load did not make: a container keeps a group for each child that has had one, from the child's first
+ * ask on; a loaded container lists only some. [hq106, 19 Nov, read from both clients at the admission: ship TZN-626, under
+ * construction in a wharf's build module, held a group for its storage module (changed 14.857, its build) on the session and
+ * none on the joiner. When the ship was finished, near tick 11,590, the module asked: the session's found its group, the
+ * joiner's made a new one with changed 0, and the census of 12000 told them apart.] The joiner cannot make it at the admission:
+ * the engine's lookup 0x4d6270 keys a group by what 0x51f110 gives for the child, the child itself only once it is built (the
+ * ship's own group before). So the admission keeps every record whose group the joiner's container lacks while the child
+ * exists, and at each tick boundary after it (join_shgr_late) looks for the group again: once the joiner's engine has made it,
+ * untouched (value and changed time 0), it takes the session's value and time, which the session's unread group kept since T;
+ * one already touched is left and counted. A record waits at most JOIN_SHGR_WAIT ticks. A join default since 19 Nov. Status
+ * shgr=on:written:equal:missing:waiting:late:late_left:expired. */
 static int join_shgr_on;
-static uint64_t join_shgr_written,join_shgr_equal,join_shgr_missing;
+static uint64_t join_shgr_written,join_shgr_equal,join_shgr_missing,join_shgr_late_written,join_shgr_late_left,join_shgr_expired;
+#define JOIN_SHGR_WAIT 216000u            /* two hours of game time */
+/* A record's child by its runtime ID (pad): a child without a portable ID at T, a part of a ship under construction [hq109: TZN-626's
+ * storage module 160bea, keyed only once built; the joiner's load keeps the saved runtime IDs]. */
+#define JOIN_SHGR_RUNTIME 1u
+#define JOIN_SHGR_PENDING 4096u
+typedef struct {uint64_t container,child;uint32_t key,pad;double value,changed;} join_shgr_wait_rec;   /* runtime IDs */
+static join_shgr_wait_rec join_shgr_wait[JOIN_SHGR_PENDING];static uint32_t join_shgr_nwait;static uint64_t join_shgr_wait_until;
 #define JOIN_SHGR_LIST 0x5d8u              /* a container's shield recharge groups: {begin, end} of group pointers */
 #define JOIN_SHGR_SOURCE_VT 0x2b19700u     /* U::ShieldRechargeSource, embedded at group +0x90 */
 static int join_shgr_list(unsigned char *o,uintptr_t v[2]) {
@@ -5737,40 +6849,75 @@ static int join_shgr_cmp(const void *a,const void *b) {
     if(x->ship!=y->ship) return x->ship<y->ship?-1:1;
     return x->key<y->key?-1:x->key>y->key;
 }
+/* One container's groups as records: its key (a portable ID, or with RUNTIME_CONTAINER in pad its runtime ID). 0: out of memory. */
+/* A container is one by its vtable (join_need_is), not by isa 0x23: for ships that class test is true only while their state +0x68
+ * is 0 (0x7c92a0), so a ship under construction was in no record [hq113, 19 Nov: ship TZN-626, keyed (created at tick 234) and
+ * under construction in a wharf's build module at T: none of the package's 92,333 records named it]. */
+static int join_shgr_capture_one(join_tables *t,uint32_t *cap,unsigned char *o,uint64_t container,uint32_t pad) {
+    uintptr_t v[2];uint32_t kind;
+    if(!join_need_is(o,&kind) || !join_shgr_list(o,v)) return 1;
+    for(uintptr_t q=v[0];q<v[1];q+=8u) {
+        uint64_t ship_runtime=0;uint32_t key=0;unsigned klass=0;join_shgr_rec r;
+        unsigned char *g=join_shgr_group(q,&ship_runtime,&key);
+        if(!g) continue;
+        memset(&r,0,sizeof(r));r.container=container;r.pad=pad;r.ship=join_key(ship_runtime,&klass);r.key=key;
+        if(!r.ship && ship_runtime) {r.ship=ship_runtime;r.pad|=JOIN_SHGR_RUNTIME;}   /* no portable ID yet: the runtime the load keeps */
+        if(!r.ship || !join_read(g+0x68,&r.value,8) || !join_read(g+0x70,&r.changed,8)) continue;
+        if(!JOIN_PUSH(t->shgr,t->nshgr,*cap,r)) return 0;
+    }
+    return 1;
+}
 static void join_capture_shgr(join_tables *t) {
     uint32_t cap=0;
     for(uint32_t i=0;i<t->nids;i++) {
         if(!t->ids[i].portable) continue;
-        unsigned char *o=join_object(t->ids[i].runtime);uintptr_t v[2];
-        if(!join_shgr_list(o,v) || join_watch_call(o,0x11e8u,0x23,1)!=1) continue;
-        for(uintptr_t q=v[0];q<v[1];q+=8u) {
-            uint64_t ship_runtime=0;uint32_t key=0;unsigned klass=0;join_shgr_rec r;
-            unsigned char *g=join_shgr_group(q,&ship_runtime,&key);
-            if(!g) continue;
-            memset(&r,0,sizeof(r));r.container=t->ids[i].portable;r.ship=join_key(ship_runtime,&klass);r.key=key;
-            if(!r.ship || !join_read(g+0x68,&r.value,8) || !join_read(g+0x70,&r.changed,8)) continue;
-            if(!JOIN_PUSH(t->shgr,t->nshgr,cap,r)) return;
-        }
+        if(!join_shgr_capture_one(t,&cap,join_object(t->ids[i].runtime),t->ids[i].portable,0)) return;
     }
     if(t->nshgr>1) qsort(t->shgr,t->nshgr,sizeof(*t->shgr),join_shgr_cmp);
     {uint32_t k=0;for(uint32_t i=0;i<t->nshgr;i++) {if(k && !join_shgr_cmp(&t->shgr[k-1],&t->shgr[i])) continue;t->shgr[k++]=t->shgr[i];}t->nshgr=k;}
 }
 static void join_admit_shgr(const join_tables *s,const join_tables *mine) {
-    join_shgr_written=join_shgr_equal=join_shgr_missing=0;
+    join_shgr_written=join_shgr_equal=join_shgr_missing=join_shgr_late_written=join_shgr_late_left=join_shgr_expired=0;join_shgr_nwait=0;join_shgr_wait_until=0;
     if(!join_shgr_on) return;
     for(uint32_t i=0;i<s->nshgr;i++) {
-        const join_shgr_rec *r=&s->shgr[i];unsigned char *o=join_object(join_runtime_of(mine,r->container)),*hit=NULL;
-        const uint64_t want=join_runtime_of(mine,r->ship);uintptr_t v[2];
+        const join_shgr_rec *r=&s->shgr[i];unsigned char *hit=NULL;
+        const uint64_t crt=join_runtime_of(mine,r->container);unsigned char *o=join_object(crt);
+        const uint64_t want=(r->pad&JOIN_SHGR_RUNTIME)?r->ship:join_runtime_of(mine,r->ship);uintptr_t v[2];
         if(want && join_shgr_list(o,v))
             for(uintptr_t q=v[0];q<v[1] && !hit;q+=8u) {
                 uint64_t ship_runtime=0;uint32_t key=0;unsigned char *g=join_shgr_group(q,&ship_runtime,&key);
                 if(g && ship_runtime==want && key==r->key) hit=g;
             }
+        /* a group the joiner's load did not make, or a container its lookup does not return yet (under construction): it waits */
+        if(!hit && want && crt && join_shgr_nwait<JOIN_SHGR_PENDING) {
+            join_shgr_wait_rec *w=&join_shgr_wait[join_shgr_nwait++];
+            w->container=crt;w->child=want;w->key=r->key;w->pad=0;w->value=r->value;w->changed=r->changed;
+        }
         if(!hit) {++join_shgr_missing;continue;}
         int changed=join_poke((uintptr_t)(hit+0x68),&r->value,8);
         changed|=join_poke((uintptr_t)(hit+0x70),&r->changed,8);
         if(changed) ++join_shgr_written; else ++join_shgr_equal;
     }
+}
+/* SHGR's waiting records, at a tick boundary on the joiner (join_boundary): each whose group the joiner's engine has made since. */
+static void join_shgr_late(uint64_t completed) {
+    if(!join_shgr_nwait) return;
+    if(!join_shgr_wait_until) join_shgr_wait_until=completed+JOIN_SHGR_WAIT;
+    uint32_t k=0;
+    for(uint32_t i=0;i<join_shgr_nwait;i++) {
+        const join_shgr_wait_rec *w=&join_shgr_wait[i];unsigned char *o=join_object(w->container),*hit=NULL;uintptr_t v[2];
+        if(o && join_shgr_list(o,v))
+            for(uintptr_t q=v[0];q<v[1] && !hit;q+=8u) {
+                uint64_t ship_runtime=0;uint32_t key=0;unsigned char *g=join_shgr_group(q,&ship_runtime,&key);
+                if(g && ship_runtime==w->child && key==w->key) hit=g;
+            }
+        if(!hit) {if(completed<join_shgr_wait_until) join_shgr_wait[k++]=*w; else ++join_shgr_expired;continue;}
+        double value=1.0,changed=1.0;
+        if(join_read(hit+0x68,&value,8) && join_read(hit+0x70,&changed,8) && value==0.0 && changed==0.0) {
+            memcpy(hit+0x68,&w->value,8);memcpy(hit+0x70,&w->changed,8);++join_shgr_late_written;
+        } else ++join_shgr_late_left;
+    }
+    join_shgr_nwait=k;if(!k) join_shgr_wait_until=0;
 }
 /* SHPW (v13, section 65; the admission opt-in, native_gate_join_shpw): ship object words a load leaves at defaults [F: w1z28, the
  * hot join's watch on four traders and miners (TradeRoutine, linear flight): the ship objects differ from the load on in +0x3b0..
@@ -6540,11 +7687,23 @@ static int join_capture_world(join_tables *t,double now) {
     join_capture_bnds(t);            /* version 13 */
     join_capture_resv(t);            /* version 13: the zones' space reservations */
     join_capture_zref(t);            /* version 13: the zone reference table */
+    join_capture_sref(t);            /* version 13: the script values the join save's <ref> writers were given */
     join_capture_conn(t);            /* version 13: the NPCs' connected connections */
     join_capture_warp(t);            /* version 13: the pending warps' destinations */
     join_capture_lstn(t);            /* version 13: the script listeners' order per event source and type */
     join_capture_srcs(t);            /* version 13: the listeners' sources */
     join_capture_fobj(t);            /* version 13: the region fields' spawned-object lists */
+    join_capture_pmod(t);            /* version 13: the processing modules' due times */
+    join_capture_need(t);            /* version 13: the containers' resource needs */
+    join_capture_acct(t);            /* version 13: the containers' accounts */
+    join_capture_kids(t);            /* version 13: the order of the children the session made */
+    join_capture_door(t);            /* version 13: the containers whose dock doors are not set up */
+    join_capture_dkey(t);            /* version 13: the keys of the dock door maps that are not empty */
+    join_capture_defr(t);            /* version 13: the posts the frame's last workers left on the deferred list */
+    join_capture_bclk(t);            /* version 13: the body clock's notes of the people's running animations */
+    join_capture_dron(t);            /* version 13: the pending and user drone modes */
+    join_capture_refp(t);            /* version 13: the price lists to the hundredth */
+    join_capture_spwn(t);            /* version 13: where field-spawned objects came from */
     if(t->npcsv>1) qsort(t->pcsv,t->npcsv,sizeof(*t->pcsv),join_solver_cmp);   /* version 13: the PlayerControllers' solvers */
     for(uint32_t i=1;i<t->npcsv;i++) if(t->pcsv[i].portable==t->pcsv[i-1].portable) return join_note("pcsv_duplicate,id=%llx",(unsigned long long)t->pcsv[i].portable);
     join_sort_omgs(t);               /* version 13: OMGS, taken in the FLIGHT walk */
@@ -8228,6 +9387,7 @@ static void join_admit_evqt(const join_tables *s,const join_tables *mine) {
                 if(!join_read(e+0x28,&ev,8) || !ev || !join_read(ev,&v,8)) break;
                 const uint32_t cls=v>=(uintptr_t)image && v-(uintptr_t)image<JOIN_FLIGHT_IMAGE?(uint32_t)(v-(uintptr_t)image):0u,id=join_evqt_type(cls);
                 if(!join_evqt_is_rebuilt(cls) || !id) continue;
+                if(cls==JOIN_EVQT_KILLCHECK && !join_evqt_source_is_object(so)) continue;   /* a resource area's: kept as loaded */
                 uint32_t j=0;while(j<np && !(src[j]==(uintptr_t)so && type[j]==id)) ++j;
                 if(j==np) {src[np]=(uintptr_t)so;type[np]=id;++np;}
             }
@@ -8236,7 +9396,9 @@ static void join_admit_evqt(const join_tables *s,const join_tables *mine) {
     for(uint32_t i=0;i<s->nevqt;i++) {
         const join_evqt_rec *r=&s->evqt[i];
         if(!join_evqt_is_rebuilt(r->cls) || !r->type) {++join_rx.evqt_other;continue;}
-        unsigned char *object=(r->flags&JOIN_EVQT_UNMAPPED)?NULL:join_object(join_runtime_of(mine,r->portable));
+        unsigned char *object=(r->flags&JOIN_EVQT_UNMAPPED)?NULL:(r->flags&JOIN_EVQT_RUNTIME)?join_object(r->portable):
+                              join_object(join_runtime_of(mine,r->portable));
+        if(object && (r->flags&JOIN_EVQT_RUNTIME)) {unsigned klass;if(join_key(r->portable,&klass)) object=NULL;}   /* keyed here: another object */
         if(!object) {++join_rx.evqt_missing;continue;}
         /* the session's source had them removed above when the joiner had any; when it had none, nothing of the type waits there */
         uint64_t *ev=(uint64_t *)join_flight_alloc(0x18);
@@ -8495,6 +9657,11 @@ static int join_admit_world(void) {
                            kind,p->kind,form,p->form);
             continue;
         }
+        if(p->form==3u && !join_pose_near(xyz,p->xyz)) {   /* started from another moment: its own */
+            ++join_rx.pose_shape;
+            join_world_row(&prows,"pose side=joiner id=%016llx why=far kind=%x form=3",(unsigned long long)p->portable,kind);
+            continue;
+        }
         if(memcmp(xyz,p->xyz,sizeof(xyz))) {
             unsigned char *at=controller+(p->form==1?0x10u:0x20u);
             for(unsigned v=0;v<4;v++) memcpy(at+16*v,p->xyz+3*v,12);
@@ -8544,7 +9711,7 @@ static int join_admit_world(void) {
             unsigned char *slot=object+JOIN_VIEW_SLOTS+(size_t)(cur^r->rel)*0x80u;
             if(!join_read(slot,&have,8)) {++join_rx.gravd_missing;continue;}
             if(have==want) {++join_rx.gravd_equal;continue;}
-            if(join_poke((uintptr_t)slot,&want,8)) ++join_rx.gravd_fixed;
+            if(join_view_parent_set(slot,want)) ++join_rx.gravd_fixed;   /* a counted reference (above) */
         }
     }
     for(unsigned i=0;i<join_watch.n;i++) join_watch.runtime[i]=join_watch_runtime(s,&mine,join_watch.portable[i]);   /* diagnostic */
@@ -8576,6 +9743,7 @@ static int join_admit_world(void) {
      join_evq_dump('j',now);}
     if(s->version>=13 && s->nviewf && (join_viewf_write || join_viewf_bits)) join_viewf_hist_note();   /* diagnostic */
     if(s->version>=13) join_gravp_settled_parents();   /* the restore's cached parents, after GRAVD, VIEWK and VIEWF */
+    if(s->version>=13) join_gravd_keep_build(s,&mine); /* and the ships' cached parents to hold through the load's publications */
     for(unsigned i=0;i<join_watch.n;i++) join_watch.runtime[i]=join_watch_runtime(s,&mine,join_watch.portable[i]);   /* diagnostic */
     join_watch_dump('j',s->gate.tick);
     if(s->version>=13 && s->njobe) {   /* version 13: the job engine's schedule (main thread, phase 3: its update does not run) */
@@ -8595,6 +9763,17 @@ static int join_admit_world(void) {
     if(s->version>=13) join_admit_agtt(s,&mine);   /* the Agents' times the load resets */
     if(s->version>=13) join_admit_ares(s,&mine);   /* the Agents' result banks (opt-in) */
     if(s->version>=13) join_admit_fobj(s,&mine);   /* the region fields' spawned-object lists (opt-in) */
+    if(s->version>=13) join_admit_pmod(s,&mine);   /* the processing modules' due times, which no save holds */
+    if(s->version>=13) join_admit_need(s,&mine);   /* the containers' resource needs, which a load leaves unset */
+    if(s->version>=13) join_admit_acct(s,&mine);   /* the containers' accounts, which a load sets back to the default */
+    if(s->version>=13) join_admit_kids(s,&mine);   /* the order of the children the session made, which a load lists as saved */
+    if(s->version>=13) join_admit_door(s,&mine);   /* the dock doors a load set up and the session has not */
+    if(s->version>=13) join_admit_dkey(s,&mine);   /* the door map entries a load put in and the session does not hold */
+    if(s->version>=13) join_admit_defr(s,&mine);   /* the session's deferred posts at T: drone flights that landed in its last pass */
+    if(s->version>=13) join_admit_bclk(s);         /* the session's body clock notes: running animations end at its ticks */
+    if(s->version>=13) join_admit_dron(s,&mine);   /* the pending and user drone modes, which the save writes as the current ones */
+    if(s->version>=13) join_admit_refp(s,&mine);   /* the price lists to the hundredth, which the save writes in whole credits */
+    if(s->version>=13) join_admit_spwn(s,&mine);   /* the field and resource area a spawned object came from, which the save leaves out */
     if(s->version>=13) join_admit_srcs(s,&mine);   /* the listeners' sources (opt-in), before their order */
     if(s->version>=13) join_admit_lstn(s,&mine);   /* the script listeners' order (opt-in) */
     if(s->version>=13) join_admit_agcb(s,&mine);   /* the pilot slot ships' command and probe blocks */

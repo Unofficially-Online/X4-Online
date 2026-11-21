@@ -338,7 +338,7 @@ JOIN_DEFAULT_ON = ('native_gate_join_rcnt', 'native_gate_join_trdn', 'native_gat
                    'native_gate_join_hold_boot_events', 'native_gate_join_resv', 'native_gate_join_pcsv',
                    'native_gate_join_gravn_extra', 'native_gate_join_conn', 'native_gate_join_porders', 'native_gate_join_attn_set',
                    'native_gate_join_ares', 'native_gate_join_warp', 'native_gate_join_undk', 'native_gate_join_srcs',
-                   'native_gate_join_fobj', 'native_gate_join_lstn', 'native_gate_join_gravp_settled',
+                   'native_gate_join_fobj', 'native_gate_join_lstn', 'native_gate_join_gravp_settled', 'native_gate_join_sref', 'native_gate_join_pmod', 'native_gate_join_need', 'native_gate_join_acct', 'native_gate_join_kids', 'native_gate_join_door', 'native_gate_join_dron', 'native_gate_join_shgr', 'native_gate_join_refp', 'native_gate_join_spwn', 'native_gate_join_defr', 'native_gate_join_bclk',
                    'native_gate_join_mute_load_npcs', 'native_gate_join_hold_fire', 'native_gate_join_cue_ids',
                    'native_gate_join_grav_dead', 'native_gate_join_body_make', 'native_gate_join_viewl',
                    'native_gate_join_anis', 'native_gate_join_anis_state', 'native_gate_join_hold_bullets',

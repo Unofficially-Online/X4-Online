@@ -837,6 +837,7 @@ def build_overlay(args):
     shutil.copy2(ROOT/'tools/dev/native_gate_player_identity.xml', out/'md/native_gate_player_identity.xml')
     # A start's standings arrive quietly: two stock cues get one condition each (X4's own diff loading; our lines only).
     for name, source in session_defaults.MD_PATCHES.items():
+        (out/name).parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(ROOT/'tools/dev'/source, out/name)
     if args.ui_replay is not None:
         added += UI_REPLAY_FILES

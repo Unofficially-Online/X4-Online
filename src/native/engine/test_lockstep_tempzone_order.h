@@ -37,6 +37,7 @@ static void test_tz_reset(void) {
     tz_noted=tz_rows=tz_failures=tz_finds=tz_misses=tz_creates=tz_unblocked=tz_other_creates=tz_other_made=tz_other_in_pass=tz_outside=0;
     tz_passes=tz_blocks=tz_opens=tz_cleared=tz_granted=tz_stored=tz_found=tz_waits=tz_overflow=tz_requests=tz_max=tz_drew=tz_unmapped=tz_gone=0;
     memset(tz_candidates,0,sizeof(tz_candidates));tz_last_ret=0;tz_original_override=NULL;tz_release_override=NULL;tz_stage="idle";
+    memset(tz_pending,0,sizeof(tz_pending));tz_pending_lock=0;tz_other_same=0;
 }
 static volatile LONG *test_tz_flag(void) {return (volatile LONG*)(image+TZ_FLAG);}
 static volatile int64_t *test_tz_slot(void) {return (volatile int64_t*)(image+TZ_ZONE);}
@@ -106,7 +107,36 @@ static void test_tempzone_order(void) {
     {char other[384];assert(tz_row((uint64_t)other_rows,other,sizeof(other))>0 &&
         !strcmp(strstr(other,"kind="),"kind=other site=ee7c7f thread=other sector=s:0000000000000010 pos=3f800000,3f800000,3f800000 "
         "zone=0000000000099001 active=0 n=0 set=0000000000000000 draws=0"));}
-    path_pass_open=saved_pass;test_tz_request(0xee7c7f,sector_c,nearby,1);assert(tz_other_made==2 && tz_other_in_pass==1 && tz_rows==other_rows+2);
+    /* The same cell asked again while its zone is not active (a second generation before the zone's event): that zone,
+     * with a reference of the caller's own, and X4's function is not called. The table holds one reference too. */
+    {
+        const unsigned calls=test_tz_calls,releases=test_tz_releases;const LONG held=test_tz_count(&test_tz_made);
+        assert(held==2 && !tz_other_same);                                   /* the first caller's and the table's */
+        test_tz_request(0xee7c7f,sector_c,nearby,1);
+        assert(test_tz_calls==calls && tz_other_same==1 && tz_other_creates==4 && tz_other_made==1 && tz_rows==other_rows+1);
+        assert(test_tz_count(&test_tz_made)==held+1 && tz_last_ret==(uintptr_t)image+0xee7c7f);
+        /* Another cell of the sector, the same cell of another sector, a lookup without create: X4's function. */
+        test_tz_result_create=0;test_tz_request(0xee7c7f,sector_c,positions[0],1);test_tz_request(0xee7c7f,sector_b,nearby,1);
+        test_tz_request(0xee7c7f,sector_c,nearby,0);assert(test_tz_calls==calls+3 && tz_other_same==1 && tz_other_made==1);
+        /* The zone is active now: the entry goes with its reference, and the request is X4's lookup again. */
+        for(unsigned i=0;i<4;i++) *(uint32_t*)(test_tz_made.bytes+0x11c+i*0x80)=0x10000;
+        test_tz_result_create=(int64_t)&test_tz_made;test_tz_request(0xee7c7f,sector_c,nearby,1);
+        assert(test_tz_calls==calls+4 && tz_other_same==1 && tz_other_made==1 && test_tz_releases==releases+1 && test_tz_count(&test_tz_made)==held+1);
+        /* A made zone that never becomes active leaves the table after TZ_PENDING_TICKS ticks; the stop empties it. */
+        test_tz_zone(&test_tz_made,0x99002,0);test_tz_request(0xee7c7f,sector_c,positions[2],1);
+        assert(tz_other_made==2 && test_tz_count(&test_tz_made)==2);
+        stats.issued+=TZ_PENDING_TICKS+1;test_tz_request(0xee7c7f,sector_c,positions[2],1);
+        assert(tz_other_same==1 && tz_other_made==3 && test_tz_count(&test_tz_made)==3);   /* dropped, made again, kept again */
+        stats.issued-=TZ_PENDING_TICKS+1;tz_pending_clear();assert(test_tz_count(&test_tz_made)==2);
+        for(unsigned i=0;i<TZ_PENDING;i++) assert(!tz_pending[i].zone);
+        /* Not in 'observe': nothing is kept and nothing given again. */
+        tz_mode=TZ_OBSERVE;test_tz_request(0xee7c7f,sector_c,positions[2],1);test_tz_request(0xee7c7f,sector_c,positions[2],1);
+        assert(tz_other_same==1 && tz_other_made==5);tz_mode=TZ_ORDER;
+        tz_other_same=0;tz_other_creates=3;tz_other_made=1;tz_rows=other_rows+1;test_tz_zone(&test_tz_made,0x99001,0);
+    }
+    /* In a pass apart: another cell, so that it is made. */
+    path_pass_open=saved_pass;test_tz_request(0xee7c7f,sector_c,positions[1],1);assert(tz_other_made==2 && tz_other_in_pass==1 && tz_rows==other_rows+2);
+    tz_pending_clear();
     test_tz_result_create=0;tz_rows=other_rows;tz_other_creates=1;tz_other_made=tz_other_in_pass=0;
     path_pass_open=0;test_tz_request(TZ_PATH_FIND,sector_b,nearby,0);assert(tz_outside==1 && tz_noted==1); /* a job outside a joined pass */
     path_pass_open=1;ui_thread=GetCurrentThreadId();test_tz_request(TZ_PATH_FIND,sector_b,nearby,0);assert(tz_outside==2); /* the MoveWorker */

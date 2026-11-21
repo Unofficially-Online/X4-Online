@@ -177,6 +177,25 @@ static int ul_callers_text(char *out,size_t cap) {
         w+=snprintf(out+w,cap-(size_t)w," %c:%x/%x=%u","ctubm"[sorted[i].target<5?sorted[i].target:0],sorted[i].c0,sorted[i].c1,sorted[i].count);
     return w>0 && (size_t)w<cap?w:0;
 }
+/* Display code of X4 itself that asks like the Lua UI does, with no Lua on the stack (18 Nov 2026): the open map
+ * draws the storage of the stations it shows and asks 0x3f9760 for it (call at 0xdd081a in the map's draw routine
+ * 0xdcc0d0; the routine's only other caller is a Lua function), which brings the station's cargo and production up
+ * to now (0x3f9799: 0x41a910(container, game time, 0)). Run mg4 (two clients, player 1's map open on its two solar
+ * power plants, player 2 in the cockpit): 6,242 such calls on client 1 in 11,520 ticks and none on client 2, each
+ * with the calls an update makes in its turn; client 1's station held a production cycle more than client 2's for
+ * hundreds of ticks (1050 against 700 energy cells), the two clients' counts of trade offer updates and of unit
+ * updates had parted (5252/5254, 15695/15697), and no digest part holds a station's cargo. A call with one of these
+ * return addresses in its chain is a UI query: 'block' and 'key' skip it (the map shows the storage the simulation
+ * last brought the station to, as the Lua menus do), 'observe' counts it. display=<skipped>/<run>.
+ * The same draw routine asks 0x4254a0 for the station at 0xdd131d (-> 0x424390 -> 0x41a910 at 0x424424): run mg5,
+ * with the first site skipped, still had 8,419 cargo updates on the map's client alone, all of this chain. */
+static const uint32_t ul_display_sites[]={0xdd081fu,0xdd1322u};
+static uint64_t ul_display_blocked,ul_display_passed;
+static int ul_from_display(const uint32_t *chain) {
+    for(unsigned i=0;i<UL_CHAIN;i++)
+        for(unsigned s=0;s<sizeof(ul_display_sites)/sizeof(*ul_display_sites);s++) if(chain[i]==ul_display_sites[s]) return 1;
+    return 0;
+}
 /* 1: a UI query in an admitted frame that 'block' skips; 0: run natively. */
 static int ul_ui_query(unsigned target,const void *container,uint64_t a1,uint64_t a2) {
     if(!ul_mode || !(stats.active && boot_phase==3)) return 0;
@@ -187,6 +206,12 @@ static int ul_ui_query(unsigned target,const void *container,uint64_t a1,uint64_
         return 0;
     }
     uint32_t chain[UL_CHAIN];int lua=(ul_from_lua_fn?ul_from_lua_fn:ul_stack_from_lua)(chain);
+    if(!lua && ul_from_display(chain)) {
+        int skip=ul_mode>=UL_BLOCK;
+        if(skip) ++ul_display_blocked; else ++ul_display_passed;
+        if(window) ul_record(target,container,chain,skip,0,a1,a2,ul_state_of(target,container));
+        return skip;
+    }
     if(!lua) {
         ++ul_sim[target];ul_caller_count(target,chain);
         if(window) ul_record(target,container,chain,0,0,a1,a2,ul_state_of(target,container));
@@ -260,7 +285,10 @@ static uint64_t ul_units(void *container,void *filter,uint64_t flag) {
 static void ul_build(void *container,double now,uint64_t force) {
     uint64_t bits;memcpy(&bits,&now,8);
     if(ul_ui_query(UL_BUILD,container,bits,force&0xff)) return;
-    ((ul_build_fn)(void *)ul_trampoline(UL_BUILD))(container,now,force);
+    /* a container of a player's own faction (factions mode): built as that player's (lockstep_faction_present.h) */
+    const int own=fpres_sim_enter(container);
+    __try {((ul_build_fn)(void *)ul_trampoline(UL_BUILD))(container,now,force);}
+    __finally {if(own) fpres_sim_leave();}
 }
 /* The map's refresh of a shown ship: nothing in a session ('block' and 'key'); 'observe' counts and runs it. */
 static void ul_map(void *behavior,void *ship) {
@@ -331,7 +359,7 @@ static int ul_arm(int mode) {
     for(unsigned i=0;i<UL_TARGETS;i++) ul_write_code(ul_page+UL_STUB*i,i,image+ul_targets[i].rva);
     if(!VirtualProtect(ul_page,0x1000,PAGE_EXECUTE_READ,&ignored)) {ul_stage="page";return 0;}
     FlushInstructionCache(GetCurrentProcess(),ul_page,0x1000);
-    memset(ul_lua,0,sizeof(ul_lua));memset(ul_sim,0,sizeof(ul_sim));memset(ul_callers,0,sizeof(ul_callers));ul_callers_full=0;for(unsigned i=0;i<UL_TARGETS;i++) ul_other[i]=0;ul_blocked=ul_unmapped=ul_unkeyed=0;memset(ul_keyed,0,sizeof(ul_keyed));ul_rows=0;ul_failures=0;ul_restored=0;ul_map_blocked=ul_map_passed=0;
+    memset(ul_lua,0,sizeof(ul_lua));memset(ul_sim,0,sizeof(ul_sim));memset(ul_callers,0,sizeof(ul_callers));ul_callers_full=0;for(unsigned i=0;i<UL_TARGETS;i++) ul_other[i]=0;ul_blocked=ul_unmapped=ul_unkeyed=0;memset(ul_keyed,0,sizeof(ul_keyed));ul_rows=0;ul_failures=0;ul_restored=0;ul_map_blocked=ul_map_passed=0;ul_display_blocked=ul_display_passed=0;
     ul_mode=mode;ul_installed=1;
     for(unsigned i=0;i<UL_TARGETS;i++) {
         unsigned char orig[5],patch[5]={0xe9};int32_t d=ul_rel(i);memcpy(orig,image+ul_targets[i].rva,5);memcpy(patch+1,&d,4);
@@ -365,11 +393,12 @@ static int ul_row(uint64_t index,char *out,size_t cap) {
 }
 static int ul_status(char *out,size_t cap) {
     static const char *const modes[4]={"off","observe","block","key"};
-    int n=snprintf(out,cap,"installed=%d mode=%s frame=%llu lua=%llu/%llu/%llu sim=%llu/%llu/%llu other=%lld/%lld/%lld blocked=%llu unmapped=%llu rows=%lld window=%llu-%llu restored=%d stage=%s failures=%lld keyed=%llu/%llu/%llu unkeyed=%llu build=%llu/%llu/%lld map=%llu/%llu",
+    int n=snprintf(out,cap,"installed=%d mode=%s frame=%llu lua=%llu/%llu/%llu sim=%llu/%llu/%llu other=%lld/%lld/%lld blocked=%llu unmapped=%llu rows=%lld window=%llu-%llu restored=%d stage=%s failures=%lld keyed=%llu/%llu/%llu unkeyed=%llu build=%llu/%llu/%lld map=%llu/%llu display=%llu/%llu",
         ul_installed,modes[ul_mode>=0 && ul_mode<4?ul_mode:0],(unsigned long long)stats.issued,(unsigned long long)ul_lua[0],(unsigned long long)ul_lua[1],
         (unsigned long long)ul_lua[2],(unsigned long long)ul_sim[0],(unsigned long long)ul_sim[1],(unsigned long long)ul_sim[2],(long long)ul_other[0],(long long)ul_other[1],(long long)ul_other[2],(unsigned long long)ul_blocked,
         (unsigned long long)ul_unmapped,(long long)ul_rows,(unsigned long long)ul_window_from,(unsigned long long)ul_window_to,ul_restored,ul_stage,(long long)ul_failures,(unsigned long long)ul_keyed[0],(unsigned long long)ul_keyed[1],(unsigned long long)ul_keyed[2],(unsigned long long)ul_unkeyed,
         (unsigned long long)ul_lua[UL_BUILD],(unsigned long long)ul_sim[UL_BUILD],(long long)ul_other[UL_BUILD],   /* build: UI queries / simulation calls / other threads */
-        (unsigned long long)ul_map_blocked,(unsigned long long)ul_map_passed);
+        (unsigned long long)ul_map_blocked,(unsigned long long)ul_map_passed,
+        (unsigned long long)ul_display_blocked,(unsigned long long)ul_display_passed);
     return n>0 && (size_t)n<cap?n:0;
 }

@@ -536,6 +536,9 @@ static void test_runtime_ids_rows(void) {
     rid_row_ring[2].count=rid_row_ring[2].first=rid_row_ring[2].last=UINT32_MAX;
     for(unsigned i=0;i<RID_ROW_KEYS;i++) rid_row_ring[2].key_count[i]=UINT32_MAX;
     assert(rid_row(2,row,sizeof(row))>0 && strstr(row," keys_other=3") && strstr(row,"keys=ffffffe0:4294967295,ffffffe1:") && rid_row_ring[2].keys==RID_ROW_KEYS);
+    /* ...and the row names the first and the last four in allocation order (the count was overwritten above: put it back) */
+    rid_row_ring[2].count=RID_ROW_KEYS+3u;
+    assert(rid_row(2,row,sizeof(row))>0 && strstr(row," keys_other=3 head=ffffffff,fffffffe,fffffffd,fffffffc tail=ffffffe0,ffffffdf,ffffffde,ffffffdd"));
     /* The ring keeps the last RID_ROW_RING rows. */
     rid_rows=RID_ROW_RING+5;assert(rid_row(4,row,sizeof(row))>0 && !strcmp(row,"index=4 evicted=1") && rid_row(5,row,sizeof(row))>0 && strncmp(row,"index=5 evicted",15));
     /* Off: nothing is noted or closed. */

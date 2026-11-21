@@ -194,6 +194,27 @@ class ConversationTests(unittest.TestCase):
         lua.execute(f"DUE={{[60]='1:73:{hex_};1:73:0800'}};S.apply(60)")
         self.assertEqual(uirep.values(g.stock_calls), ['SelectDialogOption:3', 'SelectBackOption:'])
 
+    def test_the_answer_to_a_ships_question_is_raised_by_the_notifications_sequence(self):
+        # lockstep_ui_missions.h UIMIS_C_ANSWER: number 17, count 1, tag number, the sequence's double; every client asks
+        # the gate to raise the event for its own interaction ID of that notification (lockstep_md_media.h mdv_answer)
+        event = '11' + '01' + '03' + double_hex(4.0)
+        for slot in (1, 2):
+            lua, g = session(slot)
+            lua.execute(f"RAISED={{}};gate.md_media_answer=function(seq) RAISED[#RAISED+1]=seq;return seq==4 and 1 or 0 end;DUE={{[50]='1:73:{event}'}};S.apply(50)")
+            self.assertEqual(uirep.values(g.RAISED), [4])
+            self.assertEqual(uirep.values(g.stock_calls), [])
+            self.assertTrue(any('UI_REPLAY_APPLIED tick=50 slot=1 op=73 result=applied what=answer(4)' in l for l in uirep.values(g.logs)), uirep.values(g.logs)[-3:])
+            self.assertIsNone(g.FAILED)
+        # a question that is over is gone on every client alike; a section of slot 2 holding an answer stops
+        lua, g = session(2)
+        gone = '11' + '01' + '03' + double_hex(7.0)
+        lua.execute(f"gate.md_media_answer=function(seq) return 0 end;DUE={{[50]='1:73:{gone}'}};S.apply(50)")
+        self.assertTrue(any('op=73 result=refused what=gone' in l for l in uirep.values(g.logs)), uirep.values(g.logs)[-3:])
+        self.assertIsNone(g.FAILED)
+        lua.execute(f"DUE={{[51]='2:73:{event}'}};S.apply(51)")
+        self.assertEqual(g.FAILED, 'ui_lua_op')
+        self.assertEqual(lua.eval('X4LAN_UI_REPLAY_CORE.ANSWER'), 0x11)
+
     def test_slots_2_and_up_are_refused_with_an_info_line_at_most_every_90_ticks(self):
         lua, g = session(2)
         lua.execute("LOCAL=1;S.tick=100;env.StartConversationFromMenu('default',make_id('100'));env.SelectDialogOption(1)")
@@ -208,6 +229,94 @@ class ConversationTests(unittest.TestCase):
         # A section of slot 2 holding one stops (the gate refuses it natively too).
         lua.execute("DUE={[50]='2:73:0500'};S.apply(50)")
         self.assertEqual(g.FAILED, 'ui_lua_op')
+
+    # A conversation's owner slot (lockstep_conversation_owner.h; the session's conv_slots).
+    OWNER = r"""
+      owner_calls={};OWNER_TAKE=1;OWNER_MAY=1
+      gate.conversation_owner_take=function(k) owner_calls[#owner_calls+1]='take:'..k;return OWNER_TAKE end
+      gate.conversation_owner_may=function(k) owner_calls[#owner_calls+1]='may:'..k;return OWNER_MAY end
+      gate.mpp_scope=function(k) stock_calls[#stock_calls+1]='scope:'..k;return 1 end
+      gate.mpp_unscope=function(k) stock_calls[#stock_calls+1]='unscope:'..k;return 1 end
+      gate.mpp_generate=function(k) stock_calls[#stock_calls+1]='generate:'..k;return 1 end
+    """
+
+    def owner_session(self, slot):
+        lua, g = uirep.client()
+        lua.execute(MOCK)
+        lua.execute(self.OWNER)
+        lua.execute(f"missions_session({slot},{MASK},{{mpp=true,conv_slots=true,galaxy=function() return make_id('777') end}})")
+        return lua, g
+
+    def test_with_owners_any_slot_starts_and_only_the_owner_answers(self):
+        lua, g = self.owner_session(2)
+        lua.execute("LOCAL=1;S.tick=100;env.StartConversationFromMenu('X4LAN_Talk',make_id('100'))")
+        self.assertEqual([p[2][:2] for p in uirep.values(g.pushed)], ['01'])          # a start: captured, the owner is not asked
+        self.assertEqual(uirep.values(g.owner_calls), [])
+        lua.execute("OWNER_MAY=0;env.SelectDialogOption(1)")                           # somebody else's conversation
+        self.assertEqual(len(uirep.values(g.pushed)), 1)
+        self.assertEqual(uirep.values(g.owner_calls), ['may:2'])
+        self.assertIn('UI_REPLAY_REFUSED what=SelectDialogOption why=slot', uirep.values(g.logs))
+        self.assertEqual(uirep.values(g.notices), ['100:Multiplayer: another player is in a conversation - nothing happened.'])
+        lua.execute("OWNER_MAY=1;env.SelectDialogOption(2);env.CancelConversation()")   # its own
+        self.assertEqual([p[2][:2] for p in uirep.values(g.pushed)], ['01', '07', '05'])
+        self.assertEqual(uirep.values(g.stock_calls), [])                              # nothing ran on the capturing client
+
+    def test_slot_k_start_is_signalled_in_its_scope_with_the_generation_open(self):
+        for client in (1, 2):
+            lua, g = self.owner_session(client)
+            start = '01' + self.start_hex(lua, "'X4LAN_Talk',make_id('100')")
+            lua.execute(f"DUE={{[50]='2:73:{start}'}};S.apply(50)")
+            self.assertEqual(uirep.values(g.owner_calls), ['take:2'])
+            self.assertEqual(uirep.values(g.stock_calls), ['scope:2', 'generate:2', 'SignalObject:777/x4lan_conversation:X4LAN_Talk/id:100',
+                                                           'generate:0', 'unscope:2'])
+            self.assertEqual(uirep.values(g.results), ['50:1'])
+            # its choice: the owner's call in its scope; another slot's is refused the same everywhere
+            lua.execute(f"stock_calls={{}};owner_calls={{}};DUE={{[60]='2:73:07' .. '01' .. '03' .. '{double_hex(2.0)}'}};S.apply(60)")
+            self.assertEqual(uirep.values(g.owner_calls), ['may:2'])
+            self.assertEqual(uirep.values(g.stock_calls), ['scope:2', 'SelectDialogOption:2', 'unscope:2'])
+            lua.execute("stock_calls={};OWNER_MAY=0;DUE={[70]='1:73:0500'};S.apply(70)")
+            self.assertEqual(uirep.values(g.stock_calls), [])
+            self.assertEqual(uirep.values(g.results)[-1], '70:0')
+            self.assertIsNone(g.FAILED)
+
+    def test_an_ai_dock_signal_of_slot_k_runs_in_its_scope_with_the_generation_open(self):
+        # core K.SLOT_SIGNALS (the debug ops ai_dock / ai_dock_station; MD AiDock): as the slot's conversation start, so
+        # the cue instance is slot k's and dock_player_ship_at docks slot k's ship; slot 1's: as any of its signals
+        for client in (1, 2):
+            lua, g = self.owner_session(client)
+            lua.execute("LOCAL=1;pushed={};env.SignalObject(make_id('200'),'x4lan_ai_dock',make_id('100'));LOCAL=0")
+            pushed = uirep.values(g.pushed)
+            self.assertEqual((len(pushed), pushed[0][1]), (1, 0x47))
+            self.assertEqual(uirep.values(g.stock_calls), [])                 # nothing ran on the capturing client
+            lua.execute(f"DUE={{[50]='2:71:{pushed[0][2]}'}};S.apply(50)")
+            self.assertEqual(uirep.values(g.stock_calls), ['scope:2', 'generate:2', 'SignalObject:200/x4lan_ai_dock/id:100', 'generate:0', 'unscope:2'])
+            lua.execute(f"stock_calls={{}};DUE={{[60]='1:71:{pushed[0][2]}'}};S.apply(60)")
+            self.assertEqual(uirep.values(g.stock_calls), ['SignalObject:200/x4lan_ai_dock/id:100'])
+            # another signal of slot 2: its scope, no generation
+            lua.execute("LOCAL=1;pushed={};env.SignalObject(make_id('200'),'x4lan_avatar_hold',21);LOCAL=0")
+            lua.execute(f"stock_calls={{}};DUE={{[70]='2:71:{uirep.values(g.pushed)[0][2]}'}};S.apply(70)")
+            self.assertEqual(uirep.values(g.stock_calls), ['scope:2', 'SignalObject:200/x4lan_avatar_hold/21', 'unscope:2'])
+            self.assertIsNone(g.FAILED)
+
+    def start_hex(self, lua, call):
+        lua.execute(f"LOCAL=1;pushed={{}};env.StartConversationFromMenu({call});LOCAL=0")
+        return uirep.values(lua.globals().pushed)[0][2][2:]
+
+    def test_a_busy_manager_and_an_unknown_conversation_refuse_the_same_everywhere(self):
+        lua, g = self.owner_session(1)
+        start = '01' + self.start_hex(lua, "'X4LAN_Talk',make_id('100')")
+        lua.execute(f"OWNER_TAKE=0;DUE={{[50]='2:73:{start}'}};S.apply(50)")
+        self.assertEqual(uirep.values(g.stock_calls), [])
+        self.assertEqual(uirep.values(g.results), ['50:0'])
+        other = '01' + self.start_hex(lua, "'gTrade_offerselect',make_id('100')")
+        lua.execute(f"OWNER_TAKE=1;DUE={{[60]='2:73:{other}'}};S.apply(60)")           # a conversation MD's slot cue does not know
+        self.assertEqual(uirep.values(g.stock_calls), [])
+        self.assertEqual(uirep.values(g.results)[-1], '60:0')
+        # slot 1's start keeps its own path, and takes the conversation too
+        lua.execute(f"owner_calls={{}};DUE={{[70]='1:73:{start}'}};S.apply(70)")
+        self.assertEqual(uirep.values(g.owner_calls), ['take:1'])
+        self.assertEqual(uirep.values(g.stock_calls), ['AddUITriggeredEvent:X4LAN_UiConversation/Start/X4LAN_Talk,id:100,nil'])
+        self.assertIsNone(g.FAILED)
 
     def test_the_probe_the_simulation_and_the_apply_run_the_stock_function_at_once(self):
         lua, g = session(2)

@@ -739,7 +739,12 @@ function K.session(p)
  function S.script_scope(kind,fn) return S.with_scope(nil,kind,'script.'..kind,fn) end
  S.hq_lists=0   -- lists of the own faction's headquarters given to this client's menus (wrap_menus)
  -- This client's own faction, as X4 names it: the player faction, or the slot's own in factions mode.
- function S.own_faction() return p.factions and own_slot~=1 and 'x4lan_player'..own_slot or 'player' end
+ -- Inside this client's presentation scope with its own faction in the player faction's place
+ -- (lockstep_faction_present.h) that faction is the one named "player".
+ function S.own_faction()
+  if gate.faction_present_open and gate.faction_present_open()==1 then return 'player' end
+  return p.factions and own_slot~=1 and 'x4lan_player'..own_slot or 'player'
+ end
  -- fn inside this client's faction view (lockstep_ui_faction.h: X4's player faction is this client's own for the call, as
  -- for its wrapped menus); without the faction family, or for the player faction itself, fn as it is.
  function S.own_view(fn)

@@ -511,3 +511,57 @@ static void test_view_mask(void) {
     VirtualFree(view_page,0,MEM_RELEASE);view_page=NULL;
     printf("view points mask tests PASS\n");
 }
+/* native_gate_phantom_players: more view points on routes of saved IDs, a stop per `hop` ticks, staggered per player. */
+static uint64_t test_vv_gone[2];
+static void *test_vv_lookup(uint64_t saved,uint64_t *runtime) {
+    test_vp_object *o=saved==0xa1?&test_vp_a:saved==0xb1?&test_vp_b:saved==0xc1?&test_vp_inner:NULL;
+    if(!o || saved==test_vv_gone[0] || saved==test_vv_gone[1]) return NULL;
+    *runtime=o->id;return o;
+}
+static void test_view_phantoms(void) {
+    uint64_t saved_issued=stats.issued;DWORD saved_ui=ui_thread;uint32_t saved_active=stats.active;
+    unsigned saved_pilots=pilot_slot_count;int saved_trigger=view_trigger_mode,saved_ui_mode=view_ui_mode,saved_rows=view_rows_armed;
+    view_trigger_mode=VIEW_TRIGGER_OFF;view_ui_mode=VIEW_UI_OFF;view_rows_armed=0;
+    if(!view_page) view_page=view_page_near();assert(view_page);
+    if(!view_lock_ready) {InitializeCriticalSection(&view_lock);view_lock_ready=1;}
+    test_vp_objects();test_vp_reset();ui_thread=GetCurrentThreadId();stats.active=1;stats.issued=0;
+    view_extra_lookup=test_vv_lookup;view_extra_hop=0;view_extra_players=view_extra_count=0;test_vv_gone[0]=test_vv_gone[1]=0;
+    const uint64_t r1[2]={0xa1,0xb1},r2[1]={0xc1},bad[1]={0};
+    /* Arming: installed, players mode, before the first admitted frame, on the MoveWorker, whole tick counts; routes after it. */
+    view_mode=VIEW_PLAYERS;assert(!view_extra_arm(10,5));view_installed=1;
+    view_mode=VIEW_OBSERVE;assert(!view_extra_arm(10,5));view_mode=VIEW_PLAYERS;
+    stats.issued=3;assert(!view_extra_arm(10,5));stats.issued=0;
+    ui_thread=GetCurrentThreadId()+1;assert(!view_extra_arm(10,5));ui_thread=GetCurrentThreadId();
+    assert(!view_extra_arm(0,0) && !view_extra_arm(1.5,0) && !view_extra_arm(10,-1) && !view_extra_arm(NAN,0) && !view_extra_route(r1,2));
+    assert(view_extra_arm(10,5) && view_extra_route(r1,2) && view_extra_route(r2,1) && view_extra_players==2);
+    assert(!view_extra_route(bad,1) && !view_extra_route(r1,0) && !view_extra_route(r1,VIEW_EXTRA_STOPS+1) && view_extra_players==2);
+    /* The connected player is the live player object; phantom 1 rides a (stop 0), phantom 2 the one object of its route. */
+    view_active=1;view_set_attention_override=test_vp_set_attention;test_vp_refreshed=0;pilot_slot_count=0;
+    stats.issued=5;assert(view_frame(5) && view_count==1 && view_points[0]==&test_vp_player);
+    assert(view_extra_count==2 && view_extra_points[0]==&test_vp_a && view_extra_ids[0]==test_vp_a.id && view_extra_points[1]==&test_vp_inner && view_extra_moves==1);
+    assert(test_vp_refreshed==2 && test_vp_refresh_log[0]==&test_vp_a && test_vp_refresh_log[1]==&test_vp_zone); /* a's chain; the others keep no own attention */
+    uint64_t before=view_evaluations;
+    assert(view_attention(&test_vp_zone)==9 && view_evaluations==before+3); /* the player 4, a 9, the third 4 */
+    stats.issued=6;assert(view_frame(6) && view_extra_moves==1 && test_vp_refreshed==2); /* same stops: no refresh */
+    /* Tick 10: phantom 1 hops to b (stop 1); a's chain and b's are recomputed; phantom 2 (5 ticks ahead, one stop) stays. */
+    stats.issued=10;assert(view_frame(10) && view_extra_count==2 && view_extra_points[0]==&test_vp_b && view_extra_points[1]==&test_vp_inner && view_extra_moves==2);
+    assert(test_vp_refreshed==2+2+1 && test_vp_refresh_log[2]==&test_vp_a && test_vp_refresh_log[3]==&test_vp_zone && test_vp_refresh_log[4]==&test_vp_zone);
+    assert(view_attention(&test_vp_zone)==7);
+    /* A ship that flies into another zone is a change too. */
+    test_vp_b.parent=&test_vp_zone2;stats.issued=11;assert(view_frame(11) && view_extra_moves==3 && view_extra_zone[0]==&test_vp_zone2);
+    /* b is gone: the route's next stop; the one-stop route gone: one view point less, counted. */
+    test_vv_gone[0]=0xb1;stats.issued=12;assert(view_frame(12) && view_extra_count==2 && view_extra_points[0]==&test_vp_a && !view_extra_gone);
+    test_vv_gone[1]=0xc1;stats.issued=13;assert(view_frame(13) && view_extra_count==1 && view_extra_points[0]==&test_vp_a && view_extra_gone==1);
+    assert(view_attention(&test_vp_zone)==9);
+    /* A view point whose object changed under the latch is not asked. */
+    view_extra_ids[0]^=1;assert(view_attention(&test_vp_zone)==4);view_extra_ids[0]^=1;
+    char status[2048];assert(view_status(status,sizeof(status))>0 && strstr(status," phantoms=1/2 moves=5 gone=1"));
+    view_set_attention_override=NULL;view_active=0;view_extra_lookup=view_extra_engine_lookup;
+    view_extra_hop=view_extra_stagger=view_extra_players=view_extra_count=0;view_extra_moves=view_extra_gone=0;
+    memset(view_extra_routes,0,sizeof(view_extra_routes));memset(view_extra_points,0,sizeof(view_extra_points));
+    pilot_slot_count=saved_pilots;test_vp_player.parent=NULL;test_vp_objects();test_vp_reset();
+    view_trigger_mode=saved_trigger;view_ui_mode=saved_ui_mode;view_rows_armed=saved_rows;
+    stats.issued=saved_issued;ui_thread=saved_ui;stats.active=saved_active;*(void**)(image+VIEW_UNIVERSE)=NULL;
+    VirtualFree(view_page,0,MEM_RELEASE);view_page=NULL;
+    printf("view points phantom players tests PASS\n");
+}

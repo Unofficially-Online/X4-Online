@@ -1,7 +1,8 @@
 /* native_gate_ui_lazy: UI (Lua) queries counted/blocked in admitted frames, simulation calls native, rows,
  * trampoline and stub layout, arming refusals, the pinned prologues. */
 static int test_ul_lua;
-static int test_ul_from_lua(uint32_t *chain) {for(unsigned i=0;i<UL_CHAIN;i++) chain[i]=0x1000u+i;return test_ul_lua;}
+static uint32_t test_ul_site;   /* a return address for the chain's second place (a display caller of X4's own) */
+static int test_ul_from_lua(uint32_t *chain) {for(unsigned i=0;i<UL_CHAIN;i++) chain[i]=0x1000u+i;if(test_ul_site) chain[1]=test_ul_site;return test_ul_lua;}
 static uint64_t *test_ul_word_ptr;
 static uint64_t *test_ul_word(void) {return test_ul_word_ptr;}
 static uint64_t test_ul_seen;
@@ -73,6 +74,19 @@ static void test_ui_lazy(void) {
         ul_mode=UL_OBSERVE;ul_map(station,ship);assert(ul_map_blocked==3 && ul_map_passed==2 && test_ul_map_calls==2);
         ul_mode=UL_BLOCK;assert(ul_status(out,sizeof(out))>0 && strstr(out," map=3/2"));
         ul_map_blocked=ul_map_passed=0;test_ul_lua=1;
+        /* The map's own storage query (0x3f9760 called at 0xdd081a, no Lua on the stack): skipped like a Lua query in
+         * 'block' and 'key', counted and run in 'observe'; any other native caller stays a simulation call. */
+        {   uint64_t sim0=ul_sim[UL_CARGO],lua0=ul_lua[UL_CARGO],blocked0=ul_blocked;
+            ul_display_blocked=ul_display_passed=0;test_ul_lua=0;test_ul_site=0xdd081fu;
+            ul_mode=UL_BLOCK;assert(ul_ui_query(UL_CARGO,station,1,0)==1 && ul_display_blocked==1 && !ul_display_passed);
+            ul_mode=UL_KEY;assert(ul_ui_query(UL_CARGO,station,1,0)==1 && ul_display_blocked==2);
+            ul_mode=UL_OBSERVE;assert(ul_ui_query(UL_CARGO,station,1,0)==0 && ul_display_blocked==2 && ul_display_passed==1);
+            assert(ul_sim[UL_CARGO]==sim0 && ul_lua[UL_CARGO]==lua0 && ul_blocked==blocked0);
+            ul_mode=UL_BLOCK;assert(ul_status(out,sizeof(out))>0 && strstr(out," display=2/1"));
+            test_ul_site=0xdd1322u;assert(ul_ui_query(UL_CARGO,station,1,0)==1 && ul_display_blocked==3);--ul_display_blocked;
+            test_ul_site=0xdd0820u;assert(ul_ui_query(UL_CARGO,station,1,0)==0 && ul_sim[UL_CARGO]==sim0+1 && ul_display_blocked==2);
+            ul_sim[UL_CARGO]=sim0;test_ul_site=0;test_ul_lua=1;ul_display_blocked=ul_display_passed=0;memset(ul_callers,0,sizeof(ul_callers));
+        }
         VirtualFree(ul_page,0,MEM_RELEASE);ul_page=saved_page;
     }
     /* Row window: simulation calls in it are rows with their arguments and state. */
@@ -170,6 +184,18 @@ static void test_ui_lazy_native_image(const char *path) {
      for(unsigned i=0;i<6;i++) assert(image[sites[i]]==0xe8 && sites[i]+5u+*(int32_t*)(image+sites[i]+1)==0xdcaa00u);}
     assert(!memcmp(image+0xdc52cc,"\x83\xf8\x07\x7d",4));
     image[0xdcaa00+0x40]^=1;assert(ul_state(UL_MAP)<0);image[0xdcaa00+0x40]^=1;assert(ul_state(UL_MAP)==0);
+    /* The map's storage query: the draw routine calls 0x3f9760 at 0xdd081a (return address 0xdd081f, the display
+     * site), and 0x3f9760 brings the container's cargo up to now (call 0x41a910 at 0x3f9799, force 0: xor r8d,r8d). */
+    assert(image[0xdd081a]==0xe8 && 0xdd081fu+*(int32_t*)(image+0xdd081b)==0x3f9760u);
+    assert(image[0x3f9799]==0xe8 && 0x3f979eu+*(int32_t*)(image+0x3f979a)==0x41a910u && !memcmp(image+0x3f978e,"\x45\x33\xc0",3));
+    assert(image[0x2e9a2c]==0xe8 && 0x2e9a31u+*(int32_t*)(image+0x2e9a2d)==0x3f9760u);
+    assert(ul_display_sites[0]==0xdd081fu);
+    /* ... and its second question: 0x4254a0 at 0xdd131d (return address 0xdd1322), which reaches the same update
+     * through 0x424390 (call at 0x4254e2) and its call of 0x41a910 at 0x424424. */
+    assert(image[0xdd131d]==0xe8 && 0xdd1322u+*(int32_t*)(image+0xdd131e)==0x4254a0u);
+    assert(image[0x4254e2]==0xe8 && 0x4254e7u+*(int32_t*)(image+0x4254e3)==0x424390u);
+    assert(image[0x424424]==0xe8 && 0x424429u+*(int32_t*)(image+0x424425)==0x41a910u);
+    assert(ul_display_sites[1]==0xdd1322u && sizeof(ul_display_sites)/sizeof(*ul_display_sites)==2);
     /* 0x4d8110 is Defensible slot 1105 in the Container/BuildStorage/Station vtables; its fast path returns +0x680. */
     assert(*(uint64_t*)(image+0x2a91478)==0x140000000ULL+0x4d8110u && !memcmp(image+0x4d813e,"\x8b\x81\x80\x06\x00\x00",6));
     /* The trade offer query 0x40a3f0 (script property lookups) calls UpdateTradeOffers without force. */

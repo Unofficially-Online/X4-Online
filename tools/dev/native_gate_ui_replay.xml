@@ -77,6 +77,99 @@
     </do_else>
    </actions>
   </cue>
+  <!-- Test only (script ops marines_stock and abandon, in every client's plan at the same tick): marines join a ship's
+       crew, and an ownerless scout without a pilot appears near a ship, so a scripted run has a ship to claim and
+       somebody to claim it with (the interact menu's "Claim", ClaimShip). -->
+  <cue name="Marines" instantiate="true">
+   <conditions><event_ui_triggered screen="'X4LAN_UiReplay'" control="'Marines'"/></conditions>
+   <actions>
+    <set_value name="$ship" exact="event.param3.$ship"/>
+    <do_if value="@$ship.isoperational and $ship.isclass.ship">
+     <do_all exact="event.param3.$amount">
+      <create_npc_template object="$ship" macro="macro.character_argon_female_pilot_01_macro" role="entityrole.marine"/>
+     </do_all>
+     <debug_text text="'[X4LAN] UI_REPLAY_MARINES ship=%s marines=%s time=%s'.[$ship.idcode, $ship.people.{entityrole.marine}.count, player.age]"/>
+    </do_if>
+    <do_else>
+     <debug_text text="'[X4LAN] UI_REPLAY_MARINES_REFUSED time=%s'.[player.age]"/>
+    </do_else>
+   </actions>
+  </cue>
+  <cue name="Abandoned" instantiate="true" namespace="this">
+   <conditions><event_ui_triggered screen="'X4LAN_UiReplay'" control="'Abandoned'"/></conditions>
+   <actions>
+    <set_value name="$near" exact="event.param3.$near"/>
+    <do_if value="@$near.isoperational">
+     <create_ship name="$wreck" macro="macro.ship_arg_s_scout_01_a_macro" zone="$near.zone">
+      <owner exact="faction.ownerless"/>
+      <safepos object="$near" min="event.param3.$metres" max="event.param3.$metres + 300"/>
+     </create_ship>
+     <set_object_name object="$wreck" name="event.param3.$name"/>
+     <set_value name="$watch_until" exact="player.age + 240s"/>
+     <set_value name="$watch_last" exact="''"/>
+     <debug_text text="'[X4LAN] UI_REPLAY_ABANDONED ship=%s name=%s near=%s distance=%s time=%s'.[$wreck.idcode, $wreck.name, $near.idcode, $wreck.distanceto.{$near}, player.age]"/>
+    </do_if>
+    <do_else>
+     <debug_text text="'[X4LAN] UI_REPLAY_ABANDONED_REFUSED time=%s'.[player.age]"/>
+    </do_else>
+   </actions>
+   <cues>
+    <!-- Every second for four minutes, a row whenever it changes: the abandoned ship's owner and attention, and every
+         other ship within 3 km of it (the claiming frigate, the marine's pod of move.claim) with its macro, attention,
+         command and distance. move.claim runs another branch at low attention (attention min="unknown"), so this shows
+         which branch a claim went through and where it stopped. -->
+    <cue name="AbandonedWatch" instantiate="true" checkinterval="1s">
+     <conditions><check_value value="@$wreck.isoperational and player.age lt $watch_until"/></conditions>
+     <actions>
+      <find_ship name="$close" space="$wreck.zone" multiple="true">
+       <match_distance object="$wreck" max="3km"/>
+      </find_ship>
+      <set_value name="$line" exact="'owner=%s attention=%s pilot=%s'.[$wreck.trueowner.id, $wreck.attention, @$wreck.pilot.knownname]"/>
+      <do_all exact="$close.count" counter="$i">
+       <set_value name="$other" exact="$close.{$i}"/>
+       <do_if value="$other != $wreck">
+        <set_value name="$line" exact="$line + ' | %s %s %s %s %s'.[$other.macro.id, $other.attention, @$other.pilot.command.value, ($other.distanceto.{$wreck})i, @$other.pilot.knownname]"/>
+       </do_if>
+      </do_all>
+      <do_if value="$line != $watch_last">
+       <set_value name="$watch_last" exact="$line"/>
+       <debug_text text="'[X4LAN] UI_REPLAY_ABANDONED_WATCH name=%s time=%s %s'.[$wreck.name, player.age, $line]"/>
+      </do_if>
+     </actions>
+    </cue>
+   </cues>
+  </cue>
+  <!-- Test only (script op hold_stock, in every client's plan at the same tick): wares into a slot ship's hold, so a
+       scripted run has cargo to drop. has= is what the ship then holds of it. -->
+  <cue name="Hold" instantiate="true">
+   <conditions><event_ui_triggered screen="'X4LAN_UiReplay'" control="'Hold'"/></conditions>
+   <actions>
+    <set_value name="$ship" exact="event.param3.$ship"/>
+    <do_if value="@$ship.isoperational and $ship.isclass.ship">
+     <set_value name="$ware" exact="ware.{event.param3.$ware}"/>
+     <add_cargo object="$ship" ware="$ware" exact="event.param3.$amount"/>
+     <debug_text text="'[X4LAN] UI_REPLAY_HOLD ship=%s ware=%s amount=%s has=%s time=%s'.[$ship.idcode, event.param3.$ware, event.param3.$amount, $ship.cargo.{$ware}.count, player.age]"/>
+    </do_if>
+    <do_else>
+     <debug_text text="'[X4LAN] UI_REPLAY_HOLD_REFUSED time=%s'.[player.age]"/>
+    </do_else>
+   </actions>
+  </cue>
+  <!-- Test only (script op hull_set, in every client's plan at the same tick): a ship's hull at a percentage, so a
+       scripted run has a damaged ship to repair. -->
+  <cue name="Hull" instantiate="true">
+   <conditions><event_ui_triggered screen="'X4LAN_UiReplay'" control="'Hull'"/></conditions>
+   <actions>
+    <set_value name="$ship" exact="event.param3.$ship"/>
+    <do_if value="@$ship.isoperational and $ship.isclass.ship">
+     <set_object_hull object="$ship" exact="event.param3.$percent"/>
+     <debug_text text="'[X4LAN] UI_REPLAY_HULL ship=%s percent=%s hull=%s time=%s'.[$ship.idcode, event.param3.$percent, $ship.hullpercentage, player.age]"/>
+    </do_if>
+    <do_else>
+     <debug_text text="'[X4LAN] UI_REPLAY_HULL_REFUSED time=%s'.[player.age]"/>
+    </do_else>
+   </actions>
+  </cue>
   <!-- Test only (script op dock_kit, in every client's plan at the same tick): X4's docking computer on a slot's ship, so
        a scripted run can dock at a station through X4's own docking (the ship flies the approach itself once the
        station grants the request). -->
@@ -102,6 +195,47 @@
     </do_else>
    </actions>
   </cue>
+  <!-- Test and debug tool (script ops ai_dock and ai_dock_station; native_gate_ui_replay_core.lua K.ai_dock_fly): a
+       player's own ship docks the way a fleet ship docks when it is ordered to. X4's dock_player_ship_at asks the
+       station for a dock and, when it is granted at once, gives the ship's steering to the AI and runs the stock
+       aiscripts/order.dock.xml on the player's ship computer (the entry path, the dock path, the landing); the base game
+       has the action and no script of it uses it. X4's own autopilot flies only to a dock's approach point. A slot
+       2..N's signal runs in that slot's scope with the generation open (core K.SLOT_SIGNALS), so this instance is that
+       slot's and `player` here is its player on every client; slot 1's runs as any of its script calls. -->
+  <cue name="AiDock" instantiate="true">
+   <conditions><event_object_signalled object="player.galaxy" param="'x4lan_ai_dock'"/></conditions>
+   <actions>
+    <set_value name="$destination" exact="@event.param2"/>
+    <set_value name="$ship" exact="player.occupiedship"/>
+    <do_if value="not @$destination.isoperational or not @$ship.isoperational">
+     <debug_text text="'[X4LAN] UI_REPLAY_AI_DOCK_REFUSED why=gone ship=%s destination=%s player=%s time=%s'.[@$ship.idcode, @$destination.idcode, player.entity, player.age]"/>
+    </do_if>
+    <do_elseif value="$ship.dock">
+     <debug_text text="'[X4LAN] UI_REPLAY_AI_DOCK_REFUSED why=docked ship=%s destination=%s player=%s time=%s'.[$ship.idcode, $destination.idcode, player.entity, player.age]"/>
+    </do_elseif>
+    <do_else>
+     <dock_player_ship_at destination="$destination"/>
+     <debug_text text="'[X4LAN] UI_REPLAY_AI_DOCK ship=%s destination=%s dock=%s player=%s pilot=%s time=%s'.[$ship.idcode, $destination.idcode, @$ship.assigneddock, player.entity, @$ship.pilot, player.age]"/>
+    </do_else>
+   </actions>
+  </cue>
+  <!-- Test only, read only (script op refit_why, in every client's plan at the same tick): a station's queued builds,
+       each with the parts of the test by which the station's ship trader starts a queued upgrade (aiscripts/
+       build.shiptrader.xml; tools/dev/native_gate_player_refit.xml): its Equip order and that order's state, the
+       player whether it is in the list of what every player controls (the player groups), docked here. -->
+  <cue name="RefitWhy" instantiate="true">
+   <conditions><event_ui_triggered screen="'X4LAN_UiReplay'" control="'RefitWhy'"/></conditions>
+   <actions>
+    <set_value name="$Station" exact="event.param3.$station"/>
+    <set_value name="$Builds" exact="@$Station.builds.queued"/>
+    <debug_text text="'[X4LAN] UI_REPLAY_REFIT_WHY station=%s queued=%s free=%s time=%s'.[@$Station.idcode, @$Builds.count, @$Station.freebuildprocessors.count, player.age]"/>
+    <do_all exact="@$Builds.count" counter="$I">
+     <set_value name="$B" exact="$Builds.{$I}"/>
+     <set_value name="$S" exact="@$B.buildobject"/>
+     <debug_text text="'[X4LAN] UI_REPLAY_REFIT_WHY_BUILD n=%s modification=%s upgrade=%s faction=%s ship=%s order=%s state=%s controlled_list=%s in_list=%s player_controlled=%s docked_here=%s processor=%s time=%s'.[$I, $B.isshipmodification, $B.isupgrade, $B.faction, @$S.idcode, @$S.order.id, @$S.order.state, @player.entity.$X4LAN_Controlled.count, @player.entity.$X4LAN_Controlled.indexof.{$S}, $S == player.controlled, @$S.dock.object == $Station, @$S.buildingprocessor, player.age]"/>
+    </do_all>
+   </actions>
+  </cue>
   <!-- Test only (script op wallet, in every client's plan at the same tick): money for the player's account, so a
        scripted run can buy (a trade, a ship, a crew member's fee). -->
   <cue name="Wallet" instantiate="true">
@@ -122,18 +256,72 @@
          energy cell production, a small habitat, a pier, a defence platform -->
     <set_value name="$Wares" exact="[ware.module_arg_conn_base_01, ware.module_arg_conn_cross_01, ware.module_arg_stor_container_s_01, ware.module_arg_dock_m_01,
                                       ware.module_gen_prod_energycells_01, ware.module_arg_hab_s_01, ware.module_arg_pier_l_01, ware.module_arg_def_claim_01]"/>
-    <add_blueprints wares="$Wares"/>
     <set_value name="$Ship" exact="event.param3.$ship"/>
+    <!-- the given ship's faction: the player faction in coop, the slot's own in factions mode. A script's
+         add_blueprints reaches the player faction's library only; a slot's own faction gets the same wares from the
+         script op station_blueprints (inside that slot's scope). -->
+    <set_value name="$Owner" exact="if @$Ship.isoperational then $Ship.owner else faction.player"/>
+    <do_if value="$Owner == faction.player">
+     <add_blueprints wares="$Wares"/>
+    </do_if>
     <set_value name="$Builder" exact="null"/>
     <do_if value="event.param3.$builder and @$Ship.isoperational">
      <create_ship name="$Builder" macro="macro.ship_arg_xl_builder_01_a_macro" sector="$Ship.sector">
-      <owner exact="faction.player" overridenpc="true"/>
+      <owner exact="$Owner" overridenpc="true"/>
       <pilot><select faction="faction.argon" tags="tag.aipilot"/></pilot>
       <units><unit category="unitcategory.build" mk="1" exact="20"/></units>
       <safepos object="$Ship" min="4km" max="6km"/>
      </create_ship>
     </do_if>
-    <debug_text text="'[X4LAN] UI_REPLAY_STATION_KIT blueprints=%s builder=%s pilot=%s time=%s'.[$Wares.count, @$Builder.idcode, @$Builder.pilot, player.age]"/>
+    <debug_text text="'[X4LAN] UI_REPLAY_STATION_KIT blueprints=%s builder=%s pilot=%s owner=%s time=%s'.[$Wares.count, @$Builder.idcode, @$Builder.pilot, $Owner.id, player.age]"/>
+   </actions>
+  </cue>
+  <!-- Test only (script op station_ready, in every client's plan at the same tick): a standing station of the player
+       faction for the management tests, so they do not wait for a construction: a solar power plant (a stock plan
+       that needs no supplies to produce) on the sector's plane below the given ship, moved east by the given
+       distance, with a paid plot, a manager and money on its account; near it a construction vessel of the Argon
+       (the builder a player hires for a fee) and a freighter of the player's (a subordinate to assign). -->
+  <cue name="StationReady" instantiate="true">
+   <conditions><event_ui_triggered screen="'X4LAN_UiReplay'" control="'StationReady'"/></conditions>
+   <actions>
+    <set_value name="$Ship" exact="event.param3.$ship"/>
+    <do_if value="@$Ship.isoperational">
+     <!-- the given ship's faction owns it all: the player faction in coop, the slot's own in factions mode -->
+     <set_value name="$Owner" exact="$Ship.owner"/>
+     <create_position name="$At" object="$Ship" space="$Ship.sector"/>
+     <create_station name="$Station" macro="macro.station_gen_factory_base_01_macro" owner="$Owner" sector="$Ship.sector"
+                     state="componentstate.operational" constructionplan="'scenario2_spp'">
+      <position x="$At.x + (event.param3.$east)m" y="0" z="$At.z"/>
+     </create_station>
+     <set_build_plot object="$Station" x="6km" y="4km" z="6km" paid="false"/>
+     <set_build_plot object="$Station" x="6km" y="4km" z="6km" paid="true"/>
+     <create_cue_actor cue="this" name="$Manager">
+      <select faction="faction.argon" tags="controlpost.manager.tag"/>
+      <owner exact="$Owner"/>
+      <skills><skill type="management" exact="6"/></skills>
+     </create_cue_actor>
+     <assign_control_entity object="$Station" actor="$Manager" post="controlpost.manager" transfer="true"/>
+     <remove_cue_actor actor="$Manager" cue="this"/>
+     <set_object_account object="$Station"/>
+     <!-- the station's money: through the player's account for the player faction; a slot's own faction has its
+          account from the trade family, a script reaches it by the faction -->
+     <do_if value="$Owner == faction.player">
+      <reward_player money="2000000Cr"/>
+     </do_if>
+     <transfer_money from="$Owner" to="$Station" amount="2000000Cr"/>
+     <create_ship name="$Hire" macro="macro.ship_arg_xl_builder_01_a_macro" sector="$Ship.sector">
+      <owner exact="faction.argon" overridenpc="true"/>
+      <pilot><select faction="faction.argon" tags="tag.aipilot"/></pilot>
+      <units><unit category="unitcategory.build" mk="1" exact="20"/></units>
+      <safepos object="$Station" min="5km" max="7km"/>
+     </create_ship>
+     <create_ship name="$Trader" macro="macro.ship_arg_m_trans_container_01_a_macro" sector="$Ship.sector">
+      <owner exact="$Owner" overridenpc="true"/>
+      <pilot><select faction="faction.argon" tags="tag.aipilot"/></pilot>
+      <safepos object="$Station" min="3km" max="4km"/>
+     </create_ship>
+     <debug_text text="'[X4LAN] UI_REPLAY_STATION_READY station=%s modules=%s manager=%s money=%s hire=%s trader=%s owner=%s time=%s'.[@$Station.idcode, @$Station.modules.count, @$Station.tradenpc, @$Station.money, @$Hire.idcode, @$Trader.idcode, $Owner.id, player.age]"/>
+    </do_if>
    </actions>
   </cue>
   <!-- Test only (script op builder_warp, in every client's plan at the same tick): every construction vessel of the
@@ -142,12 +330,14 @@
   <cue name="BuilderWarp" instantiate="true">
    <conditions><event_ui_triggered screen="'X4LAN_UiReplay'" control="'BuilderWarp'"/></conditions>
    <actions>
-    <find_ship name="$Builders" owner="faction.player" primarypurpose="purpose.build" space="player.galaxy" multiple="true"/>
+    <!-- one event per player faction: the faction of the given ship (none given: the player faction) -->
+    <set_value name="$Owner" exact="if @event.param3.$ship.isoperational then event.param3.$ship.owner else faction.player"/>
+    <find_ship name="$Builders" owner="$Owner" primarypurpose="purpose.build" space="player.galaxy" multiple="true"/>
     <set_value name="$Moved" exact="0"/>
     <do_all exact="$Builders.count" counter="$i">
      <set_value name="$B" exact="$Builders.{$i}"/>
      <set_value name="$To" exact="if @$B.order.id == 'DeployToStation' then @$B.order.$station else null"/>
-     <do_if value="$To and @$To.exists and $B.distanceto.{$To} gt 5km">
+     <do_if value="$To and @$To.exists and $B.distanceto.{$To} gt 20km">
       <warp object="$B" zone="$To.zone">
        <safepos object="$To" min="2500m" max="3500m"/>
       </warp>
@@ -164,7 +354,8 @@
   <cue name="StationWares" instantiate="true">
    <conditions><event_ui_triggered screen="'X4LAN_UiReplay'" control="'StationWares'"/></conditions>
    <actions>
-    <find_station name="$Stations" owner="faction.player" space="player.galaxy" checkoperational="false" multiple="true"/>
+    <set_value name="$Owner" exact="if @event.param3.$ship.isoperational then event.param3.$ship.owner else faction.player"/>
+    <find_station name="$Stations" owner="$Owner" space="player.galaxy" checkoperational="false" multiple="true"/>
     <set_value name="$Filled" exact="0"/>
     <do_all exact="$Stations.count" counter="$i">
      <set_value name="$Storage" exact="@$Stations.{$i}.buildstorage"/>
@@ -1330,7 +1521,10 @@
     </do_else>
     <!-- A stand-in, not crew: no generic conversation when a player points at it and presses Talk (the stock handler
          offered to hire and assign it, 16 Nov), no comm from afar, and it is titled as the player it stands for. -->
-    <set_entity_traits entity="$body" customhandler="true" remote="false"/>
+    <!-- ...and a mission actor: X4's NPC state machine (md.NPC_State_Machines, started for every new NPC) then leaves
+         it where its script puts it (STATE_stay). Without it the machine found no state for a figure and said so
+         in the log (an assertion, "Unknown NPC state case", 17 Nov). -->
+    <set_entity_traits entity="$body" customhandler="true" remote="false" missionactor="true"/>
     <set_entity_overrides entity="$body" title="'Player %s'.[$slot]"/>
     <!-- the figure's ID for the probe's test ops (foot_meet: tools.foot_pose reads its place) -->
     <raise_lua_event name="'X4LAN_FootAvatar%s'.[$slot]" param="$body"/>
@@ -1528,6 +1722,36 @@
     <do_else>
      <debug_text text="'[X4LAN] UI_CONVERSATION_MD_REFUSED why=name name=%s time=%s'.[$Name, player.age]"/>
     </do_else>
+   </actions>
+  </cue>
+  <!-- A conversation started by a player in slots 2..N (lockstep_conversation_owner.h): the Lua core signals the galaxy
+       inside slot k's scope with the generation open, so this instance is slot k's and start_conversation runs as
+       slot k's player. The signal names the conversation (the two MD knows here), its second value is the actor. -->
+  <cue name="ConversationStartSlot" instantiate="true">
+   <conditions>
+    <event_object_signalled object="player.galaxy"/>
+    <check_value value="event.param == 'x4lan_conversation:default' or event.param == 'x4lan_conversation:X4LAN_Talk'"/>
+   </conditions>
+   <actions>
+    <set_value name="$Actor" exact="@event.param2"/>
+    <do_if value="not $Actor or not @$Actor.isclass.entity">
+     <debug_text text="'[X4LAN] UI_CONVERSATION_MD_REFUSED why=actor name=%s actor=%s player=%s time=%s'.[event.param, @event.param2, player.entity, player.age]"/>
+    </do_if>
+    <do_elseif value="event.param == 'x4lan_conversation:default'">
+     <start_conversation actor="$Actor" conversation="default"/>
+     <debug_text text="'[X4LAN] UI_CONVERSATION_MD_START name=default actor=%s player=%s time=%s'.[$Actor, player.entity, player.age]"/>
+    </do_elseif>
+    <do_else>
+     <start_conversation actor="$Actor" conversation="X4LAN_Talk"/>
+     <debug_text text="'[X4LAN] UI_CONVERSATION_MD_START name=X4LAN_Talk actor=%s player=%s time=%s'.[$Actor, player.entity, player.age]"/>
+    </do_else>
+   </actions>
+  </cue>
+  <!-- Whose conversation ended: the player a conversation cue's frame sees (slot k's while slot k owns the conversation). -->
+  <cue name="ConversationWho" instantiate="true">
+   <conditions><event_conversation_finished/></conditions>
+   <actions>
+    <debug_text text="'[X4LAN] UI_CONVERSATION_MD_WHO finished player=%s time=%s'.[player.entity, player.age]"/>
    </actions>
   </cue>
   <!-- A conversation of our own: two choices; the chosen section and every conversation's end are logged. -->

@@ -48,6 +48,7 @@ except ImportError:
     etree = None
 RE = Path(os.environ.get('X4_RE', ROOT.parent / 'x4-re'))
 MD_XSD = RE / 'gamescripts/resolved/base/libraries/md.xsd'
+X4RE_SHIPTRADER = RE / 'gamescripts/resolved/base/aiscripts/build.shiptrader.xml'   # read only, when present
 L = identity.lua_literal
 
 S1, S2, S3, S4 = identity.DEFAULT_SHIPS[:4]
@@ -537,7 +538,8 @@ class MdScriptTests(unittest.TestCase):
         self.assertIsNone(steps["$a.$step == 'reputation'"].find('.//add_licence'))   # a pool faction: no player licences
         # The two patches: one condition each on a stock cue, nothing else, and every overlay gets them under the stock names.
         import native_gate_defaults as defaults
-        self.assertEqual(sorted(defaults.MD_PATCHES), ['md/notifications.xml', 'md/playerreputation.xml', 'md/setup.xml', 'md/tutorial_global.xml'])
+        self.assertEqual(sorted(defaults.MD_PATCHES), ['aiscripts/build.shiptrader.xml', 'md/notifications.xml', 'md/playerreputation.xml', 'md/setup.xml',
+                                                       'md/tutorial_global.xml'])
         cues = {'md/playerreputation.xml': "/mdscript/cues/cue[@name='TrackPlayerReputation']/cues/cue[@name='Base']/conditions",
                 'md/notifications.xml': "/mdscript/cues/cue[@name='Init']/cues/cue[@name='PlayerDiscountCommission']/conditions"}
         # The third: the new-game hint's timeout on (four attribute values, one per show_help of the two hint cues), nothing else.
@@ -569,8 +571,23 @@ class MdScriptTests(unittest.TestCase):
         self.assertIn('global.$X4LAN_PlayersState.{$N}.{$F} != $Now.{$N}.{$F}', ET.tostring(groups[0][1], encoding='unicode'))
         self.assertIn('if global.$X4LAN_Players? then', groups[1].text)
         self.assertEqual(groups[2][0].get('value'), 'global.$X4LAN_Players?')
+        # ...and what every player controls, on every player's entity, for the wharf's refit start (the fifth)
+        self.assertIn({'name': '$X4LAN_E.$X4LAN_Controlled', 'exact': '$X4LAN_L'}, [e.attrib for e in groups[0][0].iter('set_value')])
+        self.assertIn({'name': '$X4LAN_L', 'exact': '$X4LAN_E.controlled'}, [e.attrib for e in groups[0][0].iter('append_to_list')])
+        # The fifth: one AI script, the wharf's refit start of a queued upgrade: the stock condition with one more way in
+        # (a ship any player controls), nothing else.
+        refit = ET.fromstring((DEV / defaults.MD_PATCHES['aiscripts/build.shiptrader.xml']).read_text(encoding='utf-8'))
+        self.assertEqual([(e.tag, e.get('sel')) for e in refit], [('replace', "//do_elseif[set_value/@name='$buildaborted']/@value")])
+        clause = ' or @player.entity.$X4LAN_Controlled.indexof.{$build.buildobject}'
+        self.assertEqual(refit[0].text.count(clause), 1)
+        self.assertIn('($build.buildobject.order.state == orderstate.started or $build.buildobject == player.controlled' + clause + ')', refit[0].text)
+        stock = X4RE_SHIPTRADER.read_text(encoding='utf-8') if X4RE_SHIPTRADER.is_file() else None
+        if stock is not None:   # the read-only x4-re copy of the stock script: the rest of the condition is X4's, unchanged
+            node = [e for e in ET.fromstring(stock).iter('do_elseif') if any(c.tag == 'set_value' and c.get('name') == '$buildaborted' for c in e)]
+            self.assertEqual(len(node), 1)
+            self.assertEqual(' '.join(refit[0].text.replace(clause, '', 1).split()), ' '.join(node[0].get('value').split()))
         for name, source in defaults.MD_PATCHES.items():
-            if name in ('md/tutorial_global.xml', 'md/setup.xml'):
+            if name in ('md/tutorial_global.xml', 'md/setup.xml', 'aiscripts/build.shiptrader.xml'):
                 continue
             diff = ET.fromstring((DEV / source).read_text(encoding='utf-8'))
             self.assertEqual(diff.tag, 'diff')

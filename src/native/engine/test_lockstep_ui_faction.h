@@ -64,6 +64,7 @@ static uint64_t tuf_record(unsigned claim,uint64_t a0,uint64_t a1,uint64_t a2,ui
         switch(c->spec[i]) {
         case 'I':tuf_cat(out,cap,"%llx;",(unsigned long long)v);break;
         case 'r':tuf_cat(out,cap,"r%d;",(int)(int32_t)v);break;
+        case 'i':tuf_cat(out,cap,"i%d;",(int)(int32_t)v);break;
         case 's':case 'F':tuf_cat(out,cap,"'%s';",tuf_s((const char*)(uintptr_t)v));break;
         case 'b':tuf_cat(out,cap,"b%u;",(unsigned)(v&0xff));break;
         case 'B': {const uifac_blacklist *b=(const uifac_blacklist*)(uintptr_t)v;
@@ -91,22 +92,29 @@ static uint64_t tuf_record(unsigned claim,uint64_t a0,uint64_t a1,uint64_t a2,ui
 }
 #define TUF(n) static uint64_t tuf_fn_##n(uint64_t a0,uint64_t a1,uint64_t a2,uint64_t a3,uint64_t a4,uint64_t a5) {return tuf_record(n,a0,a1,a2,a3,a4,a5);}
 TUF(0) TUF(1) TUF(2) TUF(3) TUF(4) TUF(5) TUF(6) TUF(7) TUF(8) TUF(9) TUF(10) TUF(11) TUF(12) TUF(13) TUF(14) TUF(15) TUF(16)
-TUF(17) TUF(18) TUF(19) TUF(20) TUF(21) TUF(22) TUF(23) TUF(24) TUF(25) TUF(26) TUF(27) TUF(28) TUF(29) TUF(30) TUF(31) TUF(32)
+TUF(17) TUF(18) TUF(19) TUF(20) TUF(21) TUF(22) TUF(23) TUF(24) TUF(25) TUF(26) TUF(27) TUF(28) TUF(29) TUF(30) TUF(31) TUF(32) TUF(33)
+TUF(34) TUF(35) TUF(36) TUF(37) TUF(38) TUF(39) TUF(40) TUF(41)
 static void *const tuf_fns[]={(void*)tuf_fn_0,(void*)tuf_fn_1,(void*)tuf_fn_2,(void*)tuf_fn_3,(void*)tuf_fn_4,(void*)tuf_fn_5,(void*)tuf_fn_6,(void*)tuf_fn_7,
     (void*)tuf_fn_8,(void*)tuf_fn_9,(void*)tuf_fn_10,(void*)tuf_fn_11,(void*)tuf_fn_12,(void*)tuf_fn_13,(void*)tuf_fn_14,(void*)tuf_fn_15,(void*)tuf_fn_16,
     (void*)tuf_fn_17,(void*)tuf_fn_18,(void*)tuf_fn_19,(void*)tuf_fn_20,(void*)tuf_fn_21,(void*)tuf_fn_22,(void*)tuf_fn_23,(void*)tuf_fn_24,(void*)tuf_fn_25,
-    (void*)tuf_fn_26,(void*)tuf_fn_27,(void*)tuf_fn_28,(void*)tuf_fn_29,(void*)tuf_fn_30,(void*)tuf_fn_31,(void*)tuf_fn_32};
+    (void*)tuf_fn_26,(void*)tuf_fn_27,(void*)tuf_fn_28,(void*)tuf_fn_29,(void*)tuf_fn_30,(void*)tuf_fn_31,(void*)tuf_fn_32,(void*)tuf_fn_33,
+    (void*)tuf_fn_34,(void*)tuf_fn_35,(void*)tuf_fn_36,(void*)tuf_fn_37,(void*)tuf_fn_38,(void*)tuf_fn_39,(void*)tuf_fn_40,(void*)tuf_fn_41};
 _Static_assert(sizeof(tuf_fns)/sizeof(*tuf_fns)==UIFAC_CLAIMS,"a stand-in per claim");
 static float tuf_level,tuf_resupply;static uint64_t tuf_resupply_of;
 static void tuf_level_fn(float v) {unsigned c=tuf_claim("SetPlayerGlobalLoadoutLevel");++tuf_calls[c];tuf_level=v;memcpy(tuf_player+UIFAC_E_LOADOUT,&v,4);}
 static void tuf_resupply_fn(uint64_t id,float v) {unsigned c=tuf_claim("SetDefensibleLoadoutLevel");++tuf_calls[c];tuf_resupply_of=id;tuf_resupply=v;tuf_seen_faction[c]=tuf_now();}
+/* SetRelationBoostToFaction: the floats arrive in xmm3 and on the stack, the double on the stack. */
+static void tuf_boost_fn(uint64_t id,const char *faction,const char *reason,float value,float decay,double delay) {
+    unsigned c=tuf_claim("SetRelationBoostToFaction");++tuf_calls[c];tuf_seen_faction[c]=tuf_now();tuf_seen[c][0]=0;
+    tuf_cat(tuf_seen[c],sizeof(tuf_seen[c]),"%llx;'%s';'%s';f%.3f;f%.3f;d%.1f;",(unsigned long long)id,tuf_s(faction),tuf_s(reason),(double)value,(double)decay,delay);
+}
 static uiguard_entry tuf_table[TUF_ENTRIES];
 static unsigned tuf_rva(unsigned i) {return 0x1000u+0x40u*i;}
 static void tuf_table_build(void) {
     static const unsigned char pro[5]={0x48,0x89,0x5c,0x24,0x08};
     for(unsigned i=0;i<TUF_ENTRIES;i++) {
         unsigned char *p=tuf_region+tuf_rva(i);memcpy(p,pro,5);
-        void *target=i==UIFAC_CLAIMS?(void*)tuf_fn_0:uifac_claims[i].spec[0]=='f'?(void*)tuf_level_fn:uifac_claims[i].spec[1]=='f'?(void*)tuf_resupply_fn:tuf_fns[i];
+        void *target=i==UIFAC_CLAIMS?(void*)tuf_fn_0:!strcmp(uifac_claims[i].spec,"IFsffd")?(void*)tuf_boost_fn:uifac_claims[i].spec[0]=='f'?(void*)tuf_level_fn:uifac_claims[i].spec[1]=='f'?(void*)tuf_resupply_fn:tuf_fns[i];
         p[5]=0x48;p[6]=0xb8;memcpy(p+7,&target,8);p[15]=0xff;p[16]=0xe0;
         uiguard_entry *e=&tuf_table[i];memset(e,0,sizeof(*e));
         e->name=i<UIFAC_CLAIMS?uifac_claims[i].name:"Unclaimed";e->rva=tuf_rva(i);e->kind=UIGUARD_FFI;e->group=UIGUARD_G_FACTION;
@@ -124,6 +132,10 @@ typedef void (*tuf_float_fn)(float);
 typedef void (*tuf_resupply_t)(uint64_t,float);
 typedef unsigned char (*tuf_response_fn)(const char*,unsigned char,const char*,const char*,const char*);
 typedef void (*tuf_supply_fn)(uint64_t,const uifac_supply*,uint32_t);
+typedef void (*tuf_group_role_fn)(uint64_t,int,const char*);
+typedef void (*tuf_group_flag_fn)(uint64_t,int,unsigned char);
+typedef void (*tuf_named_fn)(uint64_t,const char*);
+typedef void (*tuf_boost_t)(uint64_t,const char*,const char*,float,float,double);
 /* The wire this client queued, in order; then the queue is empty. */
 typedef struct {unsigned op,length;unsigned char data[UIREP_EVENT_MAX];} tuf_event;
 static tuf_event tuf_wire[UIREP_QUEUE];static unsigned tuf_wire_count;
@@ -222,6 +234,14 @@ static void test_ui_faction(void) {
     ((tuf_resupply_t)tuf_entry("SetDefensibleLoadoutLevel"))(0x7003,0.375f);
     uifac_supply supply[2]={{"ship_gen_s_fightingdrone_01_a_macro",4},{NULL,-1}};
     ((tuf_supply_fn)tuf_entry("UpdateSupplyOverrides"))(0x7003,supply,2);
+    /* a wing's group settings (an int between the commander and the value) and a fleet's name */
+    ((tuf_group_role_fn)tuf_entry("SetSubordinateGroupAssignment"))(0x7002,3,"attack");
+    ((tuf_group_flag_fn)tuf_entry("SetSubordinateGroupDockAtCommander"))(0x7002,3,1);
+    ((tuf_group_flag_fn)tuf_entry("SetSubordinateGroupAttackOnSight"))(0x7002,-1,0);
+    ((tuf_named_fn)tuf_entry("SetFleetName"))(0x7002,"Second Fleet");
+    /* "Mark as hostile": another faction's object (slot 1's station), "player" is the slot's faction at the apply */
+    ((tuf_boost_t)tuf_entry("SetRelationBoostToFaction"))(0x7004,"player","markedashostile",-1.0f,1.0f,600.0);
+    assert(!tuf_calls[tuf_claim("SetSubordinateGroupAssignment")] && !tuf_calls[tuf_claim("SetFleetName")] && !tuf_calls[tuf_claim("SetRelationBoostToFaction")]);
     unsigned queued=uirep_queue_count;
     ((tuf_ctl_fn)tuf_entry("SetControllableBlacklist"))(0x7999,token,"sectortravel",1);assert(uirep_queue_count==queued);   /* unmapped */
     ((tuf_ptr_fn)tuf_entry("CreateBlacklist2"))(NULL);assert(uirep_queue_count==queued);                                   /* unreadable */
@@ -245,6 +265,14 @@ static void test_ui_faction(void) {
         assert(strstr(tuf_seen[tuf_claim("CreateTradeRule")],"T0/Long list/x4lan_player2,faction_001,") && strstr(tuf_seen[tuf_claim("CreateTradeRule")],"faction_199,/1;"));
         assert(tuf_resupply_of==0x7003 && tuf_resupply==0.375f && tuf_seen_faction[tuf_claim("SetDefensibleLoadoutLevel")]==tuf_fac[1]);
         assert(!strcmp(tuf_seen[tuf_claim("UpdateSupplyOverrides")],"7003;O2:ship_gen_s_fightingdrone_01_a_macro=4,(null)=-1,;"));
+        assert(!strcmp(tuf_seen[tuf_claim("SetSubordinateGroupAssignment")],"7002;i3;'attack';") && tuf_calls[tuf_claim("SetSubordinateGroupAssignment")]==1);
+        assert(!strcmp(tuf_seen[tuf_claim("SetSubordinateGroupDockAtCommander")],"7002;i3;b1;"));
+        assert(!strcmp(tuf_seen[tuf_claim("SetSubordinateGroupAttackOnSight")],"7002;i-1;b0;"));
+        assert(!strcmp(tuf_seen[tuf_claim("SetFleetName")],"7002;'Second Fleet';") && tuf_seen_faction[tuf_claim("SetFleetName")]==tuf_fac[1]);
+        assert(strstr(tuf_rows,"|SetSubordinateGroupAssignment scope|SetSubordinateGroupDockAtCommander scope|SetSubordinateGroupAttackOnSight scope|SetFleetName scope|"
+            "SetRelationBoostToFaction scope|"));
+        assert(!strcmp(tuf_seen[tuf_claim("SetRelationBoostToFaction")],"7004;'x4lan_player2';'markedashostile';f-1.000;f1.000;d600.0;") &&
+            tuf_calls[tuf_claim("SetRelationBoostToFaction")]==1 && tuf_seen_faction[tuf_claim("SetRelationBoostToFaction")]==tuf_fac[1]);
         assert(strstr(tuf_rows,"CreateBlacklist2 scope=42|SetPlayerBlacklistDefault scope|SetFactionDefaultWeaponMode scope|SetControllableBlacklist scope|CreateTradeRule scope=41|"));
         assert(uifac_frame_text(frames[client],sizeof(frames[client]),1));
         assert(strstr(frames[client],"UIFAC_1:b42.2,f40.0,t41.1;1.0.0,1.0.1;w111.00000000;h"));
@@ -337,7 +365,7 @@ static void test_ui_faction(void) {
     InterlockedExchange(&uirep_replaying,1);assert(uitrade_scope_enter(2)==1);InterlockedExchange(&uirep_replaying,0);
     assert(!uifac_pass(5) && !strcmp(uifac_why,"ui_faction_scope_open") && !uitrade_scope_open && tuf_now()==tuf_fac[0]);uifac_why="-";
     assert(uifac_pass(6));
-    {char text[512];assert(uifac_status(text,sizeof(text)) && strstr(text,"ui_faction=armed") && strstr(text,"claims=33"));}
+    {char text[512];assert(uifac_status(text,sizeof(text)) && strstr(text,"ui_faction=armed") && strstr(text,"claims=42"));}
     /* The probe's own frame and an apply pass to X4's function; a query-free claim never declines in a local phase. */
     tuf_reset_counts();uirep_ui_depth=1;InterlockedExchange(&rid_probe_frame,1);((tuf_bool_fn)tuf_entry("SetPlayerTaxiWaitsForPlayer"))(1);
     InterlockedExchange(&rid_probe_frame,0);assert(tuf_calls[tuf_claim("SetPlayerTaxiWaitsForPlayer")]==1 && !uirep_queue_count);uirep_ui_depth=0;
@@ -360,7 +388,8 @@ static void test_ui_faction_native_image(const char *path) {
         const uiguard_entry *e=NULL;
         for(unsigned i=0;i<UIGUARD_ENTRIES;i++) if(uiguard_table[i].kind==UIGUARD_FFI && !strcmp(uiguard_table[i].name,uifac_claims[c].name)) e=&uiguard_table[i];
         assert(e && test_uiguard_export(image,dir,e->name)==e->rva && !e->covered && e->checkonly<0 && e->ret==UIGUARD_RET_ZERO);
-        assert(e->group==UIGUARD_G_FACTION || e->group==UIGUARD_G_FLEET || e->group==UIGUARD_G_TRADE);
+        assert(e->group==UIGUARD_G_FACTION || e->group==UIGUARD_G_FLEET || e->group==UIGUARD_G_TRADE ||
+            (e->group==UIGUARD_G_CONFLICT && !strcmp(e->name,"SetRelationBoostToFaction")));   /* "Mark as hostile" */
         for(unsigned i=0;uifac_claims[c].spec[i];i++) if(uifac_claims[c].spec[i]=='I') assert(uifac_claims[c].subject==(signed char)i);   /* the only component is the subject */
     }
     /* The rule managers' lookups the run mirrors: RemoveBlacklist / RemoveFightRule / RemoveTradeRule read [manager]+0x18, the

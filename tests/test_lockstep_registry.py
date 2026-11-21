@@ -7,11 +7,13 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 ENGINE = ROOT/'src/native/engine'
 REGISTRY = (ROOT/'docs/LOCKSTEP-REGISTRY.txt').read_text(encoding='utf-8')
-NOT_REASONS = {'PSLOT_STOP_WAIT', 'PFIRE_STOP', 'PNAT_STOP_IN_MENU', 'PNAT_FULL_STOP'}   # a count and flags, not stop reasons
+# Counts and flags, not stop reasons (VIEW_EXTRA_STOPS: the stops of a phantom player's route, lockstep_view_points.h).
+NOT_REASONS = {'PSLOT_STOP_WAIT', 'PFIRE_STOP', 'PNAT_STOP_IN_MENU', 'PNAT_FULL_STOP', 'VIEW_EXTRA_STOPS'}
 # Another define for an owner's code: the Linux gate's ports, the lookahead's drop (the protocol 5 number).
 ALIASES = {'LMT_STOP_REASON': 'MT_STOP_REASON', 'LXMC_STOP_REASON': 'RC_MINING_STOP', 'LOOKAHEAD_STOP_DROPPED': 'ADAPT_STOP_DROPPED',
            'LINUX_EVENT_RNG_STOP_REASON': 'EVENT_RNG_STOP_REASON', 'LINUX_BUILD_RNG_STOP_REASON': 'BRNG_STOP_REASON',
-           'LXSH_STOP_KEYS': 'RC_STOP_REASON'}   # the Linux shape refresh's region-camera keys
+           'LXSH_STOP_KEYS': 'RC_STOP_REASON',   # the Linux shape refresh's region-camera keys
+           'LXSP_STOP_REASON': 'SCW_STOP_REASON'}   # the Linux spline phase (Windows: the spline calc watch's 199)
 # Module defines that carry a core code: 96 world created, 58 spline, the Linux gate's nav (41/42) and shape (45/46) ports.
 CORE_PORTS = {'CREATED_STOP_REASON': 96, 'LSJ_STOP_REASON': 58, 'LXN_INSTALL_STOP': 41, 'LXN_STOP_REASON': 42,
               'LXSH_STOP_INSTALL': 45, 'LXSH_STOP_FAILURE': 46}

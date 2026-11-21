@@ -105,14 +105,14 @@ class MirrorTests(unittest.TestCase):
 
     def test_the_claims_are_inventoried_entries_no_family_covers(self):
         rows = claims()
-        self.assertEqual(len(rows), 33)
+        self.assertEqual(len(rows), 42)
         lua, _ = uirep.client()
         self.assertEqual(list(lua.eval('X4LAN_UI_FACTION.CLAIMS').values()), [c['name'] for c in rows])
         table = {m[0]: (m[1], int(m[2])) for m in re.findall(r'\{"(\w+)",0x[0-9a-f]+u,UIGUARD_FFI,UIGUARD_G_(\w+),(\d+)u,', TABLE)}
         for c in rows:
             entry = inv.INVENTORY.get(('ffi', c['name']))
             self.assertIsNotNone(entry, c['name'])
-            self.assertIn(entry[1], ('faction', 'fleet', 'trade'), c['name'])
+            self.assertIn(entry[1], ('faction', 'fleet', 'trade', 'conflict'), c['name'])
             self.assertEqual(entry[2], 0, c['name'])            # no family hooks below it: the claim is the only capture
             self.assertEqual(table[c['name']], (entry[1].upper(), 0), c['name'])
             if 'I' in c['spec']:
@@ -124,16 +124,20 @@ class MirrorTests(unittest.TestCase):
             self.assertEqual(c['kind'] != 'NONE', 'r' in c['spec'] or c['spec'][0] in 'BGT', c['name'])
         names = {c['name'] for c in rows}
         # The whole faction group is the family's; the trade group's rules, overrides and module pause; the fleet group's
-        # per-controllable rules, responses and resupply.
+        # per-controllable rules, responses and resupply, a wing's group settings and a fleet's name.
         self.assertEqual({n for (k, n), v in inv.INVENTORY.items() if v[1] == 'faction'} - names, set())
         for name in ('CreateTradeRule', 'UpdateTradeRule', 'RemoveTradeRule', 'SetPlayerTradeRuleDefault', 'UpdateSupplyOverrides',
                      'PauseProcessingModule', 'PauseProductionModule', 'SetPlayerTradeLoopCargoReservationSetting', 'SetControllableBlacklist',
                      'SetControllableFightRule', 'SetDefaultResponseToSignalForControllable', 'ResetResponseToSignalForControllable',
-                     'SetDefensibleLoadoutLevel'):
+                     'SetDefensibleLoadoutLevel', 'RemoveCommander2', 'SetSubordinateGroupAssignment', 'SetSubordinateGroupAttackOnSight',
+                     'SetSubordinateGroupDockAtCommander', 'SetSubordinateGroupReinforceFleet', 'SetSubordinateGroupRespondToDistressCalls',
+                     'SetSubordinateGroupResupplyAtFleet', 'SetFleetName', 'SetRelationBoostToFaction'):
             self.assertIn(name, names)
+        # the one claim whose component is somebody else's
+        self.assertEqual(list(lua.eval('X4LAN_UI_FACTION.FOREIGN').keys()), ['SetRelationBoostToFaction'])
         # What other families own or what stays refused is not claimed here.
-        for name in ('SetContainerTradeRule', 'AddPlayerMoney', 'SetBuildTaskTransferredMoney', 'TransferPlayerInventoryTo', 'SetFleetName',
-                     'SetShipStance', 'SetEntityToPost'):
+        for name in ('SetContainerTradeRule', 'AddPlayerMoney', 'SetBuildTaskTransferredMoney', 'TransferPlayerInventoryTo',
+                     'SetSubordinateGroupProtectedLocation', 'SetFormationShape', 'SetFleetUnitSubordinateGroupAssignment', 'SetShipStance', 'SetEntityToPost'):
             self.assertNotIn(name, names)
         build = (ENGINE/'lockstep_ui_build.h').read_text(encoding='utf-8')
         missions = (ENGINE/'lockstep_ui_missions.h').read_text(encoding='utf-8')
@@ -150,7 +154,7 @@ class MirrorTests(unittest.TestCase):
     @unittest.skipUnless(FFI_H.is_file(), 'x4-re data/x4_ffi.h not at hand')
     def test_every_spec_and_return_matches_the_stock_prototype(self):
         text = FFI_H.read_text(encoding='utf-8', errors='replace')
-        letters = {'UniverseID': 'I', 'BlacklistID': 'r', 'FightRuleID': 'r', 'TradeRuleID': 'r', 'const char*': 'sF', 'bool': 'b', 'float': 'f',
+        letters = {'UniverseID': 'I', 'BlacklistID': 'r', 'FightRuleID': 'r', 'TradeRuleID': 'r', 'const char*': 'sF', 'bool': 'b', 'float': 'f', 'int': 'i', 'double': 'd',
                    'BlacklistInfo2': 'B', 'FightRuleInfo': 'G', 'TradeRuleInfo': 'T', 'UILogo': 'L', 'SupplyOverride*': 'O', 'uint32_t': 'n'}
         returns = {'void': 'VOID', 'bool': 'BOOL', 'BlacklistID': 'ID', 'FightRuleID': 'ID', 'TradeRuleID': 'ID'}
         kinds = {'BlacklistID': 'BLACKLIST', 'FightRuleID': 'FIGHT', 'TradeRuleID': 'TRADE', 'BlacklistInfo2': 'BLACKLIST',
@@ -169,7 +173,7 @@ class MirrorTests(unittest.TestCase):
                 self.assertEqual(letter == 'F', pname == 'factionid', f"{c['name']} {param}")
                 if ptype in kinds:
                     self.assertEqual(kinds[ptype], c['kind'], c['name'])
-                if letter == 'f':
+                if letter == 'f' and c['spec'] != 'IFsffd':              # (the relation boost's shape is the run's third)
                     self.assertLess(c['spec'].index('f'), 2, c['name'])   # xmm0 or xmm1: the run's two float shapes
 
     @unittest.skipUnless(FFI_H.is_file(), 'x4-re data/x4_ffi.h not at hand')
@@ -381,7 +385,7 @@ PROBE_FACTION = uirep.PROBE_MOCK + r'''
   gate.ui_replay_local=function() return 0 end
   gate.ui_replay_saved=function() return nil end
   gate.ui_faction_pins=function() ui_calls[#ui_calls+1]='faction_pins';return FPINS or 1,FPINS and 'pins_ui_faction:371370' or nil end
-  gate.ui_faction=function() ui_calls[#ui_calls+1]='faction';if FARM then return 0,FARM end;return 1,33 end
+  gate.ui_faction=function() ui_calls[#ui_calls+1]='faction';if FARM then return 0,FARM end;return 1,42 end
   gate.ui_faction_refusals=function() return nil end
   gate.ui_faction_state=function() return 'UIFAC_1:b1.1,f0.0,t0.0;1.0.0,0.0.0;w111.00000000' end
   gate.ui_faction_status=function() return 'ui_faction=armed' end
@@ -419,7 +423,7 @@ class ProbeTests(unittest.TestCase):
             self.assertLess(calls.index('guard:16383'), calls.index('faction'))
             logs = c.values('logs')
             self.assertTrue(any('UI_FACTION_PINS ok=1' in line for line in logs))
-            self.assertTrue(any(f'UI_FACTION_ARMED slot={c.slot} families={BIT+1} claims=33' in line for line in logs), logs[-5:])
+            self.assertTrue(any(f'UI_FACTION_ARMED slot={c.slot} families={BIT+1} claims=42' in line for line in logs), logs[-5:])
             self.assertTrue(any('UIFAC_1:b1.1,f0.0,t0.0;1.0.0,0.0.0;w111.00000000;h00' in data for data in c.values('hashes')))
 
     def test_refusals(self):

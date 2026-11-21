@@ -128,8 +128,8 @@
  * pathing state, agent and model fields. For the Steering model class (MOTION_FLIGHT_VTABLE) the model's pointers
  * are zeroed in model_ext and flight= gives its avoidance cache (contact count, time) and constructor draws
  * (azimuth/polar bits), also as a digest group. */
-#define MOTION_WATCH_MAX 48u
-#define MOTION_WATCH_RING 8192u
+#define MOTION_WATCH_MAX 96u        /* 19 Nov: a wharf's zone held 48 S..XL ships at once (and 71 XS) */
+#define MOTION_WATCH_RING 16384u
 #define MOTION_WATCH_NAV_VTABLE 0x2c51158u /* U::NavigationController */
 #define MOTION_WATCH_INDEX 0x38f4ee4u      /* g_PathingStateBufferIndex */
 #define MOTION_PATH_STRIDE 0x90u           /* sizeof(U::Path::FlightPoint) */
@@ -235,7 +235,17 @@ static int motion_watch_zone_add(uint64_t saved) {
     }
     motion_zone_saved[motion_zone_count++]=saved;motion_watch_armed=1;world_hash_member_note=motion_zone_note;return 1;
 }
+/* native_gate_motion_watch_zones_xs: the members are the zone's ShipExtraSmall instead (its real traffic ships: police,
+ * the ships that left their lane; 18 and 19 Nov, one of them flies apart on one client). Not both: the watch has 96 places,
+ * a wharf's zone held 48 larger ships and 71 XS at once. */
+#define MOTION_ZONE_XS_TYPE 0x2b7d738u
+static int motion_zone_xs;
+static int motion_watch_zone_xs(void) {
+    if(!motion_zone_count || stats.issued || GetCurrentThreadId()!=ui_thread) return 0;
+    motion_zone_xs=1;return 1;
+}
 static int motion_zone_ship(uint32_t type) {
+    if(motion_zone_xs) return type==MOTION_ZONE_XS_TYPE;
     for(unsigned i=0;i<sizeof(motion_zone_ship_types)/sizeof(*motion_zone_ship_types);i++) if(motion_zone_ship_types[i]==type) return 1;
     return 0;
 }

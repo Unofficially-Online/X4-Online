@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Every player's own ship is refitted at a wharf or equipment dock, not only player 1's (native_gate_player_groups,
+     a session default: this patch ships with md/setup.xml's, tools/dev/native_gate_player_groups.xml).
+
+     A station's ship trader (aiscripts/build.shiptrader.xml) starts a queued upgrade of a docked ship only when the
+     ship's Equip order has started, which its own pilot does when it has flown in, or when the ship is
+     `player.controlled`: the ship the player sits in. That script is the station's and runs outside every player's
+     scope, where `player` is player 1, so a player 2..N's own ship, which has no pilot of its own, never passed: the
+     upgrade stayed queued for good ("there is a scheduled upgrade for this ship", no timer; the action test refit
+     with the AI dock, 21 Nov: 9,000 ticks at the second pad, and alone at the first pad; refit lead 2, 17 Nov).
+     Here the same test also takes a ship that any player controls: the player groups keep that list on every
+     player's entity on every client at the same ticks ($X4LAN_Controlled; X4 keeps no script variables on a ship,
+     and AI scripts read no MD globals). Without the gate nothing sets it and the line is the stock one. The rest of
+     the condition is X4's, unchanged.
+     Our own clause only; the stock script is patched in memory by X4's own diff loading, never on disk. -->
+<diff>
+ <replace sel="//do_elseif[set_value/@name='$buildaborted']/@value">$build.isshipmodification and $build.buildobject and $build.buildobject.order.id == 'Equip' and ($build.buildobject.order.state == orderstate.started or $build.buildobject == player.controlled or @player.entity.$X4LAN_Controlled.indexof.{$build.buildobject}) and ($build.issoftwareonlyupgrade or ($build.isrestock and $buildmodule.cansupplyclass.{$build.buildobject.class}) or ($build.isupgrade and $buildmodule.canequipclass.{$build.buildobject.class})) and (not $build.buildobject.buildingprocessor or $build.buildobject.buildingprocessor == $buildprocessor) and (not $buildprocessor.buildanchor or $buildprocessor.buildanchor == $build.buildobject) and (@$build.buildobject == this.object or @$build.buildobject.dock.object == this.object or @$build.buildobject.parkedat == this.container)</replace>
+</diff>

@@ -22,7 +22,19 @@
  *   start    the action's notification (noted at the constructor's call, read after the action) starts its cutscene at
  *            once, on every client, as the UI's StartCutscene would: the manager's current notification cutscene ends
  *            with reason 3, the new one starts with the handle and the monitor's render target and its ID goes into the
- *            descriptor. Nothing asks a UI. A notification with an interaction (the player answers it) stays X4's.
+ *            descriptor. Nothing asks a UI. A notification with an interaction (a fleet ship that asks its player for
+ *            orders, aiscripts/player.interaction.xml: found an abandoned ship, attacked, halted by the police) is
+ *            started the same way since 19 Nov: left to each client's UI its picture began and ended at ticks of the
+ *            client's own, the script waits for both events, and two clients parted 160 ticks after a frigate of the
+ *            player's saw an abandoned ship (tools/dev/action_tests.py claim --ask, run p2). The answer itself is the
+ *            UI's RaisePlayerInteractionEvent(interaction ID) [0xb0d970 -> 0x157950(notification manager, &error, ID):
+ *            the descriptor by its ID (0x151d10, a handle table of its own), a U::PlayerInteractionEvent with the
+ *            descriptor's two parameters posted to the player entity]. Slot 1's is captured by the conversation family
+ *            (lockstep_ui_missions.h UIMIS_C_ANSWER) as the notification's sequence number here (mdv_interaction_seq:
+ *            started notifications are counted in the simulation's order, the same on every client; an interaction ID
+ *            is each client's own, the UI makes descriptors for whatever its player targets), and every client raises
+ *            the event at the apply tick (mdv_answer). Slots 2+ stay refused: the conversation that follows the answer
+ *            is slot 1's, as every conversation is.
  *   owner    the slot whose own cue's frame makes it (lockstep_mission_owners.h mpp_show_slot) owns it; made in nobody's
  *            frame it is everybody's, as before.
  *   UI       four Lua functions of the UI answer here first (their entries jump to mdv_lua_* in lockstep_gate.c; the
@@ -40,7 +52,7 @@
  * One notification cutscene at a time stays X4's rule: a second call ends the first one's picture (its lines go on,
  * on their owner's client). Not covered: the owner's monitor that takes the notification up after its ready event (it
  * shows the caption over noise), a joiner during a call (the join package does not carry notifications), full-screen
- * cutscenes of a mission (they still play on every client), interactive notifications. */
+ * cutscenes of a mission (they still play on every client), the answer of slots 2+ to a notification's question. */
 #define MDV_ACTION_VTABLE 0x2c6d730u     /* Cutscenes::PlayCutsceneAction */
 #define MDV_ACTION 0x10d25e0u            /* ...its execute (vtable slot 3) */
 #define MDV_ACTION_SIZE 0xe7eu
@@ -70,6 +82,12 @@
 #define MDV_TARGET 0x317ae0u             /* a render target's ID from its name */
 #define MDV_TARGET_SIZE 0x2edu
 #define MDV_TARGET_SHA "5081615ccb68b6d00fd8e076d41d9ee01e073b6ead694d1909c953ef4e5061d8"
+#define MDV_INTERACTION 0x151d10u        /* an interaction descriptor by its ID; a notification's +0x80 is one, its ID at +8 */
+#define MDV_INTERACTION_SIZE 0xa8u
+#define MDV_INTERACTION_SHA "0fdaca3ec9a92020c552ff89f3d72b22522b02cabb410df54d2b55a33cb5d6bc"
+#define MDV_RAISE 0x157950u              /* (notification manager, std::string *error, interaction ID): the player's answer */
+#define MDV_RAISE_SIZE 0x1e7u
+#define MDV_RAISE_SHA "c183a931f80daac74542de5acd28adf4dd1a7c2148327508af9ca446f5515dc1"
 #define MDV_MANAGER 0x3d19900u           /* the cutscene manager: +0x30 its cutscenes, +0xa0 on, +0xa8 the notification's, +0xc0 a mode */
 #define MDV_NOTES 0x6cf1798u             /* the notification manager: +0x50 the ID the UI says it displays */
 #define MDV_MAX 16u
@@ -84,12 +102,16 @@ typedef void (*mdv_stop_fn)(void *,int);
 typedef void *(*mdv_find_fn)(int);
 typedef void (*mdv_remove_fn)(void *,int *);
 typedef void *(*mdv_target_fn)(uint64_t *,const void *,int);
+typedef void *(*mdv_interaction_fn)(int);
+typedef void *(*mdv_raise_fn)(void *,void *,int);
 typedef struct {mdv_action_fn action;mdv_make_fn make;mdv_start_fn start;mdv_stop_fn stop;mdv_find_fn find;mdv_remove_fn remove;
-    mdv_target_fn target;int (*now)(double *);} mdv_fns;
+    mdv_target_fn target;int (*now)(double *);mdv_interaction_fn interaction;mdv_raise_fn raise;} mdv_fns;
 static mdv_fns mdv_fn;                   /* the image's; tests set their own */
 static unsigned char *mdv_base;          /* the image, or a test region */
-typedef struct {unsigned char *note,*desc;double end;int id,cutscene;unsigned owner;unsigned char used;} mdv_t;
+typedef struct {unsigned char *note,*desc;double end;int id,cutscene;unsigned owner,seq;unsigned char used;} mdv_t;
 static mdv_t mdv[MDV_MAX];
+static unsigned mdv_seq;                 /* started notifications, in the simulation's order: the same on every client */
+static volatile LONG64 mdv_answers,mdv_answers_gone;
 static int mdv_armed,mdv_slot_installed,mdv_site_installed,mdv_install_tried,mdv_pins_checked;
 /* The four entries: each starts with whole instructions in its first six bytes (push rbx; sub rsp,0x20 or four pushes). */
 static const struct {const char *name;uint32_t rva,size;const char *sha;unsigned char head[6];unsigned stub,trampoline;} mdv_ui[MDV_UI]={
@@ -141,7 +163,7 @@ static void mdv_begin(unsigned char *note) {
     int id=0,mode=0,cid=0;float seconds=0;double now=0;uint64_t target=0;unsigned char on=0;mdv_t *e=NULL;
     if(!read_local(note+8,&id,4) || !id || !read_local(note+0x78,&desc,8) || !desc || !read_local(note+0x80,&interaction,8) ||
        !read_local(note+0x1c,&seconds,4)) {InterlockedIncrement64(&mdv_failed);return;}
-    if(interaction) {InterlockedIncrement64(&mdv_interactive);return;}   /* the player answers it: X4's own way */
+    if(interaction) InterlockedIncrement64(&mdv_interactive);   /* the player may answer it; its picture is the simulation's all the same */
     for(unsigned i=0;i<MDV_MAX;i++) if(mdv[i].used) (void)mdv_valid(&mdv[i]);
     for(unsigned i=0;i<MDV_MAX && !e;i++) if(!mdv[i].used) e=&mdv[i];
     if(!e) {InterlockedIncrement64(&mdv_full);return;}
@@ -161,7 +183,7 @@ static void mdv_begin(unsigned char *note) {
     memcpy(manager+0xa8,&cutscene,8);
     if(!cutscene) {InterlockedIncrement64(&mdv_failed);return;}   /* a key the manager does not know: X4 says so in its log */
     memcpy(&cid,cutscene+8,4);memcpy(desc+0xa0,&cid,4);
-    memset(e,0,sizeof(*e));e->note=note;e->desc=desc;e->id=id;e->cutscene=cid;e->owner=mpp_show_slot();
+    memset(e,0,sizeof(*e));e->note=note;e->desc=desc;e->id=id;e->cutscene=cid;e->owner=mpp_show_slot();e->seq=++mdv_seq;
     if(seconds>0 && mdv_fn.now && mdv_fn.now(&now)) e->end=now+(double)seconds;
     e->used=1;InterlockedIncrement64(&mdv_started);
 }
@@ -212,6 +234,47 @@ static int mdv_ui_note(int id,int release) {
     }
     return 0;
 }
+/* ---- the answer to a notification's question ---- */
+/* An entry's interaction: its ID on this client (the descriptor's +8, checked against the handle table); 0: none. */
+static int mdv_interaction_id(const mdv_t *e) {
+    unsigned char *interaction=NULL;int id=0;
+    if(!read_local(e->note+0x80,&interaction,8) || !interaction || !read_local(interaction+8,&id,4) || id<=0 ||
+       !mdv_fn.interaction || mdv_fn.interaction(id)!=(void*)interaction) return 0;
+    return id;
+}
+/* The sequence number of the live notification whose question has this interaction ID here; 0: not one of ours. */
+static unsigned mdv_interaction_seq(int id) {
+    if(!mdv_live() || id<=0) return 0;
+    for(unsigned i=0;i<MDV_MAX;i++) if(mdv[i].used) {
+        const mdv_t *e=mdv_valid(&mdv[i]);
+        if(e && mdv_interaction_id(e)==id) return e->seq;
+    }
+    return 0;
+}
+/* The interaction ID of the newest live notification that asks something; 0 none (gate.md_media_question). */
+static int mdv_question(void) {
+    int best=0;unsigned seq=0;
+    if(!mdv_live()) return 0;
+    for(unsigned i=0;i<MDV_MAX;i++) if(mdv[i].used) {
+        const mdv_t *e=mdv_valid(&mdv[i]);const int id=e?mdv_interaction_id(e):0;
+        if(id && e->seq>seq) {seq=e->seq;best=id;}
+    }
+    return best;
+}
+/* The apply, every client at one tick: the question of notification `seq` is answered as the UI's call answers it.
+ * 1 the event is raised, 0 the notification or its question is gone (the same everywhere). */
+static int mdv_answer(unsigned seq) {
+    unsigned char *notes=NULL;
+    if(!mdv_live() || !seq || !mdv_fn.raise || !read_local(mdv_base+MDV_NOTES,&notes,8) || !notes) return 0;
+    for(unsigned i=0;i<MDV_MAX;i++) if(mdv[i].used && mdv[i].seq==seq) {
+        const mdv_t *e=mdv_valid(&mdv[i]);const int id=e?mdv_interaction_id(e):0;
+        if(!id) break;
+        unsigned char text[32];memset(text,0,sizeof(text));   /* X4 builds its std::string answer here: empty when raised */
+        (void)mdv_fn.raise(notes,text,id);
+        InterlockedIncrement64(&mdv_answers);return 1;
+    }
+    InterlockedIncrement64(&mdv_answers_gone);return 0;
+}
 /* ---- arm, install, the frame, restore ---- */
 static int mdv_pins(void) {
     if(!mdv_pins_checked) {
@@ -220,6 +283,7 @@ static int mdv_pins(void) {
             hash_ok(image+MDV_START,MDV_START_SIZE,MDV_START_SHA) && hash_ok(image+MDV_STOP,MDV_STOP_SIZE,MDV_STOP_SHA) &&
             hash_ok(image+MDV_NOTE_END,MDV_NOTE_END_SIZE,MDV_NOTE_END_SHA) && hash_ok(image+MDV_FIND,MDV_FIND_SIZE,MDV_FIND_SHA) &&
             hash_ok(image+MDV_REMOVE,MDV_REMOVE_SIZE,MDV_REMOVE_SHA) && hash_ok(image+MDV_TARGET,MDV_TARGET_SIZE,MDV_TARGET_SHA) &&
+            hash_ok(image+MDV_INTERACTION,MDV_INTERACTION_SIZE,MDV_INTERACTION_SHA) && hash_ok(image+MDV_RAISE,MDV_RAISE_SIZE,MDV_RAISE_SHA) &&
             read_local(image+MDV_ACTION_VTABLE+MDV_SLOT,&slot,8) && slot==(void*)(image+MDV_ACTION);
         for(unsigned i=0;ok && i<MDV_UI;i++) ok=hash_ok(image+mdv_ui[i].rva,mdv_ui[i].size,mdv_ui[i].sha) && !memcmp(image+mdv_ui[i].rva,mdv_ui[i].head,6);
         mdv_pins_checked=ok?1:-1;
@@ -244,7 +308,8 @@ static int mdv_arm(void) {
     mdv_fn.action=(mdv_action_fn)(image+MDV_ACTION);mdv_fn.make=(mdv_make_fn)(image+MDV_MAKE);mdv_fn.start=(mdv_start_fn)(image+MDV_START);
     mdv_fn.stop=(mdv_stop_fn)(image+MDV_STOP);mdv_fn.find=(mdv_find_fn)(image+MDV_FIND);mdv_fn.remove=(mdv_remove_fn)(image+MDV_REMOVE);
     mdv_fn.target=(mdv_target_fn)(image+MDV_TARGET);mdv_fn.now=pnat_time_tls;
-    memset(mdv,0,sizeof(mdv));mdv_made=NULL;mdv_install_tried=0;
+    mdv_fn.interaction=(mdv_interaction_fn)(image+MDV_INTERACTION);mdv_fn.raise=(mdv_raise_fn)(image+MDV_RAISE);
+    memset(mdv,0,sizeof(mdv));mdv_made=NULL;mdv_install_tried=0;mdv_seq=0;mdv_answers=mdv_answers_gone=0;
     mdv_actions=mdv_started=mdv_replaced=mdv_failed=mdv_interactive=mdv_full=mdv_timeouts=mdv_gone=0;
     mdv_ui_starts=mdv_ui_none=mdv_ui_stops=mdv_ui_releases=mdv_ui_hidden=mdv_ui_shown=0;
     mdv_armed=1;mdv_why="-";return 1;

@@ -96,6 +96,9 @@ static int lxtz_before_release(void);
 static int lxtz_after_join(void);
 /* The battle fixture's preparation at tick 1 (gate_battle.h): 0 stops the gate with reason 74, as Windows' path_release. */
 static int lxb_prepare(void);
+/* SPLINE_PHASE (gate_spline_phase.h): the route calculator's queues drained at the frame's two phase points; 0 stops the
+ * gate with reason 199, as Windows' path_release. */
+static int lxsp_drain(void);
 static void lxp_path_release(void *semaphore,unsigned count) {
     const lxp_release_fn release=(lxp_release_fn)(void*)LX(LX_SEM_RELEASE_VA);
     if(boot_mode && boot_phase<3) {release(semaphore,count);return;}
@@ -117,6 +120,8 @@ static void lxp_path_release(void *semaphore,unsigned count) {
     }
     /* Tempzone order: RunPass's slot clear, then the slot parked for the pass. */
     if(valid && !lxtz_before_release()) {finish(144);release(semaphore,count);return;}
+    /* SPLINE_PHASE: the routes and steering path jobs requested since the last join, before the pass. */
+    if(valid && !lxsp_drain()) {finish(199);release(semaphore,count);return;}
     if(valid) InterlockedExchange(&path_pass_open,1);
     release(semaphore,count);
     if(!valid) {InterlockedExchange(&path_pass_open,0);finish(22);return;}
@@ -141,6 +146,8 @@ static void lxp_path_release(void *semaphore,unsigned count) {
     if((path_det_mask&PATH_DET_REFRESH_BIT) && stats.active && !path_det_frame(manager)) {
         InterlockedIncrement64(&path_det_failures);finish(79);
     }
+    /* SPLINE_PHASE: what the pass's spline updates and steering steps requested, while nothing else moves the world. */
+    if(stats.active && !lxsp_drain()) finish(199);
 }
 /* The word holding the call: one aligned compare-exchange, the first 3 bytes kept. */
 static uint64_t lxp_patched_word(void) {

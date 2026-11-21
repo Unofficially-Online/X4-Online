@@ -701,12 +701,16 @@ static unsigned rid_frames_of(void *caller,uint32_t *frames) {
  * bits) to the open row; the gate boundary (rid_frame) closes it with the tick and the next ID:
  *   RUNTIME_IDS_ROW index= tick= next= count= first= last= (slots) threads=moveworker/main/other
  *   seq= (the keys in allocation order) sum= (their set) keys=key:count,... sorted by key, at most
- *   RID_ROW_KEYS (keys_other= the allocations past them)
+ *   RID_ROW_KEYS (keys_other= the allocations past them; then also head= and tail=, the first and the last
+ *   RID_ROW_ENDS keys in allocation order: 18 Nov, a tick of 3,067 allocations on one client and 3,069 on the
+ *   other, 374 and 372 in the next, the same 32 keys listed on both: the two that changed tick were past the table)
  * A tick without a shared allocation has no row. Two clients' rows part at the tick and name the
  * key; RUNTIME_IDS_CALLER key= is its stack. Play allocates about 16 a tick: about one row a tick. */
 #define RID_ROW_KEYS 32u
 #define RID_ROW_RING 1024u
-typedef struct {uint64_t tick,next,seq,sum;uint32_t count,first,last,keys,other,threads[3];uint32_t key[RID_ROW_KEYS],key_count[RID_ROW_KEYS];} rid_row_t;
+#define RID_ROW_ENDS 4u
+typedef struct {uint64_t tick,next,seq,sum;uint32_t count,first,last,keys,other,threads[3];uint32_t key[RID_ROW_KEYS],key_count[RID_ROW_KEYS];
+    uint32_t head[RID_ROW_ENDS],tail[RID_ROW_ENDS];} rid_row_t;
 static int rid_rows_on;
 static rid_row_t rid_row_open,rid_row_ring[RID_ROW_RING];
 static volatile LONG64 rid_rows;
@@ -714,6 +718,8 @@ static volatile LONG64 rid_rows;
 static void rid_row_add(rid_row_t *r,uint32_t key,unsigned thread,uint32_t slot) {
     if(!r->count) r->first=slot;
     r->last=slot;++r->count;++r->threads[thread<3u?thread:2u];
+    if(r->count<=RID_ROW_ENDS) r->head[r->count-1u]=key;
+    r->tail[(r->count-1u)%RID_ROW_ENDS]=key;
     r->seq=lockstep_mix(r->seq^key);r->sum+=lockstep_mix(key);
     for(unsigned i=0;i<r->keys;i++) if(r->key[i]==key) {++r->key_count[i];return;}
     if(r->keys<RID_ROW_KEYS) {r->key[r->keys]=key;r->key_count[r->keys]=1;++r->keys;}
@@ -754,7 +760,13 @@ __attribute__((unused)) static int rid_row(uint64_t index,char *out,size_t capac
         (unsigned long long)index,(unsigned long long)r->tick,(unsigned long long)r->next,r->count,r->first,r->last,r->threads[0],r->threads[1],r->threads[2],
         (unsigned long long)r->seq,(unsigned long long)r->sum);
     for(unsigned i=0;n>0 && (size_t)n<capacity && i<r->keys;i++) n+=snprintf(out+n,capacity-(size_t)n,"%s%08x:%u",i?",":"",r->key[i],r->key_count[i]);
-    if(n>0 && (size_t)n<capacity && r->other) n+=snprintf(out+n,capacity-(size_t)n," keys_other=%u",r->other);
+    if(n>0 && (size_t)n<capacity && r->other) {
+        const unsigned ends=r->count<RID_ROW_ENDS?r->count:RID_ROW_ENDS;
+        n+=snprintf(out+n,capacity-(size_t)n," keys_other=%u head=",r->other);
+        for(unsigned i=0;n>0 && (size_t)n<capacity && i<ends;i++) n+=snprintf(out+n,capacity-(size_t)n,"%s%08x",i?",":"",r->head[i]);
+        if(n>0 && (size_t)n<capacity) n+=snprintf(out+n,capacity-(size_t)n," tail=");
+        for(unsigned i=0;n>0 && (size_t)n<capacity && i<ends;i++) n+=snprintf(out+n,capacity-(size_t)n,"%s%08x",i?",":"",r->tail[(r->count-ends+i)%RID_ROW_ENDS]);
+    }
     return n>0 && (size_t)n<capacity?n:0;
 }
 static uint64_t rid_note_caller_cue(const uint32_t *frames,unsigned count,unsigned route,unsigned thread,const char *cue) {

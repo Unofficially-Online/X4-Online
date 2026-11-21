@@ -69,7 +69,18 @@
  * test) and logs a TEMPZONE_ROW kind=other for each (site, thread, sector,
  * cell position, zone), other_in_pass those made while a joined pathing pass
  * runs (the only overlap that could race the grant's allocation). A zone made
- * there stays unnamed by the created identities (not the MoveWorker). Pins: FUN_140785db0 (tail after the relocated prologue), the
+ * there stays unnamed by the created identities (not the MoveWorker).
+ * other_same (18 Nov, a full mission matrix, tick 13456): the region thread made the same four cell zones twice on one
+ * client, in the tick after a player's ship was put next to a station far away: RUNTIME_IDS_ROW threads=121/0/8 against
+ * 121/0/4, other_creates 27 against 23, and from the next tick eight AddTempZoneEvent against four, each with its
+ * sector's handler objects (the clients apart for good, in the runtime IDs only). A zone the creator made is active
+ * only after its AddTempZoneEvent, so a second generation of the same cells before that finds nothing and makes them
+ * again; whether a second generation comes that early is the region thread's timing on that client (its kicks: the
+ * MoveWorker's at the frame's end and the resume 0x8d3e30). With 'order' the zones this path made are remembered while
+ * they are not active (with a reference, at most TZ_PENDING, for TZ_PENDING_TICKS ticks): a create=1 request of other
+ * code for the same sector and position gets that zone, with a reference of its own, and makes none. Counted
+ * (other_same); a request for a cell whose zone is active is X4's lookup as before.
+ * Pins: FUN_140785db0 (tail after the relocated prologue), the
  * lookup, the creator, the active check, the reference release, both request
  * blocks and RunPass's clear. Every gate tick re-checks the entry and the pins;
  * a failure (also a slot changed during a parked pass) stops the gate with
@@ -133,6 +144,12 @@ static uint64_t tz_saved_zone;
 #endif
 static LONG tz_saved_flag;
 static volatile LONG64 tz_noted,tz_rows,tz_failures,tz_finds,tz_misses,tz_creates,tz_unblocked,tz_other_creates,tz_other_made,tz_other_in_pass,tz_outside;
+#define TZ_PENDING 32u
+#define TZ_PENDING_TICKS 600u
+typedef struct {uint64_t sector,tick;uint32_t position[3];int64_t zone;} tz_pending_t;
+static tz_pending_t tz_pending[TZ_PENDING];
+static volatile LONG tz_pending_lock;
+static volatile LONG64 tz_other_same;
 static uint64_t tz_passes,tz_blocks,tz_opens,tz_cleared,tz_granted,tz_stored,tz_found,tz_waits,tz_overflow,tz_requests,tz_max,tz_drew,tz_unmapped,tz_gone;
 static tz_candidate_t tz_candidates[TZ_CANDIDATES];
 static tz_row_t tz_ring[TZ_RING];
@@ -192,20 +209,73 @@ static void tz_observe_row(uint8_t kind,void *sector,const void *position,uint32
     if(zone) {read_local((unsigned char*)zone+8,&r.zone,8);r.active=(uint8_t)tz_active_view((unsigned char*)zone);}
     tz_append(&r);
 }
+/* The zones other code's create=1 made that are not active yet. The table holds a reference to each, so a zone in it is
+ * alive; an entry goes when its zone is active or after TZ_PENDING_TICKS ticks, and all of them at the stop. */
+static void tz_pending_enter(void) {while(InterlockedCompareExchange(&tz_pending_lock,1,0)) {}}
+static void tz_pending_leave(void) {InterlockedExchange(&tz_pending_lock,0);}
+/* 1: *out is the zone made for this sector and position before, not active yet, with a reference for the caller. */
+static int tz_pending_take(void *sector,const void *position,int64_t *out) {
+    uint64_t runtime=0;uint32_t at[3];int64_t gone[TZ_PENDING];unsigned n=0;int taken=0;
+    if(tz_mode!=TZ_ORDER || !out || !sector || !read_local((unsigned char*)sector+8,&runtime,8) || !runtime || !read_local(position,at,12)) return 0;
+    tz_pending_enter();
+    for(unsigned i=0;i<TZ_PENDING;i++) {
+        tz_pending_t *p=&tz_pending[i];
+        if(!p->zone) continue;
+        if(tz_active_view((const unsigned char*)p->zone) || stats.issued-p->tick>TZ_PENDING_TICKS) {gone[n++]=p->zone;memset(p,0,sizeof(*p));continue;}
+        if(!taken && p->sector==runtime && !memcmp(p->position,at,12)) {tz_addref((unsigned char*)p->zone);*out=p->zone;taken=1;}
+    }
+    tz_pending_leave();
+    for(unsigned i=0;i<n;i++) tz_release_ref(&gone[i]);
+    return taken;
+}
+static void tz_pending_add(void *sector,const void *position,int64_t zone) {
+    uint64_t runtime=0;uint32_t at[3];int64_t gone=0;
+    if(tz_mode!=TZ_ORDER || !zone || !sector || !read_local((unsigned char*)sector+8,&runtime,8) || !runtime || !read_local(position,at,12)) return;
+    tz_pending_enter();
+    tz_pending_t *slot=NULL,*oldest=&tz_pending[0];int known=0;
+    for(unsigned i=0;i<TZ_PENDING;i++) {
+        tz_pending_t *p=&tz_pending[i];
+        if(p->zone==zone) known=1;
+        if(!p->zone) {if(!slot) slot=p;}
+        else if(p->tick<oldest->tick || !oldest->zone) oldest=p;
+    }
+    if(!known) {
+        if(!slot) {slot=oldest;gone=slot->zone;}   /* full: the oldest one goes */
+        tz_addref((unsigned char*)zone);slot->zone=zone;slot->sector=runtime;slot->tick=stats.issued;memcpy(slot->position,at,12);
+    }
+    tz_pending_leave();
+    if(gone) tz_release_ref(&gone);
+}
+static void tz_pending_clear(void) {
+    int64_t gone[TZ_PENDING];unsigned n=0;
+    tz_pending_enter();
+    for(unsigned i=0;i<TZ_PENDING;i++) if(tz_pending[i].zone) {gone[n++]=tz_pending[i].zone;memset(&tz_pending[i],0,sizeof(tz_pending[i]));}
+    tz_pending_leave();
+    for(unsigned i=0;i<n;i++) tz_release_ref(&gone[i]);
+}
+static int tz_request_site(uint32_t site) {return site==TZ_PATH_CREATE || site==TZ_PATH_FIND || site==TZ_SWITCH_CREATE || site==TZ_SWITCH_FIND;}
 /* Every call of FUN_140785db0 while armed; ret is the caller's return address. */
 static int64_t *tz_find_run(tz_find_fn original,uintptr_t ret,void *sector,int64_t *out,const void *position,unsigned char create) {
+    if(create && InterlockedCompareExchange(&tz_active,0,0) && !tz_request_site(tz_site(ret))) {
+        const unsigned asking=path_thread_class();
+        /* out is the caller's empty return slot (X4's lookup constructs it): written, never read. */
+        if(asking!=PATH_THREAD_MOVEWORKER && asking!=PATH_THREAD_MAIN && tz_pending_take(sector,position,out)) {
+            InterlockedIncrement64(&tz_other_creates);InterlockedIncrement64(&tz_other_same);tz_last_ret=ret;return out;
+        }
+    }
     int64_t *result=original(sector,out,position,create);
     if(!InterlockedCompareExchange(&tz_active,0,0)) return result;
     DWORD error=GetLastError();
     uint32_t site=tz_site(ret);int64_t zone=0;unsigned thread=path_thread_class();tz_last_ret=ret;
     if(out) read_local(out,&zone,8);
-    int request=site==TZ_PATH_CREATE || site==TZ_PATH_FIND || site==TZ_SWITCH_CREATE || site==TZ_SWITCH_FIND;
+    int request=tz_request_site(site);
     if(!request) {
         if(create && thread!=PATH_THREAD_MOVEWORKER && thread!=PATH_THREAD_MAIN) {
             InterlockedIncrement64(&tz_other_creates);
             if(zone && !tz_active_view((const unsigned char*)zone)) {
                 InterlockedIncrement64(&tz_other_made);if(thread==PATH_THREAD_PASS) InterlockedIncrement64(&tz_other_in_pass);
                 tz_observe_row(TZ_ROW_OTHER,sector,position,site,zone,thread);
+                tz_pending_add(sector,position,zone);
             }
         }
     }
@@ -367,6 +437,7 @@ static int tz_check(void) {
 }
 static void tz_restore(void) {
     InterlockedExchange(&tz_active,0);
+    tz_pending_clear();
     tz_unpark(); /* a slot changed meanwhile stays as it is */
     if(!tz_installed) return;
     if(!tz_swap(tz_patched_word,tz_original_word)) return; /* a foreign value stays */
@@ -392,12 +463,12 @@ static int tz_row(uint64_t index,char *out,size_t cap) {
 static int tz_status(char *out,size_t capacity) {
     int n=snprintf(out,capacity,"mode=%s installed=%d passes=%llu blocks=%llu open=%llu cleared=%llu granted=%llu stored=%llu found=%llu "
         "waits=%llu overflow=%llu gone=%llu requests=%llu max=%llu finds=%lld misses=%lld creates=%lld unblocked=%lld other_creates=%lld "
-        "other_made=%lld other_in_pass=%lld outside=%lld drew=%llu unmapped=%llu rows=%lld restored=%d stage=%s failures=%lld",
+        "other_made=%lld other_in_pass=%lld outside=%lld drew=%llu unmapped=%llu rows=%lld restored=%d stage=%s failures=%lld other_same=%lld",
         tz_mode==TZ_ORDER?"order":tz_mode==TZ_OBSERVE?"observe":"off",tz_installed,(unsigned long long)tz_passes,(unsigned long long)tz_blocks,
         (unsigned long long)tz_opens,(unsigned long long)tz_cleared,(unsigned long long)tz_granted,(unsigned long long)tz_stored,
         (unsigned long long)tz_found,(unsigned long long)tz_waits,(unsigned long long)tz_overflow,(unsigned long long)tz_gone,
         (unsigned long long)tz_requests,(unsigned long long)tz_max,(long long)tz_finds,(long long)tz_misses,(long long)tz_creates,
         (long long)tz_unblocked,(long long)tz_other_creates,(long long)tz_other_made,(long long)tz_other_in_pass,(long long)tz_outside,(unsigned long long)tz_drew,(unsigned long long)tz_unmapped,
-        (long long)tz_rows,tz_restored,tz_stage,(long long)tz_failures);
+        (long long)tz_rows,tz_restored,tz_stage,(long long)tz_failures,(long long)tz_other_same);
     return n>0 && (size_t)n<capacity?n:0;
 }

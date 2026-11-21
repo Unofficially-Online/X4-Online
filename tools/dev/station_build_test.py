@@ -6,9 +6,9 @@ in sync until the modules stood.
     python tools/dev/station_build_test.py report CLIENT1.log CLIENT2.log --run RUNDIR
     python tools/dev/station_build_test.py plan
 
-What each player does, one after the other, in its own window (the mouse and the keyboard of the PC are taken for each
-input, as a person at that window would; ui_clicks.py):
-  the map (M), Manage Plots, "Create new plot", a click in the sector to place it, "Buy licence", "Continue" into the
+What each player does, one after the other, in its own window (by default as messages to that window, so the PC's mouse
+and keyboard stay with whoever sits at it: ui_window_input.py; --input mouse takes the real pointer: ui_clicks.py):
+  the map (the HUD's top bar), Manage Plots, "Create new plot", a click in the sector to place it, "Buy licence", "Continue" into the
   station menu, a module from the left list, a click to put it into the plot, "Confirm module changes", "Assign or hire
   a Builder", the player's construction vessel in the property list, "Select".
 The test's fixtures (script ops in every client's plan at the same tick, done by MD on every client) give what a new
@@ -34,6 +34,9 @@ The click places are fractions of a 1600x900 window at UI scale 1 (measured 17 N
 scale needs them measured again. `run` starts its own windowed clients with disposable profiles (x4ls play), beside
 other sessions when --first-profile, --lanes, --display and --tile-skip keep them apart, and stops the clients it
 started. Exit code: 0 all checks passed, 1 a check failed, 2 the run itself did not work.
+
+--mode factions: each player is a faction of its own (x4ls's factions mode). Each then builds its own faction's
+station with its own money, blueprints and construction vessel, and sees only its own plots and ships in its lists.
 """
 import argparse
 import json
@@ -49,6 +52,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import action_tests as at          # noqa: E402  (log parsing, the checks of every action test)
 import station_walk_test as rig    # noqa: E402  (lua values, log readers, window pictures, priorities)
 import ui_clicks                   # noqa: E402
+import ui_window_input             # noqa: E402
 
 PLAYERS = (1, 2)
 SIZE = '1600x900'
@@ -80,14 +84,22 @@ BUILDER_X, BUILDER_Y, SELECT_X, SELECT_Y = 0.11, 225 / 720.0, 0.17, 236 / 720.0
 PLACE = {1: (0.55, 0.62), 2: (0.45, 0.72)}       # where each player puts its plot in the sector
 
 
-def plan(minutes):
-    """Every client's plan: the fixtures and the readings, at the same ticks in both."""
+def plan(minutes, mode='coop'):
+    """Every client's plan: the fixtures and the readings, at the same ticks in both. Factions mode: a construction
+    vessel for each player's faction (replayed ops: client 1's plan alone), player 2's blueprints in its own
+    faction's library (a canonical op: both plans)."""
     last = int(minutes * 60 * 30) - 150
     rows = [(30, 'station_kit', 1, True), (40, 'wallet', 50000000)]
     rows += [(t, 'station_wares', 3000) for t in range(900, last, WARES_EVERY)]
     rows += [(t, 'builder_warp') for t in range(1200, last, WARP_EVERY)]
     rows += [(t, 'station_look') for t in range(LOOK_EVERY, last, LOOK_EVERY)]
-    return [rows, rows]
+    if mode != 'factions':
+        return [rows, rows]
+    both = [(40, 'wallet', 50000000), (60, 'station_blueprints', 2)] + [(t, 'station_look') for t in range(LOOK_EVERY, last, LOOK_EVERY)]
+    one = [(30, 'station_kit', 1, True), (32, 'station_kit', 2, True)]
+    one += [(t, 'station_wares', 3000) for t in range(900, last, WARES_EVERY)]
+    one += [(t, 'builder_warp') for t in range(1200, last, WARP_EVERY)]
+    return [sorted(one + both, key=lambda row: row[0]), both]
 
 
 def looks(log):
@@ -112,9 +124,12 @@ def stations(text):
 class Rig:
     """The running session: each client's pid and log, the console, pictures."""
 
-    def __init__(self, pids, logs, work, run_dir):
+    def __init__(self, pids, logs, work, run_dir, by='window'):
         self.pids, self.logs, self.work, self.run_dir = pids, logs, work, run_dir
-        self.asked = int(time.time()) % 100000 * 10        # console numbers only grow
+        # 'window': messages to the client's window, the PC's mouse and focus stay with the person (ui_window_input.py);
+        # 'mouse': the real pointer (ui_clicks.py; nobody can use the PC meanwhile)
+        self.input = ui_window_input if by == 'window' else ui_clicks
+        self.asked = int(time.time() * 10)        # console numbers only grow (time % 100000 wrapped every 28 hours)
         self.shots = 0
         self.steps = []
         (run_dir / 'shots').mkdir(exist_ok=True)
@@ -155,7 +170,11 @@ class Rig:
         record = {'player': k, 'step': label, 'ok': False, 'tries': 0, 'rows': {}, 'menu': None}
         for attempt in range(tries):
             marks = {c: self.size(c) for c in PLAYERS}
-            ui_clicks.act(self.pids[k - 1], action)
+            # a list is several inputs that belong together (the HUD's bar, then its map symbol): made again as a whole
+            for n, one in enumerate(action if isinstance(action, list) else [action]):
+                if n:
+                    time.sleep(1.0)
+                self.input.act(self.pids[k - 1], one)
             record['tries'] = attempt + 1
             good = True
             sent = False
@@ -187,11 +206,13 @@ class Rig:
 
 def build_station(r, k, plots_before, builder_row, leave):
     """Player k's click-through; False at the first step that failed. leave: the player then closes its menus ("Close
-    Menu", Escape on the map) and sits in its cockpit while the station is built; else the station menu stays open."""
+    Menu", the cross of the map) and sits in its cockpit while the station is built; else the station menu stays open."""
     down = LIST_STEP * plots_before
     applied = r'UI_BUILD_APPLIED tick=\d+ slot=%d what=' % k
     todo = [
-        ('map', ('key', 0x4D), None, (MAP, 'map shown=true'), 3),
+        # the HUD's menu bar comes down at the top centre, its fifth symbol is the map (no key: see ui_window_input.py);
+        # the pointer first rests in the view, so the bar sees it arrive
+        ('map', [('click', 0.5, 0.30, 'hover'), ('click', 0.5, 0.012), ('click', 0.521, 0.046)], None, (MAP, 'map shown=true'), 3),
         ('dialog', ('key', 0x0D), None, None, 3),                 # a new profile's "priority orders" question: Enter takes "No"
         ('plots', ('click',) + PLOTS_ICON, None, (MAP, 'info=plots'), 2),
         ('newplot', ('click', PLOT_COLUMN, NEW_PLOT_Y + down), None, (MAP, 'active=true'), 1.5),
@@ -210,7 +231,7 @@ def build_station(r, k, plots_before, builder_row, leave):
     ]
     if leave:
         todo += [('close', ('click',) + CLOSE_MENU, None, (MENU, 'station shown=false'), 3),
-                 ('cockpit', ('key', 0x1B), None, (MAP, 'map shown=false'), 2)]
+                 ('cockpit', ('click', 0.9937, 0.009), None, (MAP, 'map shown=false'), 2)]   # the map's close cross
     for label, action, row, expect, wait in todo:
         if not r.step(k, label, action, row, expect, wait):
             return False
@@ -285,11 +306,13 @@ def run(args):
             shutil.rmtree(stale)
     console = str(work / 'console' / 'c%d.lua').replace('\\', '/')
     made = subprocess.run([sys.executable, str(ROOT / 'tools/build_play_overlay.py'), '--snapshot', str(args.snapshot), '--gate-dll', str(args.gate_dll),
-                           '--out', str(overlay), '--players', '2', '--mode', 'coop', '--minutes', str(args.minutes), '--save-every', '0',
-                           '--set', 'native_gate_ui_replay_script=' + rig.lua(plan(args.minutes)),
+                           '--out', str(overlay), '--players', '2', '--mode', args.mode, '--minutes', str(args.minutes), '--save-every', '0',
+                           '--set', 'native_gate_ui_replay_script=' + rig.lua(plan(args.minutes, args.mode)),
                            '--set', "native_gate_ui_replay_console='%s'" % console,
                            '--set', 'native_gate_digest_parts={1,%d}' % (args.minutes * 1800)] +
                           ([] if args.no_pages else ['--set', 'native_gate_world_pages_window={1800,%d}' % (args.minutes * 1800), '--set', 'native_gate_created_rows=true']) +
+                          # factions mode: money for the factions that are not X4's player faction (the wallet op is player 1's)
+                          (['--set', 'native_gate_ui_trade_fund=50000000'] if args.mode == 'factions' else []) +
                           [x for extra in args.set for x in ('--set', extra)], cwd=ROOT, env=env, capture_output=True, text=True)
     (work / 'overlay.log').write_text(made.stdout + made.stderr, encoding='utf-8')
     if made.returncode:
@@ -323,10 +346,15 @@ def run(args):
             pids = [int(x) for x in re.findall(r'client \d+: pid (\d+)', (work / 'host.log').read_text(encoding='utf-8', errors='replace'))]
             print('the clients step (run %s, pids %s)' % (run_dir.name, pids), flush=True)
             rig.below_normal(pids)
-            r = Rig(pids, logs, work, run_dir)
+            r = Rig(pids, logs, work, run_dir, args.input)
+            factions = args.mode == 'factions'
+            rows = args.builder_rows or ([0, 0] if factions else [0, 1])
             for k in PLAYERS:
                 read = looks(logs[k - 1])
-                if not build_station(r, k, len(stations(read[-1][1])) if read else 0, k - 1, k in args.leave):
+                # coop: the lists hold both players' plots and vessels; factions: each player's own alone (the
+                # builder list holds its one vessel)
+                before = 0 if factions else len(stations(read[-1][1])) if read else 0
+                if not build_station(r, k, before, rows[k - 1], k in args.leave):
                     break
             (run_dir / 'clicks.json').write_text(json.dumps(r.steps, indent=1), encoding='utf-8')
             # until every station's module stands on both clients, or the window is nearly over
@@ -369,6 +397,11 @@ def main(argv=None):
     s.add_argument('--leave', type=lambda text: [int(x) for x in text.split(',') if x], default=[], metavar='PLAYERS',
                    help="players (1,2) who close their menus after the builder's order; the others keep the station menu open while it is built")
     s.add_argument('--keep', action='store_true', help='leave the clients running after the report')
+    s.add_argument('--mode', choices=('coop', 'factions'), default='coop', help='one shared faction, or a faction per player')
+    s.add_argument('--builder-rows', type=lambda text: [int(x) for x in text.split(',')], metavar='ROW1,ROW2',
+                   help="each player's construction vessel in its property list, as rows below the first measured place")
+    s.add_argument('--input', choices=('window', 'mouse'), default='window',
+                   help="how the clicks reach X4: 'window' (messages to its window; the PC stays usable) or 'mouse' (the real pointer)")
     s.add_argument('--no-pages', action='store_true', help='no per-object rows of the world captures (smaller logs)')
     s = sub.add_parser('report')
     s.add_argument('logs', nargs=2, type=Path)

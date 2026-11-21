@@ -372,8 +372,10 @@ Modules (define, owner):
                                 our stub page changed at a gate tick)
   198 NRW_STOP_REASON           lockstep_nav_refresh_watch.h (native_gate_nav_refresh_watch: the refresh's entry or our
                                 stub page changed at a gate tick)
-  199 SCW_STOP_REASON           lockstep_spline_calc_watch.h (native_gate_spline_calc_watch: the spline calculator's entry
-                                or our stub page changed at a gate tick)
+  199 SCW_STOP_REASON           lockstep_spline_calc_watch.h; on the Linux gate LXSP_STOP_REASON (linux/gate_spline_phase.h)
+                                (native_gate_spline_calc_watch: the spline calculator's entry or our stub page changed at
+                                a gate tick; native_gate_spline_phase on the Linux gate: a drain unreadable or past its
+                                bound, a site, the stub page or the pins changed)
   200 JOIN_STOP_REASON          lockstep_join.h (hot join: a strict joiner's admission refused; the status line's
                                 rx_detail names why: contexts_differ, wakes_unplaced, md_heap_differs, clock,
                                 ids_foreign, created_entries, rid_*, pins, engine)
@@ -400,7 +402,12 @@ Modules (define, owner):
                                 entry, the stub page or the pin; whys entry_changed, page_changed, block_changed)
   213 LXPS_STOP_REASON          linux/gate_pursuit_speed.h (native_gate_pursuit_speed, Linux gate only: the speed factor
                                 run's entry, the stub page or the pin; whys entry_changed, page_changed, block_changed)
-  free: 109, 114-119, 122-129, 147-149, 214-255.
+  214 LXZP_STOP_REASON          linux/gate_zone_pending.h (native_gate_zone_pending on the Linux gate: one of the three
+                                lock calls, the stub page or the pins; whys site_changed, page_changed, block_changed)
+  215 IORDER_STOP_REASON        lockstep_island_order.h (native_gate_island_order, a default: the island sort's call or
+                                its stub no longer ours, the pins, or a constraint the rekey could not read; whys
+                                site_changed, block_changed, unreadable)
+  free: 109, 114-119, 122-129, 147-149, 216-255.
 Not stop reasons although named *_STOP*: PSLOT_STOP_WAIT (a wait count),
 PFIRE_STOP, PNAT_STOP_IN_MENU, PNAT_FULL_STOP (flags, 0).
 Renumbered on 1 November 2026 (integration): region camera 130 -> 165, speak

@@ -65,6 +65,19 @@ def relay_info(**changes):
 
 
 class Options(unittest.TestCase):
+    def test_profiles_root(self):
+        # Without --profiles-root and X4LANE_PROFILES: the launcher's Documents/Egosoft/X4 (the known folder, which OneDrive
+        # may redirect), not ~/Documents.
+        sys.path.insert(0, str(ROOT/'src'))
+        from lockstep.launcher import profile
+        with mock.patch.dict('os.environ', {}, clear=False):
+            driver.os.environ.pop('X4LANE_PROFILES', None)
+            with mock.patch.object(profile, 'documents_folder', return_value=Path('D:/redirected')):
+                self.assertEqual(driver.profiles_root(), Path('D:/redirected/Egosoft/X4'))
+            driver.os.environ['X4LANE_PROFILES'] = 'E:/lanes'
+            self.assertEqual(driver.profiles_root(), Path('E:/lanes'))
+            self.assertEqual(driver.profiles_root('F:/given'), Path('F:/given'))
+
     def test_relay_options_and_refusals(self):
         info = relay_info()
         self.assertEqual((info['port'], info['clients'], info['absent'], info['present'], info['savers'], info['lookahead']),
@@ -618,7 +631,7 @@ class Overlays(unittest.TestCase):
             self.assertIn('exists', self.refused('savers', '--gate-dll', dll, '--snapshot', snap, '--out', root/'savers'))
             self.assertIn('last slots', self.refused('savers', '--gate-dll', dll, '--snapshot', snap, '--out', root/'x', '--absent', '2'))
             self.assertIn('arm-timeout', self.refused('savers', '--gate-dll', dll, '--snapshot', snap, '--out', root/'y', '--arm-timeout-ms', '300001'))
-            (folder/'j640.x4join').write_bytes(data[:-1]+b'\0')
+            (folder/'j640.x4join').write_bytes(data[:-1]+bytes([data[-1]^1]))   # flipped: the trailer's last byte may be 0 already
             self.assertIn('package', self.refused('joiner', '--gate-dll', dll, '--handoff', root/'handoff.json', '--out', root/'z',
                                                   '--join-mode', 'report'))
             self.assertIn('no handoff', self.refused('joiner', '--gate-dll', dll, '--handoff', root/'none.json', '--wait', '0.1',
@@ -653,6 +666,12 @@ class Overlays(unittest.TestCase):
             self.assertIn('native_gate_join_resv', overlays.JOIN_DEFAULT_ON)   # w1z156, j1-337: the 1049/1860 split gone
             self.assertIn('native_gate_join_mute_load_npcs', overlays.JOIN_DEFAULT_ON)   # ca15: the T+2 NPC split at T=733 gone
             self.assertIn('native_gate_join_viewl', overlays.JOIN_DEFAULT_ON)   # hjs4v: a docking ship's live-view flag, its T+1 row
+            self.assertIn('native_gate_join_shgr', overlays.JOIN_DEFAULT_ON)    # hq105/hq106: a finished ship's module group, the census of 12000
+            self.assertIn('native_gate_join_dron', overlays.JOIN_DEFAULT_ON)    # hq106: pending and user drone modes, a miner's mode at 6120
+            self.assertIn('native_gate_join_refp', overlays.JOIN_DEFAULT_ON)    # hq115: reference prices to the hundredth
+            self.assertIn('native_gate_join_spwn', overlays.JOIN_DEFAULT_ON)    # hq124: a wreck's field and resource area
+            self.assertIn('native_gate_join_bclk', overlays.JOIN_DEFAULT_ON)    # hq164: seated pilots' animations restarted by the load
+            self.assertIn('native_gate_join_defr', overlays.JOIN_DEFAULT_ON)    # hq152: drone flights that landed at T
             self.assertIn('native_gate_join_anis', overlays.JOIN_DEFAULT_ON)         # hjs4a: the far wharf's bays, the nav mesh receipt
             self.assertIn('native_gate_join_anis_state', overlays.JOIN_DEFAULT_ON)   # hjs4d: a ship docking at T (unit state, queue, listener)
             self.assertIn('native_gate_join_body_make', overlays.JOIN_DEFAULT_ON)   # hjs1c: the 2 IDs of T+1 on a new-session save

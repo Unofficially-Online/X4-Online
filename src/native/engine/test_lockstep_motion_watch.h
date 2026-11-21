@@ -642,6 +642,11 @@ static void test_motion_watch_native_image(const char *path) {
         ui_thread=GetCurrentThreadId();stats.issued=0;
         assert(motion_watch_zone_add(0x72c) && motion_watch_zone_add(0x72c) && motion_zone_count==1 && world_hash_member_note==motion_zone_note && motion_watch_armed);
         for(unsigned i=0;i<4;i++) assert(*(uint64_t*)(image+motion_zone_ship_types[i]-8)>0x140000000ULL); /* the Complete Object Locator */
+        /* XS members instead: only with a zone, only before the first frame; then XS ships alone are members */
+        assert(*(uint64_t*)(image+MOTION_ZONE_XS_TYPE-8)>0x140000000ULL && motion_zone_ship(motion_zone_ship_types[0]) && !motion_zone_ship(MOTION_ZONE_XS_TYPE));
+        stats.issued=1;assert(!motion_watch_zone_xs());stats.issued=0;
+        assert(motion_watch_zone_xs() && motion_zone_ship(MOTION_ZONE_XS_TYPE) && !motion_zone_ship(motion_zone_ship_types[0]));
+        motion_zone_xs=0;motion_zone_count=0;assert(!motion_watch_zone_xs());motion_zone_count=1;
         if(motion_watch_ring!=saved_ring) {VirtualFree(motion_watch_ring,0,MEM_RELEASE);motion_watch_ring=saved_ring;}
         motion_zone_count=0;motion_zone_saved[0]=0;world_hash_member_note=NULL;motion_watch_armed=0;ui_thread=saved_ui;stats.issued=saved_issued;
     }

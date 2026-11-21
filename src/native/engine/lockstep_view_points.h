@@ -90,6 +90,13 @@ static void (*view_before_refresh)(uint64_t tick);
 static uint64_t view_previous_zone_id[VIEW_MAX],view_sector_moves;
 static unsigned view_count,view_previous_count,view_latched,view_source; /* source: 0 none, 1 slots, 2 player object, 3 occupied ship */
 static uint64_t view_ids[VIEW_MAX],view_previous_ids[VIEW_MAX];
+/* Phantom players (native_gate_phantom_players, a measurement switch; the module is further down): the ships that stand in
+ * for players who are not connected, latched with the view points and evaluated after them. */
+#define VIEW_EXTRA_MAX 16u
+#define VIEW_EXTRA_STOPS 8u
+static void *view_extra_points[VIEW_EXTRA_MAX];
+static uint64_t view_extra_ids[VIEW_EXTRA_MAX];
+static unsigned view_extra_count;
 static uint64_t view_tick=UINT64_MAX,view_frame_calls,view_frame_evaluations,view_frame_differ,view_frame_levels[VIEW_LEVELS];
 static uint64_t view_calls,view_evaluations,view_differ,view_first_differ,view_refreshes,view_latches,view_unreadable;
 static unsigned view_depth;
@@ -226,6 +233,13 @@ static int view_evaluate(view_attention_fn native,void *object) {
     for(unsigned i=0;i<n;i++) {
         if(!hyb_point_counts(i,object)) continue;
         *player=points[i];*slot=(uint64_t)(uintptr_t)(view_page+VIEW_PAGE_SHADOW);
+        int r=native(object);++view_evaluations;++view_frame_evaluations;++counted;
+        if(r>best) best=r;
+    }
+    for(unsigned i=0;view_latched && i<view_extra_count;i++) { /* the phantom players' ships, each a viewer like a player's */
+        uint64_t id=0;
+        if(!read_local((unsigned char*)view_extra_points[i]+8,&id,8) || id!=view_extra_ids[i]) continue; /* gone since the latch */
+        *player=view_extra_points[i];*slot=(uint64_t)(uintptr_t)(view_page+VIEW_PAGE_SHADOW);
         int r=native(object);++view_evaluations;++view_frame_evaluations;++counted;
         if(r>best) best=r;
     }
@@ -737,6 +751,68 @@ static int view_mask_arm(double mask) {
        !isfinite(mask) || mask<0 || mask>VIEW_MASK_ALL || floor(mask)!=mask) return 0;
     view_slot_mask=(unsigned)mask;view_masked=0;return 1;
 }
+/* Phantom players, a measurement switch, DEFAULT OFF (native_gate_phantom_players = {hop=, stagger=, routes={{ids},..}};
+ * 17 Nov, the user: "simulate say 12 players moving in and out of sectors with varying level of attention"). A session
+ * of N connected clients gets up to 16 more view points: each phantom player rides one object of its route (saved IDs:
+ * ships that fly, or stations) and moves to the route's next stop every `hop` ticks, phantom player k `k * stagger`
+ * ticks ahead of the first, as a player who teleports would. A view point is all a phantom player is: around its ship
+ * the universe takes the attention a player's presence gives (the ship 9, its zone 8, the zones within reach 7, its
+ * sector and cluster), follows the ship as it flies and drops behind it when it hops away; no input, no camera, no
+ * physics scene of its own, no HUD. The other modules that follow the latched list (scenes, stand-in cameras, policy)
+ * keep the connected players alone. Identical on every client: the routes are saved IDs, the stop is a function of the
+ * tick, and whether a ship still exists is simulation state. A stop whose object is gone falls to the route's next one
+ * (counted gone= when none is left). The latch recomputes the chains of the ships left and reached, as it does for a
+ * player's ship. players mode only; armed before the first admitted frame, on the MoveWorker.
+ * Status phantoms=<latched>/<players> moves= (latches with another set or zone) gone=. */
+typedef struct {uint64_t saved[VIEW_EXTRA_STOPS],runtime[VIEW_EXTRA_STOPS];unsigned stops;} view_extra_route_t;
+static view_extra_route_t view_extra_routes[VIEW_EXTRA_MAX];
+static unsigned view_extra_players,view_extra_hop,view_extra_stagger;
+static void *view_extra_zone[VIEW_EXTRA_MAX];
+static uint64_t view_extra_moves,view_extra_gone;
+typedef void *(*view_extra_lookup_fn)(uint64_t saved,uint64_t *runtime);
+/* The live object of a saved ID through the component registry (as pilot_resolve asks), its runtime ID checked. */
+static void *view_extra_engine_lookup(uint64_t saved,uint64_t *runtime) {
+    void *map=NULL;uint64_t id=0;
+    if(!*runtime) *runtime=pilot_reverse(saved);
+    if(!*runtime || !read_local(image+0x6cf1500,&map,8) || !map) return NULL;
+    unsigned char *object=((pilot_find_fn)(void*)(image+0xced70))(map,*runtime,4);
+    return object && read_local(object+8,&id,8) && id==*runtime?object:NULL;
+}
+static view_extra_lookup_fn view_extra_lookup=view_extra_engine_lookup;
+/* gate.view_phantoms(hop, stagger), then gate.view_phantom_route("id,id,..") once per phantom player. */
+static int view_extra_arm(double hop,double stagger) {
+    if(!view_installed || view_mode!=VIEW_PLAYERS || stats.issued || GetCurrentThreadId()!=ui_thread ||
+       !isfinite(hop) || hop<1 || hop>1000000 || floor(hop)!=hop || !isfinite(stagger) || stagger<0 || stagger>1000000 || floor(stagger)!=stagger) return 0;
+    memset(view_extra_routes,0,sizeof(view_extra_routes));memset(view_extra_points,0,sizeof(view_extra_points));
+    view_extra_players=view_extra_count=0;view_extra_moves=view_extra_gone=0;
+    view_extra_hop=(unsigned)hop;view_extra_stagger=(unsigned)stagger;return 1;
+}
+static int view_extra_route(const uint64_t *saved,unsigned stops) {
+    if(!view_extra_hop || stats.issued || GetCurrentThreadId()!=ui_thread || !stops || stops>VIEW_EXTRA_STOPS || view_extra_players>=VIEW_EXTRA_MAX) return 0;
+    for(unsigned i=0;i<stops;i++) if(!saved[i]) return 0;
+    view_extra_route_t *r=&view_extra_routes[view_extra_players];
+    memset(r,0,sizeof(*r));memcpy(r->saved,saved,stops*sizeof(*saved));r->stops=stops;++view_extra_players;return 1;
+}
+/* The phantom players' ships of this tick. 1: another set or zone than the last latch; the former set goes to prev. */
+static int view_extra_latch(uint64_t tick,void **prev,uint64_t *prev_ids,unsigned *prev_n) {
+    void *points[VIEW_EXTRA_MAX],*zones[VIEW_EXTRA_MAX];uint64_t ids[VIEW_EXTRA_MAX];unsigned n=0;
+    for(unsigned k=0;k<view_extra_players;k++) {
+        view_extra_route_t *r=&view_extra_routes[k];void *object=NULL;uint64_t id=0;
+        const unsigned stop=(unsigned)(((tick+(uint64_t)k*view_extra_stagger)/view_extra_hop)%r->stops);
+        for(unsigned tries=0;tries<r->stops && !object;tries++) {const unsigned at=(stop+tries)%r->stops;object=view_extra_lookup(r->saved[at],&r->runtime[at]);}
+        if(!object || !read_local((unsigned char*)object+8,&id,8)) {++view_extra_gone;continue;}
+        points[n]=object;ids[n]=id;zones[n]=view_zone_of(object);++n;
+    }
+    int changed=n!=view_extra_count;
+    for(unsigned i=0;i<n && !changed;i++) changed=points[i]!=view_extra_points[i] || zones[i]!=view_extra_zone[i];
+    *prev_n=0;
+    if(changed) {
+        memcpy(prev,view_extra_points,sizeof(view_extra_points));memcpy(prev_ids,view_extra_ids,sizeof(view_extra_ids));*prev_n=view_extra_count;
+        ++view_extra_moves;
+    }
+    memcpy(view_extra_points,points,n*sizeof(*points));memcpy(view_extra_ids,ids,n*sizeof(*ids));memcpy(view_extra_zone,zones,n*sizeof(*zones));
+    view_extra_count=n;return changed;
+}
 /* Slot 6 of every admitted frame: latch the viewpoints for the next frames. */
 static int view_frame_locked(uint64_t tick);
 static int view_frame_latch(uint64_t tick,int refresh);
@@ -809,6 +885,15 @@ static int view_frame_latch(uint64_t tick,int refresh) {
         }
         for(unsigned i=0;i<n;i++) view_refresh_chain(points[i]);
     }
+    if(view_extra_players) { /* the phantom players: the chains of the ships they left and the ships they are on now */
+        void *former[VIEW_EXTRA_MAX];uint64_t former_ids[VIEW_EXTRA_MAX];unsigned former_n=0;
+        if(view_extra_latch(tick,former,former_ids,&former_n) && refresh && view_mode==VIEW_PLAYERS) {
+            for(unsigned i=0;i<former_n;i++) {
+                uint64_t id=0;if(read_local((unsigned char*)former[i]+8,&id,8) && id==former_ids[i]) view_refresh_chain(former[i]);
+            }
+            for(unsigned i=0;i<view_extra_count;i++) view_refresh_chain(view_extra_points[i]);
+        }
+    }
     vcam_latch(); /* cutscene camera shots noted or ended since the last latch */
     hyb_latch_check(); /* the H1 boundary: owners inside their sectors, nobody else in them */
     return 1;
@@ -823,7 +908,7 @@ static int view_status(char *out,size_t capacity) {
     int n=snprintf(out,capacity,"mode=%s armed=%ld installed=%d frame=%llu source=%s viewpoints=%u ids=%s calls=%llu evaluations=%llu "
         "levels=%s differ=%llu total_calls=%llu total_evaluations=%llu total_differ=%llu first_differ=%llu refreshes=%llu latches=%llu "
         "unreadable=%llu foreign=%lld restored=%d stage=%s failures=%lld triggers=%s:%llu/%llu/%llu/%llu/%llu blocked=%llu "
-        "source_mode=%s ship_misses=%llu cutscene=%llu/%llu/%llu/%llu callers=%s callers_other=%llu ui=%s:%llu/%llu/%llu/%llu/%llu/%llu ui_blocked=%llu ui_local=%llu mask=%x masked=%llu sector_moves=%llu",
+        "source_mode=%s ship_misses=%llu cutscene=%llu/%llu/%llu/%llu callers=%s callers_other=%llu ui=%s:%llu/%llu/%llu/%llu/%llu/%llu ui_blocked=%llu ui_local=%llu mask=%x masked=%llu sector_moves=%llu phantoms=%u/%u moves=%llu gone=%llu",
         view_mode==VIEW_PLAYERS?"players":view_mode==VIEW_OBSERVE?"observe":"off",view_active,view_installed,
         (unsigned long long)(view_tick==UINT64_MAX?0:view_tick),view_source==1?"slots":view_source==2?"player":view_source==3?"ship":"none",view_count,
         view_count?ids:"-",(unsigned long long)(fresh?view_frame_calls:0),(unsigned long long)(fresh?view_frame_evaluations:0),levels,
@@ -839,6 +924,7 @@ static int view_status(char *out,size_t capacity) {
         view_ui_mode==VIEW_UI_BLOCK?"block":view_ui_mode==VIEW_UI_OBSERVE?"observe":"off",
         (unsigned long long)view_ui_counts[VIEW_UI_PRESENT],(unsigned long long)view_ui_counts[VIEW_UI_VIEW],(unsigned long long)view_ui_counts[VIEW_UI_DISPATCH],
         (unsigned long long)view_ui_counts[VIEW_UI_RENDER],(unsigned long long)view_ui_counts[VIEW_UI_SLOT6],(unsigned long long)view_ui_counts[VIEW_UI_CAMERA],
-        (unsigned long long)view_ui_blocked,(unsigned long long)view_ui_local,view_slot_mask,(unsigned long long)view_masked,(unsigned long long)view_sector_moves);
+        (unsigned long long)view_ui_blocked,(unsigned long long)view_ui_local,view_slot_mask,(unsigned long long)view_masked,(unsigned long long)view_sector_moves,
+        view_extra_count,view_extra_players,(unsigned long long)view_extra_moves,(unsigned long long)view_extra_gone);
     return n>0 && (size_t)n<capacity?n:0;
 }

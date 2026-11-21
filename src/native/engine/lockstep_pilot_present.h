@@ -268,6 +268,13 @@ static void pres_use_image(void) {
 /* ---- the presentation scope ---- */
 static int pres_enter(void);static void pres_leave(void);
 static void rsch_view_enter(unsigned k);static void rsch_view_leave(unsigned k);   /* lockstep_research_owner.h */
+/* lockstep_faction_present.h: the slot's own faction in the player faction's place for the length of the scope
+ * (factions mode); while it is, fpres_canonical is X4's player faction as the simulation knows it. */
+static int fpres_open;static void *fpres_canonical;
+static int fpres_enter(unsigned slot);static void fpres_leave(void);
+/* The simulation's update of a container of slot k's own faction runs with that faction as X4's player faction
+ * (fpres_sim_enter): while it does, fpres_sim_slot is k and fpres_sim_saved the simulation's own player faction. */
+static unsigned fpres_sim_slot;static void *fpres_sim_saved;
 static unsigned char *pres_plan_presenter(unsigned char *flag) {
     unsigned char *manager=NULL,*presenter=NULL;
     if(!read_local(pnat_base+PRES_UI_MANAGER,&manager,8) || !manager || !read_local(manager+8,&presenter,8) || !presenter ||
@@ -414,11 +421,13 @@ static int pres_enter(void) {
     mpp_active_enter(pres_slot);   /* this client's own active mission on its HUD and in its menus */
     rsch_view_enter(pres_slot);    /* and its own faction's research, when it has its own faction */
     if(pres_settings_hook) pres_settings_hook(1);
+    fpres_enter(pres_slot);        /* last in, first out: and its own faction as the player faction */
     return 1;
 }
 static void pres_leave(void) {
     pslot_slot *s=&pslots[pres_slot];unsigned char *p1=pslot_p1;unsigned n=0,p=0;
     if(!pres_open) return;
+    fpres_leave();
     if(pres_settings_hook) pres_settings_hook(0);
     rsch_view_leave(pres_slot);
     mpp_active_leave(pres_slot,0);

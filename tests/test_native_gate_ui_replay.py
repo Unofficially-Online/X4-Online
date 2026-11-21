@@ -202,6 +202,52 @@ class SessionTests(unittest.TestCase):
         self.assertEqual(calls[0], calls[1])
         self.assertEqual(calls[0], ['CreateOrder(id:100;Attack;{primarytarget=id:200};false;true;false;nil;nil;nil;true)'])
 
+    def test_an_order_longer_than_one_event_travels_in_parts(self):
+        # the interact menu's "Deploy" on a place for a fleet ship: 223 bytes, refused as too_long until 19 Nov
+        order = ("env.CreateOrder(make_id('100'),'DeployObjectAtPosition',{destination={make_id('200'),{12345.678,-234.5,98765.4321}},"
+                 "objectstodeploy='eq_arg_resourceprobe_01_macro',amountstodeploy=1},false,false,false,nil,nil,nil,true)")
+        calls = []
+        for slot_client in (1, 2):
+            lua, g = client()
+            lua.execute('S=new_session();ret=' + order)
+            parts = [values(p) for p in values(g.pushed)]
+            self.assertEqual(g.ret, 0)
+            self.assertEqual([p[0] for p in parts], [0x43, 0x43])
+            self.assertEqual([p[1][:2] for p in parts], ['f2', 'f1'])
+            self.assertTrue(all(len(p[1]) // 2 <= 160 for p in parts))
+            self.assertEqual(g.S.captured, 1)
+            # the parts arrive in two ticks, another slot's whole order between them
+            lua.execute("pushed={};env.CreateOrder(make_id('100'),'Attack',{},false)")
+            other = values(values(g.pushed)[0])[1]
+            lua.execute(f"S=new_session();DUE={{[50]='2:67:{parts[0][1]};1:67:{other}',[51]='2:67:{parts[1][1]}'}};S.apply(50);first=#stock_calls;S.apply(51)")
+            self.assertEqual(g.first, 1)                        # the other slot's order ran; the part ran nothing
+            calls.append(values(g.stock_calls))
+            self.assertTrue(any('UI_REPLAY_APPLIED tick=50 slot=2 op=67 result=applied what=part' in l for l in values(g.logs)))
+            self.assertTrue(any('UI_REPLAY_APPLIED tick=51 slot=2 op=67 result=applied what=order=DeployObjectAtPosition' in l for l in values(g.logs)))
+        self.assertEqual(calls[0], calls[1])
+        self.assertIn('DeployObjectAtPosition', calls[0][1])
+        # a whole order of the same slot after an unfinished one drops the parts; a last part without its beginning
+        # runs nothing and stops nothing
+        lua, g = client()
+        lua.execute('S=new_session();' + order)
+        parts = [values(p) for p in values(g.pushed)]
+        lua.execute("pushed={};env.CreateOrder(make_id('100'),'Attack',{},false)")
+        whole = values(values(g.pushed)[0])[1]
+        lua.execute(f"S=new_session();DUE={{[50]='2:67:{parts[0][1]}',[51]='2:67:{whole}',[52]='2:67:{parts[1][1]}'}};S.apply(50);S.apply(51);S.apply(52)")
+        self.assertEqual(len(values(g.stock_calls)), 1)
+        self.assertIn('Attack', values(g.stock_calls)[0])
+        self.assertIsNone(g.FAILED)
+        self.assertTrue(any('UI_REPLAY_APPLIED tick=52 slot=2 op=67 result=refused what=orphan' in l for l in values(g.logs)), values(g.logs)[-3:])
+        # too many parts are refused, and the split is by what one event carries
+        K = lua.eval('X4LAN_UI_REPLAY_CORE')
+        self.assertEqual(lua.eval("(function() local parts={};local a,b=X4LAN_UI_REPLAY_CORE.join_call(parts,1,'f2'..string.rep('00',159));"
+                                  "for i=1,4 do a,b=X4LAN_UI_REPLAY_CORE.join_call(parts,1,'f0'..string.rep('00',159)) end;"
+                                  "return tostring(a)..':'..tostring(b)..':'..tostring(parts[1]) end)()"), 'nil:parts:nil')
+        self.assertEqual([x[:2] for x in values(K.split_call('ab' * 400))], ['f2', 'f0', 'f1'])
+        self.assertEqual(K.PART_DATA * K.PARTS_MAX, 636)
+        self.assertEqual(len(K.split_call('ab' * 161)), 2)
+        self.assertEqual(len(K.split_call('ab' * 159)), 1)
+
     def test_a_slot_ship_takes_no_orders(self):
         lua, g = client()
         lua.execute("SLOT_SHIPS={['100']=2};S=new_session();env.CreateOrder(make_id('100'),'Attack',{},false)")

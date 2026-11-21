@@ -77,7 +77,8 @@ enum {UIFAC_RET_VOID=0,UIFAC_RET_BOOL,UIFAC_RET_ID};
 enum {UIFAC_PRED_VOID=0,UIFAC_PRED_TRUE,UIFAC_PRED_TOKEN};
 /* Argument specs, one letter per C argument: I a component (the subject when `subject` names it), r a rule ID of the claim's
  * kind (int32; a token, -1 or 0 pass as they are), s a string, F a faction ID string ("player" = the slot's faction),
- * b a bool, f a float in xmm(i), B BlacklistInfo2*, G FightRuleInfo*, T TradeRuleInfo*, L UILogo*, O SupplyOverride* with
+ * b a bool, i an int32, f a float (in xmm(i), from the fifth argument on in its stack slot), d a double on the stack,
+ * B BlacklistInfo2*, G FightRuleInfo*, T TradeRuleInfo*, L UILogo*, O SupplyOverride* with
  * its count next (n). A struct the stock prototype takes by value arrives by pointer (Win64: larger than 8 bytes). */
 typedef struct {const char *name,*spec;unsigned char ret,pred,kind,entity;signed char subject;} uifac_claim;
 static const uifac_claim uifac_claims[]={
@@ -121,6 +122,23 @@ static const uifac_claim uifac_claims[]={
     {"PauseProcessingModule","Ib",UIFAC_RET_VOID,UIFAC_PRED_VOID,UIFAC_K_NONE,0,0},
     {"PauseProductionModule","Ib",UIFAC_RET_VOID,UIFAC_PRED_VOID,UIFAC_K_NONE,0,0},
     {"SetDefensibleLoadoutLevel","If",UIFAC_RET_VOID,UIFAC_PRED_VOID,UIFAC_K_NONE,0,0},
+    /* a ship leaves its commander ("Remove Assignment" of the interact menu and of the map's subordinate list; the
+     * default Wait order that follows is the queue family's). New claims go below: the claim's index goes over the wire. */
+    {"RemoveCommander2","I",UIFAC_RET_BOOL,UIFAC_PRED_TRUE,UIFAC_K_NONE,0,0},
+    /* a wing's groups (the commander, the group 1..10): the role of the map's subordinate list and of the interact
+     * menu's "Change assignment", the five switches of the behaviour page's subordinate rows; a fleet's name (the
+     * map's rename of a fleet). The commander is the subject: the slot faction's own. */
+    {"SetSubordinateGroupAssignment","Iis",UIFAC_RET_VOID,UIFAC_PRED_VOID,UIFAC_K_NONE,0,0},
+    {"SetSubordinateGroupAttackOnSight","Iib",UIFAC_RET_VOID,UIFAC_PRED_VOID,UIFAC_K_NONE,0,0},
+    {"SetSubordinateGroupDockAtCommander","Iib",UIFAC_RET_VOID,UIFAC_PRED_VOID,UIFAC_K_NONE,0,0},
+    {"SetSubordinateGroupReinforceFleet","Iib",UIFAC_RET_VOID,UIFAC_PRED_VOID,UIFAC_K_NONE,0,0},
+    {"SetSubordinateGroupRespondToDistressCalls","Iib",UIFAC_RET_VOID,UIFAC_PRED_VOID,UIFAC_K_NONE,0,0},
+    {"SetSubordinateGroupResupplyAtFleet","Iib",UIFAC_RET_VOID,UIFAC_PRED_VOID,UIFAC_K_NONE,0,0},
+    {"SetFleetName","Is",UIFAC_RET_VOID,UIFAC_PRED_VOID,UIFAC_K_NONE,0,0},
+    /* "Mark as hostile" (the interact menu and the map, behind the user question menu): a relation boost of another
+     * faction's object towards the slot's faction. The component is not the slot faction's: the Lua half's authority
+     * check lets this claim's subject be anybody's (F.FOREIGN). */
+    {"SetRelationBoostToFaction","IFsffd",UIFAC_RET_VOID,UIFAC_PRED_VOID,UIFAC_K_NONE,0,0},
 };
 #define UIFAC_CLAIMS (sizeof(uifac_claims)/sizeof(*uifac_claims))
 /* The stock struct layouts (menu_playerinfo.lua, helper.lua, menu_station_overview.lua ffi.cdef; the Lua half compares them
@@ -252,7 +270,9 @@ static int uifac_view_open,uifac_view_settings;
 static void *uifac_view_saved,*uifac_view_faction;
 static volatile LONG64 uifac_views,uifac_views_nested,uifac_views_refused;
 /* X4's player faction as the simulation knows it (the view's saved one while the view is open). */
-static void *uifac_player_faction(void) {return uifac_view_open?uifac_view_saved:*uitrade_player_faction();}
+static void *uifac_player_faction(void) {
+    return fpres_open?fpres_canonical:fpres_sim_slot?fpres_sim_saved:uifac_view_open?uifac_view_saved:*uitrade_player_faction();
+}
 /* Slot k's faction against X4's player faction: 0 the same (coop, slot 1), 1 another (factions mode), -1 none (no ship). */
 static int uifac_slot_relation(unsigned slot,void **faction) {
     *faction=uitrade_slot_faction(slot);
@@ -351,10 +371,11 @@ static int uifac_encode(const uifac_claim *c,const uint64_t *frame,uifac_writer 
             if(!a || !uirep_component(a) || !uirep_check_of(a)) w->why="unmapped";
             else {unsigned char ref[UIREP_REF];uirep_put_ref(ref,a);uifac_put(w,ref,UIREP_REF);}
             break;
-        case 'r':uifac_put32(w,(uint32_t)a);break;
+        case 'r':case 'i':uifac_put32(w,(uint32_t)a);break;
         case 's':case 'F':uifac_string(w,(const char*)(uintptr_t)a,0);break;
         case 'b':uifac_put8(w,(a&0xffu)!=0);break;
-        case 'f':if(i>=4) w->why="float";else uifac_put32(w,uifac_xmm(frame,i));break;
+        case 'f':uifac_put32(w,i>=4?(uint32_t)a:uifac_xmm(frame,i));break;
+        case 'd':if(i<4) w->why="double";else {uifac_put32(w,(uint32_t)a);uifac_put32(w,(uint32_t)(a>>32));}break;
         case 'n':break;
         case 'B': {
             uifac_blacklist b;if(!uifac_read((const void*)(uintptr_t)a,&b,sizeof(b),w)) break;
@@ -493,11 +514,12 @@ static int uifac_decode(const uifac_claim *c,uifac_reader *r,uint64_t a[UIFAC_AR
             {uint32_t check=0;a[i]=uirep_get_ref(r->b+r->at,&check);}
             r->at+=UIREP_REF;
             break;
-        case 'r':a[i]=(uint64_t)(int64_t)(int32_t)uifac_g32(r);break;
+        case 'r':case 'i':a[i]=(uint64_t)(int64_t)(int32_t)uifac_g32(r);break;
         case 's':a[i]=(uint64_t)(uintptr_t)uifac_gstring(r,0,0);break;
         case 'F':a[i]=(uint64_t)(uintptr_t)uifac_gstring(r,0,0);break;   /* checked and rewritten by the run */
         case 'b': {unsigned v=uifac_g8(r);if(v>1 && !r->why) r->why="bool";a[i]=v;break;}
         case 'f':*float_bits=uifac_g32(r);a[i]=*float_bits;break;
+        case 'd': {const uint64_t low=uifac_g32(r);a[i]=low|((uint64_t)uifac_g32(r)<<32);break;}
         case 'n':break;
         case 'B': {
             uifac_blacklist *b=uifac_alloc(r,sizeof(*b)),t;memset(&t,0,sizeof(t));
@@ -705,6 +727,10 @@ static int uifac_run(unsigned slot,const char *self,const char *refused,char *wh
     __try {
         if(c->spec[0]=='f') ((void(*)(float))entry)(f);
         else if(c->spec[1]=='f') ((void(*)(uint64_t,float))entry)(a[0],f);
+        else if(!strcmp(c->spec,"IFsffd")) {   /* SetRelationBoostToFaction: xmm3, a stack float, a stack double */
+            float value,decay;double delay;memcpy(&value,&a[3],4);memcpy(&decay,&a[4],4);memcpy(&delay,&a[5],8);
+            ((void(*)(uint64_t,const char*,const char*,float,float,double))entry)(a[0],(const char*)(uintptr_t)a[1],(const char*)(uintptr_t)a[2],value,decay,delay);
+        }
         else result=((uifac_call_fn)entry)(a[0],a[1],a[2],a[3],a[4],a[5]);
     }
     __except(GetExceptionCode()==EXCEPTION_ACCESS_VIOLATION?EXCEPTION_EXECUTE_HANDLER:EXCEPTION_CONTINUE_SEARCH) {fault=1;}

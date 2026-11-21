@@ -60,7 +60,13 @@
  * portable ID, class, macro), ordinal = rank in that thread's creation order,
  * parents first. Objects of other threads stay unportable (load_foreign).
  * Note overflow or more than CREATED_LOAD_MAX candidates assign none of them
- * (load_skipped) rather than a partial, order-dependent set. */
+ * (load_skipped) rather than a partial, order-dependent set.
+ * The limits (16 Nov): a session save of a played universe makes 1.36 million notes and 365 candidates; the same save
+ * loaded with every zone at high attention (native_gate_attention_floor) makes 4.52 million notes, which overflowed
+ * the 2^21 notes of the time. The set was skipped without a word, about 21 ships stayed without an identity, their
+ * draws came from the frame's natural word (the once-a-second attention check 0x6d1ff0 draws its next time there),
+ * and the clients parted from tick 23. So: 2^23 notes (committed, touched only as far as the load goes), as many
+ * candidates as one resolve pass holds, and a skipped set is a watched counter (ERROR DEGRADED load_skipped). */
 /* The Linux gate (linux/gate_world_created.h) has its own hook, reads, macro and class lookups. */
 #ifndef CREATED_OWN_PLATFORM
 #define CREATED_ENTRY 0xcc220u
@@ -81,8 +87,8 @@
 #define CREATED_DOMAIN 0x58344c4352454154ULL /* "X4LCREAT" */
 #define CREATED_CLASS_CACHE 1024u
 #define CREATED_STOP_REASON 96u
-#define CREATED_LOAD_NOTES (1u<<21)
-#define CREATED_LOAD_MAX 32768u
+#define CREATED_LOAD_NOTES (1u<<23)
+#define CREATED_LOAD_MAX CREATED_PENDING /* created_resolve's batch arrays hold this many */
 #define CREATED_LOAD_THREADS 16u
 enum {CREATED_MOVEWORKER,CREATED_MAIN,CREATED_OTHER};
 /* native_gate_runtime_ids (lockstep_runtime_ids.h): who allocates, and from which list. */

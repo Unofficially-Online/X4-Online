@@ -319,17 +319,22 @@ static void test_crash_note(void) {
     {   FILE *f=fopen(note,"rb");char back[4096];size_t got=f?fread(back,1,sizeof(back)-1,f):0;if(f) fclose(f);back[got]=0;
         assert(got && strstr(back,"NATIVE_GATE CRASH tick=1599 code=c0000005") && !strstr(strstr(back,"\n")+1,"CRASH"));}
     /* First chance (footlook: X4's own handler ended the process before the filter): an access violation in X4's image
-     * writes a CRASH_FIRST_CHANCE line, at most CRASH_NOTE_FIRST of them, and handles nothing; one elsewhere writes none. */
+     * writes a CRASH_FIRST_CHANCE line, at most CRASH_NOTE_FIRST of them, and handles nothing; one elsewhere writes a
+     * CRASH_FIRST_CHANCE_OUTSIDE line from its own budget. */
     {   unsigned char *saved_image=image;static unsigned char fake_image[64];void *saved_address=test_crash_record.ExceptionAddress;
-        image=fake_image;crash_note_first_count=0;test_crash_record.ExceptionAddress=fake_image+8;
+        image=fake_image;crash_note_first_count=crash_note_outside_count=0;test_crash_record.ExceptionAddress=fake_image+8;
         assert(crash_note_first_chance(&info)==EXCEPTION_CONTINUE_SEARCH && crash_note_first_count==1);
-        test_crash_record.ExceptionAddress=(void*)(uintptr_t)0x10;assert(crash_note_first_chance(&info)==EXCEPTION_CONTINUE_SEARCH && crash_note_first_count==1);
+        test_crash_record.ExceptionAddress=(void*)(uintptr_t)0x10;
+        for(unsigned i=0;i<CRASH_NOTE_FIRST+2;i++) assert(crash_note_first_chance(&info)==EXCEPTION_CONTINUE_SEARCH && crash_note_first_count==1);
+        assert(crash_note_outside_count==(LONG)CRASH_NOTE_FIRST+2);
         test_crash_record.ExceptionAddress=fake_image+8;
         for(unsigned i=0;i<CRASH_NOTE_FIRST+2;i++) assert(crash_note_first_chance(&info)==EXCEPTION_CONTINUE_SEARCH);
         FILE *f=fopen(note,"rb");char back[16384];size_t got=f?fread(back,1,sizeof(back)-1,f):0;if(f) fclose(f);back[got]=0;
         unsigned lines=0;for(const char *c=back;(c=strstr(c,"CRASH_FIRST_CHANCE tick=1599 code=c0000005 at=8 "));c++) ++lines;
         assert(lines==CRASH_NOTE_FIRST && crash_note_vectored);
-        image=saved_image;test_crash_record.ExceptionAddress=saved_address;crash_note_first_count=0;}
+        lines=0;for(const char *c=back;(c=strstr(c,"CRASH_FIRST_CHANCE_OUTSIDE tick=1599 code=c0000005 at="));c++) ++lines;
+        assert(lines==CRASH_NOTE_FIRST);
+        image=saved_image;test_crash_record.ExceptionAddress=saved_address;crash_note_first_count=crash_note_outside_count=0;}
     SetUnhandledExceptionFilter(kept);crash_note_armed=0;crash_note_entered=0;crash_note_previous=NULL;crash_note_path[0][0]=0;
     /* Through Lua, where the probe arms it: right after loading the gate, before gate.start names the UI thread
      * (build120 refused here: accept_ui). */

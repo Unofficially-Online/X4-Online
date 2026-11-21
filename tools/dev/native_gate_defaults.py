@@ -64,11 +64,14 @@ MD_FILES = ('md/native_gate_battle.xml', 'md/native_gate_player_identity.xml', '
 # Patches of stock MD scripts (X4's own diff loading: the overlay's file has the stock file's name; our lines only):
 # a start's standings arrive quietly (native_gate_player_identity.xml's relation steps); the new-game hint box leaves
 # after its 15 s instead of staying on the crosshair of every player in every session (a fresh profile each time);
-# the stock lists of "the player's" objects hold every player's (native_gate_player_groups.xml, native_gate_player_groups).
+# the stock lists of "the player's" objects hold every player's (native_gate_player_groups.xml, native_gate_player_groups);
+# and one stock AI script: a wharf refits every player's own ship, not only player 1's (native_gate_player_refit.xml,
+# with the player groups).
 MD_PATCHES = {'md/playerreputation.xml': 'native_gate_quiet_playerreputation.xml',
               'md/notifications.xml': 'native_gate_quiet_notifications.xml',
               'md/tutorial_global.xml': 'native_gate_hint_timeout.xml',
-              'md/setup.xml': 'native_gate_player_groups.xml'}
+              'md/setup.xml': 'native_gate_player_groups.xml',
+              'aiscripts/build.shiptrader.xml': 'native_gate_player_refit.xml'}
 
 TABLE = load()
 ON_KEYS = [e[0] for e in TABLE['on']]
@@ -85,6 +88,7 @@ def ship_files(out, ui_files):
         (out/name).parent.mkdir(parents=True, exist_ok=True)
         (out/name).write_bytes((source/Path(name).name).read_bytes())
     for name, patch in MD_PATCHES.items():
+        (out/name).parent.mkdir(parents=True, exist_ok=True)
         (out/name).write_bytes((source/patch).read_bytes())
     rest = [name for name in ui_files if name not in UI_FILES]
     return list(UI_FILES) + rest

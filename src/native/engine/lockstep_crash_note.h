@@ -11,14 +11,21 @@
  * took the exception before the last-chance filter. So the armed note also writes up to CRASH_NOTE_FIRST lines
  * 'NATIVE_GATE CRASH_FIRST_CHANCE' from a vectored handler (called first, before any frame handler) for an access
  * violation whose address lies in X4's image; it handles nothing (the search goes on). One that X4 or a gate __try
- * then handles is a line as well: the label says it was first chance, the note's last CRASH line says the end. */
+ * then handles is a line as well: the label says it was first chance, the note's last CRASH line says the end.
+ * Outside the image (a late joiner, hq63, 18 Nov: 0xC0000005 560 ticks after its handover and no line of either kind, so
+ * the address was not in X4's image: a call through a pointer already gone, or code of another module): such an access
+ * violation is a 'NATIVE_GATE CRASH_FIRST_CHANCE_OUTSIDE' line, with its own budget of CRASH_NOTE_FIRST lines, so that a
+ * module that probes memory this way cannot use up the lines of X4's own. The gate is such a module (a join's admission reads
+ * through pointers it cannot trust inside a guarded scope: four lines at tick 0 in hq66), so one in the gate's own module is
+ * 'CRASH_FIRST_CHANCE_GATE' with a budget of two. */
 #define CRASH_NOTE_CHAIN 16u
 static WCHAR crash_note_path[2][MAX_PATH];
 static LPTOP_LEVEL_EXCEPTION_FILTER crash_note_previous;
 static volatile LONG crash_note_armed,crash_note_entered;
 static char crash_note_line[2048],crash_note_first_line[2048];
 #define CRASH_NOTE_FIRST 4u
-static volatile LONG crash_note_first_count;
+static volatile LONG crash_note_first_count,crash_note_outside_count,crash_note_gate_count;
+#define CRASH_NOTE_GATE 2u
 static PVOID crash_note_vectored;
 static void crash_note_where(uintptr_t at,char *out,size_t capacity) {
     uintptr_t base=(uintptr_t)image;HMODULE module=NULL;WCHAR name[MAX_PATH];
@@ -71,13 +78,20 @@ static LONG WINAPI crash_note_filter(EXCEPTION_POINTERS *info) {
     }
     return crash_note_previous?crash_note_previous(info):EXCEPTION_CONTINUE_SEARCH;
 }
-/* The vectored handler: an access violation in X4's image, the first CRASH_NOTE_FIRST of them; nothing handled. */
+/* The vectored handler: an access violation, the first CRASH_NOTE_FIRST in X4's image and the first CRASH_NOTE_FIRST outside
+ * it; nothing handled. */
 static LONG WINAPI crash_note_first_chance(EXCEPTION_POINTERS *info) {
     const EXCEPTION_RECORD *e=info?info->ExceptionRecord:NULL;uintptr_t base=(uintptr_t)image,at=e?(uintptr_t)e->ExceptionAddress:0;
-    if(!e || e->ExceptionCode!=EXCEPTION_ACCESS_VIOLATION || !InterlockedCompareExchange(&crash_note_armed,0,0) || !base || at<base ||
-       at-base>=VPL_IMAGE_SPAN) return EXCEPTION_CONTINUE_SEARCH;
-    if((unsigned)InterlockedIncrement(&crash_note_first_count)>CRASH_NOTE_FIRST) return EXCEPTION_CONTINUE_SEARCH;
-    int n=crash_note_text_as("CRASH_FIRST_CHANCE",info,crash_note_first_line,sizeof(crash_note_first_line));
+    if(!e || e->ExceptionCode!=EXCEPTION_ACCESS_VIOLATION || !InterlockedCompareExchange(&crash_note_armed,0,0) || !base) return EXCEPTION_CONTINUE_SEARCH;
+    const int inside=at>=base && at-base<VPL_IMAGE_SPAN;int own=0;
+    if(!inside) {
+        HMODULE mine=NULL,theirs=NULL;const DWORD how=GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS|GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT;
+        own=GetModuleHandleExW(how,(LPCWSTR)(uintptr_t)crash_note_first_chance,&mine) && GetModuleHandleExW(how,(LPCWSTR)at,&theirs) && mine && mine==theirs;
+    }
+    if(own) {if((unsigned)InterlockedIncrement(&crash_note_gate_count)>CRASH_NOTE_GATE) return EXCEPTION_CONTINUE_SEARCH;}
+    else if((unsigned)InterlockedIncrement(inside?&crash_note_first_count:&crash_note_outside_count)>CRASH_NOTE_FIRST) return EXCEPTION_CONTINUE_SEARCH;
+    int n=crash_note_text_as(inside?"CRASH_FIRST_CHANCE":own?"CRASH_FIRST_CHANCE_GATE":"CRASH_FIRST_CHANCE_OUTSIDE",info,crash_note_first_line,
+                             sizeof(crash_note_first_line));
     if(n) crash_note_write(crash_note_first_line,n);
     return EXCEPTION_CONTINUE_SEARCH;
 }

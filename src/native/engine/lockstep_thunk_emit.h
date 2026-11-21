@@ -22,7 +22,8 @@ static const thunk_recipe thunk_recipes[]={
     {JOIN_IDS_CONN_THUNK,16,THUNK_JUMP,0,0,0,(void*)join_ids_conn_hook,{0}},   /* 160..175: its connection node */
     {JOIN_IDS_MADE_THUNK,16,THUNK_JUMP,0,0,0,(void*)join_ids_made_hook,{0}},   /* 176..191: its connection's get-or-make */
     {RID_REMOVE_THUNK,64,THUNK_PAIR,RID_REMOVE_ENTRY,5,32,(void*)rid_remove,{0x48,0x89,0x5c,0x24,0x08}},
-    {256,64,THUNK_JUMP,0,0,0,(void*)agent_update,{0}},
+    {256,16,THUNK_JUMP,0,0,0,(void*)agent_update,{0}},   /* 256..271; 272..319 was its unused rest */
+    {JOIN_SREF_THUNK,16,THUNK_JUMP,0,0,0,(void*)join_sref_hook,{0}},   /* 272..287: lockstep_join_sref.h, the script <ref> writers and readers */
     {320,64,THUNK_UNWIND_TRAMPOLINE,PARAMS_ENTRY,15,0,NULL,{0x48,0x8b,0xc4,0x55,0x53,0x56,0x57,0x41,0x54,0x41,0x55,0x41,0x56,0x41,0x57}},
     {384,64,THUNK_PAIR,SHAPE_ENTRY,5,32,(void*)shape_move,{0x48,0x89,0x5c,0x24,0x08}},
     /* 448..511 was unowned (between shape and mass); created identities. */

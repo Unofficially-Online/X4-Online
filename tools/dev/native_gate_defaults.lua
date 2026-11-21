@@ -39,6 +39,7 @@ D.ON={
  {'native_gate_spline_refresh',true,'native_gate_spline_diag native_gate_agent_full','spline refresh keyed'},
  {'native_gate_spline_join',true,'native_gate_spline_diag native_gate_agent_full native_gate_serial_pathing','spline builds joined at the gate'},
  {'native_gate_spline_join_all',true,'native_gate_spline_join','every spline build joined'},
+ {'native_gate_spline_phase',true,'native_gate_serial_pathing','the route calculator runs at two fixed points of the frame only (its routes and the steering path jobs of docking ships): a route reads the same world on every client and a job is done at the same step, however busy its PC (Windows and Linux gates)'},
  {'native_gate_ship_rng',true,'','ship draws keyed'},
  {'native_gate_params_init',true,'','flight parameters initialized at a fixed point'},
  {'native_gate_weapon_diag',true,'','registers the fixture guns with the weapon module: their draws are keyed by actor and slot (lockstep_weapon.h); rows only at the trace stride'},
@@ -104,6 +105,9 @@ D.ON={
  {'native_gate_ship_sound_rng','split','','ship sounds on their own RNG word'},
  {'native_gate_move_rng',true,'','station people and signal leaks draw on their own RNG word'},
  {'native_gate_warp_rng',true,'native_gate_world_identities','warp draws keyed'},
+ -- A hot joiner's load hands out other BodyIDs (hq129: 61 of 71 live bodies), and Jolt sorted each island's contacts by them
+ -- (a docking transport's four contacts solved in another order at 21921, the census of 22200 apart).
+ {'native_gate_island_order',true,'native_gate_world_identities','island contacts solved in an order keyed alike on every client'},
  -- With the inline jobs too (complete command-list splices either way): a hot join needs the temporary zones' portable order
  -- (hjs1, 11 Nov, without it: 17 objects more on the joiner at the first step after the join).
  {'native_gate_tempzone_order','order','native_gate_world_identities native_gate_serial_pathing native_gate_travel_determinism','temporary zones in a fixed order'},
@@ -208,11 +212,14 @@ D.ON={
  {'native_gate_pilot_slots_post',true,'native_gate_pilot_stock_slots','a player 2+ own ship answers that player as its pilot while the game runs as that player (the autopilot check)'},
  {'native_gate_missions_per_player_ai_frames',true,'native_gate_missions_per_player','the autopilot and other scripts of a player 2+ own ship computer run as that player'},
  {'native_gate_md_media',true,'native_gate_pilot_stock_slots','a mission call on the target monitor starts in the simulation at one tick on every client and shows on its owner client only'},
+ {'native_gate_conversation_slots',true,'native_gate_missions_per_player native_gate_ui_replay~conversation','a conversation belongs to the player who started it: players 2..N talk, answer and hire as player 1 does (one conversation in the world at a time)'},
  {'native_gate_player_groups',true,'native_gate_pilot_stock_slots','the stock scripts lists of the player ship, container and controlled object hold every player (scans, docking and damage notices, cover count for all)'},
  {'native_gate_scan_long',true,'native_gate_pilot_stock_slots','the long-range scan for every player: the mode for players 2+, the charge on the secondary trigger, the send at its release'},
  {'native_gate_scan_mode',true,'native_gate_pilot_stock_slots','the scan mode for every player: its key is shared, players 2+ get the mode on their own player'},
  {'native_gate_area_jobs',true,'native_gate_pilot_stock_slots','a sector resource area job runs at the tick of its request on every client (its finish on a job thread decided the tick before)'},
+ {'native_gate_zone_pending',true,'native_gate_pilot_stock_slots','the frame work on physics bodies that wait runs in every frame on every client: X4 skipped it when a lock was busy, and two clients built the same bodies a tick apart (Windows and Linux gates; soaked 108,116 ticks in sync)'},
  {'native_gate_anim_listeners',true,'native_gate_pilot_stock_slots native_gate_view_points','an animation event its listeners wait for is posted by the simulation only: a client that draws a station no longer rebuilds its walk mesh alone'},
+ {'native_gate_faction_present',true,'native_gate_pilot_stock_slots native_gate_pilot_present','factions mode: a player with a faction of its own sees that faction as the player faction in its own menus and HUD (its own stations and ships under Property Owned, not those of player 1)'},
  {'native_gate_swarm_seed',true,'native_gate_pilot_stock_slots','swarm missiles keep the same formation on every client (X4 seeds the offsets of a swarm with a memory address, so each client flew its missiles elsewhere)'},
  {'native_gate_shared_listeners',true,'native_gate_pilot_stock_slots','a script no player owns (world plots, story activators, statistics) hears the events of every player, each inside that player scope'},
  {'native_gate_ui_reload_hold',true,'native_gate_ui_guard','a window resize, a UI scale change or a controller-mode switch no longer ends a player session: X4 reloads its UI after the session'},
@@ -250,6 +257,7 @@ D.DIAGNOSTIC={
  {'native_gate_checkpoint_at','x4ls --checkpoint-at: every client saves after tick T (the save pauses the game: the session ends)'},
  {'native_gate_event_rng_play_rows','EVENT_RNG rows in play mode (soak attribution)'},
  {'native_gate_path_transforms_rows','PATH_TRANSFORMS rows of a tick window'},
+ {'native_gate_path_transforms_dock_rows','PATH_TRANSFORMS dock rows (the dock range test inputs) and the stepping ship in every row, every tick'},
  {'native_gate_path_transform_observe','Linux path-transform observation in a bounded tick window'},
  {'native_gate_world_pages_window','per-object world pages of a tick window in play mode (x4ls triage)'},
  {'native_gate_world_detail_rows','false suppresses per-object log rows; all world captures and relay digests remain enabled'},
@@ -331,7 +339,7 @@ D.DIAGNOSTIC={
  {'native_gate_nav_refresh_watch_owner','nav refresh rows only for the controller of this runtime ID, each with its stack (diagnostic)'},
  {'native_gate_nav_refresh_watch_handover','nav refresh rows from H-N to H+N around a hot join handover, the window set once H is known (diagnostic)'},
  {'native_gate_spline_calc_watch','spline calc rows: when the spline route calculator runs relative to the gated frames (diagnostic)'},
- {'native_gate_spline_phase','the spline route calculator at the frame phase points only (before the pathing pass, after its join)'},
+ {'native_gate_spline_calc_delay','test only: {slot, ms}, the route calculator of that client sleeps ms at every job (a busy PC)'},
  {'native_gate_safe_pos_dump','safe pos dump rows: the GetSafePos solver calls in a tick window, every box as given (diagnostic)'},
  {'native_gate_world_static','world static rows: the published poses of uncompared positional objects at ticks (diagnostic)'},
  {'native_gate_join_jobcnt_at','hot join job count rows after a step (diagnostic)'},
@@ -373,6 +381,17 @@ D.DIAGNOSTIC={
  {'native_gate_join_fobj','hot join: the joiner fills its region fields spawned-object lists as the session (FOBJ)'},
  {'native_gate_join_lstn','hot join: the joiner orders each event source script listeners as the session (LSTN)'},
  {'native_gate_join_gravp_settled','hot join: the published pose restore also takes settled objects below attention 6 (GRAVP settled)'},
+ {'native_gate_join_sref','hot join: script positions and rotations keep the session bits, which the save text does not hold (SREF)'},
+ {'native_gate_join_pmod','hot join: processing modules take the session due times, which no save holds (PMOD)'},
+ {'native_gate_join_need','hot join: containers take the session resource needs, which a load leaves unset (NEED)'},
+ {'native_gate_join_acct','hot join: containers take the session accounts, which a load sets back to the default (ACCT)'},
+ {'native_gate_join_kids','hot join: objects list their children in the session order, which a load lists as saved (KIDS)'},
+ {'native_gate_join_door','hot join: dock doors are set up where the session has them set up; a load sets all up (DOOR)'},
+ {'native_gate_join_dron','hot join: pending and user drone modes take the session values, which the save writes as the current modes (DRON)'},
+ {'native_gate_join_refp','hot join: reference and override prices take the session values to the hundredth, which the save rounds (REFP)'},
+ {'native_gate_join_spwn','hot join: field-spawned objects take the field and resource area they came from, which the save leaves out (SPWN)'},
+ {'native_gate_join_bclk','hot join: the animations the people run at T end at the session ticks: the joiner takes the session body clock notes (BCLK)'},
+ {'native_gate_join_defr','hot join: the joiner posts again the events the session had deferred at T, drone flights that landed in its last pass (DEFR)'},
  {'native_gate_join_porders','hot join: the joiner drops the pathing manager queued Path orders at the admission (PORD)'},
  {'native_gate_join_bp','hot join: a one-shot breakpoint after the admission (JOIN_BP)'},
  {'native_gate_join_undk','hot join: the session undocking behaviours written at the admission (UNDK)'},
@@ -435,6 +454,7 @@ D.DIAGNOSTIC={
  {'native_gate_own_predict_hud_probe','own-ship prediction: a target projected with the simulated and the displayed camera (diagnostic rows)'},
  {'native_gate_pilot_slots_registry','personal missions C1: the slot players in the component registry (diagnostic)'},
  {'native_gate_motion_watch_zones','motion watch zones'},
+ {'native_gate_motion_watch_zones_xs','motion watch zones: the XS ships (real traffic) instead of S to XL'},
  {'native_gate_wreck_watch','wreck watch'},
  {'native_gate_draw_watch','draw watch'},
  {'native_gate_draw_watch_frame','draw watch frame'},
@@ -455,6 +475,7 @@ D.DIAGNOSTIC={
  {'native_gate_thread_rng_census','thread RNG census'},
  {'native_gate_camera_probe','camera probe rows'},
  {'native_gate_view_points_mask','masks view points for measurement'},
+ {'native_gate_phantom_players','phantom players: more view points on routes of ships, for measurement'},
  {'native_gate_fp_attack_capture','FP attack capture'},
  {'native_gate_fp_attack_watch','FP attack watch'},
  {'native_gate_fp_redirect_watch','FP redirect watch'},
@@ -836,8 +857,11 @@ end
 -- Degraded paths in module statuses: a counter of WATCH that grows is an ERROR row (every growth), in the log only. The in-game
 -- info line it also showed is gone (user, 3 Nov): the counters seen in every session (build rng fallback, find order unmapped,
 -- created identities macro_unknown) are deterministic paths the census confirms equal, and a player cannot act on them.
+-- load_skipped (CREATED_IDENTITIES): the load made more objects than the gate notes, so none of the load-created ones has an
+-- identity and their random draws are not keyed (16 Nov: the clients parted from tick 23).
 -- table_full (SCRIPT_RNG and the other per-tick key tables): a scope that found its table full draws from the shared word.
-D.WATCH={failures=true,unmapped=true,fallback=true,unknown=true,unsupported=true,refused=true,swap_refused=true,lost=true,torn=true,table_full=true}
+D.WATCH={failures=true,unmapped=true,fallback=true,unknown=true,unsupported=true,refused=true,swap_refused=true,lost=true,torn=true,load_skipped=true,
+ table_full=true}
 D.WATCH_SUFFIX={'_failures','_unmapped','_refused','_unknown'}
 -- 'lua=a/b/c/d' composites of the UI families (native_gate_ui_replay_core.lua): the names of their parts.
 D.WATCH_LUA={UI_TRADE_STATUS={'captured','applied','skipped','refused'},UI_FACTION_STATUS={'applied','skipped','parts','dropped','refused'}}

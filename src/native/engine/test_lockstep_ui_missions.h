@@ -80,7 +80,7 @@ static void test_ui_missions(void) {
     uiguard_armed=1;uiguard_groups=1u<<UIGUARD_G_MISSIONS;assert(!uimis_arm(test_uimis_number) && !strcmp(uimis_why,"ui_missions_need_guard_group"));
     uiguard_groups=UIGUARD_ALL_GROUPS;uimis_pins_checked=-1;assert(!uimis_arm(test_uimis_number) && !strncmp(uimis_why,"pins_ui_missions:",17));
     uimis_pins_checked=1;assert(uimis_arm(test_uimis_number) && uimis_armed && uimis_ready());
-    {unsigned claimed=0;for(unsigned i=0;i<UIGUARD_MAX;i++) claimed+=uiguard_claim_by[i]==uimis_claim;assert(claimed==9);}   /* 5 exports, 4 C functions */
+    {unsigned claimed=0;for(unsigned i=0;i<UIGUARD_MAX;i++) claimed+=uiguard_claim_by[i]==uimis_claim;assert(claimed==10);}   /* 5 exports, 4 C functions, the answer to a notification's question */
     /* The pass refuses a missing arming with the replay's stop. */
     {int keep=uimis_armed;uimis_armed=0;uirep_failed=0;uirep_why="-";uirep_installed=0;rid_mode=RID_SET;
      assert(!uirep_pass(5) && !strcmp(uirep_why,"ui_missions_not_armed"));uirep_failed=0;uirep_why="-";uirep_stage_name="armed";uimis_armed=keep;}
@@ -138,6 +138,11 @@ static void test_ui_missions(void) {
      conv[0]=UIMIS_C_HIRE_MONEY;assert(uimis_event_ok(1,UIREP_OP_CONVERSATION,conv,2,&why) && !uimis_event_ok(2,UIREP_OP_CONVERSATION,conv,2,&why));
      conv[0]=UIMIS_C_HIRE_MONEY-1;assert(!uimis_event_ok(1,UIREP_OP_CONVERSATION,conv,2,&why));conv[0]=UIMIS_C_HIRE_MONEY+1;
      assert(!uimis_event_ok(1,UIREP_OP_CONVERSATION,conv,2,&why));conv[0]=UIMIS_C_CANCEL;
+     /* The answer to a notification's question (UIMIS_C_ANSWER): slot 1 only, one number in the core's codec. */
+     {unsigned char answer[11]={UIMIS_C_ANSWER,1,3};double seq=4.0;memcpy(answer+3,&seq,8);
+      assert(uimis_event_ok(1,UIREP_OP_CONVERSATION,answer,11,&why) && !uimis_event_ok(2,UIREP_OP_CONVERSATION,answer,11,&why));
+      assert(!uimis_event_ok(1,UIREP_OP_CONVERSATION,answer,10,&why));answer[2]=4;assert(!uimis_event_ok(1,UIREP_OP_CONVERSATION,answer,11,&why));
+      assert(uimis_conv_kind_of("RaisePlayerInteractionEvent")==UIMIS_C_ANSWER && UIMIS_C_ANSWER>UIMIS_CONV_GLOBALS);}
      assert(!uimis_event_ok(1,0x4a,conv,2,&why) && !strcmp(why,"ui_op"));
      uirep_families=UIREP_FAMILY_CONVERSATION;assert(!uimis_event_ok(1,UIREP_OP_MISSION,abort_event,sizeof(abort_event),&why));
      uirep_families=UIREP_FAMILY_MISSIONS;assert(!uimis_event_ok(1,UIREP_OP_CONVERSATION,conv,2,&why));

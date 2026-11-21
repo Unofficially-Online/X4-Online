@@ -211,6 +211,81 @@ static void test_path_transforms(void) {
                ptf_site_calls[1]==walk_end0+4);
         InterlockedExchange64(&ptf_site_calls[1],walk_end0);ptf_walk_native=NULL;
     }
+    /* Dock rows: a dock site's call inside a Steering update (flight_current_model/slot) is a row with the stepping ship,
+     * the outcome and the range test's inputs; outside one, or with the rows off, none. The test redone: a ship at the
+     * approach point is within range, one 1 km off is not. */
+    {   const LONG64 dock0=ptf_site_calls[PTF_SITE_DOCK],frame0=ptf_site_calls[PTF_SITE_DOCK+1],walk_end0=ptf_site_calls[1];
+        static unsigned char model[0x400],agent[0x1000];memset(model,0,sizeof(model));memset(agent,0,sizeof(agent));
+        static const uint32_t bank0=0;ptf_test_read_bank=&bank0;
+        unsigned char *agent_p=agent,*ship_p=wreck;memcpy(model+0x10,&agent_p,8);memcpy(agent+0xef0,&ship_p,8);
+        const float range[3]={0.0f,6.0f,8.0f},v[4]={1.0f,0.0f,0.0f,0.0f};const double timer=5.5;   /* range 10 m */
+        memcpy(model+0x2c0,range,12);memcpy(model+0x378,&timer,8);memcpy(agent+0xaa0,v,16);agent[0xf5c]=1;agent[0xac8]=1;
+        float slot[4]={0.0f,0.0f,0.0f,0.0f};
+        ptf_walk_native=test_ptf_walk;test_ptf_walk_tls=tls;test_ptf_walk_manager=manager;
+        #define PTF_DOCK_M() do {const float m0[16]={1,2,3,0, 1,0,0,0, 0,1,0,0, 0,0,1,0};memcpy(m,m0,sizeof(m0));} while(0)
+        LONG64 r0=ptf_rows;PTF_DOCK_M();
+        assert(PTF_CALL(PTF_SITE_DOCK,zone,sector,0,PATH_THREAD_PASS)==m && ptf_rows==r0+1);   /* rows off: the window's only */
+        assert(ptf_dock_rows_arm() && ptf_dock_rows);
+        r0=ptf_rows;PTF_DOCK_M();
+        assert(PTF_CALL(PTF_SITE_DOCK,zone,sector,0,PATH_THREAD_PASS)==m && ptf_rows==r0+1);   /* no Steering update on the thread */
+        flight_current_model=model;flight_current_slot=slot;
+        r0=ptf_rows;PTF_DOCK_M();slot[0]=1000.0f;
+        assert(PTF_CALL(PTF_SITE_DOCK,zone,sector,0,PATH_THREAD_PASS)==m && ptf_rows==r0+2);
+        const float q[3]={m[4]+m[0],m[5]+m[1],m[6]+m[2]};   /* the approach point: v = the first axis */
+        assert(ptf_row_text((uint64_t)r0,out,sizeof(out))>0 && strstr(out,"site=dock_point ") && strstr(out," outcome=diverted dock=1 ship=0000000000176ad5/0/0 ") &&
+               strstr(out," slot=00007a44000000000000000000000000 local=0000803f000000000000000000000000 range=000000000000c04000000041 ") &&
+               strstr(out," timer=0000000000001640 flags=010101000000") && !strstr(out,"chain=") && !strstr(out,"native="));
+        assert(ptf_row_text((uint64_t)r0+1,out,sizeof(out))>0 && strstr(out," outcome=diverted chain="));   /* the window row after it */
+        memcpy(slot,q,12);r0=ptf_rows;PTF_DOCK_M();
+        assert(PTF_CALL(PTF_SITE_DOCK,zone,sector,0,PATH_THREAD_PASS)==m && ptf_row_text((uint64_t)r0,out,sizeof(out))>0 && strstr(out," flags=010101000100"));
+        const uint64_t pending=1;memcpy(model+0x388,&pending,8);memset(model+0x360,0x11,8);r0=ptf_rows;PTF_DOCK_M();   /* dock_frame: no test redone */
+        assert(PTF_CALL(PTF_SITE_DOCK+1,zone,sector,0,PATH_THREAD_MOVEWORKER)==(void*)0x77 && ptf_row_text((uint64_t)r0,out,sizeof(out))>0 &&
+               strstr(out,"site=dock_frame ") && strstr(out," outcome=outside dock=1 ") && strstr(out," flags=010100000001"));
+        /* With the option every row names the stepping ship: the Agent update's, else the Steering model's agent's, else none. */
+        r0=ptf_rows;
+        assert(PTF_CALL(1,wreck,zone,0,PATH_THREAD_PASS)==m && ptf_rows==r0+1 && ptf_row_text((uint64_t)r0,out,sizeof(out))>0 &&
+               strstr(out,"site=walk_end ") && strstr(out," ship=0000000000176ad5/0/0") && !strstr(out,"dock=1"));   /* the model's */
+        flight_current_model=flight_current_slot=NULL;r0=ptf_rows;
+        assert(PTF_CALL(1,wreck,zone,0,PATH_THREAD_PASS)==m && ptf_row_text((uint64_t)r0,out,sizeof(out))>0 && strstr(out," ship=0000000000000000/"));
+        agent_current=agent;r0=ptf_rows;
+        assert(PTF_CALL(1,wreck,zone,0,PATH_THREAD_PASS)==m && ptf_row_text((uint64_t)r0,out,sizeof(out))>0 && strstr(out," ship=0000000000176ad5/0/0"));
+        agent_current=NULL;
+        /* Dock gate rows: a row when a docking ship's branch entry changes (new=1 first), none while it stays; the cheap
+         * flag only counted; f5c cleared: a last row and the ship is forgotten; forgotten too after 600 ticks without an
+         * update, or when its address holds another ship (runtime ID). */
+        {   uint64_t wreck_id;memcpy(&wreck_id,wreck+8,8);
+            const int32_t m68=2;memcpy(model+0x68,&m68,4);memset(model+0x360,0,16);memset(model+0x388,0,8);memcpy(agent+0xa90,&wreck_id,8);
+            const unsigned gates0=ptf_gate_count;
+            r0=ptf_rows;ptf_gate_note(model,5.0,0);
+            assert(ptf_rows==r0+1 && ptf_gate_count==gates0+1 && ptf_row_text((uint64_t)r0,out,sizeof(out))>0 &&
+                   strstr(out," site=dock_gate dock=3 ship=0000000000176ad5/0/0 new=1 pending=0 f5c=1 ac8=1 m68=00000002 list=1 open=0 "
+                              "dock_id=1 target=0000000000176ad5/0 timer=0000000000001640 cheap_now=0 full=1 cheap=0 bank=0 time=4014000000000000"));
+            ptf_gate_note(model,5.25,1);ptf_gate_note(model,5.5,0);assert(ptf_rows==r0+1);   /* unchanged: still time <= timer */
+            ptf_gate_note(model,6.0,1);
+            assert(ptf_rows==r0+2 && ptf_row_text((uint64_t)r0+1,out,sizeof(out))>0 && strstr(out," new=0 ") && strstr(out," open=1 ") &&
+                   strstr(out," cheap_now=1 full=2 cheap=2 "));
+            const double later=7.5;memcpy(model+0x378,&later,8);ptf_gate_note(model,6.0,0);   /* a new next-check time */
+            assert(ptf_rows==r0+3 && ptf_row_text((uint64_t)r0+2,out,sizeof(out))>0 && strstr(out," open=0 ") && strstr(out," timer=0000000000001e40 "));
+            agent[0xf5c]=0;ptf_gate_note(model,6.1,0);
+            assert(ptf_rows==r0+4 && ptf_gate_count==gates0 && ptf_row_text((uint64_t)r0+3,out,sizeof(out))>0 && strstr(out," new=0 pending=0 f5c=0 "));
+            ptf_gate_note(model,6.2,0);assert(ptf_rows==r0+4);   /* forgotten and not docking: nothing */
+            agent[0xf5c]=1;ptf_gate_note(model,6.3,0);
+            assert(ptf_rows==r0+5 && ptf_row_text((uint64_t)r0+4,out,sizeof(out))>0 && strstr(out," new=1 ") && strstr(out," full=1 cheap=0 "));
+            ptf_gate_sweep(stats.issued+PTF_GATE_FORGET-1u);assert(ptf_gate_count==gates0+1);   /* updated 599 ticks ago: kept */
+            ptf_gate_sweep(stats.issued+PTF_GATE_FORGET);assert(ptf_gate_count==gates0);
+            ptf_gate_note(model,6.4,0);assert(ptf_rows==r0+6 && ptf_row_text((uint64_t)r0+5,out,sizeof(out))>0 && strstr(out," new=1 "));
+            ptf_gate_find(ship_p)->id=wreck_id+1;ptf_gate_note(model,6.5,0);   /* another ship at that address */
+            assert(ptf_rows==r0+7 && ptf_gate_count==gates0+1 && ptf_row_text((uint64_t)r0+6,out,sizeof(out))>0 && strstr(out," new=1 "));
+            ptf_dock_rows=0;ptf_gate_note(model,9.0,0);assert(ptf_rows==r0+7);ptf_dock_rows=1;   /* the option off: none */
+            ptf_gate_sweep(~0ull-PTF_GATE_FORGET);assert(ptf_gate_count==gates0);
+            memset(model+0x68,0,4);memset(agent+0xa90,0,8);memcpy(model+0x378,&timer,8);
+        }
+        ptf_installed=1;assert(ptf_dock_rows_arm());ptf_dock_rows=0;assert(!ptf_dock_rows_arm());ptf_installed=0;   /* armed: no change */
+        flight_current_model=flight_current_slot=NULL;ptf_test_read_bank=NULL;ptf_walk_native=NULL;
+        #undef PTF_DOCK_M
+        InterlockedExchange64(&ptf_site_calls[PTF_SITE_DOCK],dock0);InterlockedExchange64(&ptf_site_calls[PTF_SITE_DOCK+1],frame0);
+        InterlockedExchange64(&ptf_site_calls[1],walk_end0);
+    }
     ptf_installed=1;assert(!ptf_window(1,2) && ptf_window(2460,2470));ptf_installed=0;ptf_window_from=ptf_window_to=0;
     rows=ptf_rows-1;
     /* Rows evicted from the ring say so. */

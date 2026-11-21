@@ -38,6 +38,7 @@
 #include "test_lockstep_draw_watch.h"
 #include "test_lockstep_player_timer.h"
 #include "test_lockstep_warp_rng.h"
+#include "test_lockstep_island_order.h"
 #include "test_lockstep_transition_rows.h"
 #include "test_lockstep_tempzone_order.h"
 #include "test_lockstep_nav_octree_sites.h"
@@ -1118,6 +1119,9 @@ static void test_dynamic_registry(void) {
 #include "test_lockstep_scan_mode.h"
 #include "test_lockstep_pilot_deliver.h"
 #include "test_lockstep_anim_listeners.h"
+#include "test_lockstep_zone_pending.h"
+#include "test_lockstep_faction_present.h"
+#include "test_lockstep_conversation_owner.h"
 #include "test_lockstep_spline_calc_watch.h"
 #include "test_lockstep_step_chain.h"
 #include "test_lockstep_path_transforms.h"
@@ -1140,9 +1144,10 @@ int main(int argc,char **argv) {
     if(argc==2) test_view_cameras_native_image(argv[1]);
     if(argc==2) test_scan_long_native_image(argv[1]);
     if(argc==2) test_scan_mode_native_image(argv[1]);
-    if(argc==2) {test_mission_owners_native_image(argv[1]);test_pilot_aim_native_image(argv[1]);test_ui_missions_native_image(argv[1]);}
+    if(argc==2) {test_conversation_owner_native_image(argv[1]);test_mission_owners_native_image(argv[1]);test_pilot_aim_native_image(argv[1]);test_ui_missions_native_image(argv[1]);}
     if(argc==2) test_ui_trade_native_image(argv[1]);
     if(argc==2) test_ui_faction_native_image(argv[1]);
+    if(argc==2) test_faction_present_native_image(argv[1]);
     if(argc==2) test_player_settings_native_image(argv[1]);
     if(argc==2) test_fp_redirect_native_image(argv[1]);
     if(argc==2) test_safe_pos_order_native_image(argv[1]);
@@ -1230,6 +1235,7 @@ int main(int argc,char **argv) {
     test_draw_watch_frame();
     test_player_timer();
     test_warp_rng();
+    test_island_order();
     test_transition_rows();
     test_tempzone_order();
     test_nav_octree_sites();
@@ -1241,7 +1247,7 @@ int main(int argc,char **argv) {
     test_view_rows();
     test_view_ui();
     test_view_source();
-    test_view_mask();
+    test_view_mask();test_view_phantoms();
     test_hybrid();
     test_sample_profile();
     test_camera_offset();
@@ -1271,6 +1277,10 @@ int main(int argc,char **argv) {
     test_scan_mode();
     test_pilot_deliver();
     test_anim_listeners();
+    test_zone_pending();
+    test_near_page();
+    test_faction_present();
+    test_conversation_owner();
     test_pilot_aim();
     test_speech_local();
     test_spline_calc_watch();

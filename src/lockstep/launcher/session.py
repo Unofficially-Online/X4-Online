@@ -156,6 +156,16 @@ def other_clients():
     return found
 
 
+def frees_last_client(remote, opened):
+    """Whether a session frees X4's instance mutex in its last client too. Alone on the PC with the first profiles it
+    keeps it (nothing else is to start). With remote players, an open slot, other profiles or beside other sessions
+    (X4LS_BESIDE=1) it frees it: otherwise the next launcher on the PC has to reach into this session's client
+    (release_beside), and its log then names a client that is not its own. A test script that took the first
+    "pid N" of such a log for its own joiner ended other sessions' client 2 three times on 18 Nov; every victim was a
+    session on the first profiles, the only ones that kept the mutex."""
+    return bool(remote or opened or profile.FIRST_PROFILE or os.environ.get('X4LS_BESIDE'))
+
+
 def release_beside(own, log=print):
     """Before a client start: X4's instance mutex is freed in every other session's launcher client (never in an X4
     that is not a launcher client). A client another session started a moment ago holds the mutex until its own
@@ -578,7 +588,7 @@ def run(o: Options, log=print):
             wait_for_log(profile.profile_dir(profile_id) / f'x4ls-c{k}.log', 'Entering startmenu', proc, 180)
             if arm_at and time.time() > arm_at - 5:
                 raise SystemExit(f'client {k} reached the start menu after the common arm time; raise --startup')
-            if k != local[-1] or remote or opened or profile.FIRST_PROFILE:  # X4 refuses to start while another process holds EGOSOFT_X4_INSTANCE
+            if k != local[-1] or frees_last_client(remote, opened):  # X4 refuses to start while another process holds EGOSOFT_X4_INSTANCE
                 log(f'client {k}: released {instance.release_instance_mutex(proc.pid)} instance mutex handle(s)')
         placed.set()
         # The arm time was budgeted before any client started (--startup a client). With every player on this PC they

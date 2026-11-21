@@ -623,6 +623,10 @@ static const lx_site lx_sites[]={
     {"steer_roll_b",0x13ec5f0,0x29,"2b8513bb2f50ea3f75c3b93d562530d1bdbae90e3d4a7c01ab10e1d603b0d2a9"},
     {"avoid_angle",0x13c9fd6,0x58,"3aa2cb7e6e334de48d09ef31c98011c310bcef0091d8d4f33a8cee0422e73c84"}, /* the avoidance angles (gate_avoid_angle.h) */
     {"pursuit_speed",0x13d7b9c,0x48,"3c0eae4a81b72a84bcb27ba863d12543abb3e54c9547a65a795029882f8f9ebe"}, /* the pursuit speed factor (gate_pursuit_speed.h) */
+    {"zone_pending",0x1161bb0,0x68,"a27480ac0e5e62fd0da43d395798e5ddd9a49195a324df2a1dbc26e33f485b69"}, /* the frame's pending physics work, its three lock calls (gate_zone_pending.h) */
+    {"zone_pending_frame",0xfeb82b,0x5,"4c5851c1a977f26fac2cbf050b1640cd510446befba9de17fd2990f9d7629266"}, /* UniverseFrameUpdate -> 0x1161bb0 (gate_zone_pending.h) */
+    {"spline_phase_route",0x1374d90,0x40,"a57977607a6075e964d0aa1053b033f02298f3140e2855c323b49bf952003dea"}, /* the route calculation's head, Windows 0xec0cb0 (gate_spline_phase.h) */
+    {"spline_phase_steer",0x10b0c90,0x128,"746b62a940333a7715e89700fa1f490ad7239fa92d5bc32709b54d84c03e87d3"}, /* the calculator's steering path job, its Unlock call 0x10b0cc1 (gate_spline_phase.h) */
     {"ik_wrap_tail",0x15661c0,0x60,"98e46a50b2cf8111eab6cda0ec549913e60a2356ce72f85cc33e6c00f7688f25"},
     {"body_defined_mass",0xed4cf0,0x8e,"f640dc2b2c63a1a363cc8f487544824b91ee72e7eadc3da0dcd7117084634874"},
     {"mining_search",0x1f47b20,0x6d0,"2793312d8762d21df2f389e8d00a52856fad88569264f6c63e0365e368a9ba07"},

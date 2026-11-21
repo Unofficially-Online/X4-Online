@@ -90,6 +90,23 @@ class PlanTests(unittest.TestCase):
             self.assertIn(op, ops)
         self.assertTrue(all(row[0] < 5 * 1800 for row in plan[0]))
 
+    def test_a_faction_per_player_gets_each_its_own_fixtures(self):
+        one, two = sbt.plan(5, 'factions')
+        # the replayed fixtures (a vessel for each faction, the material, the warp) are client 1's alone: in both plans
+        # they would run twice; the canonical ones (money, player 2's blueprints) and the readings are in both
+        self.assertEqual([row for row in one if row[1] == 'station_kit'], [(30, 'station_kit', 1, True), (32, 'station_kit', 2, True)])
+        self.assertFalse([row for row in two if row[1] in ('station_kit', 'station_wares', 'builder_warp')])
+        for rows in (one, two):
+            self.assertIn((40, 'wallet', 50000000), rows)
+            self.assertIn((60, 'station_blueprints', 2), rows)
+        self.assertEqual([row for row in one if row[1] == 'station_look'], [row for row in two if row[1] == 'station_look'])
+        self.assertEqual(one, sorted(one, key=lambda row: row[0]))
+
+    def test_a_reading_of_a_faction_per_player_names_the_owner_and_each_account(self):
+        found = sbt.stations('stations=2 %s %s/owner=x4lan_player2 money=1 money2=2' % (ROW % (1, 2946), ROW.replace('ABC-123', 'XYZ-999') % (0, 3000)))
+        self.assertEqual(sorted(found), ['ABC-123', 'XYZ-999'])
+        self.assertEqual(found['XYZ-999']['built'], 0)
+
     def test_a_reading_is_read_per_station(self):
         found = sbt.stations('stations=2 %s %s money=1' % (ROW % (1, 2946), OTHER % 0))
         self.assertEqual(found['ABC-123']['built'], 1)

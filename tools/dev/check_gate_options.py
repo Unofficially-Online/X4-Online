@@ -81,7 +81,10 @@ PROBE_OPTIONS = {
     'native_gate_viewpoint_policy': (('sector',), (), None),
     'native_gate_effect_rows': (('true',), (), None),
     'native_gate_swarm_seed': (('true',), (), None),
+    'native_gate_zone_pending': (('true',), (), None),
     'native_gate_anim_listeners': (('true',), (), None),
+    'native_gate_spline_phase': (('true',), (), None),
+    'native_gate_faction_present': (('true',), (), None),
     'native_gate_motion_watch_orders': (('true',), (), None),
     'native_gate_motion_watch_digest': (('true',), (), None),
     'native_gate_rng_rows': (('true',), (), None),
@@ -109,7 +112,8 @@ PROBE_REQUIRES_ALL = {
     'native_gate_warp_rng': (('true', 'split', 'observe'), ('native_gate_world_identities',)),
     'native_gate_transition_rows': (('true',), ('native_gate_world_identities',)),
     'native_gate_tempzone_order': (('true', 'order', 'observe'), ('native_gate_world_identities', 'native_gate_serial_pathing')),
-    'native_gate_path_transforms': (('sim', 'observe'), ('native_gate_serial_pathing',)),
+    'native_gate_path_transforms': (('sim', 'observe', 'all'), ('native_gate_serial_pathing',)),
+    'native_gate_path_transforms_dock_rows': (('true',), ('native_gate_path_transforms',)),
     'native_gate_body_pose': (('sim', 'observe'), ()),
     'native_gate_gravidar_posts': (('true',), ('native_gate_gravidar_key_all',)),
     'native_gate_gravidar_wide': (('true', 'wide', 'sort'), ()),
@@ -739,13 +743,18 @@ def probe_rules(config_text, enabled):
                                  bits=['native_gate_virtual_players']))
         if not re.fullmatch(r'[0-9]{1,5}', due) or not 2 <= int(due) <= 18000:
             failures.append(dict(rule='native_gate_virtual_players_construct_tick must be an admitted tick 2..18000', bits=[due]))
+    def on(name):
+        """A required option is on when it is true or set to a mode (native_gate_path_transforms = 'sim'), not false or nil."""
+        if name in enabled:
+            return True
+        return any(v.strip('\'"') not in ('false', 'nil') for v in re.findall(r'X4LAN_CONFIG\.' + name + r'\s*=\s*([^\s;]+)', config_text))
     for option, (values, required) in PROBE_REQUIRES_ALL.items():
         for value in re.findall(r'X4LAN_CONFIG\.' + option + r'\s*=\s*([^\s;]+)', config_text):
             value = value.strip('\'"')
             if value in ('false', 'nil'): continue
             if value not in values:
                 failures.append(dict(rule=f'{option} must be {", ".join(values)}', bits=[value]))
-            missing = [name for name in required if name not in enabled]
+            missing = [name for name in required if not on(name)]
             if missing:
                 failures.append(dict(rule=f'{option} needs {", ".join(required)}', bits=missing))
             if not re.search(r'X4LAN_CONFIG\.native_gate_snapshot_sha\s*=', config_text):
@@ -882,6 +891,9 @@ def probe_rules(config_text, enabled):
     if re.search(r'X4LAN_CONFIG\.native_gate_view_points_mask\s*=\s*(?!false\b|nil\b)\S', config_text) and \
        not re.search(r'X4LAN_CONFIG\.native_gate_view_points\s*=\s*(?:true\b|[\'"]players[\'"])', config_text):
         failures.append(dict(rule="native_gate_view_points_mask needs native_gate_view_points = 'players'", bits=['native_gate_view_points']))
+    if re.search(r'X4LAN_CONFIG\.native_gate_phantom_players\s*=\s*(?!false\b|nil\b)\S', config_text) and \
+       not re.search(r'X4LAN_CONFIG\.native_gate_view_points\s*=\s*(?:true\b|[\'"]players[\'"])', config_text):
+        failures.append(dict(rule="native_gate_phantom_players needs native_gate_view_points = 'players'", bits=['native_gate_view_points']))
     if re.search(r'X4LAN_CONFIG\.native_gate_view_triggers\s*=\s*(?!false\b|nil\b)\S', config_text) and \
        not re.search(r'X4LAN_CONFIG\.native_gate_view_points\s*=\s*(?!false\b|nil\b)\S', config_text):
         failures.append(dict(rule='native_gate_view_triggers needs native_gate_view_points', bits=['native_gate_view_points']))

@@ -310,7 +310,15 @@ class CoreTests(unittest.TestCase):
         self.assertTrue(any('UI_BUILD_FUND tick=36 amount=2000000 money=10000' in line for line in logs))
         self.assertTrue(any('UI_BUILD_SCRIPT tick=40 op=buy ok=true result=88ULL' in line for line in logs))
         with self.assertRaises(Exception):
-            lua.eval("X4LAN_UI_BUILD_CORE.script({{0,'sell'}},40,{})")
+            lua.eval("X4LAN_UI_BUILD_CORE.script({{0,'no_such_op'}},40,{})")
+        # the sale (18 Nov): an op of this family, one commit scope as the map's "Sell ships" confirm is
+        self.assertTrue(lua.eval("type(X4LAN_UI_BUILD_CORE.script({{0,'sell','st','sh'}},40,{})[40][1].call)=='function'"))
+        # ...and the repair of a docked ship: the price, then the station's signal, in one scope
+        self.assertTrue(lua.eval("type(X4LAN_UI_BUILD_CORE.script({{0,'repair','st','sh'}},40,{})[40][1].call)=='function'"))
+        core = (ROOT/'tools/dev/native_gate_ui_build_core.lua').read_text(encoding='utf-8')
+        repair = core[core.index("elseif op=='repair' then"):core.index("elseif op=='plot' then")]
+        self.assertIn("S.with_scope('script.repair'", repair)
+        self.assertLess(repair.index('TransferPlayerMoneyTo(price,station)'), repair.index("SignalObject(station,'repairs_initiate',lua,{100,{}})"))
 
 
 PROBE_BUILD = r'''
@@ -337,6 +345,75 @@ PROBE_BUILD = r'''
     for field,at in pairs(e[3]) do LAYOUT_OFFSET[e[1]..'.'..field]=at end
   end
 '''
+
+
+class StationMenuTests(unittest.TestCase):
+    """Display and order-block parts of the station menus (18 Nov): synthetic, no X4."""
+
+    def test_the_overview_draws_again_when_its_own_call_landed_after_a_draw(self):
+        lua, _ = lua_client()
+        out = lua.eval(r'''(function()
+          local K=X4LAN_UI_BUILD_CORE
+          local now=10
+          local drawn,setup={},0
+          local menu={name='StationOverviewMenu',shown=true,updateExpandedNode=function() drawn[#drawn+1]='node' end,
+            display=function() drawn[#drawn+1]='whole' end,setupFlowchartData=function() setup=setup+1 end}
+          local p={menus=function() return {menu} end,env={getElapsedTime=function() return now end}}
+          local S,R={},{}
+          K.overview_frame(S,p,R,now)                       -- the menu's draw functions are noted from here on
+          menu.updateExpandedNode();R.applied_station=1      -- a ticked box: the menu drew its node, the call landed 0.2 s later
+          now=10.2;K.overview_frame(S,p,R,now)
+          local first=tostring(menu.refreshnode)..'/'..tostring(menu.refresh)
+          menu.refreshnode=nil;now=20;R.applied_station=2    -- a slider's step long after any draw: no draw is asked for
+          K.overview_frame(S,p,R,now)
+          local second=tostring(menu.refreshnode)..'/'..tostring(menu.refresh)
+          menu.display();now=20.1;R.applied_station=3        -- the trade wares' Confirm drew the whole chart
+          K.overview_frame(S,p,R,now)
+          local third=tostring(menu.refreshnode)..'/'..tostring(menu.refresh)..'/'..setup
+          menu.shown=false;R.applied_station=4;K.overview_frame(S,p,R,now)
+          return first..' '..second..' '..third..' '..table.concat(drawn,',')
+        end)()''')
+        self.assertEqual(out, '10.2/nil nil/nil nil/true/1 node,whole')
+
+    def test_a_station_call_is_named_by_what_it_changes(self):
+        lua, _ = lua_client()
+        K = lua.eval('X4LAN_UI_REPLAY_CORE')
+        for what in ('SetContainerWarePriceOverride', 'AddTradeWare', 'SetMaxBudget', 'TransferPlayerMoneyTo(5,7)', 'UpdateSupplyOverrides',
+                     'PauseProductionModule', 'SetContainerTradeRule'):
+            self.assertTrue(K.station_call(what), what)
+        for what in ('AddUITriggeredEvent(MapMenu,x)', 'CreateOrder3=1/1', 'SetOrderParam@1', 'clear', 'part', None):
+            self.assertFalse(K.station_call(what), what)
+
+    def test_assigning_and_removing_a_subordinate_are_open_when_their_calls_are_shared(self):
+        lua, _ = lua_client()
+        K = lua.eval('X4LAN_UI_BUILD_CORE')
+        orders, queue, faction = 4, 128, 32768
+        check = lua.eval('function(K,e,m) return (K.has_all(m,K.UNBLOCK[e])) end')
+        for entry in ('InteractMenu.buttonAssignCommander', 'InteractMenu.orderAssignCommander'):
+            self.assertTrue(check(K, entry, orders + queue), entry)
+            self.assertFalse(check(K, entry, orders), entry)
+        for entry in ('InteractMenu.buttonRemoveAssignment', 'MapMenu.buttonRemoveAssignment'):
+            self.assertTrue(check(K, entry, orders + queue + faction), entry)
+            self.assertFalse(check(K, entry, orders + queue), entry)
+        guard = K.GUARDS.InteractMenu.buttonAssignCommander
+        table = lua.eval('function(f,v) return {fleetunit=f,x=v} end')
+        self.assertEqual(guard(table(1, 0), 'trade'), 'fleet_unit')
+        self.assertEqual(guard(table(None, 0), 'positiondefence'), 'position_defence')
+        self.assertIsNone(guard(table(None, 0), 'trade'))
+        # "Change assignment": open with the faction family; a fleet unit anywhere in it, the position defence and a
+        # commander that cannot be read are refused
+        entry = 'InteractMenu.buttonChangeAssignment'
+        self.assertTrue(check(K, entry, orders + queue + faction), entry)
+        self.assertFalse(check(K, entry, orders + queue), entry)
+        guard = K.GUARDS.InteractMenu.buttonChangeAssignment
+        menu = lua.eval('function(unit,ships,group) return {fleetunit=unit,shipswithcurrentcommander=ships,groupShips=group,componentSlot={component=7}} end')
+        ships = lua.eval('{11,12}')
+        self.assertEqual(guard(menu(1, ships, None), 'attack'), 'fleet_unit')
+        self.assertEqual(guard(menu(None, ships, None), 'positiondefence'), 'position_defence')
+        self.assertIsNone(guard(menu(None, ships, None), 'attack'))
+        self.assertIsNone(guard(menu(None, None, lua.eval('{{component=11},{component=12}}')), 'attack'))
+        self.assertEqual(guard(menu(None, None, lua.eval('{{component=11},{fleetunit=3}}')), 'attack'), 'fleet_unit')
+        self.assertEqual(guard(menu(None, None, None), 'attack'), 'fleet_unit')          # no GetCommander to read here
 
 
 class ProbeTests(unittest.TestCase):

@@ -157,7 +157,8 @@ static volatile LONG64 ptf_site_calls[PTF_SITES],ptf_outside,ptf_trivial,ptf_spa
 static double ptf_last_time;
 typedef struct {uint64_t key;unsigned klass,depth;} ptf_ref_t;
 typedef struct {volatile LONG64 ready;uint64_t tick;unsigned site,mode,differs,object;ptf_ref_t a,b,obj;uint32_t ctrl_vt;
-    double time;float sim[16],native[16];unsigned win;} ptf_row_t; /* win: formation window row, outcome + 1 */
+    double time;float sim[16],native[16];unsigned win;ptf_ref_t ship;unsigned dock;} ptf_row_t;
+/* win: formation window row, outcome + 1. dock: a dock row (below), native[] holds its inputs, ship the stepping ship. */
 enum {PTF_OUT_OUTSIDE,PTF_OUT_TRIVIAL,PTF_OUT_NAV,PTF_OUT_NOT_ANCESTOR,PTF_OUT_SPACES,PTF_OUT_FAILURE,PTF_OUT_OBSERVE,PTF_OUT_DIVERTED};
 static const char *const ptf_outcomes[8]={"outside","trivial","nav","not_ancestor","spaces","failure","observe","diverted"};
 #define PTF_SITE_FORMATION 4u
@@ -205,6 +206,15 @@ static int ptf_chain(unsigned char *a,const unsigned char *b,unsigned char **obj
     }
     return 0;
 }
+static int ptf_dock_rows; /* native_gate_path_transforms_dock_rows: the dock rows (below), and every row names its ship */
+/* The ship whose update this thread runs: the Agent update's (lockstep_agent.h), else the Steering update's model's
+ * agent (lockstep_flight.h); NULL outside both. */
+static unsigned char *ptf_stepping_ship(void) {
+    unsigned char *agent=agent_current,*ship=NULL;
+    if(!agent && flight_current_model && !read_local((const unsigned char*)flight_current_model+0x10,&agent,8)) agent=NULL;
+    if(!agent || !read_local(agent+0xef0,&ship,8)) return NULL;
+    return ship;
+}
 static void ptf_row(unsigned site,const unsigned char *a,const unsigned char *b,const unsigned char *object,uint32_t ctrl_vt,
                     double time,const float *sim,const float *native,int differs,unsigned win) {
     if(!ptf_ring) return;
@@ -213,7 +223,8 @@ static void ptf_row(unsigned site,const unsigned char *a,const unsigned char *b,
     ptf_row_t *r=&ptf_ring[(uint64_t)index%PTF_RING];
     InterlockedExchange64(&r->ready,0);
     r->tick=stats.issued;r->site=site;r->mode=(unsigned)ptf_mode;r->differs=(unsigned)differs;r->object=object!=NULL;
-    r->a=ptf_ref(a);r->b=ptf_ref(b);r->obj=ptf_ref(object);r->ctrl_vt=ctrl_vt;r->time=time;r->win=win;
+    r->a=ptf_ref(a);r->b=ptf_ref(b);r->obj=ptf_ref(object);r->ctrl_vt=ctrl_vt;r->time=time;r->win=win;r->dock=0;memset(&r->ship,0,sizeof(r->ship));
+    if(ptf_dock_rows) {r->dock=2;r->ship=ptf_ref(ptf_stepping_ship());} /* the dock rows' option: every row names the stepping ship */
     memcpy(r->sim,sim,sizeof(r->sim));
     if(native) memcpy(r->native,native,sizeof(r->native));else memset(r->native,0,sizeof(r->native));
     InterlockedExchange64(&r->ready,index+1);
@@ -347,11 +358,164 @@ static void *ptf_call_core(unsigned site,void *a,float *out,void *b,uint64_t fla
     if(object) ptf_row(site,a,b,object,ctrl_vt,time,sim,NULL,0,0);
     return out;
 }
+/* Dock rows (native_gate_path_transforms_dock_rows = true, diagnostic, every tick; 19 Nov). The refit and trade splits
+ * (police mass traffic ships near a wharf or station) all part first in these sites' counts: one client makes the
+ * dock_point call two or three steps more before the dock_frame call that starts a dock path (and the keyed timer
+ * draw after it, ACTOR_RNG_ALL agent_drawn). In the step 0xec7200 that is the range test between the two calls:
+ * the ship's position (the step's slot, +0) against the approach point (the agent's vector at +0xaa0 + bank*0x10 put
+ * through dock_point's result), within the length of the model's +0x2c0; then the dock's navigation octree, whose
+ * lookups NAV_OCTREE_LOOKUP rows already compare. The counts do not say whose step it was or which input parted.
+ * A dock row per call of either dock site made inside a Steering update (lockstep_flight.h keeps the update's model and
+ * slot per thread): the ship (portable key of agent+0xef0), the call's outcome and thread class, the result matrix
+ * (sim=), and raw: slot= the ship's position, local= the approach vector, range= the model's +0x2c0..+0x2cb, timer= the
+ * model's next-check time +0x378, flags= agent+0xf5c, agent+0xac8, model +0x360 == +0x368, the bank, the range test
+ * redone in the step's order (1 within), model+0x388 set. Two clients' rows compare as sequences per ship; the first
+ * differing row names the ship and the input. With the option every other row (object rows, window rows) names the
+ * stepping ship too (ship=: the Agent update's, lockstep_agent.h, else the Steering update's), and the probe writes
+ * every row on every tick, not only on status ticks: the trade split 20261119-154538 parted first in walk_end calls
+ * against a station between two status ticks, whose rows were never written. Read-only. */
+#define PTF_BANK_INDEX 0x38f4ee4u /* g_PathingStateBufferIndex: the read bank */
+static const uint32_t *ptf_test_read_bank; /* tests only: the read bank */
+static void *ptf_gates_alloc(void);
+static int ptf_dock_rows_arm(void) {
+    if(ptf_installed) return ptf_dock_rows;
+    if(!ptf_gates_alloc()) return 0;
+    ptf_dock_rows=1;return 1;
+}
+static void ptf_dock_row(unsigned site,const unsigned char *a,const unsigned char *b,const float *out,unsigned cls,unsigned outcome) {
+    const unsigned char *model=flight_current_model,*slot=flight_current_slot;
+    unsigned char *agent=NULL,*ship=NULL;
+    if(!ptf_ring || !model || !slot || !read_local(model+0x10,&agent,8) || !agent || !read_local(agent+0xef0,&ship,8)) return;
+    if(InterlockedIncrement64(&ptf_tick_rows)>(LONG64)PTF_ROWS_PER_TICK) {InterlockedIncrement64(&ptf_dropped);return;}
+    unsigned char in[64];memset(in,0,sizeof(in));
+    uint32_t bank=0;
+    if(ptf_test_read_bank) bank=*ptf_test_read_bank;else if(!read_local(image+PTF_BANK_INDEX,&bank,4)) bank=0xffu;
+    float p[4]={0},v[4]={0},r[3]={0};uint64_t pending=0,list[2]={0,0};
+    (void)read_local(slot,p,16);
+    if(bank<=1u) (void)read_local(agent+0xaa0+0x10u*bank,v,16);
+    (void)read_local(model+0x2c0,r,12);
+    memcpy(in,p,16);memcpy(in+16,v,16);memcpy(in+32,r,12);
+    (void)read_local(agent+0xf5c,in+44,1);(void)read_local(agent+0xac8,in+45,1);
+    in[46]=read_local(model+0x360,list,16) && list[0]==list[1];in[47]=(unsigned char)bank;
+    (void)read_local(model+0x378,in+48,8);
+    /* The step's test: the approach point m*v (m: dock_point's result, translation at 0..2, axes 4.., 8.., 12..). */
+    if(site==PTF_SITE_DOCK) {
+        float q[3];
+        for(unsigned i=0;i<3;i++) q[i]=v[2]*out[12+i]+v[0]*out[4+i]+v[1]*out[8+i]+out[i];
+        const float d=(q[0]-p[0])*(q[0]-p[0])+(q[1]-p[1])*(q[1]-p[1])+(q[2]-p[2])*(q[2]-p[2]);
+        in[56]=d<r[0]*r[0]+r[1]*r[1]+r[2]*r[2];
+    }
+    in[57]=read_local(model+0x388,&pending,8) && pending;
+    LONG64 index=InterlockedIncrement64(&ptf_rows)-1;
+    ptf_row_t *row=&ptf_ring[(uint64_t)index%PTF_RING];
+    InterlockedExchange64(&row->ready,0);
+    row->tick=stats.issued;row->site=site;row->mode=(unsigned)ptf_mode;row->differs=0;row->object=0;
+    row->a=ptf_ref(a);row->b=ptf_ref(b);memset(&row->obj,0,sizeof(row->obj));row->ctrl_vt=cls;row->time=ptf_last_time;
+    row->win=outcome+1u;row->dock=1;row->ship=ptf_ref(ship);
+    memcpy(row->sim,out,sizeof(row->sim));memcpy(row->native,in,sizeof(row->native));
+    InterlockedExchange64(&row->ready,index+1);
+}
+/* Dock gate rows (with the dock rows' option; 19 Nov, kx1 on the laptop, refit, XS ships traced): at 10320 client 2 made
+ * a ship's dock_point call (and its dock_frame: the check passed at once) against wharf 1b5af and client 1 none, while
+ * both clients' pathing walks (PATH_DETERMINISM walk=) agreed; 35 ticks later a police XS ship near it flew apart. Client
+ * 1's step did not enter the dock branch that tick, so no dock row says why. The branch's entry in 0xec7200 (not a cheap
+ * update): no dock path pending (model+0x388), agent+0xf5c, the dock frame, agent+0xac8, the dock's ID at agent+0xa90 +
+ * read bank * 8, model+0x68, and model+0x360 == +0x368 or the step's time past model+0x378, the next check. Read at the
+ * start of every Steering update (lockstep_flight.h): one row per ship whenever that tuple changes (dock=3), from its first
+ * update with agent+0xf5c set (new=1) to the first without (f5c=0, the ship is forgotten), with the full and cheap updates
+ * the ship had since then (the cheap flag is not in the tuple: past the pathing budget it changes every few ticks). Keyed
+ * by the ship and its runtime ID, so a model rebuilt or an address reused does not show; ships with no update for 600
+ * ticks are forgotten at the next multiple of 600 (a docked ship keeps the flag), the same on every client. Read-only. */
+#define PTF_GATES 16384u
+#define PTF_GATE_FORGET 600u
+typedef struct {const unsigned char *ship;uint64_t id,seen,full,cheap;unsigned char tuple[32];} ptf_gate_t;
+static ptf_gate_t *ptf_gates;
+static unsigned ptf_gate_count;
+static uint64_t ptf_gate_full;   /* ships not kept: the table was full */
+static SRWLOCK ptf_gate_lock=SRWLOCK_INIT;
+static void *ptf_gates_alloc(void) {
+    if(!ptf_gates) ptf_gates=VirtualAlloc(NULL,sizeof(ptf_gate_t)*PTF_GATES,MEM_COMMIT|MEM_RESERVE,PAGE_READWRITE);
+    return ptf_gates;
+}
+static unsigned ptf_gate_slot(const void *ship) {return (unsigned)(((uint64_t)(uintptr_t)ship*0x9e3779b97f4a7c15ull)>>50)&(PTF_GATES-1u);}
+static ptf_gate_t *ptf_gate_find(const unsigned char *ship) {
+    for(unsigned i=ptf_gate_slot(ship),n=0;n<PTF_GATES;i=(i+1)&(PTF_GATES-1u),n++) {
+        if(!ptf_gates[i].ship) return NULL;
+        if(ptf_gates[i].ship==ship) return &ptf_gates[i];
+    }
+    return NULL;
+}
+static ptf_gate_t *ptf_gate_insert(const unsigned char *ship) {
+    if(ptf_gate_count>=PTF_GATES*3u/4u) {++ptf_gate_full;return NULL;}
+    unsigned i=ptf_gate_slot(ship);
+    while(ptf_gates[i].ship) i=(i+1)&(PTF_GATES-1u);
+    memset(&ptf_gates[i],0,sizeof(ptf_gates[i]));ptf_gates[i].ship=ship;++ptf_gate_count;
+    return &ptf_gates[i];
+}
+/* Linear probing: the backward shift keeps every chain whole. */
+static void ptf_gate_erase(ptf_gate_t *e) {
+    unsigned i=(unsigned)(e-ptf_gates),j=i;
+    memset(&ptf_gates[i],0,sizeof(ptf_gates[i]));--ptf_gate_count;
+    for(;;) {
+        j=(j+1)&(PTF_GATES-1u);
+        if(!ptf_gates[j].ship) return;
+        const unsigned home=ptf_gate_slot(ptf_gates[j].ship);
+        if((j>i && (home<=i || home>j)) || (j<i && home<=i && home>j)) {ptf_gates[i]=ptf_gates[j];memset(&ptf_gates[j],0,sizeof(ptf_gates[j]));i=j;}
+    }
+}
+/* Gate tick (main thread, no pass running): forget the ships not updated for PTF_GATE_FORGET ticks. */
+static void ptf_gate_sweep(uint64_t now) {
+    if(!ptf_gates) return;
+    AcquireSRWLockExclusive(&ptf_gate_lock);
+    for(int again=1;again;) {
+        again=0;
+        for(unsigned i=0;i<PTF_GATES;i++) if(ptf_gates[i].ship && ptf_gates[i].seen+PTF_GATE_FORGET<=now) {ptf_gate_erase(&ptf_gates[i]);again=1;}
+    }
+    ReleaseSRWLockExclusive(&ptf_gate_lock);
+}
+static void ptf_gate_note(const unsigned char *model,double time,unsigned char cheap) {
+    unsigned char *agent=NULL,*ship=NULL;uint64_t id=0;unsigned char f5c=0;
+    if(!ptf_dock_rows || !ptf_gates || !ptf_ring || !model || !read_local(model+0x10,&agent,8) || !agent ||
+       !read_local(agent+0xef0,&ship,8) || !ship || !read_local(ship+8,&id,8)) return;
+    (void)read_local(agent+0xf5c,&f5c,1);
+    unsigned char t[32],in[64];memset(t,0,sizeof(t));memset(in,0,sizeof(in));
+    uint32_t bank=0;uint64_t pending=0,list[2]={0,0},dock=0;int32_t m68=0;double timer=0.0;
+    if(ptf_test_read_bank) bank=*ptf_test_read_bank;else if(!read_local(image+PTF_BANK_INDEX,&bank,4)) bank=0xffu;
+    t[0]=read_local(model+0x388,&pending,8) && pending;t[1]=f5c;(void)read_local(agent+0xac8,t+2,1);
+    (void)read_local(model+0x68,&m68,4);t[3]=m68!=0;
+    t[4]=read_local(model+0x360,list,16) && list[0]==list[1];
+    (void)read_local(model+0x378,&timer,8);t[5]=!(time<=timer);   /* the step skips the check while time <= timer (NaN: checks) */
+    if(bank<=1u) (void)read_local(agent+0xa90+8u*bank,&dock,8);
+    unsigned klass=WORLD_KEY_NONE;const uint64_t key=dock?world_identity_key(dock,&klass):0;
+    memcpy(t+8,&timer,8);memcpy(t+16,&key,8);memcpy(t+24,&klass,4);t[28]=dock!=0;
+    AcquireSRWLockExclusive(&ptf_gate_lock);
+    ptf_gate_t *e=ptf_gate_find(ship);
+    if(e && e->id!=id) {ptf_gate_erase(e);e=NULL;}   /* a new ship at a dead one's address */
+    const int fresh=!e;
+    if(!e && (!f5c || !(e=ptf_gate_insert(ship)))) {ReleaseSRWLockExclusive(&ptf_gate_lock);return;}
+    e->id=id;e->seen=stats.issued;if(cheap) ++e->cheap;else ++e->full;
+    if(!fresh && !memcmp(e->tuple,t,sizeof(t))) {ReleaseSRWLockExclusive(&ptf_gate_lock);return;}
+    memcpy(e->tuple,t,sizeof(t));
+    memcpy(in,t,sizeof(t));memcpy(in+32,&m68,4);in[36]=(unsigned char)fresh;in[37]=cheap!=0;in[38]=(unsigned char)bank;
+    memcpy(in+40,&e->full,8);memcpy(in+48,&e->cheap,8);
+    if(!f5c) ptf_gate_erase(e);
+    ReleaseSRWLockExclusive(&ptf_gate_lock);
+    if(InterlockedIncrement64(&ptf_tick_rows)>(LONG64)PTF_ROWS_PER_TICK) {InterlockedIncrement64(&ptf_dropped);return;}
+    LONG64 index=InterlockedIncrement64(&ptf_rows)-1;
+    ptf_row_t *row=&ptf_ring[(uint64_t)index%PTF_RING];
+    InterlockedExchange64(&row->ready,0);
+    row->tick=stats.issued;row->site=PTF_SITE_DOCK;row->mode=(unsigned)ptf_mode;row->differs=0;row->object=0;
+    memset(&row->a,0,sizeof(row->a));memset(&row->b,0,sizeof(row->b));memset(&row->obj,0,sizeof(row->obj));row->ctrl_vt=0;row->time=time;
+    row->win=0;row->dock=3;row->ship=ptf_ref(ship);
+    memset(row->sim,0,sizeof(row->sim));memcpy(row->native,in,sizeof(row->native));
+    InterlockedExchange64(&row->ready,index+1);
+}
 static void *ptf_call_using(unsigned site,void *a,float *out,void *b,uint64_t flag,unsigned cls,const unsigned char *tls,
                             ptf_hier_fn native,ptf_gtr_fn gtr,const unsigned char *manager) {
     InterlockedIncrement64(&ptf_site_calls[site]);
     unsigned outcome=PTF_OUT_OUTSIDE;
     void *result=ptf_call_core(site,a,out,b,flag,cls,tls,native,gtr,manager,&outcome);
+    if(site>=PTF_SITE_DOCK && ptf_dock_rows && out) ptf_dock_row(site,a,b,out,cls,outcome);
     if((site==PTF_SITE_FORMATION || site>=PTF_SITE_DOCK) && ptf_window_to && stats.issued>=ptf_window_from && stats.issued<=ptf_window_to && out) {
         __declspec(align(16)) float m[16];memcpy(m,out,sizeof(m));
         uint32_t chain[16];memset(chain,0xff,sizeof(chain));void *frames[24];USHORT n=RtlCaptureStackBackTrace(1,24,frames,NULL);unsigned k=0;
@@ -489,6 +653,7 @@ static int ptf_owned(void) {
 /* Gate tick (main thread, no pass running): any failure or a changed site stops the gate with reason 180. */
 static int ptf_check(void) {
     InterlockedExchange64(&ptf_tick_rows,0);
+    if(ptf_dock_rows && stats.issued && stats.issued%PTF_GATE_FORGET==0) ptf_gate_sweep(stats.issued);
     if(InterlockedCompareExchange64(&ptf_failures,0,0)) return 0;
     if(!ptf_owned()) {ptf_stage="site_changed";InterlockedIncrement64(&ptf_failures);return 0;}
     return 1;
@@ -502,12 +667,35 @@ static int ptf_row_text(uint64_t index,char *out,size_t cap) {
     const ptf_row_t *r=&ptf_ring[index%PTF_RING];
     if(InterlockedCompareExchange64((volatile LONG64*)&r->ready,0,0)!=(LONG64)index+1) return 0;
     char a[40],b[40],o[40],sim[129],native[129];uint64_t time;memcpy(&time,&r->time,8);
+    if(r->dock==3) { /* a dock gate row: native[] holds the tuple, model+0x68, new, cheap, bank and the update counts */
+        const unsigned char *in=(const unsigned char*)r->native;char ship[40],timer[17];uint64_t key,full,cheap;unsigned klass;int32_t m68;
+        ptf_ref_text(ship,r->ship);motion_watch_hex(timer,in+8,8);
+        memcpy(&key,in+16,8);memcpy(&klass,in+24,4);memcpy(&m68,in+32,4);memcpy(&full,in+40,8);memcpy(&cheap,in+48,8);
+        n=snprintf(out,cap,"index=%llu tick=%llu site=dock_gate dock=3 ship=%s new=%u pending=%u f5c=%u ac8=%u m68=%08x list=%u open=%u "
+            "dock_id=%u target=%016llx/%u timer=%s cheap_now=%u full=%llu cheap=%llu bank=%u time=%016llx",(unsigned long long)index,
+            (unsigned long long)r->tick,ship,in[36],in[0],in[1],in[2],(unsigned)m68,in[4],in[5],in[28],(unsigned long long)key,klass,timer,
+            in[37],(unsigned long long)full,(unsigned long long)cheap,in[38],(unsigned long long)time);
+        return n>0 && (size_t)n<cap?n:0;
+    }
     ptf_ref_text(a,r->a);ptf_ref_text(b,r->b);ptf_ref_text(o,r->obj);
     motion_watch_hex(sim,(const unsigned char*)r->sim,64);motion_watch_hex(native,(const unsigned char*)r->native,64);
+    const int show_native=r->mode==PTF_OBSERVE && r->dock!=1;
     n=snprintf(out,cap,"index=%llu tick=%llu site=%s mode=%s a=%s b=%s object=%s ctrl=%08x time=%016llx differs=%u sim=%s%s%s",
         (unsigned long long)index,(unsigned long long)r->tick,ptf_sites[r->site<PTF_SITES?r->site:0].name,r->mode==PTF_OBSERVE?"observe":"sim",
-        a,b,r->object?o:"-",r->ctrl_vt,(unsigned long long)time,r->differs,sim,r->mode==PTF_OBSERVE?" native=":"",r->mode==PTF_OBSERVE?native:"");
-    if(n>0 && (size_t)n<cap && r->win) { /* window rows: ctrl= is the thread class, native[] holds the chain */
+        a,b,r->object?o:"-",r->ctrl_vt,(unsigned long long)time,r->differs,sim,show_native?" native=":"",show_native?native:"");
+    if(n>0 && (size_t)n<cap && r->dock==2) { /* a row made with the dock rows' option: the stepping ship */
+        char ship[40];ptf_ref_text(ship,r->ship);
+        int m=snprintf(out+n,cap-(size_t)n," ship=%s",ship);
+        n=m>0 && (size_t)m<cap-(size_t)n?n+m:-1;
+    }
+    if(n>0 && (size_t)n<cap && r->dock==1) { /* dock rows: ctrl= is the thread class, native[] holds the range test's inputs */
+        const unsigned char *in=(const unsigned char*)r->native;char ship[40],slot[33],local[33],range[25],timer[17],flags[13];
+        ptf_ref_text(ship,r->ship);motion_watch_hex(slot,in,16);motion_watch_hex(local,in+16,16);motion_watch_hex(range,in+32,12);
+        motion_watch_hex(timer,in+48,8);snprintf(flags,sizeof(flags),"%02x%02x%02x%02x%02x%02x",in[44],in[45],in[46],in[47],in[56],in[57]);
+        int m=snprintf(out+n,cap-(size_t)n," outcome=%s dock=1 ship=%s slot=%s local=%s range=%s timer=%s flags=%s",ptf_outcomes[(r->win-1u)&7u],
+                       ship,slot,local,range,timer,flags);
+        n=m>0 && (size_t)m<cap-(size_t)n?n+m:-1;
+    } else if(n>0 && (size_t)n<cap && r->win) { /* window rows: ctrl= is the thread class, native[] holds the chain */
         const uint32_t *c=(const uint32_t*)r->native;
         int m=snprintf(out+n,cap-(size_t)n," outcome=%s chain=%x,%x,%x,%x,%x,%x,%x,%x",ptf_outcomes[(r->win-1u)&7u],c[0],c[1],c[2],c[3],c[4],c[5],c[6],c[7]);
         n=m>0 && (size_t)m<cap-(size_t)n?n+m:-1;

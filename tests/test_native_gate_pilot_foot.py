@@ -405,6 +405,10 @@ class MirrorTests(unittest.TestCase):
         self.assertEqual(native, lua)
         names = re.search(r'K\.CONVERSATION=\{(.*?)\}', uirep.CORE, re.S).group(1)
         self.assertGreater(native, len(re.findall(r"'(\w+)'", names)))   # above the conversation globals' numbers
+        # the answer to a notification's question: its own number, the same on both sides
+        answer = int(re.search(r'#define UIMIS_C_ANSWER (\d+)u', MISSIONS_H).group(1))
+        self.assertEqual(answer, int(re.search(r'K\.ANSWER=(\d+)', uirep.CORE).group(1)))
+        self.assertGreater(answer, native)
 
     def test_the_stop_reason_and_the_claim_are_registered(self):
         self.assertIn('#define PFOOT_STOP_REASON 185u', FOOT_H)

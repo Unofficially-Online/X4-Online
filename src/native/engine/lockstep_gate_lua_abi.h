@@ -12,7 +12,8 @@ API(void,lua_createtable,(lua_State *,int,int));
 API(void,lua_setfield,(lua_State *,int,const char *));
 API(void,lua_pushcclosure,(lua_State *,lua_CFunction,int));
 API(void,lua_rawseti,(lua_State *,int,int)); /* optional: protocol 3 needs it for s.inputs */
-API(void *,lua_touserdata,(lua_State *,int)); /* optional: lockstep_md_media.h reads the cutscene descriptor the UI's StartCutscene is given */
+/* optional: lockstep_md_media.h reads the cutscene descriptor the UI's StartCutscene is given (Windows gate; the Linux gate has no reader) */
+static void *(*p_lua_touserdata)(lua_State *,int) __attribute__((unused));
 /* relay_host("a.b.c.d"): opt-in remote relay, set only before the gate starts. Once
  * started, only the same address returns 1: the probe repeats its configuration
  * after the snapshot load reloads the UI (like gate.wire and gate.lookahead). */

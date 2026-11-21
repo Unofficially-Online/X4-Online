@@ -171,6 +171,12 @@ static int lxav_installed;
 static void lxps_restore(void); /* the pursuit speed factor in the Windows order (gate_pursuit_speed.h) */
 static int lxps_check(void);
 static int lxps_installed;
+static void lxzp_restore(void); /* the frame's pending physics work in every frame (gate_zone_pending.h) */
+static int lxzp_check(void);
+static int lxzp_installed_count(void);
+static void lxsp_restore(void); /* the route calculator at the frame's phase points only (gate_spline_phase.h) */
+static int lxsp_check(void);
+static int lxsp_installed;
 static int lxsr_check(void);
 static int lxsr_installed;
 /* Physics shape refresh: the fixture path and shape_refresh (gate_shape.h, included below). */
@@ -597,6 +603,10 @@ static void finish(unsigned reason) {
     if(lxav_installed) stats.restored=0;
     lxps_restore();
     if(lxps_installed) stats.restored=0;
+    lxzp_restore();
+    if(lxzp_installed_count()) stats.restored=0;
+    lxsp_restore();
+    if(lxsp_installed) stats.restored=0;
     if(lxis_installed) stats.restored=0;
     if(lxai_installed) stats.restored=0;
     if(lxvd_installed) stats.restored=0;
@@ -738,6 +748,8 @@ static void gate_tick(void *frame,unsigned char loading) {
     if(lxsr_installed && !lxsr_check()) {finish(210);gate_original_once(frame,loading);return;} /* LXSR_STOP_REASON */
     if(lxav_installed && !lxav_check()) {finish(212);gate_original_once(frame,loading);return;} /* LXAV_STOP_REASON */
     if(lxps_installed && !lxps_check()) {finish(213);gate_original_once(frame,loading);return;} /* LXPS_STOP_REASON */
+    if(lxzp_installed_count() && !lxzp_check()) {finish(214);gate_original_once(frame,loading);return;} /* LXZP_STOP_REASON */
+    if(lxsp_installed && !lxsp_check()) {finish(199);gate_original_once(frame,loading);return;} /* LXSP_STOP_REASON */
     if(lxmc_installed && !lxmc_check()) {finish(166);gate_original_once(frame,loading);return;} /* LXMC_STOP_REASON */
     if((lxf_installed || lxf_ctor_installed) && (!lxf_owned() || lxf_failures)) {finish(55);gate_original_once(frame,loading);return;} /* flight, as Windows */
     if(ai_wait_armed && ai_wait_failures) {finish(88);gate_original_once(frame,loading);return;}
@@ -986,6 +998,8 @@ static int lua_start(lua_State *L) {
 #include "gate_steer_roll.h"
 #include "gate_avoid_angle.h"
 #include "gate_pursuit_speed.h"
+#include "gate_zone_pending.h"
+#include "gate_spline_phase.h"
 static int lua_flight_faults(lua_State *L) {
     char out[512];int n=accept_ui()?lxf_status(out,sizeof(out)):0;
     if(n) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);return 1;
@@ -1232,6 +1246,8 @@ GATE_EXPORT int luaopen_x4lan_gate(lua_State *L) {
     METHOD(ai_wait_rng);METHOD(ai_wait_rng_status);METHOD(ai_wait_rng_row);
     METHOD(md_resume_rng);METHOD(md_resume_rng_status);METHOD(md_resume_rng_row);
     METHOD(boot_hold);METHOD(boot_hold_status);
+    METHOD(zone_pending);METHOD(zone_pending_status);
+    METHOD(spline_phase);METHOD(spline_calc_delay);METHOD(spline_calc_watch_status);
     METHOD(event_order);METHOD(event_order_status);METHOD(event_rows);METHOD(event_order_row);
     METHOD(event_rng);METHOD(event_rng_status);METHOD(event_rng_row);
     METHOD(gravidar_key);METHOD(gravidar_time);METHOD(gravidar_key_status);METHOD(gravidar);

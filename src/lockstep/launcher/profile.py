@@ -20,8 +20,34 @@ CAPTURE_PROFILE = 45841  # tools/dev/native_gate_snapshot.lua only saves inside 
 SNAPSHOT_SLOT = 'save_009.xml.gz'
 
 
+def documents_folder():
+    """The Windows Documents folder as X4 sees it: the known folder FOLDERID_Documents, which may be redirected (OneDrive's
+    folder backup moves it to %USERPROFILE%\\OneDrive\\Documents, and X4's profiles move with it); %USERPROFILE%\\Documents
+    when the shell cannot be asked."""
+    return known_documents() or Path(os.environ['USERPROFILE']) / 'Documents'
+
+
+def known_documents():
+    """FOLDERID_Documents from the shell (SHGetKnownFolderPath), None off Windows or when the shell has no answer."""
+    if os.name == 'nt':
+        try:
+            import ctypes
+            import uuid
+            guid = (ctypes.c_ubyte * 16).from_buffer_copy(uuid.UUID('{FDD39AD0-238F-46AF-ADB4-6C85480369C7}').bytes_le)
+            path = ctypes.c_wchar_p()
+            if ctypes.windll.shell32.SHGetKnownFolderPath(ctypes.byref(guid), 0, None, ctypes.byref(path)) == 0:
+                try:
+                    if path.value:
+                        return Path(path.value)
+                finally:
+                    ctypes.windll.ole32.CoTaskMemFree(path)
+        except (OSError, AttributeError, ValueError):
+            pass
+    return None
+
+
 def documents():
-    return Path(os.environ['USERPROFILE']) / 'Documents/Egosoft/X4'
+    return documents_folder() / 'Egosoft/X4'
 
 
 def profile_dir(profile, root=None):

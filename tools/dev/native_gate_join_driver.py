@@ -71,11 +71,16 @@ class HandoffError(ValueError):
 
 
 def profiles_root(explicit=None):
-    """Where the lane profiles live: --profiles-root, else the lane tool's X4LANE_PROFILES, else Documents/Egosoft/X4."""
+    """Where the lane profiles live: --profiles-root, else the lane tool's X4LANE_PROFILES, else Documents/Egosoft/X4 as
+    the launcher finds it (the Windows known folder: OneDrive's folder backup moves Documents and X4's profiles with it)."""
     if explicit:
         return Path(explicit)
     env = os.environ.get('X4LANE_PROFILES')
-    return Path(env) if env else Path.home()/'Documents'/'Egosoft'/'X4'
+    if env:
+        return Path(env)
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'src'))
+    from lockstep.launcher import profile
+    return profile.documents()
 
 
 def sha256_file(path):

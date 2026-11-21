@@ -72,6 +72,7 @@ static uint64_t rid_assign_patched_word;
 #define LX_RID_POS_A 0x1316e40u /* U::Positional's constructors (Windows 0x7429c0, 0x7426d0) */
 #define LX_RID_POS_B 0x13215c0u
 #define LX_RID_SPHERE 0xeedd70u /* the query sphere, a JPH::SphereShape in an IDBase wrapper (Windows 0xb82d0) */
+#define LX_RID_BOX 0x2007d40u /* the query box from a Vec3 of extents, a JPH::BoxShape (vtable 0x3c4db68) in the same wrapper (Windows 0xb83b0) */
 static const rid_site_t lx_rid_sites[]={
     /* U::UIElement in both factories (Windows: both constructors' Positional calls); U::UIElement::CreateInstance (the
      * log string; it calls factory 0x119bd70 itself). */
@@ -110,7 +111,11 @@ static const rid_site_t lx_rid_sites[]={
     /* AI::NavSplineCalculator's sweep test (0x10b0b30, the only maker of the sphere that sweeps it) and the player
      * entity's two query spheres (vfunc674 0x138e6a0: +0x8a510 radius +0x4ed4, +0x8a518 radius +0x4ed8; Windows
      * +0x8a520/+0x4f54 and +0x8a528/+0x4f58). */
-    LX_RID_CALL(0x10b0cd7u,LX_RID_SPHERE,RID_ROUTE_VIEW),LX_RID_CALL(0x13927d7u,LX_RID_SPHERE,RID_ROUTE_VIEW),LX_RID_CALL(0x1392be5u,LX_RID_SPHERE,RID_ROUTE_VIEW)};
+    LX_RID_CALL(0x10b0cd7u,LX_RID_SPHERE,RID_ROUTE_VIEW),LX_RID_CALL(0x13927d7u,LX_RID_SPHERE,RID_ROUTE_VIEW),LX_RID_CALL(0x1392be5u,LX_RID_SPHERE,RID_ROUTE_VIEW),
+    /* The same job's route calculation 0x1374d90 (Windows 0xec0cb0; its one caller is the calculator's step 0x10b0b30 at
+     * 0x10b0bdf, as Windows 0x1099650 calls 0xec0cb0 at 0x109976c): it makes its query box first (0x1374ed9) and deletes
+     * it (vfunc 1) on each way out. Shared, the ID was taken whenever the worker got to the request (Windows 624b6049). */
+    LX_RID_CALL(0x1374edeu,LX_RID_BOX,RID_ROUTE_VIEW)};
 #define LX_RID_SITES (sizeof(lx_rid_sites)/sizeof(*lx_rid_sites))
 static created_assign_fn lxr_assign_native; /* tests only: replaces the thunk's original */
 /* Every call row checked: the table's return addresses are this build's (the bodies are start pins). */

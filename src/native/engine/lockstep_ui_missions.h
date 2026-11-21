@@ -40,6 +40,7 @@ static int mpp_call_enter(unsigned k);
 static int mpp_call_leave(unsigned k);
 #define UIMIS_OP_MISSION UIREP_OP_MISSION
 #define UIMIS_OP_CONVERSATION UIREP_OP_CONVERSATION
+static int cvo_armed;static int cvo_may(unsigned slot);   /* lockstep_conversation_owner.h, behind this file: a conversation's owner slot */
 #define UIMIS_FAMILIES (UIREP_FAMILY_MISSIONS|UIREP_FAMILY_CONVERSATION)
 #define UIMIS_REF 12u
 #define UIMIS_TEXTURE_MAX 48u
@@ -66,6 +67,8 @@ static const char *const uimis_conv_names[UIMIS_CONV_KINDS]={"","StartConversati
 /* Hiring (the Lua core's hire scope around MapMenu.buttonHire, native_gate_ui_replay_core.lua K.HIRE_MONEY): the NPC's fee,
  * TransferPlayerMoneyTo to the NPC's station, as an event of this family in call order with ProceedFromMenu('g_hire', ...).
  * A wire number of the op only: no guard entry is claimed for it (TransferPlayerMoneyTo is the trade family's entry). */
+#define UIMIS_C_ANSWER 17u                    /* RaisePlayerInteractionEvent: a fleet ship's question answered; the notification's sequence */
+static unsigned mdv_interaction_seq(int id);  /* lockstep_md_media.h */
 #define UIMIS_C_HIRE_MONEY 16u
 typedef uint64_t (*uimis_call_fn)(uint64_t,uint64_t,uint64_t);
 typedef struct {uint64_t tick,id;unsigned char op,kind;} uimis_row;
@@ -75,6 +78,7 @@ static int uimis_armed;
 static const char *uimis_why="-";
 static uimis_row uimis_rows[UIMIS_RING];
 static unsigned uimis_row_head,uimis_row_tail;
+static volatile LONG64 uimis_answers;
 static volatile LONG64 uimis_captured[UIMIS_KINDS],uimis_conv_captured[UIMIS_CONV_KINDS],uimis_applied,uimis_gone,uimis_unmapped,uimis_rows_lost;
 
 /* ---- cue references ---- */
@@ -135,6 +139,7 @@ static unsigned uimis_kind_of(const char *name) {
 }
 static unsigned uimis_conv_kind_of(const char *name) {
     for(unsigned k=UIMIS_C_CANCEL;k<UIMIS_CONV_KINDS;k++) if(!strcmp(name,uimis_conv_names[k])) return k;   /* the four without components */
+    if(!strcmp(name,"RaisePlayerInteractionEvent")) return UIMIS_C_ANSWER;   /* the answer to a notification's question */
     return 0;
 }
 /* The guard's argument reader, declared by lockstep_ui_guard.h. */
@@ -144,11 +149,25 @@ static int uimis_guard(const char *name,int lua,const uint64_t *frame,uint64_t *
     unsigned char data[UIREP_EVENT_MAX];unsigned n=0;
     *ret=0;
     if(!uirep_armed || !uimis_armed || !(uirep_families&UIMIS_FAMILIES)) return 0;
-    if(pstk_capture_slot!=1 && (lua || !mpp_armed)) return 0;   /* slots 2+: refused, but missions per player's own missions calls */
+    /* Slots 2+: refused, but missions per player's own missions calls, and a conversation's calls of its owner
+     * (lockstep_conversation_owner.h; with it slot 1 too answers only what it may). */
+    if(lua?(cvo_armed?!cvo_may(pstk_capture_slot):pstk_capture_slot!=1):(pstk_capture_slot!=1 && !mpp_armed)) return 0;
     if(lua) {
         unsigned k=(uirep_families&UIREP_FAMILY_CONVERSATION)?uimis_conv_kind_of(name):0;
         if(!k) return 0;
         data[n++]=(unsigned char)k;
+        if(k==UIMIS_C_ANSWER) {   /* one number: the sequence of the notification that asks (an interaction ID is this client's own) */
+            /* player 1's only, also with conversation owners: the conversation that follows an answer is MD's player's */
+            if(pstk_capture_slot!=1) {uirep_note_refusal(name,"slot");return 0;}
+            void *L=(void*)(uintptr_t)uiguard_arg(frame,0);
+            double id=L && uimis_lua_number?uimis_lua_number(L,1):0.0;
+            double seq=id>=1.0 && id<=2147483647.0 && floor(id)==id?(double)mdv_interaction_seq((int)id):0.0;
+            if(!(seq>=1.0)) {InterlockedIncrement64(&uimis_unmapped);uirep_note_refusal(name,"not_a_question");return 0;}
+            data[n++]=1;data[n++]=3;memcpy(data+n,&seq,8);n+=8;
+            if(!uirep_push(UIMIS_OP_CONVERSATION,data,n)) return 0;
+            InterlockedIncrement64(&uimis_answers);uimis_note(UIMIS_OP_CONVERSATION,k,(uint64_t)seq);
+            return 1;
+        }
         if(k==UIMIS_C_SELECT) {   /* one number, the button: the core codec's count 1, tag number, the double's bytes */
             void *L=(void*)(uintptr_t)uiguard_arg(frame,0);
             double button=L && uimis_lua_number?uimis_lua_number(L,1):-1.0;
@@ -212,7 +231,8 @@ static int uimis_event_ok(unsigned slot,unsigned op,const unsigned char *data,un
         return 1;
     }
     if(op==UIMIS_OP_CONVERSATION) {
-        if(!(uirep_families&UIREP_FAMILY_CONVERSATION) || slot!=1 || n<2 || !data[0] || (data[0]>UIMIS_CONV_GLOBALS && data[0]!=UIMIS_C_HIRE_MONEY)) {*why="ui_conversation";return 0;}
+        if(!(uirep_families&UIREP_FAMILY_CONVERSATION) || (slot!=1 && !cvo_armed) || n<2 || !data[0] || (data[0]>UIMIS_CONV_GLOBALS && data[0]!=UIMIS_C_HIRE_MONEY && data[0]!=UIMIS_C_ANSWER) ||
+           (data[0]==UIMIS_C_ANSWER && (slot!=1 || n!=11 || data[1]!=1 || data[2]!=3))) {*why="ui_conversation";return 0;}
         return 1;
     }
     *why="ui_op";return 0;
@@ -299,7 +319,7 @@ static int uimis_rows_text(char *out,size_t capacity) {
     int n=0;out[0]=0;
     while(uimis_row_tail!=uimis_row_head) {
         const uimis_row *r=&uimis_rows[uimis_row_tail%UIMIS_RING];
-        const char *name=r->op==UIMIS_OP_MISSION?uimis_exports[r->kind].name:uimis_conv_names[r->kind];
+        const char *name=r->op==UIMIS_OP_MISSION?uimis_exports[r->kind].name:r->kind<UIMIS_CONV_KINDS?uimis_conv_names[r->kind]:"RaisePlayerInteractionEvent";
         int more=snprintf(out+n,capacity-(size_t)n,"%s%llu:%u:%s:%llu",n?",":"",(unsigned long long)r->tick,r->op,name,(unsigned long long)r->id);
         if(more<0 || (size_t)more>=capacity-(size_t)n) break;
         n+=more;++uimis_row_tail;

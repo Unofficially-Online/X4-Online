@@ -217,6 +217,7 @@ static int tz_check(void) {
 }
 static void tz_restore(void) {
     InterlockedExchange(&tz_active,0);
+    tz_pending_clear(); /* the zones held for a repeated request give their references back, as on Windows */
     tz_unpark(); /* a slot changed meanwhile stays as it is */
     if(!tz_installed) return;
     if(lxtz_patched) {

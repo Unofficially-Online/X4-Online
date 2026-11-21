@@ -508,6 +508,249 @@ python tools/x4ls.py new-session --base-start x4ep1_gamestart_discover --players
   its join with the pathing budget check (stop reason 79), and hq44 ended at the same point; in hq43 it was
   dropped for falling behind when both sides saved every 600 ticks. None of the night's late joins reached a
   clean handover.
+- Why ships drifted after a late join (18 Nov morning, runs hq46 to hq61, all with the zone table on): the
+  joiner's radar did not see what the session's saw. The chain that found it: the per-tick rows of shared
+  runtime IDs named the first split, one AI script more on the joiner 36 to 44 ticks after the join; the script
+  RNG rows of both clients showed `event_gravidar_has_scanned` running fight and movement handlers on the joiner
+  alone from five ticks after the join (the event and its ship are in the row's key and can be recovered by
+  trying keywords and nearby IDs); the radar post rows showed a unit's own place alternating between two poses
+  on the joiner; the join watch showed why. A ship that the engine does not republish keeps its last published
+  pose, attention and parent in both views, and the radar reads the view of the frame. Three cases, all fixed
+  in the join (`native_gate_join_gravp_settled`, a join default):
+  - A fighter that had left a busy sector 14 s earlier still published attention 6 and a pose 33 km behind,
+    at a real attention of 2. The join put the session's poses back only for objects whose *published*
+    attention was low, so the joiner's load wrote the live pose into one view and nothing took it back. The
+    restore now also goes by the real attention when the two views agree.
+  - A fighter stored inside a carrier whose one view still showed it on the pad: the session's radar sees it on
+    every other frame. The joiner's load made both views show the storage when the join tick's parity hit the
+    stale view. The session's cached parents are now kept through the load's first two frames, unless the
+    ship really changed its parent in that frame.
+  - A ship changing its zone in the very tick of the join has a publication in progress that the session
+    completes one tick later (a one-shot cache specification of that frame). Those are left to the engine.
+  The write of a cached parent was also a plain store of what is a counted reference in X4; the engine later
+  gave back a reference the join had never taken. That fits the two joiners that stopped in a walk over a list
+  holding an object already gone; it is not proven to be the cause. The store now counts as the engine does.
+- Result (hq60, join at tick 6089): shared runtime IDs equal at all 714 ticks checked after the join, where they
+  parted after 36 to 44 before; every digest part but the census equal at 715 ticks; of 7,994 radar posts in
+  691 ticks none is the session's alone and 5 are the joiner's alone. Those five are one station and one ship
+  settling on a dock right at the edge of the station's range, with a stale published attention of 6: the
+  session republishes it once more, the joiner does not. A second run (hq61, join at tick 6047): runtime IDs
+  equal at 601 ticks, all 9,441 radar posts the same on both clients, script entries different in one tick of
+  351 (one capital ship's attack script, which resumes at another place at tick 6231 in every run). The census
+  at tick 6600 there, object by object: 44 ships differ in motion and nothing else (149 before the fixes, at
+  about the same distance from the join), and they are whole fleets: a battleship with its 19 escorts in one
+  zone, a destroyer with seven, a carrier with four, and five single ships. So what is left is in how a fleet
+  leader moves, not in the radar (found and fixed the same day: the next bullets but two). Also open: the
+  join was not tried with the zone table off.
+- Tried and dropped: `native_gate_join_viewf_bits=8` and `native_gate_join_pend` with
+  `native_gate_join_specdrop` (the diagnostics that keep the joiner's load from republishing at all) each
+  parted the runtime IDs two ticks after the join.
+- Rig notes for a late join on one PC: a joiner takes its settings from the overlay's `play-recipe.json`, not
+  from the host's config; the join watch and a per-object census of the joiner's first capture are slow enough
+  to miss the relay's 15 s stall limit at the handover (`x4ls play --stall-drop 0` for such runs), which looks
+  like a joiner that died; on a PC running six other clients the joiner catches up slower than the session
+  runs and is dropped at the handover.
+- What moved the fleets (18 Nov afternoon, hq63 to hq71, zone table on). The motion watch works on a joiner, so
+  the 44 ships of the census went on its list with digests: every fleet's leader parted first, in its rotation
+  only (target, path and flight parameters equal), in the tick it changed its sector, and every such tick lay
+  within 255 ticks of the join. `move.gate` works out a ship's place and rotation behind a gate, waits six to
+  eight seconds and warps it there. The two values are script values, and a script's positions and rotations
+  are not saved as they are: a rotation is a matrix in memory and yaw, pitch and roll in degrees in the save,
+  and of both kinds an attribute closer than 0.0001 to its default is left out. A joiner in that wait warped
+  its ship with a yaw 2.4e-7 rad off. Fixed in the join (`native_gate_join_sref`, a join default, package
+  section SREF): the saver notes every value its join save's two `<ref>` writers are given, the joiner's two
+  readers put the session's bits back in the same order, each checked against what the text gave. Per join
+  about 720 rotations, of which about 660 had other bits, and 40 positions of 12,250.
+- One more of the kind: a drone on its way out of its ship is moved by a linear acceleration controller, whose
+  start rotation the join's exact poses (POSE) did not cover because the census claims no motion for it. One
+  XS ship made in the session came out of it 43 ticks after the join a few bits off, the one object of 11,676
+  still different at the next census. POSE carries that controller's start transform now (form 3).
+- Why late joiners stopped. With the first-chance crash line also outside the image (and the gate's own guarded
+  reads kept apart) a joiner's stop 322 ticks after its handover was readable: the salvage search walked a
+  region field's list of spawned objects and called through an object whose first word was 0xb. The join fills
+  those lists with the session's objects (FOBJ), and it stored bare pointers where the engine's entries are
+  counted references that the field's pass gives back when it drops an entry. So an object could go while the
+  list still named it, and every dropped entry gave back a reference nobody had taken, on an object others
+  still used: stops in other places too (one 560 ticks after a handover at an address outside the image, and
+  it fits the two of 17 Nov). The insertion takes the reference as the engine does.
+- Result (hq70, join at tick 6032, then hq71 at 6050): the census equal on both clients at 6600 and at every
+  capture to 10800, the handover (8568, 8604) without a desync, no stop (alive 3,971 ticks after the handover;
+  an earlier joiner without the form 3 fix ran 7,491). A join at 6086 was already whole without form 3: its
+  drone had left its ship before the join.
+- Open after that: in both runs the runtime IDs part at tick 11016, about 4,980 ticks after the join. The
+  session starts an order script the joiner does not: one trader's `trade.find.commander` finds a trade on the
+  session only (script RNG rows of 10800 to 11020; before it in that window: other draws of one mining and one
+  trade routine, and `event_object_signalled` of one frigate reaching its two escorts at another place in the
+  tick). Both clients' periodic saves of tick 7200, compared as bags of lines without the save's own numbering
+  (`savebag.py` in the rig notes), differ in content the census does not hash: some ware amounts and trade
+  logs, 577 travel factors, pending zone kill checks, about a thousand script lists the session's save holds
+  and the joiner's does not. Which of these is the joiner's and which is any two clients' is not known: the
+  control (two clients from the start, same saves) is not run yet.
+- The split of 11016 was the scrap works. With a common save 67 ticks after the join (`native_gate_save_every`
+  chosen so that one falls there) and the saves compared object by object (`savecomp.py`): the five stations'
+  processing modules had run two seconds after the joiner's load and not on the session. A processing module
+  keeps the time it is due next in memory only; the save holds when it last ran, so a loaded module is due at
+  once, and from there the joiner's stations yield their wares at other ticks. Fixed in the join
+  (`native_gate_join_pmod`, a join default, package section PMOD): the due time and the state's time of every
+  processing module are carried. Run hq74 (join at 6075): 15 modules written, handover at 8584 without a
+  desync, every digest part equal to tick 11999.
+- Open after that: the census of tick 12000 differs in its health and motion roots (about 5,900 ticks after
+  the join). And from the same comparison of saves, different and not carried: six builder ships' build
+  resource shortages (the session keeps them from its start, the joiner's are gone within 67 ticks of its
+  load), a pending kill check on 310 recyclables that only the joiner holds (an hour after its load), the
+  travel factor of 339 ships (the joiner's start again), a travel-disabling influence on other ships (17).
+  Shield groups differ in form only (a full group is written without its value on the joiner).
+- The build shortages: fixed in the join (`native_gate_join_need`, a join default, package section NEED). A
+  shortage is not what a load loses. A container (station, ship, build storage) keeps two maps of what it
+  needs of each resource, made the first time something asks, and no save holds them. X4 brings a container up
+  to date whenever something asks about it, and in that step it settles the build shortages before it makes
+  the maps: with no map every shortage is dropped, and the next question puts it back with the time of that
+  moment. A session's containers have their maps; a joiner's have none. Read from both clients with the
+  session held (run hq79, `contcmp.py`, `contall.py`): the maps of 920 stations were unset on the joiner.
+  The saver records the maps of every container that has them; the joiner lets X4's own routine make its
+  maps where the session had them and then takes the session's amounts and the flag that says they are up to
+  date. Run hq80 (join at 6032): 2,957 containers, 1,158 made, 1,818 set to the session's values, none with
+  other wares; both clients' saves of tick 6120 hold the same 44 shortages (before: 44 and 38).
+- Still open, hq80: the census of tick 12000 differs as before. Both clients' saves of tick 10200 (4,168 ticks
+  after the join) differ in 560 of 44,423 objects. What is not numbering or form: 13 trade orders of eleven
+  miners and traders carry the flags `sellermoneyvirtual|buyermoneyvirtual` on the joiner and not on the
+  session (same wares, prices and amounts; other ships' orders at the same stations agree), nine stations'
+  reference price counts are one lower on the joiner, and four ships' economy log has an offer time on the
+  joiner only. The travel factors agree again by then; the kill checks of 308 recyclables are still the
+  joiner's alone.
+- The trade orders' flags: fixed in the join (`native_gate_join_acct`, a join default, package section ACCT).
+  A container trades on an account. A ship or a build storage X4 makes while it runs takes its faction's
+  account; after any load every one that does not own its account is on the default again. X4 makes a deal's
+  money virtual when both sides are on one account. So a miner made during the session that sells to a
+  station of the save is paid on the session and not on a joiner. Read from both clients at tick 9,000 (run
+  hq82): 721 ships and build storages on a faction's account on the session, 173 on the joiner (the ones made
+  after its load), each faction's account the same on both. The saver records the account of every container
+  that is not on the default; the joiner's takes it. Run hq83 (join at 6065): 560 written, none unknown; in
+  both clients' saves of tick 10200 the trade orders and reservations agree.
+- Still open, hq83: the census of tick 12000 differs as before, with every join tick tried (6032 to 6087); what
+  parts the clients happens at a game time, not a time after the join. Both clients' saves of tick 10200 still
+  differ in: nine stations' reference price counts (one lower on the joiner; a count can agree again later),
+  the transport drone mode of six large ships (`collectselected` on the session, `trade` on the joiner), a
+  dock door close time on three small ships (joiner only), one sector's scrap yield (859,486 and 860,640),
+  five ships' economy log offer time, the kill checks of 308 recyclables.
+- What parted the clients at tick 12000 was one torpedo, and behind it the order of a ship's parts: fixed in
+  the join (`native_gate_join_kids`, a join default, package section KIDS). With the script rows of ticks 11400
+  to 12000 the first difference was one pilot's attack script at 11782, two draws apart: on the session a small
+  ship fired a torpedo and its target answered with a flare, on the joiner neither. The stock attack script
+  walks the ship's weapons and keeps `$firestorpedo` only when the last one is a torpedo launcher. An object
+  lists its children in the order they were attached: a ship X4 builds while it runs in the build's order, the
+  same ship loaded from a save in the save's order. Read from both clients with the session held (run hq86,
+  `childorder.py`): 781 of 33,296 lists of two or more children in another order, all on ships. The saver
+  records the order of every list with a parent or a child the session made; the joiner sets its lists to it.
+  Run hq87 and hq88 (join at 6065): 786 lists set, none with other children; the script rows of 11400 to 12000
+  are the same on both clients and so is the motion part of the census of 12000.
+- Still open after that: the health part of the census of tick 12000 differs (not named yet). And once in six
+  joins with this build (run hq89) the clients parted 135 ticks after the join: an on-foot character's
+  animation started at tick 6176 on the session and 6178 on the joiner, then one more order script on the
+  session at 6181. That is the walking characters' open item, not this change.
+- The health part of the census of 12000 was one object: the storage module of a medium ship the session had
+  built (run hq93, the object rows of ticks 11990 to 12010). Behind it the dock doors: fixed in the join
+  (`native_gate_join_door`, a join default, package section DOOR). A container sets its dock doors up when it
+  enters a state and takes them down when it leaves it, and a flag says which; the flag is not saved, and X4's
+  load sets the doors up for every container. A ship built during the session and out of that state has them
+  down on the session and up on a joiner, where they then open at a trade (both clients' saves of tick 12240,
+  run hq94: a dock door close time on seven small and medium ships, on the joiner only). The saver records the
+  containers whose doors are down; the joiner clears its flag there.
+  The first form (the flag alone) did not do it: read from both clients with the session held (run hq97,
+  `doorcmp.py`), the seven ships' flag was up on both, and what differed was the doors' map: an entry stands for
+  a door that is open or closing, a session's map is mostly empty, and the set-up of a load puts one in for the
+  container's own doors. The saver records the containers whose doors are down or whose map is empty; the joiner
+  takes its map down there the way X4 does (and the flag where it is down). Run hq99 (join at 6065): 411 maps
+  taken down, 1,500 equal, none unreadable; both clients' saves of tick 12240 hold the same 23 dock door times
+  (before: 23 and 30).
+- The rest of the health part of tick 12000: one shield group. With both clients paused at tick 12,012 and the
+  census's health fields compared object by object (`pausejoin.sh`, `healthcmp.py`), the one difference was the
+  storage module of medium ship TZN-626: its shield group read changed time 14.857 on the session and 0 on the
+  joiner, with no shield in it (value and maximum 0, so the census's canonical form does not apply). A container
+  keeps a shield group for each of its parts that has asked for one, and the join's SHGR section carries them;
+  it was opt-in and missed this case twice over. The ship was being built in a wharf; X4's class test the
+  capture used (container, 0x23) is false for a ship under construction, so none of its groups were in the
+  package; and the joiner's load had made no group for the part, so there was nothing to write at the join.
+  When the ship was finished (about tick 11,590) the session's part found its old group and the joiner's made a
+  new one. Fixed: SHGR is a join default, tells containers by their class table, and keeps a record whose group
+  the joiner lacks until the joiner's own engine makes it, then writes the session's values into it if nothing
+  has touched it yet (status `shgr=on:written:equal:missing:waiting:late:left:expired`).
+- Drone modes (`native_gate_join_dron`, a join default, package section DRON): a ship or station keeps a pending
+  drone mode for each of its three kinds and the user's transport mode; the save writes the current modes in
+  their places, so after a load nothing is pending. Read at the join (run hq106): 34 containers with a pending or
+  user mode on the session, 2 on the joiner; a docked miner then switched its cargo drones to collecting on the
+  session only, and seven more large ships later. The joiner now takes the session's pending and user modes.
+- Wreck kill checks: every load posts each wreck a check an hour after its own time and the save keeps the ones
+  before, so a joiner had 307 extra checks due an hour after it joined. The join's event section (EVQT) now
+  rebuilds that event class as it does the update events: the joiner's are removed, the session's posted. A
+  resource area keeps its own kill check, which the save holds whole; the join cannot look its event source up,
+  so the joiner keeps the one it loaded (a first build removed it, run hq114). A source without a portable ID is
+  recorded by its runtime ID, which the joiner's load keeps.
+- Result, run hq114 (join at 6070, everything above on): handover at 8839, then no desync to tick 13,447 (the
+  relay's desync record empty), every digest part equal from 6600 on, the census of 12000 equal in all 11,240
+  objects. Run hq115 (join at 6075, the final build): no desync to 13,422, the census of 12000 equal; both
+  clients' saves of tick 12240 differ in 89 objects instead of about 540, none of them in shield groups, drone
+  modes, dock doors or kill checks.
+- Prices (`native_gate_join_refp`, a join default, package section REFP): a station keeps its reference and override
+  prices in hundredths of a credit, and the save writes them in whole credits, so a joiner's were up to a credit
+  off (14 entries of mined wares apart in both clients' saves of tick 8160, run hq115). The saver records every
+  price with hundredths; the joiner writes it where its own holds what a load of the save gives. Run hq117 (join
+  at 6065): 164 prices written, all 1,221 reference entries equal at tick 12240, no desync to 13,429, 73 objects
+  apart in the saves. Soak hq116 (the build before, join at 6050): no desync to tick 20,051.
+- Field-spawned wrecks (`native_gate_join_spwn`, a join default, package section SPWN): a wreck or piece of debris
+  drawn from a region's field remembers the field and the resource area its scrap comes from; when it enters a
+  space, its scrap comes off that area. The save keeps only the region, so a loaded one remembers neither, and on
+  a joiner nothing came off: wreck SBE-256, at the join in sector NSG-027, entered its space at tick 7197 and took
+  1,154 from the scrap field there on the session alone (runs hq117 to hq124; a read-only poller on both
+  clients). The saver records each such object's field and area by their places in the region's and the
+  sector's lists; the joiner writes them into its loaded copy.
+- Collisions (`native_gate_island_order`, a default, every client): a soak joined near tick 6050 stayed in sync to
+  22,199, then the census of 22200 parted in one Paranid transport docking at a station. Its four contacts with the
+  station's dock area were the same on both clients (bodies, normals, depths, points), yet solved in another order
+  at tick 21921, and the ship's pose came out 1.7 cm apart. Jolt sorts each island's contacts by a hash of the bodies'
+  IDs, which come from the body manager's free list in creation order: after the join 61 of 71 live bodies had other
+  IDs on the joiner. The sort now runs on keys every client computes alike: the bodies' owners (portable ID and which
+  physics record), the contact normal and the points. Run hq130 (join at 6074): no desync to tick 22,933, the
+  transport equal throughout; six sorts on each client, no unkeyed body, no tie.
+- Door maps that are not empty (package section DKEY, with `native_gate_join_door`): a container's map of open or closing
+  doors gets an entry for the container itself at every load. DOOR takes the joiner's map down where the session's is
+  empty, but left it where the session had an open door: Paranid frigate MVX-838, built eight seconds before the join,
+  held one entry (a bay) on the session and that and its own on the joiner, and both clients' saves of tick 24000 held
+  a door close time on the joiner only (run hq131). The saver now lists the keys of every map that is not empty, and the
+  joiner removes the entries the session's map lacks through the game's own removal of a door entry.
+- Deferred events at the join tick (package section DEFR, `native_gate_join_defr`, a join default): work that runs off
+  the main thread, such as the transport drones' flights, posts its events onto a list the next tick hands to the event
+  queues. The mass-traffic pass ends at the tick boundary, so the drones that land in the last pass before the join have
+  their events on that list when the package is captured, and neither the save nor the event queue capture holds them. A
+  join at 6058 caught the six flights of Paranid miner DIH-881's ice sale to DPR-229 landing there: the session finished
+  the trade one tick later and undocked, while on the joiner the flights were gone, the trade started over and the
+  runtime IDs parted at 6225 (runs hq136, hq152). The saver now records those posts (cargo arrivals by the trade's seller,
+  buyer and partner, since a load renumbers trades; drones returning home), and the joiner posts them again at its
+  admission. Run hq153 (join at 6058): no runtime ID split to tick 6713; both clients' saves of tick 6062 hold the trade
+  complete (hq155; without DEFR, hq156, the joiner's still had 2709 of 3709 to move).
+- Travel drive ramps (ENGR, a join default): an engine's travel factor ramps toward its target over the time since its
+  last engine refresh, and a load restamps that time, so the first refresh after the join ramped the session's ships
+  over seconds and the joiner's over two ticks (26 ships in travel at a join at 6058; BJL-112 at 3.37 on the session
+  and 8.73 on the joiner four ticks later). ENGR, which carries the boost ramp for the same reason, now carries the
+  travel ramp's time and factor too (run hq160: the engines equal). The first world capture after that join still
+  differs by twelve dead temp zones the session has not deleted yet; from the next capture (6600) on the world parts
+  are equal.
+- A join at tick 6046 used to part the clients at 6182 every time (runs hq89, hq111). With DEFR and the travel ramps
+  it no longer does (run hq163: runtime IDs equal to 6758, world parts equal from the 6600 capture), and neither do
+  joins at 6040, 6049, 6052, 6055, 6061, 6064, 6067, 6070, 6076 and 6082 (runs hqs6040 to hqs6082, each to about 6800).
+- People's running animations (package section BCLK, `native_gate_join_bclk`, a join default): the gate's body clock
+  (`native_gate_body_clock`) ends a person's animation by the simulation time, from a note it makes when the
+  animation is played. A joiner's load plays every person's current animation anew (the save keeps only its name)
+  and the joiner had no notes, so those animations ended by its load time: at a join at 6046 two seated pilots played
+  their next animation at 6111 and 6176 on the session and both at 6178 on the joiner, and stayed out of step. No
+  digest part holds animations, but what follows from an animation's end (the people's scripts) can. The saver now
+  sends the body clock's notes and the joiner takes them at its admission. Run hq165 (join at 6046): every
+  animation play from 6111 to 6800 is the same on both clients (tick, motion, start offset), 21 notes taken.
+- Still open: ships' economy log offer times and mission cue numbers still differ in the saves.
+- Rig notes: a test overlay holds its own copy of the probe scripts, so a new config key needs them replaced
+  there (and the manifest's lines), or the saver never arms it while the joiner does; the motion watch's
+  `slotx` group hashes a vector's unused fourth lane and a padding byte, which hold leftovers on the session
+  and 0 on a joiner (one ship of 44 differed in it from the join on and in nothing else).
 - A joiner started on the same PC beside freshly started clients of other sessions twice stayed at 90 MB without
   a log (hq20, the first control run). `x4ls join --same-pc` now frees X4's instance lock in the other launcher
   clients before it starts its client, as `x4ls play` does; in the second control run it freed one and the joiner
@@ -895,6 +1138,21 @@ In the integration branch since 17 Nov. Run with scripted input, not by people.
     `native_gate_viewpoint_policy_rows` now writes that test for every traffic ship and tick (POLICY_ROW
     site=113), for the next time it shows; nine runs on a quiet PC and seven with the test's two clients pinned to
     a few cores did not show it.
+  - A cause of that kind found and closed on 18 Nov, without proof that it is this one: X4 works out a ship's
+    route on a thread of its own, from where the other ships are at the moment that thread gets to it. In this
+    scenario 22 of 54 routes were worked out 24 to 32.5 ms after their tick began, with ticks 33.3 ms apart: on a
+    busy PC such a route is worked out one tick later on one client, from other positions. Shown by holding that
+    thread back on client 2 alone (`native_gate_spline_calc_delay={2,10}`, test only): 6 of 54 routes read other
+    positions than client 1's, 21 with 40 ms. `native_gate_spline_phase` (written on 7 Nov for a hot join, now a
+    session default) lets that thread work at two fixed points of every tick only: with it and the same 40 ms
+    every route read the same positions on both clients. A police ship that flies back to its lane flies such a
+    route, and no check covers where a traffic ship is, which is why this is the suspect; neither delayed run
+    parted, so the split itself is still not reproduced. A long wait of that thread (no tick for 10 s: a session
+    waiting for a stalled client) is counted, no longer a stop.
+  - Also seen in a delayed run and once before: two object numbers handed out at tick 1454 on one client and 1455
+    on the other, alike again from the next tick (about 3,400 are handed out in those two ticks). Not yet
+    named; the per-tick rows now list the first and the last four of a tick
+    (`head=`, `tail=`) so the next one is.
   - Not tried: three or more players, a hot join while someone is docked or on the dock, a docked ship's death,
     the Linux gate, two PCs.
 - **The test** (starts its own windowed clients with disposable profiles, prints a check list, saves pictures of both
@@ -910,8 +1168,8 @@ In the integration branch since 17 Nov. Run with scripted input, not by people.
 
 ## Building a station (17 Nov; two clients on one PC, the stock menus clicked with the real mouse)
 
-Not in the integration branch yet (branch `contrib/ferrite-station-build`). The menus were clicked by a test rig that
-moves the real cursor (`tools/dev/ui_clicks.py`), and in part by a person.
+In the integration branch since 17 Nov. The menus were clicked by a test rig that moves the real cursor
+(`tools/dev/ui_clicks.py`), and in part by a person.
 
 - **What was clicked, by both players, each for a station of its own:** the map, Manage Plots, "Create new plot", a
   click in the sector, the plot's size arrows, "Buy licence", "Continue", modules from the left list put into the
@@ -947,14 +1205,114 @@ moves the real cursor (`tools/dev/ui_clicks.py`), and in part by a person.
     compared every ten seconds. Both clients agreed in every part at every one of 30,522 ticks, both modules stood
     at the same reading on both clients (ticks 25240 and 28840), and the map's refresh had been held back 9,554
     times on the client with the map.
-- **Not run:** a hired (not owned) construction vessel and its fee, cancelling a construction, removing a plot, the
-  station's budget, a second plan on a standing station, a manager, the station's trade settings, a faction per player.
+- **Run on 18 Nov** (next section): a hired construction vessel and its fee, a planned module taken back, removing a
+  plot, the station's budget, a second plan on a standing station, managers, the station's trade settings,
+  subordinates. **Not run:** a faction per player.
 - **The test:** `python tools/dev/station_build_test.py run --snapshot SAVE.xml.gz --gate-dll x4lan_gate_64.dll`
-  starts two clients, clicks both players through and compares them until the modules stand. It takes the mouse and
-  the keyboard of the PC for each click; the click places are measured for 1600x900 windows. Nobody should use the
-  PC's mouse in those windows while it runs: a resized window moved every later click off its button.
+  starts two clients, clicks both players through and compares them until the modules stand. Since 18 Nov its clicks
+  go to each X4 window as messages and leave the PC's mouse and keyboard alone (`--input mouse` for the real
+  pointer); the click places are measured for 1600x900 windows, and a resized window moves every later click off its
+  button. It passed from start to end by itself on 18 Nov (run t7): 15 steps per player, each taken at the first
+  try, the eight build calls on both clients at the same ticks, 88 station readings the same on both, both modules
+  standing from the same readings (ticks 24940 and 26140), in sync at all 26,655 ticks. The three tries of 17 Nov
+  had each stopped for a reason outside the game (a click not taken, a person's clicks in its windows, a closed
+  client).
 
-## Player actions, tested without a person (built 17 Nov; two scripted clients on one PC)
+## Managing a station (18 Nov; two clients on one PC, the stock menus clicked without the PC's mouse)
+
+Branch `contrib/ferrite-station-build`. Two solar power plants of the player faction stood from the start of each run
+(a test fixture: a stock plan that produces without supplies, a manager each, an account), so the menus had something
+to manage. Each player's clicks went to its own X4 window as window messages (`tools/dev/ui_window_input.py`): the
+PC's cursor and keyboard were not touched, a person used the PC meanwhile.
+
+- **What was clicked, and ran on both clients at the same tick with the same result:**
+  - *Logical Station Overview:* the station account (slider, Confirm), a ware's automatic pricing off and its price
+    slider, automatic sell amount off, "Create Buy Offer", automatic storage allocation off, "Select Trade Wares"
+    (two wares, Confirm), the drones' "restock automatically" off and their target amount, the supply trade rule's
+    "use global setting", "Pause Production".
+  - *The map's Information panel of a station:* the trade rules' "use global setting" boxes, the preferred build method.
+  - *Station menu ("Plan Build") of a standing station:* one more module put into the plot and confirmed (the plan of
+    seven modules went in four parts), "Assign or hire a Builder" with a construction vessel of the Argon (the fee of
+    50,000 Cr left the account on both clients, the vessel took the order on both, the module stood at the same
+    reading on both, 42040), the player's own vessel for the other station, "Cancel Builder Assignment", the money for
+    construction (slider, Confirm), a planned module removed again and confirmed.
+  - *Manage Plots:* a new plot and "Remove Plot" with its question.
+  - *Crew:* the manager fired (with its question); the other station's manager sent to work at the first one ("Work
+    somewhere else for me", the station, the role, "Assign").
+  - *A freighter as a station's trader:* see below.
+- **Found and fixed:**
+  - **The station overview drew the state from before each click.** "Automatic pricing" stayed ticked and no price
+    slider came, although the price was fixed on both clients; a new trade ware was missing from the chart. The menu
+    draws right after its call, and in a session the call happens a few ticks later. It now draws again when its own
+    player's call has happened.
+  - **A ship could not be given to a station (or a ship) as a subordinate.** The click on "Trade for commander", then
+    a group, did nothing: the entry was refused in a session although every call it makes is shared. It is open now
+    (not for a fleet's replacement slots and not for "position defence", which make calls nothing shares yet); both
+    players assigned a freighter as their station's trader, on both clients.
+  - **"Remove Assignment" did nothing** for the same reason, and one of its calls was not shared. It is shared now:
+    player 2 took its freighter from its station again, on both clients.
+  - **An open map made a station produce on one client first.** The map draws the storage of the stations it shows,
+    and that question brings the station's cargo and production up to the moment, on the client with the map alone.
+    That client's station held one production cycle more than the other client's for hundreds of ticks (1050 against
+    700 energy cells; no check covers a station's cargo), the two clients no longer updated trade offers the same
+    number of times, and after some 6,000 ticks one client ran one script step the other did not: the clients had
+    parted (run mg4, the runtime IDs at tick 8843). The one unexplained extra ID of 17 Nov (a client idle with a
+    station menu open) fits this. In a session the map's question no longer moves a station; the map shows the
+    storage the simulation last brought it to, as the menus do. With that, the same clicks and player 1's map open
+    from tick 3,000 on: both clients agreed in every part at every one of 31,799 ticks (run mg5), and in the run
+    after it (mg6) the two clients worked their stations up exactly the same number of times (366,362 at tick
+    12,540) with the same storage, the map's question held back 20,138 times.
+- **What a player should know:**
+  - The list in "Select a Builder" holds only the construction vessels the map shows at that moment: zoom out and
+    they appear. This is the stock game's behaviour.
+  - The map and the menus show a far station's storage as the simulation last worked it out, which can be a few
+    minutes old for a station nobody is near.
+  - A second player's change to a station whose overview you have open shows when you next open a node or the menu.
+- **The test rig:** `tools/dev/ui_window_input.py PID click FX FY` (also `rclick`, `drag`, `key`) reaches one X4 test
+  client without the PC's mouse; `station_build_test.py` uses it by default (`--input mouse` for the real pointer).
+  The mouse wheel and letter keys do not arrive this way; the map opens by the HUD's top bar.
+- **Not run:** renaming a station (text entry); a defence or mining subordinate at work over a long time; the
+  encyclopedia and the other entries of the module menu; three or more players. A faction per player: next section.
+
+## Stations with a faction per player (19 Nov; two clients on one PC, the stock menus clicked without the PC's mouse)
+
+Factions mode (`--mode factions`): each player is a faction of its own, with its own money, blueprints, stations
+and ships. Each player had a station, a construction vessel and a freighter of its own faction from the start of the
+run (test fixtures), and built a second station by clicks.
+
+- **What was wrong, and is fixed:**
+  - **Player 2's menus showed player 1's property.** The map's "Property Owned" listed player 1's station and ships,
+    player 2's own station was drawn as a foreign one, and its Logical Station Overview showed "???" in every node.
+    The stock menus ask for "the player's" faction, which was player 1's on every client. Now each client's menus
+    and HUD see that client's own faction as the player's faction: player 2 sees its own stations and ships, its
+    own money, its own station's data.
+  - **The map stays the one map everybody shares:** sectors and other factions' stations a player 2 sees carry
+    their names as they do for player 1 (before the second fix they were all "Unknown").
+  - **Player 2 could not give its ships orders from the menus.** "Trade for commander" ran on both clients and
+    the game refused the order (it takes orders for the player faction's ships only). Orders, order queues and
+    their parameters now run as the ordering player's faction. Player 2 made its freighter its station's trader.
+  - **Player 2's station plan vanished.** "Confirm module changes" ran on both clients, and the station had no
+    planned module a moment later. The game logged why: "Failed to create 'manager' of
+    'buildstorage_gen_base_01_macro' as no character definition was found". The game's list of people names "the
+    player faction" and no faction of a session, so player 2's build storage had nobody to process its plans. A
+    player's own faction now draws its people from the player faction's list, so its build storage, stations and
+    ships get managers and crew as player 1's do.
+- **What was clicked, and ran on both clients at the same tick with the same result:** player 2: the map and its
+  property list, the station overview (a manual price, a trade ware), a plot with its licence fee paid from player
+  2's own money, a module put into the plot and confirmed, its own construction vessel assigned, its freighter as
+  the station's trader. Player 1 the same, as before.
+- **Proof:** `station_build_test.py run --mode factions` passed end to end (run tf8): both players' 15 steps at the
+  first try, both modules standing on both clients at the same reading (26440 and 30040), 101 readings equal, in
+  sync for all 30,573 ticks. The coop test passes unchanged on the same gate.
+- **What a player should know:**
+  - Players see each other's stations in full (as in coop); what a station of yours can build is your faction's
+    own blueprints.
+  - The game's own station manager scripts do not yet treat a player 2+'s faction as a player: a station of player
+    2 kept its whole account (2,000,000 Cr) where player 1's manager handed the surplus back to player 1.
+- **Not run:** hiring another faction's construction vessel as player 2, the manager menu and the budget as
+  player 2, a faction per player with three or more players, a player who joins later.
+
+## Player actions, tested without a person (built 17 to 19 Nov; two scripted clients on one PC)
 
 `tools/dev/action_tests.py` runs one scenario in a live two-client session: both players do a chain of player
 actions, and the test checks that each action happened in the game and that the two clients stayed in sync.
@@ -967,32 +1325,126 @@ python tools/dev/action_tests.py plan trade
 ```
 
 - **How a scenario runs.** Every client's plan holds the fixtures (X4's docking computer on the players' ships,
-  money, fleet ships handed to the player faction) and one chain for its own player: steps that each begin when the
-  one before has ended, because flying and docking take as long as they take. A step makes the call a stock menu
-  makes, or presses the menu's own handler (the function a button's click runs). Nobody moves a mouse: what a
-  person sees on the way is covered only as far as the handlers go. (`tools/dev/station_build_test.py` clicks
-  with a real mouse.)
+  money, fleet ships handed to the player faction, deployables and cargo for a ship) and one chain for its own
+  player: steps that each begin when the one before has ended, because flying and docking take as long as they
+  take. A step makes the calls a stock menu makes, or presses the menu's own handler (the function a button's click
+  runs). Nobody moves a mouse: what a person sees on the way is covered only as far as the handlers go.
+  (`tools/dev/station_build_test.py` clicks with a real mouse.)
 - **What every run checks.** No client's gate stopped; each chain ran to its last step; the same readings taken at
   the same ticks on both clients are the same text; the world, the players' records and their inputs agree at every
-  tick. Every world capture is logged per object, so a run whose world differs names the objects that differ; every
-  tick's runtime ID allocations are logged by caller. Each scripted action also asks whether the menu entry it
-  stands for is open to a person in the session: a script's own calls pass where the session refuses the click.
-- **The scenarios** (the snapshot is the two-player one; exit code 0 when every check passed; runs of 17 Nov):
+  tick. The whole world is compared every 1,800 ticks (a capture); a run goes on to the capture after its last
+  step, and a run without one fails. Every capture is logged per object, so a run whose world differs names the
+  objects that differ; every tick's runtime ID allocations are logged by caller. Each scripted action also asks
+  whether the menu entry it stands for is open to a person in the session: a script's own calls pass where the
+  session refuses the click.
+- **The scenarios** (the snapshot is the two-player one; exit code 0 when every check passed):
   - `trade` (passes): each player flies to the food factory MMJ-623, docks, opens the trade menu with the dock
     menu's Trade button, sets 20 food rations and presses Confirm, undocks when X4 grants it, flies to the shipyard
     NLN-075, docks and sells them the same way. Both players' holds and the account read the same on both clients;
-    in sync at all 8,174 ticks of the run.
+    in sync at all 8,174 ticks of the run of 17 Nov.
   - `orders` (passes): each player tells a fleet fighter to fly to a place 28 km off, to explore the sector, to
     patrol it (the order queue), sets Patrol as its default behaviour, and sends a second ship to dock.
+  - `orders2` (passes, 18 Nov): more of the interact menu's orders, each given to a fleet fighter by each player:
+    follow another ship (within 2 km of it 15 to 19 s after that one arrived 6 km away), protect a station, collect
+    the 20 energy cells the player dropped, pick up a satellite the player launched, attack whatever is in range at
+    a place (two Xenon fighters lost their shields), withdraw from combat. In sync at all 5,627 ticks, three
+    captures of the world; two runs gave the same ticks to the digit.
   - `shipbuy` (passes): each player buys a scout at the wharf AVK-777 as the ship configuration's Confirm does;
     both are paid for and built (about 160 s of game time), in sync at all 5,071 ticks.
-  - `crew` (the crew page's part passes for both players, the hire for player 1): fire a crew member, fire the
-    captain, promote the crew member that is left to captain; then dock at a station and hire a person of the
-    station for the fleet ship (the comm, the Hire choice, the map's Hire button; the fee was 479,200 Cr). Player
-    2's hire is refused: a conversation and the Hire button are player 1's only in a session today, and the test
-    says so (`refused` names what each client was refused).
-  - `refit` (passes for player 1): dock at the wharf, order the wharf's high preset for the docked ship (travel
-    engines mk2 to combat mk3, shield mk1 to mk3, lasers mk1 to mk2), undock when it is done.
+  - `crew` (passes for both players since 19 Nov evening): fire a crew member, fire the captain, promote the crew
+    member that is left to captain; then dock at a station and hire a person of the station for the fleet ship (the
+    comm, the Hire choice, the map's Hire button; the fees were 479,200 and 1,213,800 Cr). Each player talks when
+    nobody is in a conversation (X4 has one at a time), checks the conversation is its own and ends it after the
+    hire. `--no-conversations` switches conversation owners off: player 2's hire is refused then, as before.
+  - `refit` (passes for player 1; `refit --ai-dock` passes for both players since 21 Nov): dock at the wharf, order
+    the wharf's high preset for the docked ship (travel engines mk2 to combat mk3, shield mk1 to mk3, lasers mk1 to
+    mk2), undock when it is done. By the autopilot player 2's own ship does not reach its pad (see the wharf below);
+    with `--ai-dock` both ships dock by X4's own AI, and both are refitted since the ship trader's fix below (run
+    20261121-153401: exit 0, in sync at all 10,962 ticks). `refitorder` refits a fleet ship for both players.
+  - `refitorder` (passes for both players, 20 Nov): each player orders the wharf's high preset for a fleet fighter
+    out in space, as a person does it from the map (the ship selected, the wharf's "Upgrade", the configuration's
+    Confirm). X4 gives the ship its Equip order with the build task, and the ship's own pilot flies it in and docks
+    it (68 and 80 s after the order; both ships at the wharf at the same time), the wharf refits it (player 1's: combat
+    engines mk3, shield mk3, lasers mk2; player 2's, which had those engines already: its second shield to mk3) and X4
+    undocks it after. Two runs, in sync at all 9,239 and 9,238 ticks.
+  - `repair` (passes, 18 Nov): each player sends a fleet fighter with half its hull to the wharf to dock and has it
+    repaired there (the ship configuration's Confirm with a repair: 16,699 and 21,479 Cr). Both ships were docked at
+    the wharf at the same time; each hull was whole within a second of its order. In sync at all 3,847 ticks.
+    `repair --own` (passes, 21 Nov): each player's own ship instead, docked by X4's own AI (11,085 and 11,856 Cr).
+  - `wing` (passes, 18 Nov): each player makes one fleet fighter the subordinate of another ("Assign as
+    subordinate", assignment Defend), sends the leader 8 km off, orders the leader to attack a Xenon fighter, and
+    removes the assignment. Ten seconds after each leader arrived its subordinate was 557 m and 976 m from it. The
+    fight is a real one: player 2's target was destroyed after about 58 s, player 1's was down to 19 % shield when
+    the test's 80 s were over. In sync at all 3,756 ticks, two captures of the world.
+  - `shipsell` (passes, 18 Nov): each player sends a fleet fighter to the wharf to dock and sells it there (the
+    map's "Sell ships" confirm). Sold for 1,701,612 and 1,202,466 Cr; the account went from 10,000 to 2,914,077 Cr
+    on both clients; in sync at all 3,771 ticks.
+  - `crewmove` (passes, 18 Nov): each player moves a service crew member from one fleet ship to another (the crew
+    transfer's Confirm). X4 lists the person on the other ship at once and counts it aboard six to ten seconds
+    later, also when the ships are 58 km apart. In sync at all 1,982 ticks.
+  - `fleettrade` (passes, 18 Nov): each player has a fleet courier buy 20 food rations at MMJ-623 (a trade order
+    from afar), sends it to the shipyard NLN-075 and has it sell them there. In sync at all 9,287 ticks, five
+    captures of the world.
+  - `deploy` (passes, 18 Nov; the last two steps 19 Nov): each player renames its own ship, launches a satellite,
+    a nav beacon, a resource probe, a mine and a laser tower from it, drops 20 of the 50 energy cells in its hold,
+    switches its mine off and on again and has its satellite destroy itself (the interact menu on a deployable).
+    All ten deployables were out on both clients; each satellite went off and on and was no longer working half
+    a second after its self-destruct. In sync at all 2,053 ticks.
+  - `rules` (passes, 18 Nov): each player makes a blacklist, a fight rule and a trade rule for the faction (the
+    global orders of the player information menu), sets the first two for its own ship, renames the blacklist and
+    removes the trade rule. Both clients list the same rules with the same IDs; in sync at all 2,053 ticks.
+  - `systems` (passes, 19 Nov): each player puts a weapon of its own ship into a second weapon group and makes
+    that group the active one, switches flight assist off and on, travel mode on and off; then sets a fleet
+    warship's turrets as the map's loadout page does: all turrets to "attack fighters", one turret (a frigate's)
+    or one turret group (a destroyer's) to "missile defence" and disarmed, all disarmed, all armed, the defence
+    drones to another mode and disarmed. Both clients read the same settings of all four ships throughout; in
+    sync at all 1,967 ticks.
+  - `settings` (passes, 19 Nov): the player information menu. Player 1 sets the faction's standing order for
+    "attacked" (to its first answer, then its second), switches "ships wait for the player" off and on and names
+    the faction; player 2 sets the standing order for a found abandoned ship, the resupply level, the turrets'
+    default mode, the paint and the logo; each sets its own ship's answer to "attacked" and its resupply level.
+    One faction, so both clients read all of it the same; in sync at all 2,012 ticks.
+  - `storage` (passes, 19 Nov): each player has a fleet fighter dock at a fleet capital ship (a carrier, a resupply
+    ship), puts it into the ship's internal storage and retrieves it ("Put into storage", "Retrieve from
+    storage"). X4 greys the first entry out for some seconds after a docking; the script waits as a person would
+    have to. In sync at all 3,786 ticks, two captures of the world.
+  - `claim` (passes, 19 Nov): the fixtures give a fleet frigate two marines and put an ownerless scout 1.5 km from
+    it; each player has its frigate claim it (the interact menu's "Claim"). A boarding pod flies over and the ship
+    is the player faction's 18 seconds later, with the marine as its pilot. In sync at all 1,984 ticks. The
+    scenario first sets the standing order for a found abandoned ship to "ignore" without the question;
+    `--ask` leaves the question on (see the findings).
+  - `wingset` (passes, 19 Nov, on the gate built that day): each player forms a wing of two fleet fighters,
+    switches each of the group's five settings off and on (attack on sight, dock at the commander, reinforce the
+    fleet, respond to distress calls, resupply at the fleet), changes the group's role from defence to attack,
+    names the fleet and moves the subordinate to a second group. In sync at all 1,988 ticks.
+  - `mining` (passes, 19 Nov): each player has a fleet miner drop two resource probes at places three kilometres
+    off (the interact menu's "Deploy" on a place of the sector: an order in two parts, see the findings) and,
+    where the sector yields ore, mine it ("Mine"). All four probes were out 20 to 24 seconds after their orders.
+    The snapshot's sector yields nothing to mine, so the "Mine" order is reported as not given. In sync at all
+    3,837 ticks, two captures of the world.
+  - `routines` (passes, 19 Nov): each player gives a fleet courier automatic trading of food rations and a fleet
+    miner automatic mining as their default behaviour (the map's behaviour page: the routine, its ware, this
+    sector as its range, Confirm). All four ships have the behaviour on both clients. What a routine then finds
+    is the game's: player 1's courier bought and sold on its own (the account went from 60,000 to 21,232 and on
+    to 68,624 Cr), player 2's found no second deal in three minutes, and the miners stayed where they were. In
+    sync at all 9,187 ticks, five captures.
+  - `hostile` (passes, 19 Nov, gate of that afternoon): each player marks a neutral Argon freighter as hostile (the
+    interact menu's "Mark as hostile" and the Yes of X4's question). Both freighters read hostile and enemy on
+    both clients a moment later; in sync at all 2,020 ticks.
+  - `exchange` (passes, 19 Nov): each player has a fleet courier hand 30 of its 50 energy cells to a fleet capital ship
+    (the map's ware exchange between two ships of the player's: the trade menu in its exchange mode sets virtual
+    cargo on both ships, lists the exchange offers, Confirm). The courier docks at the capital ship and the wares
+    arrive there a few seconds after they leave its hold. In sync at all 5,618 ticks.
+  - `tradeloop` (passes, 19 Nov): each player puts a fleet courier on repeat orders (the behaviour page) and gives it a
+    buy of 20 food rations at MMJ-623 and a sale at NLN-075 (the trade menu's loop Confirm, see the findings). A fleet
+    fighter first docks at NLN-075 so the faction knows its offer. Both couriers bought, sold and bought again on
+    their own: the queue went round. In sync at all 14,635 ticks, eight captures of the world.
+  - `claim --answer` (passes, 19 Nov, gate of that afternoon): the frigates' questions stay on; player 1 answers
+    its frigate's question (the key on the notification) and picks "Claim it" in the conversation that follows,
+    and the frigate sends its marine by itself; player 2 presses the key too and is refused, as every
+    conversation is to players 2..N.
+    Player 1's answer was raised on both clients at the same tick, and its frigate claimed the scout; player 2's
+    was refused with a notice, and its claim by order after the questions landed. In sync at all 3,846 ticks.
   - `mapopen` (a diagnostic, passes): one client keeps the map open for 100 seconds and nothing else happens.
 - **What the tests found and what was changed for it:**
   - The trade menu's Confirm button was refused to a person: it stood on the list of blocked order entries and
@@ -1002,16 +1454,103 @@ python tools/dev/action_tests.py plan trade
     helper and the interact menu's icon text. Both were refused with the order entries, so the trade sliders set no
     amount and every order entry's text began with a 0 where its icon belongs. Both are left alone now.
   - The interact menu's Explore, Protect, Collect, Mining and the other order entries that make only the calls the
-    orders family shares were refused to a person. Open now (of these only Explore has run).
+    orders family shares were refused to a person. Open now. Run since, by the calls the entries make: Explore,
+    Follow, Protect station, Collect drops in radius, Collect (a deployable), Attack in range, Withdraw from combat.
   - Setting a ship's default behaviour did nothing: the parameter of the planned behaviour went to the wrong
     order, and the confirm's reset of the order loop was refused. Both fixed (the second in the gate DLL); the
     behaviour page's Confirm is open.
   - A ship purchase jammed the buyer's actions for good: its record went out in 200-byte parts, and beside the
     player's flight record only 185 bytes of a tick's packet are left for one. The part stayed first in line and
     nothing behind it was ever sent (found the same evening by the station test with a station plan; fixed there).
+  - "Remove assignment" did half its work (18 Nov): X4's call that takes a ship out of its wing was not shared, so
+    it was refused, while the two calls after it went through. The ship got its new default behaviour and kept its
+    commander. "Assign as subordinate" was refused to a person although its calls for the plain case are all
+    shared. The station test found the same two the same morning by clicking the menus and fixed them (the call is
+    shared, both entries are open; the assignment "position defence" and a fleet's planned ships stay refused with
+    a notice). That fix is the one in the code; `wing` passes on it.
   - X4 answers "trade computer busy" to an undock for about three seconds after a docked trade. An undock sent
     in that time is still replayed and goes through if the computer is free by then; the dock menu itself does not
     offer the button that early.
+- **Found on 19 Nov, and what was changed for it:**
+  - **A fleet ship that asked its player for orders parted the clients.** A frigate of the player's saw the
+    abandoned scout and asked what to do: the stock script `player.interaction`, an interactive notification with
+    the pilot's face. Its picture was started and ended by each client's own UI, at ticks of that client's own,
+    and the script waits for both events. Runtime IDs differed from tick 1186, the inputs from 1465, and at the
+    next capture 3,677 objects moved differently. The same script speaks for every fleet ship that reports an
+    attack, a police halt or a lockbox with the question switched on. The picture of such a notification is now
+    the simulation's, as a mission's call already was: it starts in the script's action on every client and ends
+    with the script's stop. The same run (`claim --ask`) is in sync at all 9,222 ticks, five captures. Answering
+    the question is still refused to every player (the UI's call is not shared): the ship acts on its standing
+    order after ten seconds.
+  - In that run one of the two claims failed, on both clients alike: the pod reached the scout while the
+    notification's camera made the place "visible", and X4's claim script lost the pod when the place stopped
+    being visible in the three seconds between attaching and claiming (the script's own comment warns of it).
+    The game's, not the session's; without the question both claims land.
+  - **"Deploy" on a place of the map was refused for a fleet ship.** The order carries its place, the macro and
+    the amount: 223 bytes, and one event of a player's actions holds 160. It was refused as too long, so no fleet
+    ship could be sent to drop a satellite, a probe or a mine. An order that long now travels in parts (up to
+    four) and runs when the last has arrived, on every client at the same tick. `mining` gives two such orders
+    per player.
+  - **A wing's group settings were refused to every player** (listed as a known fault on 18 Nov): the five
+    switches of a subordinate group, the group's role and a fleet's name are shared now (seven more calls of the
+    faction family), and the interact menu's "Change assignment" is open, except for a fleet's planned ships and
+    the position defence, which stay refused with a notice. `wingset` runs all of it.
+  - **The trade menu's Confirm in its loop mode was refused to a person.** A fleet ship on repeat orders gets
+    its buy and sale orders through it (SingleBuy, SingleSell); it was on the list of blocked order entries and
+    nothing reopened it, although its calls are all shared. Open now; `tradeloop` runs it.
+  - **Answering a fleet ship's question was refused to every player.** Player 1's answer (the key or the click on
+    the notification) is shared now: the click names an interaction that is each client's own, so it travels as
+    the notification's place among the ones the simulation started, and every client raises the answer for its
+    own interaction of that notification at the same tick. The conversation that follows is player 1's, as every
+    conversation is; players 2..N are refused with a notice. Note: while player 1 is in that conversation X4 lets
+    no other ship ask (one question at a time, for the one MD player).
+  - **"Mark as hostile" was refused to every player.** X4's call names another faction's object and passes two
+    floats and a double; it is shared now as a faction call whose object may be anybody's but another player's
+    ship.
+  - The snapshot's sector yields nothing to mine (a scan of 1,681 places around each miner found no ore and no
+    other resource), so the "Mine" order is not given there and a miner on automatic mining stays where it is.
+- **The launcher's change of 18 Nov, run live** (19 Nov): a session started beside others on the first profile
+  pair (`X4LS_BESIDE=1`, `X4LS_FIRST_PROFILE=0`) freed its own last client's instance mutex ("client 2: released 1
+  instance mutex handle(s)"), and the other sessions' clients had none left to free; `rules` passed on it.
+- **Regression on the gate of 19 Nov afternoon** (all of this section's changes): every scenario of this section
+  run again, 28 runs in all, each in sync to its last tick (1,976 to 14,658 ticks); exit 0 for all but `crew`
+  (the hire of player 2, known) and `claim --ask` (below). The first runs of `claim --answer`, `exchange` and
+  `tradeloop` failed on mistakes of the tests (the moment of player 2's answer, the exchange mode's virtual cargo,
+  a sale order with no offer in sight); fixed and run again.
+- **Runs on the merged state of 19 Nov afternoon** (this branch with integration 43957e3f in it, merge 972482b8,
+  gate built from that tree; integration took it as 9abd20d8): `hostile`, `claim --answer`, `wingset`, `mining`,
+  `settings`, `exchange` and `tradeloop` pass. `trade` ran seven times: five in sync to the last tick, and twice
+  a police traffic ship (`ship_arg_xs_police_01_a_macro`) moved differently on the two clients, from the capture
+  of tick 3600 and from 9000. That is the open traffic ship fault below; the station walk work found the same
+  first sign there (a ship's dock approach that starts some steps apart, from a ship that already moves
+  differently). (`native_gate_zone_pending` was not on in any of these runs: it became a default only after.)
+- **Fixed on 19 Nov evening: players 2..N talk and hire.** A conversation now belongs to the player who started it
+  (`native_gate_conversation_slots`, a session default; the first form of 11 Nov, never merged until now, plus a fix
+  found by the first live run: the gate's push of a conversation call still took player 1 alone). The start runs as
+  that player's on every client, every conversation event reaches MD in that player's scope, the dialog choices, a
+  menu's return and the hire fee are that player's alone. `crew` (run 20261119-195325): player 1 hired at the wharf,
+  then player 2 at the shipyard through its own conversation; in sync at all 5,529 ticks. One conversation in the
+  world at a time: another player's start is refused while one runs, the same on every client.
+  - A conversation's dialog and the menus it opens show on its owner's screen only (the conversation itself runs on
+    every client): before, player 1's hire map stayed open on player 2's screen. Run 20261119-202543: each client showed its own conversation's dialog and hire menu and held back the other player's; both players hired; in sync at all 5,539 ticks.
+- **Three things the tests had to learn from the game** (no fault of the session):
+  - A ship's sale is one unit: the money and the sale. The map's "Sell ships" confirm is shared as that unit. A
+    script that made the two calls apart had its money refused (the session moves money only between a player and
+    its own property outside such a unit) and sold both ships for nothing.
+  - A station's trade offers are known to a player only while one of its ships is near the station. A freighter
+    10 km from the shipyard could not be told to sell there: there was no offer to pick, for a person neither.
+  - X4's count of a ship's satellites, mines and so on (`GetNumAllSatellites`...) counts the kinds, not the units.
+- **Runs on the merged state** (this branch with the integration branch of 18 Nov 05:10 in it, gate built from that
+  tree): `wing`, `repair`, `rules` and `trade` pass.
+- **A client that went away, and why** (18 Nov): four times that night a session on this PC lost its second client:
+  X4 gone with exit code 1, its log ending mid-run, no crash note of the gate, the first client playing on. Another
+  session's join-test script took the first "pid N" of its join launcher's log for its own joiner and ended that
+  process when the test was over. The first such line was "beside X4 pid N: released 1 instance mutex handle(s)":
+  another session's client, whose instance mutex the join launcher had just freed from outside. Only a session on
+  the first profile pair kept that mutex in its last client, so only those lost one. The script is corrected, and a
+  session started beside others (`X4LS_BESIDE=1`) now frees its last client's mutex itself
+  (`session.frees_last_client`), so no other launcher's log names its client. In a report the sign is "in sync at
+  all N ticks both clients logged" with N far below the ticks of the chains.
 - **Two desyncs these scenarios reproduced, and their fixes** (both fixes are the station test's; the scenarios
   proved them):
   - `refit`: only client 1 read the wharf's build tasks, and at the capture of tick 5400 a ship at the wharf
@@ -1022,21 +1561,104 @@ python tools/dev/action_tests.py plan trade
     runs of three. An open map refreshed the engine settings of every ship it showed, on that client only. With
     that refresh kept out of a session's steps (the fifth lazy target) the same run agrees at all 9,306 ticks.
 - **Known faults.**
-  - The second player to arrive at the wharf AVK-777 never gets into its dock: while the first is docked there,
-    the second ship stops two to three kilometres off its granted dock for the rest of the run (six runs of `crew`
-    and `refit`; with `refit --lead 2` player 2 docks and player 1 hangs). At the food factory and at the shipyard
-    both players dock on neighbouring pads. The `crew` scenario sends player 2 to the shipyard for its hire.
-  - `refit --lead 2`: the wharf took player 2's refit and left it queued for the remaining 8,000 ticks (player
-    1's, in the other runs, starts after about 350 ticks). And in that run, the longest so far, one drone-sized
-    ship in the wharf's zone differed in its motion from the capture of tick 10800. Both open.
-  - Hiring is player 1's only (the comm with a station's person, the Hire choice and the Hire button are refused to
-    players 2..N), and player 1's hire conversation opens the "Hire Staff" map on every client: on player 2's screen
-    it stays until that player closes it.
+  - The script ops that remove a blacklist, a fight rule or a trade rule failed with "wrong number of arguments"
+    (a Lua `assert` as a call's last argument passes its message too). Test code only; fixed, and `rules` runs one.
+  - A desync, reproduced twice (17 and 18 Nov, `refit --together`): from the capture of tick 10800 one police
+    traffic ship (`ship_arg_xs_police_01_a_macro`, made at tick 6568 in the wharf's zone) moves differently on the
+    two clients, and client 2 removes it at tick 10888 while client 1 still has it 160 ticks later. Everything
+    else in the world, the players' records and the inputs agree. In both runs a player's ship stood still near
+    the wharf for minutes (see the next point). Of two runs with the players in turn, one was in sync for all
+    18,297 ticks; in the other a traffic ship of that zone with its five parts existed on client 2 only from the
+    capture of tick 7200 (runtime IDs apart from tick 7129). It matches the station walk test's open fault (a
+    traffic ship that leaves at different ticks, after which one client reuses a ship and the other makes one);
+    the runs are handed to that work.
+  - The wharf AVK-777: all 18 pads for small ships are on its build module, 3.2 km from the station's centre, nine
+    on each side. X4's autopilot reaches the first pad given out (it ends 74 m from it and X4's docking computer
+    lands the ship). For the second pad (the next one, 40 m away) it ends 3.5 km short, 2.3 km from the station's
+    centre, and ends at once whenever it is started again, whichever player gets that pad. Since 19 Nov the test
+    then flies the autopilot to the ship docked nearest the pad (`tools.dock_neighbour`, the other player's ship
+    on the next pad) and starts the approach again from there: the ship gets to 294 m of its pad and stops there;
+    the dock key at that point gives the grant back. Both clients agree in every run (refit in sync at all 11,040
+    and 11,070 ticks). The steering path jobs held at the phase points (dafdbc2e, the police ship's fix, gate
+    build-sw58) do not change it: two runs of 19-20 Nov stop at 304 m in the same place, in sync at all 11,001
+    and 11,006 ticks.
+    Measured on 20 Nov (the dock step logs the ship's and the station centre's places in the pad's own frame, and
+    the test takes pictures at the stall): the pads lie in a row inside the open frame of the build module, beams
+    over them; the first pad is the row's end. Player 1's approach comes in from beyond the end of the module and
+    along the row 65 m over the pads, and lands from 56 m over its pad. Player 2's approach and the detour both run
+    the ship into the module's inner wall 200 m up (picture: 0 m/s, the wall filling the view). Since 20 Nov the
+    dock step then flies the ship by its flight keys, as a person flies it (`hop`: speeds aimed at each point of a
+    route in the pad's frame; the refit scenario gives player 1's lane, moved to the second pad): it reaches the
+    approach point, X4's docking computer takes the ship over by itself and lifts it to 156 m straight over the
+    pad, and there it holds, also after player 1 has left and the wharf builds nothing; the dock key gives the
+    grant back, a new request gets the same pad. Both clients agree throughout (runs 20261120-012919 and -014328,
+    in sync at all 11,042 and 11,014 ticks). Open: why the docking computer holds over that pad (X4's own docking;
+    the first ship's descent from 152 m was not held). Ships that their own pilots fly in by an order (`refitorder`,
+    `repair`, `shipsell`) dock without help, two at a time: in `refitorder` they sat in the docking bays 436224 and
+    436225 (read as the bay a docked ship is in, `ship_look` bay=), so X4's ships were not given the pad 436331 the
+    players' second ship gets.
+    `refit --no-detour` keeps the old stranding, `--no-hop` the stop at the wall. The `crew` scenario sends player 2
+    to the shipyard.
+  - `--ai-dock` (any scenario; a test and debug tool, 21 Nov): the players' own ships dock by X4's own AI, the way a
+    fleet ship docks when it is ordered to, instead of by the autopilot. X4's autopilot is not made to dock from end
+    to end: it flies to a dock's approach point (`aiscripts/move.autopilot.xml`) and leaves the landing to the
+    docking computer. X4 has an MD action, `dock_player_ship_at`, that no script of the base game uses: it asks the
+    station for a dock and, when the dock is granted at once, gives the ship's steering to the AI and runs the fleet
+    ships' dock order (`aiscripts/order.dock.xml`: the dock's entry path, its dock path, the landing) on the
+    player's ship computer. The step (`ai_dock_station`) flies the autopilot to the station, stops it within 9 km and
+    signals our MD cue `AiDock`; the signal travels as the player's other script calls do, and for players 2..N the
+    cue runs in that player's scope, so it docks that player's ship on every client. No dock granted (all taken):
+    asked again every 20 s. `ai_dock` alone sends the signal once.
+    `refit --ai-dock` (run 20261121-143158): both players docked by the AI, player 2 at the wharf's second pad
+    (436331) for the first time, at tick 3821; on both clients the cue docked the asking player's ship; in sync at
+    all 16,146 ticks, eight captures of the world. Player 1's refit ran (ticks 3319 to about 6900); player 2's was
+    ordered on both clients and stayed in the wharf's queue for the 9,000 ticks after player 1's was done. With
+    `--lead 2` (player 2 first, alone at the first pad; player 1 docked by the AI at the second) player 2's refit
+    stayed queued all the same and player 1's started at once: a players 2..N fault, not the pad's.
+  - A wharf refits every player's own ship (fixed 21 Nov). The station's ship trader
+    (`aiscripts/build.shiptrader.xml`) starts a queued upgrade of a docked ship when the ship's Equip order has
+    started (its own pilot flew it in) or when the ship is `player.controlled`. The ship trader is the station's
+    script and runs outside every player's scope, where that is player 1's ship; a player 2..N's own ship has an
+    Equip order that nobody starts (`ship_look`: `Equip/ready`) and so its upgrade stayed queued for good: the dock
+    menu said "there is a scheduled upgrade for this ship" and showed no timer. Now the session's player groups
+    (`native_gate_player_groups`) keep the list of what every player controls on every player's entity, and a patch
+    of the ship trader's test (`tools/dev/native_gate_player_refit.xml`, X4's own diff loading, one added clause)
+    also takes a ship in that list. Without the gate the list is never set and the test is the stock one.
+    `refit --ai-dock` (run 5 of 21 Nov): both players docked and refitted, player 2's upgrade with X4's timer in the
+    dock menu ("Waiting for upgrade to finish"); the wharf has one build processor, so the second refit starts when
+    the first is done. A refit of the wharf's high preset (two engines, the shield, two lasers) takes about 2 minutes
+    of game time (3,600 ticks at 30 a second). `refit_why` (MD `RefitWhy`, read only) logs each queued build of a
+    station with the parts of that test. A player's own ship is repaired at a wharf without such a patch: the dock
+    menu's repair signals the station (`repairs_initiate`), and the ship trader repairs any ship docked there.
+    `repair --own` (run 20261121-155134): both players' own ships, damaged to 50 % by the fixture, docked by the AI,
+    paid and repaired to 100 %, undocked; in sync at all 5,575 ticks. The ship trader's other repair start (a ship
+    that docks with a Repair order and is `player.controlled`) is not reached in a session: the replay refuses
+    orders for any player's own ship.
+  - `refit --lead 2` (17 Nov): the wharf took player 2's refit and left it queued for the remaining 8,000 ticks
+    (player 1's, in the other runs, starts after about 350 ticks). Open.
+  - A course a player 2..N plots ("Plot course" in the map, SetGuidance) makes no guidance: X4's Guidance script
+    listens on player 1's entity, so the signal on player 2's goes nowhere, and Shift+A has nothing to fly to for
+    players 2..N (found 19 Nov while trying it as a detour for the wharf; not fixed).
+  - Not shared, so refused to every player (from the session's list of calls, not run): a wing's formation, a
+    fleet's planned ships (fleet units), a group's protected position, boarding. Shared since 19 Nov: the
+    settings of a wing's groups and a fleet's name.
+  - The answer to a fleet ship's question is player 1's only (the conversation that follows is); for players 2..N
+    the ship acts on its standing order.
+  - `claim --ask`, three runs of three: player 2's claim fails on both clients alike, player 1's lands; the clients
+    agree throughout (9,222, 9,269 and 9,204 ticks). Read on 19 Nov with a watch of the scouts (the fixture logs each
+    second their owner and attention and every ship within 3 km): a frigate's question on the target monitor raises
+    the attention around that frigate to "nearby" for its ten seconds. Pod 2 began in X4's claim script
+    (`aiscripts/move.claim.xml`) at low attention, was switched to the high branch when frigate 2's question came
+    up, attached itself to the scout, and the question ended before the claim: the script went back to its low
+    branch at its "move" label, which never claims an attached pod, and the scout stayed ownerless for the four
+    minutes watched. Pod 1 crossed the other way (high, then low before attaching) and claimed. That is X4's own
+    script with X4's own question picture, the same for a single player; not patched here.
   - `trade`, one run of five: the world differed from the capture of tick 3600 with the PC loaded by other
     sessions; not reproduced, objects not logged in that run, and it was before the two fixes above.
   - A fleet ship that is part of the snapshot's battle fixture stops every client when it begins to dock (the
     fixture's state sampling has no docking state in a play session). The dock order is tested on other ships.
   - Not tried: three or more players, factions mode, a hot join during any of this, the Linux gate, two PCs.
+
 
 ## Not yet
 

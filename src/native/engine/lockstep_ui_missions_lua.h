@@ -8,12 +8,16 @@ static int lua_ui_missions(lua_State *L) {
     if(ok) return 1;
     p_lua_pushlstring(L,uimis_why,strlen(uimis_why));return 2;
 }
-/* gate.ui_missions_push(op, hex): a conversation call the Lua core captured (op 0x49, slot 1 only). 1 or 0. */
+/* gate.ui_missions_push(op, hex): a conversation call the Lua core captured (op 0x49): slot 1's; with conversation owners
+ * (lockstep_conversation_owner.h) also another slot's start and its owner's other calls (the Lua core asks the same
+ * first; the apply asks again, the same on every client). 1 or 0. */
 static int lua_ui_missions_push(lua_State *L) {
     double op=p_lua_tonumber(L,1);size_t length=0;const char *text=p_lua_tolstring(L,2,&length);
     unsigned char data[UIREP_EVENT_MAX];unsigned n=0;const char *why="ui_conversation";
-    int ok=accept_ui() && uirep_armed && uimis_armed && op==UIMIS_OP_CONVERSATION && pstk_capture_slot==1 && text && length<=2*UIREP_EVENT_MAX &&
-        pstk_unhex(text,length,data,sizeof(data),&n) && uimis_event_ok(1,UIMIS_OP_CONVERSATION,data,n,&why);
+    const unsigned slot=pstk_capture_slot;
+    int ok=accept_ui() && uirep_armed && uimis_armed && op==UIMIS_OP_CONVERSATION && (slot==1 || cvo_armed) && text && length<=2*UIREP_EVENT_MAX &&
+        pstk_unhex(text,length,data,sizeof(data),&n) && uimis_event_ok(slot,UIMIS_OP_CONVERSATION,data,n,&why) &&
+        (slot==1 || data[0]==UIMIS_C_START || cvo_may(slot));
     if(!ok) {if(uirep_armed) uirep_note_refusal("conversation",why);p_lua_pushnumber(L,0);return 1;}
     p_lua_pushnumber(L,uirep_push(UIMIS_OP_CONVERSATION,data,n));return 1;
 }

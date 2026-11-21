@@ -60,7 +60,16 @@ static void agent_execute(agent_fn original,agent_sample *s,unsigned actor,uint6
         SetLastError(error);
     }
 }
+/* The Agent update this thread is in, NULL outside one (a nested update puts the outer one back): the rows of
+ * lockstep_path_transforms.h name the ship (agent+0xef0) whose update made a call. */
+static _Thread_local void *agent_current;
+static void agent_update_body(void *self,void *commands,float dt,double time,unsigned char cheap);
 static void agent_update(void *self,void *commands,float dt,double time,unsigned char cheap) {
+    void *const outer=agent_current;agent_current=self;
+    __try {agent_update_body(self,commands,dt,time,cheap);}
+    __finally {agent_current=outer;}
+}
+static void agent_update_body(void *self,void *commands,float dt,double time,unsigned char cheap) {
     registry_observe_owner(self,0xef0,REGISTRY_AGENT);
     agent_fn original=(agent_fn)(image+AGENT_ORIGINAL);agent_sample *s=NULL;unsigned actor=0;
     if(stats.active && boot_phase==3) for(unsigned i=0;i<ACTOR_CAPACITY;i++) {

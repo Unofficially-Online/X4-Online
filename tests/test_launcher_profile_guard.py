@@ -45,5 +45,20 @@ class InUse(unittest.TestCase):
             self.assertEqual(profile.running_profiles(), {})
 
 
+
+class DocumentsFolder(unittest.TestCase):
+    """X4 keeps its profiles in the Documents known folder, which OneDrive's folder backup can move (seen on a player
+    laptop: the user folder's OneDrive/Documents); %USERPROFILE%/Documents is only the fallback."""
+
+    def test_off_windows_or_without_the_shell_it_is_the_profile_folder(self):
+        with mock.patch.object(profile, 'known_documents', return_value=None), mock.patch.dict(profile.os.environ, {'USERPROFILE': r'C:\Users\someone'}):
+            self.assertEqual(profile.documents_folder(), Path(r'C:\Users\someone') / 'Documents')
+            self.assertEqual(profile.documents(), Path(r'C:\Users\someone') / 'Documents' / 'Egosoft' / 'X4')
+
+    @unittest.skipUnless(sys.platform == 'win32', 'the known folder is asked on Windows only')
+    def test_on_windows_the_shell_answers_with_a_folder_that_exists(self):
+        self.assertTrue(profile.documents_folder().is_dir())
+
+
 if __name__ == '__main__':
     unittest.main()

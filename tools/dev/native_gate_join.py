@@ -177,7 +177,7 @@ SEC_STEER, SEC_STEERPT = 23, 24
 SEC_SOLVER, SEC_BULLET = 25, 26
 SEC_GRAV, SEC_GRAVC, SEC_GRAVS = 27, 28, 29
 SEC_SPLM, SEC_SPLME, SEC_SPLMSEG, SEC_GRAVN, SEC_GRAVP, SEC_GRAVQ, SEC_JOBE, SEC_EVQT, SEC_GRAVD = 30, 31, 32, 33, 34, 35, 36, 37, 38
-SEC_VIEWK, SEC_VIEWKC, SEC_VIEWF, SEC_VIEWP, SEC_SHOOT, SEC_ATTK, SEC_LIVEF, SEC_SPEC, SEC_NAVC, SEC_JOBS, SEC_GONE, SEC_BODY, SEC_BUPD, SEC_LDC, SEC_NAVT, SEC_NMESH, SEC_NOCT, SEC_AGTT, SEC_AGCB, SEC_PBNK, SEC_PEND, SEC_GRAVB, SEC_VIEWL, SEC_IKV, SEC_RCNT, SEC_ECOS, SEC_SHPW, SEC_TRDN, SEC_NPCA, SEC_JOBG, SEC_CODE, SEC_ENGR, SEC_SHGR, SEC_BNDS, SEC_OMGS, SEC_RESV, SEC_PCSV, SEC_CONN, SEC_WARP, SEC_ARES, SEC_LSTN, SEC_UNDK, SEC_SRCS, SEC_FOBJ, SEC_CUEI, SEC_ANIS, SEC_ANIL, SEC_ZREF = 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86
+SEC_VIEWK, SEC_VIEWKC, SEC_VIEWF, SEC_VIEWP, SEC_SHOOT, SEC_ATTK, SEC_LIVEF, SEC_SPEC, SEC_NAVC, SEC_JOBS, SEC_GONE, SEC_BODY, SEC_BUPD, SEC_LDC, SEC_NAVT, SEC_NMESH, SEC_NOCT, SEC_AGTT, SEC_AGCB, SEC_PBNK, SEC_PEND, SEC_GRAVB, SEC_VIEWL, SEC_IKV, SEC_RCNT, SEC_ECOS, SEC_SHPW, SEC_TRDN, SEC_NPCA, SEC_JOBG, SEC_CODE, SEC_ENGR, SEC_SHGR, SEC_BNDS, SEC_OMGS, SEC_RESV, SEC_PCSV, SEC_CONN, SEC_WARP, SEC_ARES, SEC_LSTN, SEC_UNDK, SEC_SRCS, SEC_FOBJ, SEC_CUEI, SEC_ANIS, SEC_ANIL, SEC_ZREF, SEC_SREF, SEC_PMOD, SEC_NEED, SEC_ACCT, SEC_KIDS, SEC_DOOR, SEC_DRON, SEC_REFP, SEC_SPWN, SEC_DKEY, SEC_DEFR, SEC_BCLK = 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98
 SECTION_NAMES = {SEC_GATE: 'gate', SEC_IDS: 'ids', SEC_WAKE: 'wake', SEC_WAKEVEC: 'wakevec', SEC_MDHEAP: 'mdheap',
                  SEC_MODULES: 'modules', SEC_CTX: 'ctx', SEC_LUA: 'lua', SEC_HEALTH: 'health', SEC_POSE: 'pose',
                  SEC_SHIELD: 'shield', SEC_NAV: 'nav', SEC_ATTN: 'attn', SEC_KEYS: 'keys', SEC_PATH: 'path', SEC_REGION: 'region',
@@ -186,7 +186,7 @@ SECTION_NAMES = {SEC_GATE: 'gate', SEC_IDS: 'ids', SEC_WAKE: 'wake', SEC_WAKEVEC
                  SEC_GRAV: 'grav', SEC_GRAVC: 'gravc', SEC_GRAVS: 'gravs', SEC_SPLM: 'splm', SEC_SPLME: 'splme',
                  SEC_SPLMSEG: 'splmseg', SEC_GRAVN: 'gravn', SEC_GRAVP: 'gravp',
                  SEC_GRAVQ: 'gravq', SEC_JOBE: 'jobe',
-                 SEC_EVQT: 'evqt', SEC_GRAVD: 'gravd', SEC_VIEWK: 'viewk', SEC_VIEWKC: 'viewkc', SEC_VIEWF: 'viewf', SEC_VIEWP: 'viewp', SEC_SHOOT: 'shoot', SEC_ATTK: 'attk', SEC_LIVEF: 'livef', SEC_SPEC: 'spec', SEC_NAVC: 'navc', SEC_JOBS: 'jobs', SEC_GONE: 'gone', SEC_BODY: 'body', SEC_BUPD: 'bupd', SEC_LDC: 'ldc', SEC_NAVT: 'navt', SEC_NMESH: 'nmesh', SEC_NOCT: 'noct', SEC_AGTT: 'agtt', SEC_AGCB: 'agcb', SEC_PBNK: 'pbnk', SEC_PEND: 'pend', SEC_GRAVB: 'gravb', SEC_VIEWL: 'viewl', SEC_IKV: 'ikv', SEC_RCNT: 'rcnt', SEC_ECOS: 'ecos', SEC_SHPW: 'shpw', SEC_TRDN: 'trdn', SEC_NPCA: 'npca', SEC_JOBG: 'jobg', SEC_CODE: 'code', SEC_ENGR: 'engr', SEC_SHGR: 'shgr', SEC_BNDS: 'bnds', SEC_OMGS: 'omgs', SEC_RESV: 'resv', SEC_PCSV: 'pcsv', SEC_CONN: 'conn', SEC_WARP: 'warp', SEC_ARES: 'ares', SEC_LSTN: 'lstn', SEC_UNDK: 'undk', SEC_SRCS: 'srcs', SEC_FOBJ: 'fobj', SEC_CUEI: 'cuei', SEC_ANIS: 'anis', SEC_ANIL: 'anil', SEC_ZREF: 'zref'}
+                 SEC_EVQT: 'evqt', SEC_GRAVD: 'gravd', SEC_VIEWK: 'viewk', SEC_VIEWKC: 'viewkc', SEC_VIEWF: 'viewf', SEC_VIEWP: 'viewp', SEC_SHOOT: 'shoot', SEC_ATTK: 'attk', SEC_LIVEF: 'livef', SEC_SPEC: 'spec', SEC_NAVC: 'navc', SEC_JOBS: 'jobs', SEC_GONE: 'gone', SEC_BODY: 'body', SEC_BUPD: 'bupd', SEC_LDC: 'ldc', SEC_NAVT: 'navt', SEC_NMESH: 'nmesh', SEC_NOCT: 'noct', SEC_AGTT: 'agtt', SEC_AGCB: 'agcb', SEC_PBNK: 'pbnk', SEC_PEND: 'pend', SEC_GRAVB: 'gravb', SEC_VIEWL: 'viewl', SEC_IKV: 'ikv', SEC_RCNT: 'rcnt', SEC_ECOS: 'ecos', SEC_SHPW: 'shpw', SEC_TRDN: 'trdn', SEC_NPCA: 'npca', SEC_JOBG: 'jobg', SEC_CODE: 'code', SEC_ENGR: 'engr', SEC_SHGR: 'shgr', SEC_BNDS: 'bnds', SEC_OMGS: 'omgs', SEC_RESV: 'resv', SEC_PCSV: 'pcsv', SEC_CONN: 'conn', SEC_WARP: 'warp', SEC_ARES: 'ares', SEC_LSTN: 'lstn', SEC_UNDK: 'undk', SEC_SRCS: 'srcs', SEC_FOBJ: 'fobj', SEC_CUEI: 'cuei', SEC_ANIS: 'anis', SEC_ANIL: 'anil', SEC_ZREF: 'zref', SEC_SREF: 'sref', SEC_PMOD: 'pmod', SEC_NEED: 'need', SEC_ACCT: 'acct', SEC_KIDS: 'kids', SEC_DOOR: 'door', SEC_DRON: 'dron', SEC_REFP: 'refp', SEC_SPWN: 'spwn', SEC_DKEY: 'dkey', SEC_DEFR: 'defr', SEC_BCLK: 'bclk'}
 WORLD_SECTIONS = (SEC_HEALTH, SEC_POSE)         # version 2 and later, always both
 WORLD3_SECTIONS = (SEC_SHIELD, SEC_NAV, SEC_ATTN, SEC_KEYS)   # version 3, always all four
 WORLD4_SECTIONS = (SEC_PATH, SEC_REGION)                      # version 4, always both
@@ -199,9 +199,9 @@ WORLD10_SECTIONS = (SEC_SOLVER, SEC_BULLET)                   # version 10, alwa
 WORLD11_SECTIONS = (SEC_GRAV, SEC_GRAVC, SEC_GRAVS)           # version 11, always all three
 WORLD12_SECTIONS = (SEC_SPLM, SEC_SPLME, SEC_SPLMSEG, SEC_GRAVN, SEC_GRAVP, SEC_GRAVQ)   # version 12, always all six
 WORLD13_SECTIONS = (SEC_JOBE, SEC_EVQT, SEC_GRAVD, SEC_VIEWK, SEC_VIEWKC, SEC_VIEWF, SEC_VIEWP, SEC_SHOOT, SEC_ATTK,
-                    SEC_LIVEF, SEC_SPEC, SEC_NAVC, SEC_JOBS, SEC_GONE, SEC_BODY, SEC_BUPD, SEC_LDC, SEC_NAVT, SEC_NMESH, SEC_NOCT, SEC_AGTT, SEC_AGCB, SEC_PBNK, SEC_PEND, SEC_GRAVB, SEC_VIEWL, SEC_IKV, SEC_RCNT, SEC_ECOS, SEC_SHPW, SEC_TRDN, SEC_NPCA, SEC_JOBG, SEC_CODE, SEC_ENGR, SEC_SHGR, SEC_BNDS, SEC_OMGS, SEC_RESV, SEC_PCSV, SEC_CONN, SEC_WARP, SEC_ARES, SEC_LSTN, SEC_UNDK, SEC_SRCS, SEC_FOBJ, SEC_CUEI, SEC_ANIS, SEC_ANIL, SEC_ZREF)   # version 13, all fifty-one
+                    SEC_LIVEF, SEC_SPEC, SEC_NAVC, SEC_JOBS, SEC_GONE, SEC_BODY, SEC_BUPD, SEC_LDC, SEC_NAVT, SEC_NMESH, SEC_NOCT, SEC_AGTT, SEC_AGCB, SEC_PBNK, SEC_PEND, SEC_GRAVB, SEC_VIEWL, SEC_IKV, SEC_RCNT, SEC_ECOS, SEC_SHPW, SEC_TRDN, SEC_NPCA, SEC_JOBG, SEC_CODE, SEC_ENGR, SEC_SHGR, SEC_BNDS, SEC_OMGS, SEC_RESV, SEC_PCSV, SEC_CONN, SEC_WARP, SEC_ARES, SEC_LSTN, SEC_UNDK, SEC_SRCS, SEC_FOBJ, SEC_CUEI, SEC_ANIS, SEC_ANIL, SEC_ZREF, SEC_SREF, SEC_PMOD, SEC_NEED, SEC_ACCT, SEC_KIDS, SEC_DOOR, SEC_DRON, SEC_REFP, SEC_SPWN, SEC_DKEY, SEC_DEFR, SEC_BCLK)   # version 13, all sixty-three
 LAST_SECTION = {1: SEC_LUA, 2: SEC_POSE, 3: SEC_KEYS, 4: SEC_REGION, 5: SEC_SPLINE, 6: SEC_AGENT, 7: SEC_ROUTE, 8: SEC_DOCK, 9: SEC_STEERPT,
-                10: SEC_BULLET, 11: SEC_GRAVS, 12: SEC_GRAVQ, 13: SEC_ZREF}
+                10: SEC_BULLET, 11: SEC_GRAVS, 12: SEC_GRAVQ, 13: SEC_BCLK}
 TEXT_SECTIONS = (SEC_MODULES, SEC_LUA)          # newline-terminated printable lines; count = lines
 # Fixed record shapes (lockstep_join.h join_*_rec). GATE is one 256-byte record; MODULES and LUA (the probe's own state
 # providers, native_gate_join_core.lua) are text (count = lines).
@@ -213,7 +213,7 @@ WAKEVEC = struct.Struct('<QQIIIIII')          # owner, script, class, version, v
 MDHEAP = struct.Struct('<QQQQIIII')           # name, root, time bits, activation bits, seq, kind, ordinal, state
 # The world side table (lockstep_join_world.h), sorted by portable ID:
 HEALTH = struct.Struct('<QQQQQII')            # portable, hull bits, shield value bits, changed bits, maximum bits, flags, count
-POSE = struct.Struct('<QII12I')               # portable, controller vtable RVA, form (1: +0x10, 2: +0x20), x/y/z of 4 vectors
+POSE = struct.Struct('<QII12I')               # portable, controller vtable RVA, form (1: +0x10, 2 and 3: +0x20), x/y/z of 4 vectors
 HEALTH_SHIELD, HEALTH_FULL = 1, 2             # flags: a shield group; its value and changed time are the census's full form
 # Version 3 (lockstep_join.h join_shield_rec, join_nav_rec, join_attn_rec, join_key_rec):
 SHIELD = struct.Struct('<QQIIIIII')           # portable, delay bits, rate bits, factor bits, the modifiers' 3 factors, flags (1: modifiers)
@@ -357,6 +357,7 @@ GRAVQ = struct.Struct('<QIIIIQQQ')
 JOBE = struct.Struct('<QII%ds' % JOBE_CURSOR)
 EVQT = struct.Struct('<QIIIIQ')   # EVQT: source portable, class RVA, type ID, place, flags, time bits
 EVQT_UNMAPPED = 1
+EVQT_RUNTIME = 2   # a source without a portable ID by its runtime ID
 GRAVD = struct.Struct('<QQII')   # GRAVD: ship, cached parent (portable IDs), view (relative), flags NONE/UNMAPPED
 GRAVD_NONE, GRAVD_UNMAPPED = 1, 2
 VIEWK = struct.Struct('<QIIII')   # VIEWK: component, view (relative), flags UNMAPPED/UNREAD, the view flags, the children count
@@ -391,7 +392,7 @@ TRDN = struct.Struct('<Qd')         # TRDN: a container's next trade offer updat
 NPCA = struct.Struct('<QII48s')     # NPCA: an active NPC's flags, animation index and bytes +0x5b0 .. +0x5e0
 JOBG = struct.Struct('<QQ')         # JOBG: a job's own generator word *(job+0x528), by its ID's FNV-1a hash
 CODE = struct.Struct('<II')         # CODE: the object code counter and the game's code seed (one record)
-ENGR = struct.Struct('<QdQ')        # ENGR: an engine's boost ramp time (+0x2f0) and factor word (+0x2f8)
+ENGR = struct.Struct('<QdQdII')     # ENGR: an engine's boost ramp time (+0x2f0) and factor word (+0x2f8), travel ramp time (+0x338) and factor (+0x330)
 RESV = struct.Struct('<QQQ112sd')   # RESV: a zone's space reservation (owner, index): box node+0x30 .. +0x9f raw, expiry +0xa0
 CONN = struct.Struct('<QQQQ')       # CONN: an NPC's (or its partner's) connection (owner, ID) -> its partner (owner, ID), portable owners
 WARP = struct.Struct('<QQII64s')    # WARP: a pending WarpEvent's source (portable), due time bits, place, flags, destination transform
@@ -410,13 +411,39 @@ ECOS = struct.Struct('<Qdd')         # ECOS: a station's, build storage's or shi
 RCNT = struct.Struct('<QII')         # RCNT: a created ship's or bay's reference count (+0x40)
 ZREF = struct.Struct('<QiIQ')       # ZREF: an entry of the zone reference table (the zone's portable ID, count, 0, the time's bits)
 assert ZREF.size == 24
-assert ANIL.size == 32 and ANIS.size == 136 and CUEI.size == 16 and FOBJ.size == 32 and SRCS.size == 40 and UNDK.size == 224 and LSTN.size == 40 and ARES.size == 224 and WARP.size == 88 and CONN.size == 32 and RESV.size == 144 and SPLM.size == 1264 and SPLME.size == 192 and GRAVN.size == 32 and GRAVP.size == 80 and GRAVQ.size == 48 and JOBE.size == 128 and EVQT.size == 32 and GRAVD.size == 24 and VIEWK.size == 24 and VIEWKC.size == 24 and VIEWF.size == 24 and VIEWP.size == 72 and SHOOT.size == 104 and ATTK.size == 48 and LIVEF.size == 16 and SPEC.size == 40 and NAVC.size == 104 and JOBS.size == 24 and GONE.size == 8 and BODY.size == 208 and BUPD.size == 16 and LDC.size == 128 and NAVT.size == 128 and NMESH.size == 8 and NOCT.size == 40 and AGTT.size == 32 and AGCB.size == 1032 and PBNK.size == 376 and PEND.size == 16 and GRAVB.size == 24 and VIEWL.size == 16 and IKV.size == 40 and RCNT.size == 16 and ECOS.size == 24 and SHPW.size == 56 and TRDN.size == 16 and NPCA.size == 64 and JOBG.size == 16 and CODE.size == 8 and ENGR.size == 24 and SHGR.size == 40 and BNDS.size == 216 and OMGS.size == 8776
+SREF = struct.Struct('<II48s')     # SREF: a script value as the join save's <ref> writer was given it (kind 1 rotation, 2 position; 0; its bytes)
+assert SREF.size == 56
+PMOD = struct.Struct('<QQQ')      # PMOD: a processing module (portable ID), its next update time and its state's time (doubles' bits)
+assert PMOD.size == 24
+NEED = struct.Struct('<QQiBBH')   # NEED: a container (portable ID); which 0: its class and flags, 1 / 2: a ware (FNV-1a of its ID) and its amount
+assert NEED.size == 24
+ACCT = struct.Struct('<QQ')       # ACCT: a container (portable ID) and the handle of the account it trades on
+assert ACCT.size == 16
+KIDS = struct.Struct('<QQII')     # KIDS: a parent and a child (portable IDs), the class bucket and the child's place in it
+assert KIDS.size == 24
+DOOR = struct.Struct('<QQ')       # DOOR: a container (portable ID); flags 1 its dock doors are not set up, 2 its doors' map is empty
+assert DOOR.size == 16
+DRON = struct.Struct('<QIIII')    # DRON: a container (portable ID), its three pending drone modes and its user transport mode
+assert DRON.size == 24
+REFP = struct.Struct('<QQqqII')   # REFP: a container (portable ID), a ware (FNV-1a of its ID), buy and sell in hundredths, which list
+assert REFP.size == 40
+SPWN = struct.Struct('<QQQIIII')   # SPWN: a field-spawned object, its region, its area's sector (portables), field and area index, flags
+assert SPWN.size == 40
+DKEY = struct.Struct('<QQ')   # DKEY: a container and a key of its dock door map (portable IDs; key 0: one without)
+assert DKEY.size == 16
+DEFR = struct.Struct('<QIIQQQQQQII')   # DEFR: a deferred post at T: listener, class, place, time, stamp, word, the trade's parties, amount, flags
+assert DEFR.size == 72
+DEFR_ARRIVED, DEFR_RETURN = 0x2baab60, 0x2ba7788   # TradeCargoArrivedEvent (flags 1), ReturnUnitEvent (flags 2)
+BCLK = struct.Struct('<QQIIQQ')   # BCLK: a body clock note: person, over tick, motion key, slot, start and whole time (bits)
+assert BCLK.size == 40
+BCLK_ENTRIES = 4096
+assert ANIL.size == 32 and ANIS.size == 136 and CUEI.size == 16 and FOBJ.size == 32 and SRCS.size == 40 and UNDK.size == 224 and LSTN.size == 40 and ARES.size == 224 and WARP.size == 88 and CONN.size == 32 and RESV.size == 144 and SPLM.size == 1264 and SPLME.size == 192 and GRAVN.size == 32 and GRAVP.size == 80 and GRAVQ.size == 48 and JOBE.size == 128 and EVQT.size == 32 and GRAVD.size == 24 and VIEWK.size == 24 and VIEWKC.size == 24 and VIEWF.size == 24 and VIEWP.size == 72 and SHOOT.size == 104 and ATTK.size == 48 and LIVEF.size == 16 and SPEC.size == 40 and NAVC.size == 104 and JOBS.size == 24 and GONE.size == 8 and BODY.size == 208 and BUPD.size == 16 and LDC.size == 128 and NAVT.size == 128 and NMESH.size == 8 and NOCT.size == 40 and AGTT.size == 32 and AGCB.size == 1032 and PBNK.size == 376 and PEND.size == 16 and GRAVB.size == 24 and VIEWL.size == 16 and IKV.size == 40 and RCNT.size == 16 and ECOS.size == 24 and SHPW.size == 56 and TRDN.size == 16 and NPCA.size == 64 and JOBG.size == 16 and CODE.size == 8 and ENGR.size == 40 and SHGR.size == 40 and BNDS.size == 216 and OMGS.size == 8776
 RECORDS = {SEC_IDS: IDS, SEC_CTX: CTX, SEC_WAKE: WAKE, SEC_WAKEVEC: WAKEVEC, SEC_MDHEAP: MDHEAP, SEC_HEALTH: HEALTH, SEC_POSE: POSE,
            SEC_SHIELD: SHIELD, SEC_NAV: NAV, SEC_ATTN: ATTN, SEC_KEYS: KEYS, SEC_PATH: PATH, SEC_REGION: REGION,
            SEC_FLIGHT: FLIGHT, SEC_SPLINE: SPLINE, SEC_AGENT: AGENT, SEC_ROUTE: ROUTE, SEC_PARAM: PARAM, SEC_DOCK: DOCK,
            SEC_STEER: STEER, SEC_STEERPT: ROUTE, SEC_SOLVER: SOLVER, SEC_BULLET: BULLET, SEC_GRAV: GRAV, SEC_GRAVC: GRAVC,
            SEC_GRAVS: GRAVS, SEC_SPLM: SPLM, SEC_SPLME: SPLME, SEC_SPLMSEG: SPLINE, SEC_GRAVN: GRAVN,
-           SEC_GRAVP: GRAVP, SEC_GRAVQ: GRAVQ, SEC_JOBE: JOBE, SEC_EVQT: EVQT, SEC_GRAVD: GRAVD, SEC_VIEWK: VIEWK, SEC_VIEWKC: VIEWKC, SEC_VIEWF: VIEWF, SEC_VIEWP: VIEWP, SEC_SHOOT: SHOOT, SEC_ATTK: ATTK, SEC_LIVEF: LIVEF, SEC_SPEC: SPEC, SEC_NAVC: NAVC, SEC_JOBS: JOBS, SEC_GONE: GONE, SEC_BODY: BODY, SEC_BUPD: BUPD, SEC_LDC: LDC, SEC_NAVT: NAVT, SEC_NMESH: NMESH, SEC_NOCT: NOCT, SEC_AGTT: AGTT, SEC_AGCB: AGCB, SEC_PBNK: PBNK, SEC_PEND: PEND, SEC_GRAVB: GRAVB, SEC_VIEWL: VIEWL, SEC_IKV: IKV, SEC_RCNT: RCNT, SEC_ECOS: ECOS, SEC_SHPW: SHPW, SEC_TRDN: TRDN, SEC_NPCA: NPCA, SEC_JOBG: JOBG, SEC_CODE: CODE, SEC_ENGR: ENGR, SEC_SHGR: SHGR, SEC_BNDS: BNDS, SEC_OMGS: OMGS, SEC_RESV: RESV, SEC_PCSV: SOLVER, SEC_CONN: CONN, SEC_WARP: WARP, SEC_ARES: ARES, SEC_LSTN: LSTN, SEC_UNDK: UNDK, SEC_SRCS: SRCS, SEC_FOBJ: FOBJ, SEC_CUEI: CUEI, SEC_ANIS: ANIS, SEC_ANIL: ANIL, SEC_ZREF: ZREF}
+           SEC_GRAVP: GRAVP, SEC_GRAVQ: GRAVQ, SEC_JOBE: JOBE, SEC_EVQT: EVQT, SEC_GRAVD: GRAVD, SEC_VIEWK: VIEWK, SEC_VIEWKC: VIEWKC, SEC_VIEWF: VIEWF, SEC_VIEWP: VIEWP, SEC_SHOOT: SHOOT, SEC_ATTK: ATTK, SEC_LIVEF: LIVEF, SEC_SPEC: SPEC, SEC_NAVC: NAVC, SEC_JOBS: JOBS, SEC_GONE: GONE, SEC_BODY: BODY, SEC_BUPD: BUPD, SEC_LDC: LDC, SEC_NAVT: NAVT, SEC_NMESH: NMESH, SEC_NOCT: NOCT, SEC_AGTT: AGTT, SEC_AGCB: AGCB, SEC_PBNK: PBNK, SEC_PEND: PEND, SEC_GRAVB: GRAVB, SEC_VIEWL: VIEWL, SEC_IKV: IKV, SEC_RCNT: RCNT, SEC_ECOS: ECOS, SEC_SHPW: SHPW, SEC_TRDN: TRDN, SEC_NPCA: NPCA, SEC_JOBG: JOBG, SEC_CODE: CODE, SEC_ENGR: ENGR, SEC_SHGR: SHGR, SEC_BNDS: BNDS, SEC_OMGS: OMGS, SEC_RESV: RESV, SEC_PCSV: SOLVER, SEC_CONN: CONN, SEC_WARP: WARP, SEC_ARES: ARES, SEC_LSTN: LSTN, SEC_UNDK: UNDK, SEC_SRCS: SRCS, SEC_FOBJ: FOBJ, SEC_CUEI: CUEI, SEC_ANIS: ANIS, SEC_ANIL: ANIL, SEC_ZREF: ZREF, SEC_SREF: SREF, SEC_PMOD: PMOD, SEC_NEED: NEED, SEC_ACCT: ACCT, SEC_KIDS: KIDS, SEC_DOOR: DOOR, SEC_DRON: DRON, SEC_REFP: REFP, SEC_SPWN: SPWN, SEC_DKEY: DKEY, SEC_DEFR: DEFR, SEC_BCLK: BCLK}
 GATE_FIELDS = ('tick', 'game', 'real', 'wire_version', 'clients', 'lookahead', 'tick_hz', 'slot', 'md_seq', 'rid_next',
                'created_generation', 'created_live', 'identities', 'ctx_count', 'wake_count', 'vec_index', 'vec0', 'vec1',
                'md_count', 'md_void', 'md_release', 'md_queued', 'unsupported', 'digest', 'portable', 'save_us',
@@ -780,7 +807,8 @@ def _evqt_key(r):
 def evqt_shape(evqt):
     """lockstep_join_world.h join_evqt_shape: sorted by (portable, class, time, place), flags UNMAPPED only, exactly without a source."""
     for i, r in enumerate(evqt):
-        if r[4] & ~EVQT_UNMAPPED or (not r[0]) != bool(r[4] & EVQT_UNMAPPED) or (i and _evqt_key(evqt[i-1]) > _evqt_key(r)):
+        if (r[4] & ~(EVQT_UNMAPPED | EVQT_RUNTIME) or (r[4] & EVQT_UNMAPPED and r[4] & EVQT_RUNTIME)
+                or (not r[0]) != bool(r[4] & EVQT_UNMAPPED) or (i and _evqt_key(evqt[i-1]) > _evqt_key(r))):
             return False
     return True
 
@@ -896,7 +924,7 @@ def read_package(data):
     if hashlib.sha256(data[:-32]).digest() != data[-32:]:
         raise JoinError('package_sha')
     magic, version, count, tick, game, real, save_sha, save_bytes, slot, flags, reserved = HEADER.unpack_from(data)
-    if magic != MAGIC or version not in PACKAGE_VERSIONS or reserved or count > 86:
+    if magic != MAGIC or version not in PACKAGE_VERSIONS or reserved or count > 98:
         raise JoinError('package_magic')
     header = {'tick': tick, 'game': game, 'real': real, 'save_sha': save_sha.hex(), 'save_bytes': save_bytes, 'slot': slot,
               'flags': flags, 'sections': count, 'version': version}
@@ -1052,10 +1080,10 @@ def read_package(data):
     code = sections.get('code', [])
     if version >= 13 and (len(code) > 1 or any(r[0] > 0x1000000 or r[1] > 0xffffff for r in code)):
         raise JoinError('code_shape')
-    if version >= 13 and any(not r[0] or (i and sections['engr'][i-1][0] >= r[0]) for i, r in enumerate(sections.get('engr', []))):
+    if version >= 13 and any(not r[0] or r[5] or (i and sections['engr'][i-1][0] >= r[0]) for i, r in enumerate(sections.get('engr', []))):
         raise JoinError('engr_shape')
     shgr = sections.get('shgr', [])
-    if version >= 13 and any(not r[0] or not r[1] or r[3] or (i and shgr[i-1][:3] >= r[:3]) for i, r in enumerate(shgr)):
+    if version >= 13 and any(not r[0] or not r[1] or r[3] > 1 or (i and shgr[i-1][:3] >= r[:3]) for i, r in enumerate(shgr)):   # pad 1: a runtime ID
         raise JoinError('shgr_shape')
     bnds = sections.get('bnds', [])
     if version >= 13 and any(not r[0] or r[-1] or (i and bnds[i-1][0] >= r[0]) for i, r in enumerate(bnds)):
@@ -1102,6 +1130,59 @@ def read_package(data):
     zref = sections.get('zref', [])   # ZREF: by the zone, each once
     if version >= 13 and any(not r[0] or r[2] or (i and zref[i-1][0] >= r[0]) for i, r in enumerate(zref)):
         raise JoinError('zref_shape')
+    if version >= 13 and any(r[0] not in (1, 2) or r[1] or (r[0] == 2 and any(r[2][16:])) for r in sections.get('sref', [])):
+        raise JoinError('sref_shape')   # SREF: a rotation or a position, a position's rest 0
+    bclk = sections.get('bclk', [])   # BCLK: a person's note, in slot order, each slot in the table
+    if version >= 13 and any(not r[0] or r[3] >= BCLK_ENTRIES or (i and bclk[i-1][3] >= r[3]) for i, r in enumerate(bclk)):
+        raise JoinError('bclk_shape')
+    defr = sections.get('defr', [])   # DEFR: in list order; a trade's arrival or a unit's return, nothing else set
+    for i, r in enumerate(defr if version >= 13 else []):
+        portable, cls, index, _time, stamp, word, seller, buyer, partner, amount, flags = r
+        trade = flags == 1 and cls == DEFR_ARRIVED and not word and (seller or buyer)
+        unit = flags == 2 and cls == DEFR_RETURN and not (stamp or seller or buyer or partner or amount)
+        if not portable or not (trade or unit) or (i and defr[i-1][2] >= index):
+            raise JoinError('defr_shape')
+    dkey = sections.get('dkey', [])   # DKEY: by (container, key), each once
+    for i, r in enumerate(dkey if version >= 13 else []):
+        if not r[0] or (i and (dkey[i-1][0], dkey[i-1][1]) >= (r[0], r[1])):
+            raise JoinError('dkey_shape')
+    spwn = sections.get('spwn', [])   # SPWN: by object, each once; a field or an area, nothing else set
+    for i, r in enumerate(spwn if version >= 13 else []):
+        if (not r[0] or not r[1] or not r[5] or r[5] & ~3 or r[6] or (not r[5] & 1 and r[3])
+                or ((not r[2]) if r[5] & 2 else (r[2] or r[4])) or (i and spwn[i-1][0] >= r[0])):
+            raise JoinError('spwn_shape')
+    refp = sections.get('refp', [])   # REFP: by container, which, ware; each once; hundredths in it
+    for i, r in enumerate(refp if version >= 13 else []):
+        p = refp[i-1] if i else None
+        if (not r[0] or not r[1] or r[4] > 1 or r[5] or (not int(r[2] % 100 if r[2] >= 0 else -r[2] % 100) and not int(r[3] % 100 if r[3] >= 0 else -r[3] % 100))
+                or (p is not None and (p[0], p[4], p[1]) >= (r[0], r[4], r[1]))):
+            raise JoinError('refp_shape')
+    dron = sections.get('dron', [])   # DRON: by the container, each once; modes below 0x40
+    if version >= 13 and any(not r[0] or max(r[1:]) >= 0x40 or (i and dron[i-1][0] >= r[0]) for i, r in enumerate(dron)):
+        raise JoinError('dron_shape')
+    door = sections.get('door', [])   # DOOR: by the container, each once
+    if version >= 13 and any(not r[0] or not 1 <= r[1] <= 3 or (i and door[i-1][0] >= r[0]) for i, r in enumerate(door)):
+        raise JoinError('door_shape')
+    kids = sections.get('kids', [])   # KIDS: by parent, bucket, index; a bucket's indices from 0
+    for i, r in enumerate(kids if version >= 13 else []):
+        p = kids[i-1] if i else None
+        same = p is not None and p[0] == r[0] and p[2] == r[2]
+        if (not r[0] or not r[1] or r[2] >= 128 or r[3] != (p[3] + 1 if same else 0)
+                or (p is not None and not same and (p[0] > r[0] or (p[0] == r[0] and p[2] >= r[2])))):
+            raise JoinError('kids_shape')
+    acct = sections.get('acct', [])   # ACCT: by the container, each once; never the default
+    if version >= 13 and any(not r[0] or r[1] < 2 or (i and acct[i-1][0] >= r[0]) for i, r in enumerate(acct)):
+        raise JoinError('acct_shape')
+    need = sections.get('need', [])   # NEED: a container's head, then its entries; sorted, each once
+    for i, r in enumerate(need if version >= 13 else []):
+        p = need[i-1] if i else None
+        head = p is None or p[0] != r[0]
+        if (not r[0] or r[3] > 2 or r[5] or head != (r[3] == 0) or (not r[3] and (r[2] or r[4] > 7 or not r[1])) or (r[3] and (r[4] or not r[1]))
+                or (p is not None and (p[0] > r[0] or (not head and (p[3] > r[3] or (p[3] == r[3] and p[1] >= r[1])))))):
+            raise JoinError('need_shape')
+    pmod = sections.get('pmod', [])   # PMOD: by the module, each once
+    if version >= 13 and any(not r[0] or (i and pmod[i-1][0] >= r[0]) for i, r in enumerate(pmod)):
+        raise JoinError('pmod_shape')
     fobj = sections.get('fobj', [])   # FOBJ: by (region, field, place), the object 0 exactly when unmapped
     if version >= 13 and any(not r[0] or r[4] & ~1 or r[5] or bool(r[4] & 1) == bool(r[1])
                              or (i and (fobj[i-1][0], fobj[i-1][2], fobj[i-1][3]) >= (r[0], r[2], r[3])) for i, r in enumerate(fobj)):

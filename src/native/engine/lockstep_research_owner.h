@@ -126,6 +126,8 @@ static void *rsch_faction_native(unsigned k) {return uitrade_slot_faction(k);}
 static void *rsch_canonical_native(void) {
     if(uitrade_scope_open) return uitrade_scope_saved;      /* a replayed call's faction scope holds a slot's now */
     if(mpp_faction_open) return mpp_faction_saved;          /* a mission scope too */
+    if(fpres_open) return fpres_canonical;                  /* and client k's presentation (lockstep_faction_present.h) */
+    if(fpres_sim_slot) return fpres_sim_saved;              /* and the update of a container of a slot's own faction */
     return pnat_base?*uitrade_player_faction():NULL;
 }
 static int rsch_scope_enter_native(unsigned k) {return !pstk_scope_slot && pslot_enter(k);}

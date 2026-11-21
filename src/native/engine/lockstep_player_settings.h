@@ -171,6 +171,8 @@ static unsigned char *pss_player(void) {return pnat_player();}
 static void *pss_load_ptr(const unsigned char *at) {void *p=NULL;memcpy(&p,at,8);return p;}
 /* X4's player faction as the simulation knows it, also while a faction scope or the view has swapped g_PlayerFaction. */
 static void *pss_true_player_faction(void) {
+    if(fpres_open) return fpres_canonical;   /* the presentation holds the slot's own faction in its place */
+    if(fpres_sim_slot) return fpres_sim_saved;   /* and so does the update of a container of a slot's own faction */
     if(uitrade_scope_open) return uitrade_scope_saved;
     if(uifac_view_open) return uifac_view_saved;
     return *uitrade_player_faction();
