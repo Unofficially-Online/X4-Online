@@ -279,6 +279,20 @@ class ConversationTests(unittest.TestCase):
             self.assertEqual(uirep.values(g.results)[-1], '70:0')
             self.assertIsNone(g.FAILED)
 
+    def test_with_owners_any_slot_answers_a_ships_question_and_takes_the_conversation(self):
+        # The answer starts the conversation the ship's script holds next: it takes the conversation for its slot first,
+        # as a start does; a conversation already running refuses it on every client alike, nothing raised.
+        event = '11' + '01' + '03' + double_hex(4.0)
+        for client in (1, 2):
+            lua, g = self.owner_session(client)
+            lua.execute(f"RAISED={{}};gate.md_media_answer=function(seq) RAISED[#RAISED+1]=seq;return 1 end;DUE={{[50]='2:73:{event}'}};S.apply(50)")
+            self.assertEqual((uirep.values(g.owner_calls), uirep.values(g.RAISED)), (['take:2'], [4]))
+            self.assertTrue(any('slot=2 op=73 result=applied what=answer(4)' in l for l in uirep.values(g.logs)), uirep.values(g.logs)[-3:])
+            lua.execute(f"owner_calls={{}};OWNER_TAKE=0;DUE={{[60]='1:73:{event}'}};S.apply(60)")
+            self.assertEqual((uirep.values(g.owner_calls), uirep.values(g.RAISED)), (['take:1'], [4]))
+            self.assertTrue(any('slot=1 op=73 result=refused what=busy' in l for l in uirep.values(g.logs)), uirep.values(g.logs)[-3:])
+            self.assertIsNone(g.FAILED)
+
     def test_an_ai_dock_signal_of_slot_k_runs_in_its_scope_with_the_generation_open(self):
         # core K.SLOT_SIGNALS (the debug ops ai_dock / ai_dock_station; MD AiDock): as the slot's conversation start, so
         # the cue instance is slot k's and dock_player_ship_at docks slot k's ship; slot 1's: as any of its signals

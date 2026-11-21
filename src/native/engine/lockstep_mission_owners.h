@@ -25,6 +25,10 @@
  *          leaves the canonical one (slot 1's) as it was, the same on every client; client k's presentation scope
  *          (pres_enter/pres_leave) shows slot k's to its own HUD and menus and changes nothing. The index is found
  *          again by ID at every exchange (the vector moves when a mission ends); an ID that is gone is no active mission.
+ *          One exception, client k's own guidance: a presentation scope in which X4's Guidance script ran (the map's
+ *          Plot course or Remove course, which stay local; lockstep_script_rng.h counts its frames) keeps what it
+ *          left as slot k's active mission on this client, as slot 1's own guidance is the canonical one on client 1
+ *          alone (a player 2..N's Plot course made a guidance that nobody saw and Shift+A had no target, 19 Nov).
  *          The manager's guidance timer (+0x30 on g_Ticker, flag +0x8c) stays the manager's one: slot k's guidance is
  *          refreshed where its scope runs it, not by the timer [I].
  *  lists   a client's mission menus list its own slot's missions (the probe wraps the Lua list readers by mpp_owner_of;
@@ -508,8 +512,9 @@ static int mpp_call_leave(unsigned k) {
 static uint64_t mpp_active[PILOT_SLOTS+1];   /* slot k's active mission ID while the manager holds another slot's (2..N) */
 static uint64_t mpp_active_saved;            /* the canonical ID while a scope is open */
 static unsigned mpp_active_open;             /* the slot whose active mission the manager holds now, 0 = canonical */
-static volatile LONG64 mpp_active_swaps,mpp_active_gone,mpp_active_shown,mpp_active_shown_changed;
+static volatile LONG64 mpp_active_swaps,mpp_active_gone,mpp_active_shown,mpp_active_shown_changed,mpp_active_guidance;
 static uint64_t mpp_active_shown_id;       /* what this client's last presentation scope showed as its active mission */
+static LONG64 mpp_active_guidance_at;      /* the Guidance script's frames counted when the open scope began */
 /* The manager's active mission becomes this ID with its index of now; an ID not in the vector is none. */
 static void mpp_active_put(unsigned char *m,uint64_t id) {
     unsigned char *begin=NULL,*end=NULL;uint64_t index=0;int found=0;
@@ -526,15 +531,18 @@ static void mpp_active_enter(unsigned k) {
     unsigned char *m;uint64_t now=0;
     if(!mpp_armed || k<2 || k>PILOT_SLOTS || mpp_active_open || !(m=uimis_manager(UIMIS_MISSION_MANAGER)) || !sample_read(m+MPP_MGR_ACTIVE,&now,8)) return;
     mpp_active_saved=now;mpp_active_put(m,mpp_active[k]);mpp_active_open=k;InterlockedIncrement64(&mpp_active_swaps);
+    mpp_active_guidance_at=script_rng_guidance_frames;
 }
 /* ...and closes: keep = the simulation's scope (what it left is slot k's active mission from now on); a presentation scope
- * keeps nothing (a change there is counted: the UI's SetActiveMission is captured and replayed, never run here). */
+ * keeps nothing (a change there is counted: the UI's SetActiveMission is captured and replayed, never run here), but
+ * for this client's own guidance: a change made while the Guidance script ran in the scope is kept (header 'active'). */
 static void mpp_active_leave(unsigned k,int keep) {
     unsigned char *m;uint64_t now=0;
     if(!k || mpp_active_open!=k) return;
     mpp_active_open=0;
     if(!(m=uimis_manager(UIMIS_MISSION_MANAGER)) || !sample_read(m+MPP_MGR_ACTIVE,&now,8)) return;
     if(keep) mpp_active[k]=now;
+    else if(now!=mpp_active[k] && script_rng_guidance_frames!=mpp_active_guidance_at) {mpp_active[k]=now;InterlockedIncrement64(&mpp_active_guidance);}
     else {mpp_active_shown_id=mpp_active[k];InterlockedIncrement64(&mpp_active_shown);if(now!=mpp_active[k] && !(mpp_active[k] && !now)) InterlockedIncrement64(&mpp_active_shown_changed);}
     mpp_active_put(m,mpp_active_saved);
 }
@@ -605,7 +613,7 @@ static int mpp_status(char *out,size_t cap) {
     return snprintf(out,cap,"armed=%d owners=%u hash=%016llx claims=%lld gone=%lld full=%lld frames=%lld entered=%lld inside=%lld "
         "conflicts=%lld refused=%lld calls=%lld call_refused=%lld leave_failed=%lld active=%llx/%llx/%llx swaps=%lld active_gone=%lld "
         "shown=%lld/%lld/%llx generations=%lld generated=%lld/%lld pruned=%lld depth=%u hook=%d/%s faction=%lld/%lld/%lld story=%lld/%lld "
-        "ai=%d/%lld/%lld/%lld/%lld/%lld sched=%d/%lld/%lld/%lld",mpp_armed,mpp_count,(unsigned long long)mpp_owners_hash(),
+        "ai=%d/%lld/%lld/%lld/%lld/%lld sched=%d/%lld/%lld/%lld guidance=%lld",mpp_armed,mpp_count,(unsigned long long)mpp_owners_hash(),
         (long long)mpp_claims,(long long)mpp_claim_gone,(long long)mpp_full,(long long)mpp_frames,(long long)mpp_entered,(long long)mpp_inside,
         (long long)mpp_conflicts,(long long)mpp_refused,(long long)mpp_calls,(long long)mpp_call_refused,(long long)mpp_leave_failed,
         (unsigned long long)mpp_active[2],(unsigned long long)mpp_active[3],(unsigned long long)mpp_active[4],(long long)mpp_active_swaps,
@@ -613,5 +621,6 @@ static int mpp_status(char *out,size_t cap) {
         (long long)mpp_created,(long long)mpp_pruned,mpp_depth,mpp_site_installed[0]+mpp_site_installed[1],mpp_hook_why,
         (long long)mpp_faction_swaps,(long long)mpp_faction_same,(long long)mpp_faction_changed,(long long)mpp_story_asked,(long long)mpp_story_claimed,
         mpp_ai_on,(long long)mpp_ai_frames,(long long)mpp_ai_entered,(long long)mpp_ai_inside,(long long)mpp_ai_conflicts,(long long)mpp_ai_refused,
-        mpp_sched_installed[0]+mpp_sched_installed[1]+mpp_sched_installed[2],(long long)mpp_sched_calls[0],(long long)mpp_sched_calls[1],(long long)mpp_sched_calls[2]);
+        mpp_sched_installed[0]+mpp_sched_installed[1]+mpp_sched_installed[2],(long long)mpp_sched_calls[0],(long long)mpp_sched_calls[1],(long long)mpp_sched_calls[2],
+        (long long)mpp_active_guidance);
 }

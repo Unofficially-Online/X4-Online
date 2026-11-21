@@ -1445,6 +1445,12 @@ python tools/dev/action_tests.py plan trade
     conversation is to players 2..N.
     Player 1's answer was raised on both clients at the same tick, and its frigate claimed the scout; player 2's
     was refused with a notice, and its claim by order after the questions landed. In sync at all 3,846 ticks.
+  - `claim --answer --answer-by 2` (passes, 21 Nov): any player answers a fleet ship's question since 21 Nov.
+    Player 2 answers the first question and picks "Claim it"; the answer took the conversation for player 2 (as a
+    player's own conversation start does), so the conversation was player 2's, and frigate 1 claimed its scout by
+    itself. Player 1 pressed the key two seconds later: nothing raised (the question was over). Player 1 then had
+    frigate 2 claim the second scout by order. Player 2's answer raised on both clients at tick 993; in sync at all
+    3,843 ticks. A second answer while a conversation runs is refused alike on every client ('busy').
   - `mapopen` (a diagnostic, passes): one client keeps the map open for 100 seconds and nothing else happens.
 - **What the tests found and what was changed for it:**
   - The trade menu's Confirm button was refused to a person: it stood on the list of blocked order entries and
@@ -1636,14 +1642,26 @@ python tools/dev/action_tests.py plan trade
     orders for any player's own ship.
   - `refit --lead 2` (17 Nov): the wharf took player 2's refit and left it queued for the remaining 8,000 ticks
     (player 1's, in the other runs, starts after about 350 ticks). Open.
-  - A course a player 2..N plots ("Plot course" in the map, SetGuidance) makes no guidance: X4's Guidance script
-    listens on player 1's entity, so the signal on player 2's goes nowhere, and Shift+A has nothing to fly to for
-    players 2..N (found 19 Nov while trying it as a detour for the wharf; not fixed).
+  - Every player's own Plot course (fixed 21 Nov; scenario `guidance`, passes for both players). A course is its
+    client's own: the map's Plot course and Remove course stay local and X4's Guidance script runs for that client.
+    A player 2..N's course was made (the call runs in that client's presentation scope, where X4's player object
+    holds that player's state) but not kept: the scope gives back every change of the player's active mission, so
+    the HUD showed nothing and Shift+A had no target. Now a change made while the Guidance script ran in the scope is
+    kept as that player's active mission on its own client (lockstep_mission_owners.h; the script RNG counts the
+    script's frames), as player 1's own course has always been the canonical one on client 1 alone. A patch of the
+    stock script (`tools/dev/native_gate_player_guidance.xml`, X4's own diff loading) notes whose course it is and
+    checks arrival from that player's ship (from player 1, the course never ended), and in a session it no longer
+    signals the ship computer that a course ended or moved: the course is one client's, the autopilot listening there
+    runs on every client, and that signal on one client alone would stop or turn it there only. An autopilot started
+    for a course flies on to its target and ends there; a new course while it flies wants Shift+A again.
+    `guidance` (run of 21 Nov): each player plots a course to a different station (player 1 to NLN-075, player 2 to
+    MMJ-623), sees it on its own client, flies it by Shift+A (147 and 158 km), the course ends by itself at the
+    station, a second course is cleared by Remove course; in sync at all 3,841 ticks.
   - Not shared, so refused to every player (from the session's list of calls, not run): a wing's formation, a
     fleet's planned ships (fleet units), a group's protected position, boarding. Shared since 19 Nov: the
     settings of a wing's groups and a fleet's name.
-  - The answer to a fleet ship's question is player 1's only (the conversation that follows is); for players 2..N
-    the ship acts on its standing order.
+  - The answer to a fleet ship's question: any player's since 21 Nov (`claim --answer --answer-by 2` above); the
+    conversation that follows is the answering player's, its dialog on that player's screen.
   - `claim --ask`, three runs of three: player 2's claim fails on both clients alike, player 1's lands; the clients
     agree throughout (9,222, 9,269 and 9,204 ticks). Read on 19 Nov with a watch of the scouts (the fixture logs each
     second their owner and attention and every ship within 3 km): a frigate's question on the target monitor raises

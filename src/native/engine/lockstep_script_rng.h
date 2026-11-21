@@ -359,6 +359,9 @@ static void script_rng_record_unkeyed(const script_rng_frame *f,uint64_t exit) {
 static void script_rng_spent(uint64_t since) {uint64_t spent=script_rng_tsc()-since;script_rng_now.self+=spent;script_rng_self+=spent;}
 /* Returns 1 when a frame was pushed (script_rng_leave must run), 0 for an
  * untouched pass-through. rng is the executing thread's TLS word. */
+/* MD frames of X4's Guidance script begun (a static cue named "Guidance.*"), counted: a client's own guidance made inside
+ * its presentation scope is kept as its slot's active mission (lockstep_mission_owners.h, 'active'). */
+static volatile LONG64 script_rng_guidance_frames;
 static int script_rng_enter(script_rng_frame *f,unsigned source,void *object,void *program,uint64_t begin,uint64_t end,unsigned mode,uint64_t *rng) {
     if(!InterlockedCompareExchange(&script_rng_active,0,0) || !stats.active || source<SR_EXEC || source>=SR_SOURCES) return 0;
     if(boot_phase!=3 && !(boot_phase==2 && boot_mode && !stats.issued && (script_rng_mask&SCRIPT_RNG_BOOT))) return 0;
@@ -404,6 +407,7 @@ static int script_rng_enter(script_rng_frame *f,unsigned source,void *object,voi
         }
     }
     f->owner=f->state==SR_OUTER || f->state==SR_CHILD?f:owner;
+    if(f->id.kind==SCRIPT_RNG_MD && !strncmp(f->id.name,"Guidance.",9)) InterlockedIncrement64(&script_rng_guidance_frames);
     if(script_rng_rows && (script_rng_options&SCRIPT_RNG_OPT_TRACE) && (source==SR_EXEC || source==SR_RANGE) && object) {
         f->exec=(uintptr_t)object;if(!script_rng_read((unsigned char*)object+0x18,&f->pc_begin,8)) f->pc_begin=UINT64_MAX;
         if(source==SR_RANGE) {f->range_begin=begin;f->range_end=end;}

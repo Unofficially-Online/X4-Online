@@ -150,15 +150,18 @@ static int uimis_guard(const char *name,int lua,const uint64_t *frame,uint64_t *
     *ret=0;
     if(!uirep_armed || !uimis_armed || !(uirep_families&UIMIS_FAMILIES)) return 0;
     /* Slots 2+: refused, but missions per player's own missions calls, and a conversation's calls of its owner
-     * (lockstep_conversation_owner.h; with it slot 1 too answers only what it may). */
-    if(lua?(cvo_armed?!cvo_may(pstk_capture_slot):pstk_capture_slot!=1):(pstk_capture_slot!=1 && !mpp_armed)) return 0;
+     * (lockstep_conversation_owner.h; with it slot 1 too answers only what it may). The answer to a ship's question
+     * starts the conversation that follows it: with conversation owners any slot gives it, as a start (its apply takes
+     * the conversation for its slot first, tools/dev/native_gate_ui_replay_core.lua K.ANSWER). */
+    const int answer=lua && (uirep_families&UIREP_FAMILY_CONVERSATION) && uimis_conv_kind_of(name)==UIMIS_C_ANSWER;
+    if(answer?(!cvo_armed && pstk_capture_slot!=1):lua?(cvo_armed?!cvo_may(pstk_capture_slot):pstk_capture_slot!=1):(pstk_capture_slot!=1 && !mpp_armed)) return 0;
     if(lua) {
         unsigned k=(uirep_families&UIREP_FAMILY_CONVERSATION)?uimis_conv_kind_of(name):0;
         if(!k) return 0;
         data[n++]=(unsigned char)k;
         if(k==UIMIS_C_ANSWER) {   /* one number: the sequence of the notification that asks (an interaction ID is this client's own) */
-            /* player 1's only, also with conversation owners: the conversation that follows an answer is MD's player's */
-            if(pstk_capture_slot!=1) {uirep_note_refusal(name,"slot");return 0;}
+            /* without conversation owners player 1's only: the conversation that follows an answer is MD's player's */
+            if(pstk_capture_slot!=1 && !cvo_armed) {uirep_note_refusal(name,"slot");return 0;}
             void *L=(void*)(uintptr_t)uiguard_arg(frame,0);
             double id=L && uimis_lua_number?uimis_lua_number(L,1):0.0;
             double seq=id>=1.0 && id<=2147483647.0 && floor(id)==id?(double)mdv_interaction_seq((int)id):0.0;
@@ -232,7 +235,7 @@ static int uimis_event_ok(unsigned slot,unsigned op,const unsigned char *data,un
     }
     if(op==UIMIS_OP_CONVERSATION) {
         if(!(uirep_families&UIREP_FAMILY_CONVERSATION) || (slot!=1 && !cvo_armed) || n<2 || !data[0] || (data[0]>UIMIS_CONV_GLOBALS && data[0]!=UIMIS_C_HIRE_MONEY && data[0]!=UIMIS_C_ANSWER) ||
-           (data[0]==UIMIS_C_ANSWER && (slot!=1 || n!=11 || data[1]!=1 || data[2]!=3))) {*why="ui_conversation";return 0;}
+           (data[0]==UIMIS_C_ANSWER && ((slot!=1 && !cvo_armed) || n!=11 || data[1]!=1 || data[2]!=3))) {*why="ui_conversation";return 0;}
         return 1;
     }
     *why="ui_op";return 0;

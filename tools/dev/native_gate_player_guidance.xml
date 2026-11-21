@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Every player's own Plot course (native_gate_player_groups, a session default: this patch ships with md/setup.xml's,
+     tools/dev/native_gate_player_groups.xml).
+
+     X4's guidance (md/guidance.xml) is one player's. A guidance is each client's own in a session: the map's Plot course
+     (SetGuidance) and Remove course (EndGuidance) stay local, the script's runtime IDs are the client's own
+     (lockstep_guidance_local.h), and on client k the map's call runs inside client k's presentation scope, where X4's
+     player object holds player k's state, so X4's own listener hears it and makes the guidance. Two things were player
+     1's all the same (a player 2..N's Plot course showed nothing and Shift+A had no target, action tests 19 Nov):
+      - the mission the guidance made was not kept as player k's active mission: the gate keeps it now
+        (lockstep_mission_owners.h, 'active');
+      - the arrival checks run later, outside that scope, and measured from player 1. Here the guidance notes whose it
+        is when it starts or moves ($X4LAN_P: the player 2..N whose own entity controls what "the player" controls in
+        that frame; none for player 1 and in a stock game) and the checks measure from that player: from its ship
+        while it controls one (a player 2..N's entity is not placed in its seat as X4's own player is: the first run
+        of 21 Nov flew player 2 to 2.8 km of its station and the course stayed on), else from its entity. Player 1's
+        and a stock game's checks are X4's own.
+     And in a session the script does not signal the ship computer that a guidance ended or moved: a guidance is one
+     client's, the autopilot listening there runs on every client, and a signal of one client stopped or turned it
+     there alone. An autopilot started for a guidance flies on to its target and ends there by itself; a new course
+     while it flies wants Shift+A again.
+     Without the gate the player list never exists and every line is the stock behaviour.
+     Our own lines only; the stock script is patched in memory by X4's own diff loading, never on disk. -->
+<diff>
+ <add sel="/mdscript/cues/cue[@name='Start']/cues/cue[@name='NewTarget']/actions" pos="prepend">
+  <include_actions ref="X4LAN_GuidanceOwner"/>
+ </add>
+ <add sel="//cue[@name='UpdateTarget']/actions" pos="prepend">
+  <include_actions ref="X4LAN_GuidanceOwner"/>
+ </add>
+ <add sel="/mdscript/cues/cue[@name='Start']/cues">
+  <library name="X4LAN_GuidanceOwner" purpose="include_actions">
+   <actions>
+    <remove_value name="$X4LAN_P"/>
+    <do_if value="global.$X4LAN_Players? and player.controlled">
+     <do_all exact="global.$X4LAN_Players.count" counter="$X4LAN_I">
+      <do_if value="$X4LAN_I gt 1 and @global.$X4LAN_Players.{$X4LAN_I}.controlled == player.controlled">
+       <set_value name="$X4LAN_P" exact="global.$X4LAN_Players.{$X4LAN_I}"/>
+       <break/>
+      </do_if>
+     </do_all>
+     <remove_value name="$X4LAN_I"/>
+     <debug_text text="'[X4LAN] GUIDANCE_OWNER player=%s owner=%s controlled=%s event=%s time=%s'.[player.entity, @$X4LAN_P, player.controlled, event.name, player.age]"/>
+    </do_if>
+   </actions>
+  </library>
+ </add>
+ <replace sel="//cue[@name='UpdateTarget']//signal_objects">
+  <do_if value="not global.$X4LAN_Players?">
+   <signal_objects object="player.computer" param="'guidance_updated'" param2="$Component" param3="if $Offset then $Offset else position.[0,0,0]"/>
+  </do_if>
+ </replace>
+ <replace sel="//cue[@name='EndGuidance']/actions/signal_objects">
+  <do_if value="not global.$X4LAN_Players?">
+   <signal_objects object="player.computer" param="'guidance_ended'"/>
+  </do_if>
+ </replace>
+ <replace sel="//cue[@name='AtSpace']/conditions/check_value/@value">(if not $X4LAN_P? then player.entity else (if @$X4LAN_P.controlled.isclass.ship then $X4LAN_P.controlled else $X4LAN_P)).hascontext.{$Component}</replace>
+ <replace sel="//cue[@name='ChangedSpace']/conditions/event_object_changed_zone/@object">if not $X4LAN_P? then player.entity else (if @$X4LAN_P.controlled.isclass.ship then $X4LAN_P.controlled else $X4LAN_P)</replace>
+ <replace sel="//cue[@name='ChangedSpace']/conditions/check_value/@value">(if not $X4LAN_P? then player.entity else (if @$X4LAN_P.controlled.isclass.ship then $X4LAN_P.controlled else $X4LAN_P)).hascontext.{$Component}</replace>
+ <replace sel="//cue[@name='NearComponent']/conditions/check_any/check_value[1]/@value">$NearDistance? and (if $Component.isclass.space then (if not $X4LAN_P? then player.entity else (if @$X4LAN_P.controlled.isclass.ship then $X4LAN_P.controlled else $X4LAN_P)).distanceto.[$Target, $Offset] else $Component.bboxdistanceto.{if not $X4LAN_P? then player.entity else (if @$X4LAN_P.controlled.isclass.ship then $X4LAN_P.controlled else $X4LAN_P)}) le (if (not (if not $X4LAN_P? then player.occupiedship else @$X4LAN_P.controlled.isclass.ship) and $Component.isclass.ship) then 1m else $NearDistance)</replace>
+ <replace sel="//cue[@name='NearComponent']/conditions/check_any/check_value[2]/@value">$Embark? and (if not $X4LAN_P? then player.entity else (if @$X4LAN_P.controlled.isclass.ship then $X4LAN_P.controlled else $X4LAN_P)).hascontext.{$Component}</replace>
+</diff>

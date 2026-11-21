@@ -41,7 +41,10 @@ K.MISSIONS_NOTICE_TICKS=90   -- the info line of a slot 2+ refusal at most this 
 K.HIRE_MONEY=16
 -- A fleet ship's question answered (the key or the click on its notification: RaisePlayerInteractionEvent): number
 -- K.ANSWER = UIMIS_C_ANSWER with the notification's sequence number, captured natively (lockstep_md_media.h); every
--- client raises the event at the apply (gate.md_media_answer). Slot 1's only, as the conversation that follows.
+-- client raises the event at the apply (gate.md_media_answer). With conversation owners (p.conv_slots) any player answers:
+-- the answer takes the conversation for its slot first, as a start does, so the conversation the ship's script starts
+-- next is that player's (its dialog on that player's screen); a conversation already running refuses it, the same on
+-- every client ('busy'). Without them slot 1's only.
 K.ANSWER=17
 K.HIRE_SCOPES={MapMenu={'buttonHire'}}
 -- The UI guard (lockstep_ui_guard.h, native_gate_ui_guard): its groups in the native order (bit 1 << index-1).
@@ -594,9 +597,10 @@ function K.session(p)
   if op==K.OP_CONVERSATION then
    local number=tonumber(hex:sub(1,2),16) or 0
    if number==K.ANSWER then
-    if slot~=1 or not gate.md_media_answer then gate.ui_replay_fail('ui_lua_op');return false,'op' end
+    if (slot~=1 and not p.conv_slots) or not gate.md_media_answer then gate.ui_replay_fail('ui_lua_op');return false,'op' end
     local args=K.decode_call(hex:sub(3),ctx)
     if not args or type(args[1])~='number' then gate.ui_replay_fail('ui_lua_decode');return false,'decode' end
+    if p.conv_slots and gate.conversation_owner_take(slot)~=1 then return false,'busy' end
     local raised=gate.md_media_answer(args[1])==1
     return raised,raised and 'answer('..args[1]..')' or 'gone'   -- gone: the question was over, the same on every client
    end
@@ -1034,7 +1038,7 @@ end
 -- ship the player controls (ui/core/messageconfigurationgraph.xml: untargetableconditions is_playercontrolled), and in
 -- the probe's canonical frame that is slot 1's ship on every client, so slot k could not target it. The other ops keep
 -- the canonical frame their live runs (U5, U7) passed with. Guidance is set and ended where the map's click runs too.
-K.SCOPED={foot_where=true,transport_list=true,transport_to=true,transport_named=true,target_slot=true,target_none=true,target_home=true,dock_home=true,suit_home=true,guidance_slot=true,guidance_end=true,inv_read=true,inv_drop=true,inv_research_seen=true,inv_research_hqs=true}
+K.SCOPED={foot_where=true,transport_list=true,transport_to=true,transport_named=true,target_slot=true,target_none=true,target_home=true,dock_home=true,suit_home=true,guidance_slot=true,guidance_end=true,guidance_set=true,guidance_look=true,inv_read=true,inv_drop=true,inv_research_seen=true,inv_research_hqs=true}
 -- The stock calls of the station overview and the station menu's trade settings, by what their names hold.
 function K.station_call(what)
  local name=tostring(what):match('^[%w_]+') or ''
@@ -1650,6 +1654,21 @@ function K.script(plan,start,tools)
   elseif op=='ap_obj' then call=function() return tools.env.StartAutoPilot(tools.saved_lua(e[3])) end
   elseif op=='ap_stop' then call=function() return tools.env.StopAutoPilot() end
   elseif op=='ap_toggle' then call=function() return tools.C.ToggleAutoPilot(false) end
+  -- Plot course (the map's menu.plotCourse: SetGuidance with no offset) to a saved object for this client's own
+  -- player, {tick,'guidance_set',SAVED} (Remove course: guidance_end below). A guidance is its client's
+  -- own: the calls stay local (players 2..N: native_gate_player_guidance.xml). Read only, {tick,'guidance_look'
+  -- [,SAVED]}: the target of this client's guidance (none), the distance to SAVED, whether its autopilot flies.
+  elseif op=='guidance_set' then call=function()
+    pcall(ffi.cdef,'typedef struct { float x; float y; float z; float yaw; float pitch; float roll; } UIPosRot;')
+    pcall(ffi.cdef,'void SetGuidance(UniverseID componentid, UIPosRot offset);')
+    tools.C.SetGuidance(tools.saved_id(e[3]),ffi.new('UIPosRot',0));return 'set' end
+  elseif op=='guidance_look' then call=function()
+    pcall(ffi.cdef,'bool IsAutoPilotActive(void);')
+    local target=tools.env.GetActiveGuidanceMissionComponent and tools.env.GetActiveGuidanceMissionComponent()
+    local text='guidance='..(target and tostring(target)~='0' and (tostring(tools.env.GetComponentData(target,'idcode') or '?')..'/'..
+      tostring(ConvertStringTo64Bit(tostring(target)))) or 'none')
+    if e[3] then local d=tools.dock_state(e[3]);text=text..' distance='..tostring(d.distance and math.floor(d.distance)) end
+    return text..' autopilot='..tostring(tools.C.IsAutoPilotActive()) end
   elseif op=='quickdock' then call=function() return tools.C.QuickDock() end
   elseif op=='dock_at' then call=function() return tools.C.RequestDockAt(tools.saved_id(e[3]),false) end
   -- The spacesuit, out and home, through the calls the stock menus make (each is captured as a person's click is:

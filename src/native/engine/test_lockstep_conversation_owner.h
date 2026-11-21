@@ -73,12 +73,13 @@ static void test_conversation_owner(void) {
     {char text[512];cvo_owner=2;cvo_owner_tick=77;assert(cvo_status(text,sizeof(text))>0 && strstr(text,"armed=1") && strstr(text,"owner=2 since=77") && strstr(text,"dispatches=6"));}
     /* the event check the capture (gate.ui_missions_push) and the apply ask: slot 2's start passes with owners armed, not
      * without (the first live run, crew --conversations of 19 Nov, was refused at the push: it asked for slot 1 alone);
-     * the answer to a ship's question stays slot 1's either way */
+     * the answer to a ship's question too, with owners (it takes the conversation that follows for its slot), not without */
     {const unsigned families=uirep_families;const char *why="-";uirep_families|=UIREP_FAMILY_CONVERSATION;
      const unsigned char start[2]={UIMIS_C_START,0},answer[11]={UIMIS_C_ANSWER,1,3,0,0,0,0,0,0,0xf0,0x3f};
      cvo_armed=1;assert(uimis_event_ok(2,UIMIS_OP_CONVERSATION,start,2,&why) && uimis_event_ok(1,UIMIS_OP_CONVERSATION,answer,11,&why));
-     assert(!uimis_event_ok(2,UIMIS_OP_CONVERSATION,answer,11,&why));
+     assert(uimis_event_ok(2,UIMIS_OP_CONVERSATION,answer,11,&why));
      cvo_armed=0;assert(!uimis_event_ok(2,UIMIS_OP_CONVERSATION,start,2,&why) && uimis_event_ok(1,UIMIS_OP_CONVERSATION,start,2,&why));
+     assert(!uimis_event_ok(2,UIMIS_OP_CONVERSATION,answer,11,&why) && uimis_event_ok(1,UIMIS_OP_CONVERSATION,answer,11,&why));
      uirep_families=families;}
     /* the owner's screen: the dialog and the conversation branch's menu are held back on a client of another slot */
     {const unsigned own=stats.slot;cvo_dialog_fn dialog=cvo_dialog_original;

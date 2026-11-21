@@ -138,9 +138,12 @@ static void test_ui_missions(void) {
      conv[0]=UIMIS_C_HIRE_MONEY;assert(uimis_event_ok(1,UIREP_OP_CONVERSATION,conv,2,&why) && !uimis_event_ok(2,UIREP_OP_CONVERSATION,conv,2,&why));
      conv[0]=UIMIS_C_HIRE_MONEY-1;assert(!uimis_event_ok(1,UIREP_OP_CONVERSATION,conv,2,&why));conv[0]=UIMIS_C_HIRE_MONEY+1;
      assert(!uimis_event_ok(1,UIREP_OP_CONVERSATION,conv,2,&why));conv[0]=UIMIS_C_CANCEL;
-     /* The answer to a notification's question (UIMIS_C_ANSWER): slot 1 only, one number in the core's codec. */
+     /* The answer to a notification's question (UIMIS_C_ANSWER): slot 1 only, one number in the core's codec; with
+      * conversation owners any slot's (the apply takes the conversation for it first). */
      {unsigned char answer[11]={UIMIS_C_ANSWER,1,3};double seq=4.0;memcpy(answer+3,&seq,8);
       assert(uimis_event_ok(1,UIREP_OP_CONVERSATION,answer,11,&why) && !uimis_event_ok(2,UIREP_OP_CONVERSATION,answer,11,&why));
+      {const int was=cvo_armed;cvo_armed=1;assert(uimis_event_ok(2,UIREP_OP_CONVERSATION,answer,11,&why));
+       assert(!uimis_event_ok(2,UIREP_OP_CONVERSATION,answer,10,&why));cvo_armed=was;}
       assert(!uimis_event_ok(1,UIREP_OP_CONVERSATION,answer,10,&why));answer[2]=4;assert(!uimis_event_ok(1,UIREP_OP_CONVERSATION,answer,11,&why));
       assert(uimis_conv_kind_of("RaisePlayerInteractionEvent")==UIMIS_C_ANSWER && UIMIS_C_ANSWER>UIMIS_CONV_GLOBALS);}
      assert(!uimis_event_ok(1,0x4a,conv,2,&why) && !strcmp(why,"ui_op"));

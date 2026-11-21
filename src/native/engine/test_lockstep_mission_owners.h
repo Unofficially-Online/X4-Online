@@ -132,6 +132,13 @@ static void test_mission_owners(void) {
         mpp_active_leave(2,0);assert(TMO_ACTIVE(0x52,0) && mpp_active[2]==0x53 && mpp_active_shown==1 && !mpp_active_shown_changed);
         mpp_active_enter(2);v=0x52;memcpy(manager+MPP_MGR_ACTIVE,&v,8);
         mpp_active_leave(2,0);assert(mpp_active[2]==0x53 && mpp_active_shown_changed==1 && TMO_ACTIVE(0x52,0));
+        /* ...but a change made while X4's Guidance script ran in the scope (client 2's own Plot course) is kept on this
+         * client: slot 2's own guidance, as slot 1's is the canonical one on client 1 alone. */
+        {   const LONG64 md_was=script_rng_guidance_frames;mpp_active_guidance=0;
+            mpp_active_enter(2);v=0x52;memcpy(manager+MPP_MGR_ACTIVE,&v,8);script_rng_guidance_frames++;
+            mpp_active_leave(2,0);assert(mpp_active[2]==0x52 && mpp_active_guidance==1 && TMO_ACTIVE(0x52,0));
+            mpp_active_enter(2);assert(TMO_ACTIVE(0x52,0));mpp_active_leave(2,0);assert(mpp_active[2]==0x52 && mpp_active_guidance==1);
+            mpp_active[2]=0x53;script_rng_guidance_frames=md_was;}
         /* Slot 2's active mission ended outside its scope: none at its next scope, counted. */
         {uintptr_t range[2]={(uintptr_t)list,(uintptr_t)list+UIMIS_MISSION_SIZE};memcpy(manager+UIMIS_MISSIONS,range,16);}
         mpp_active_enter(2);assert(TMO_ACTIVE(0,0) && mpp_active_gone==1);

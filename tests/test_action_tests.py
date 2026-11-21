@@ -170,6 +170,23 @@ class ChainTests(unittest.TestCase):
         self.assertEqual(values(g.rows), ['0 ai_dock true signalled'])
         self.assertEqual(values(g.calls), ['signal:galaxy:x4lan_ai_dock:luaaa'])
 
+    def test_the_guidance_ops_plot_remove_and_read_this_clients_course(self):
+        lua, g = self.client()
+        lua.execute('''TARGET=nil;AP=false
+          ConvertStringTo64Bit=ConvertStringTo64Bit or function(s) return s end
+          tools.C.SetGuidance=function(id,offset) calls[#calls+1]='set:'..tostring(id)..':'..offset.x..'/'..offset.yaw;TARGET='st'..tostring(id) end
+          tools.C.EndGuidance=function() calls[#calls+1]='end';TARGET=nil end
+          tools.C.IsAutoPilotActive=function() return AP end
+          tools.env.GetActiveGuidanceMissionComponent=function() return TARGET end
+          tools.env.GetComponentData=function(c,key) return key=='idcode' and 'NLN-075' or nil end
+          tools.dock_state=function() return {docked=false,distance=12345.6} end
+          rows=run({{0,'guidance_look','aa'},{1,'guidance_set','aa'},{2,'guidance_look','aa'},{3,'guidance_end'},{4,'guidance_look'}},5)''')
+        rows = values(g.rows)
+        self.assertEqual(rows, ['0 guidance_look true guidance=none distance=12345 autopilot=false', '1 guidance_set true set',
+                                '2 guidance_look true guidance=NLN-075/stidaa distance=12345 autopilot=false', '3 guidance_end true ffi',
+                                '4 guidance_look true guidance=none autopilot=false'])
+        self.assertEqual(values(g.calls), ['set:idaa:0/0', 'end'])
+
     def test_the_ai_dock_option_swaps_every_chains_dock_station_step(self):
         plan = [[(30, 'dock_kit', 1), (60, 'chain', 100, [('dock', 'until', '^docked', 'dock_station', 'aa', 9000, False, False, True, 0),
                                                           ('rest', 'wait', 3), ('dock2', 'until', '^docked', 'dock_station', 'bb')])]]

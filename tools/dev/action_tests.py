@@ -2401,9 +2401,12 @@ class Claim:
         s.add_argument('--metres', type=int, default=1500, help='how far from the frigate its abandoned ship appears')
         s.add_argument('--ask', action='store_true', help='leave the standing order for a found abandoned ship as it is: the frigate asks its player for orders '
                                                           '(an interactive notification; it parted the clients until the gate of 19 Nov)')
-        s.add_argument('--answer', action='store_true', help='with the question on: player 1 answers it (the key on the notification) and picks "Claim it" in the '
-                                                             'conversation, so its frigate claims the ship by itself; player 2 tries to answer too (refused: '
-                                                             'conversations are player 1\'s) and claims by order when the questions are over')
+        s.add_argument('--answer', action='store_true', help='with the question on: a player answers the first one (the key on the notification) and picks '
+                                                             '"Claim it" in the conversation, so frigate 1 claims its ship by itself; the other player tries to '
+                                                             'answer two seconds later (nothing raised: the conversation is taken or the question over) and has '
+                                                             'frigate 2 claim the second ship by order when the questions are over')
+        s.add_argument('--answer-by', type=int, choices=(1, 2), default=1, help='with --answer: the player who answers (2: a player 2..N answers, with '
+                                                                                'conversation owners; the conversation is its own)')
 
     @staticmethod
     def wreck(k):
@@ -2416,16 +2419,19 @@ class Claim:
         # sets no "ask"); one player sets it for the faction
         quiet = [('quiet', 'op', 'fac_response', 2, 2), ('quiet_wait', 'wait', 20)] if k == 1 and not (a.ask or a.answer) else []
         if a.answer:
-            # The question is on every client's monitor about a second after the abandoned ship appears, for ten seconds.
-            # Player 2 presses the key at once (on player 1's question: while player 1 is in the conversation that
-            # follows an answer, X4 lets no other ship ask, run p6 of 19 Nov), player 1 two seconds later.
-            asked = [('question', 'poll', 'question=[1-9]', 5, 2400, 'question_look')] +                     ([('answer_pause', 'wait', 60)] if k == 1 else []) + [('answer', 'op', 'question_answer')]
+            # The question is on every client's monitor about a second after the abandoned ship appears, for ten seconds:
+            # frigate 1's comes first. The answering player presses the key at once, the other two seconds later (while
+            # a player is in the conversation that follows an answer, X4 lets no other ship ask, run p6 of 19 Nov). The
+            # answer makes frigate 1 claim its ship; the other player has frigate 2 claim the second by order.
+            first = k == a.answer_by
+            asked = [('question', 'poll', 'question=[1-9]', 5, 2400, 'question_look')] + \
+                ([] if first else [('answer_pause', 'wait', 60)]) + [('answer', 'op', 'question_answer')]
             ours = asked + [('answer_wait', 'wait', 90),
                             ('choose', 'op', 'dialog', 1),                        # the conversation's first choice: "Claim it"
-                            ('crew', 'op', 'ship_look', ship)] if k == 1 else \
+                            ('crew', 'op', 'ship_look', ship)] if first else \
                 asked + [('questions_over', 'wait', 900),
-                         ('crew', 'op', 'ship_look', ship),
-                         ('claim', 'op', 'claim', ship, name)]
+                         ('crew', 'op', 'ship_look', Claim.SHIPS[2]),
+                         ('claim', 'op', 'claim', Claim.SHIPS[2], Claim.wreck(2))]
         else:
             ours = [('wreck_wait', 'wait', 60),
                     ('crew', 'op', 'ship_look', ship),
@@ -2466,21 +2472,29 @@ class Claim:
                 check.note('question', 'the standing order for a found abandoned ship: %s (%s)' %
                            (shown(c, 'quiet', 60) if not asks else 'left as it is', 'the frigates ask nobody' if not asks else 'the frigates ask their player: an interactive notification'))
             if a.answer:
-                # the answer as every client applied it (the conversation family's event of slot 1), and the choice
-                rows = [[x for x in clients[n]['applied'] if x[2].startswith('answer(')] for n in PLAYERS]
+                # the answers as every client applied them (the conversation family's event of the answering slot), and the
+                # choice; the other player's answer raised nothing (the conversation taken, or the question over)
+                rows = [[x for x in clients[n]['applied'] if x[2].startswith('answer(') and x[1] == k] for n in PLAYERS]
                 said = shown(c, 'answer', 60)
-                if k == 1:
+                if k == a.answer_by:
                     check('answered', said.startswith('answered') and len(rows[0]) == 1 and rows[0] == rows[1],
-                          'player 1: %s' % ('its answer to the frigate\'s question was raised on both clients at tick %d (%s), then "Claim it" (%s)' %
+                          'player %d: %s' % (k, 'its answer to the frigate\'s question was raised on both clients at tick %d (%s), then "Claim it" (%s)' %
                                             (rows[0][0][0], rows[0][0][2], shown(c, 'choose', 20)) if said.startswith('answered') and rows[0] and rows[0] == rows[1] else
                                             'no answer on both clients (the call said %s; client 1 %s, client 2 %s; the question: %s)' %
                                             (said, rows[0][:2], rows[1][:2], shown(c, 'question', 40))))
                 else:
+                    # the other player's key two seconds later: nothing raised (the conversation taken, the question over),
+                    # or the answer to another ship's question that came up by then, the same on both clients; never the
+                    # first question a second time
                     refused = {key: count for key, count in c['refused'].items() if 'RaisePlayerInteractionEvent' in key}
-                    check('refused', said.startswith('answered') and bool(refused), 'player 2: its answer is refused, as every conversation is to players 2..N (%s; the call said %s)' %
-                          (refused or 'no refusal row', said))
-                    check.note('asked', "player 2's frigate %s" % ('asked its own question too' if len([x for x in answers(c, 'question') if 'question=' in x['text']]) > 1 else
-                               'asked nothing of its own while player 1 was in the conversation (X4 lets one question through at a time)'))
+                    first = [[x for x in clients[n]['applied'] if x[2].startswith('answer(') and x[1] == a.answer_by] for n in PLAYERS]
+                    again = any(x[2] == y[2] for x in rows[0] for y in first[0])
+                    check('second', rows[0] == rows[1] and not again, "player %d: its key after player %d's answer %s (the call said %s)" %
+                          (k, a.answer_by, ('answered another question on both clients: %s' % ', '.join(x[2] for x in rows[0])) if rows[0] and rows[0] == rows[1] and not again else
+                           ('raised nothing on either client (%s)' % (('refused at the capture: %s' % refused) if refused else 'taken or over at the apply')) if not rows[0] and not rows[1] else
+                           'differs between the clients or answered the first question again: client 1 %s, client 2 %s' % (rows[0], rows[1]), said))
+                    check.note('asked', "player %d's turn: %s" % (k, 'a second question came' if len([x for x in answers(c, 'question') if 'question=' in x['text']]) > 1 else
+                               'no other question while the conversation ran (X4 lets one question through at a time)'))
             crew = shown(c, 'crew', 900)
             check('fixture', 'marine:' in crew, "player %d's frigate has marines aboard: people %s" % (k, rig.field(crew, 'people')))
             before = held(c, 'wreck', r'state=ok')
@@ -2488,7 +2502,7 @@ class Claim:
                   "player %d's abandoned ship: %s" % (k, before['text'] if before else shown(c, 'wreck')))
             calls = [[x for x in clients[n]['built'] if x[1] == k and x[2].startswith('ClaimShip')] for n in PLAYERS]
             answer = shown(c, 'claim', 60)
-            if not (a.answer and k == 1):          # (player 1's frigate claims by itself after the answer)
+            if not (a.answer and k == a.answer_by):   # (frigate 1 claims by itself after the answer)
                 check('ordered', answer.startswith('claimed=true') and len(calls[0]) >= 1 and calls[0] == calls[1], 'player %d: %s' % (k, 'the claim ran on both clients at tick %d (%s)' % (calls[0][0][0], answer)
                       if answer.startswith('claimed=true') and calls[0] and calls[0] == calls[1] else 'no claim on both clients (the call answered %s; client 1 %s, client 2 %s)' % (answer, calls[0][:2], calls[1][:2])))
             row = held(c, 'claimed', r'owner=player')
@@ -2687,7 +2701,75 @@ class Settings:
             check.note('settings', 'at tick %d: %s' % (rows[-1][0], rows[-1][2][:330]))
 
 
-SCENARIOS = {s.name: s for s in (Trade, Orders, Orders2, Crew, ShipBuy, Refit, RefitOrder, Repair, Wing, ShipSell, CrewMove, FleetTrade, Deploy, Rules, Systems, Settings, Storage, Exchange, Hostile, TradeLoop, Claim, Mining, WingSet, Routines, MapOpen)}
+# ---- a plotted course ------------------------------------------------------------------------------------------------
+class Guidance:
+    """Each player plots a course to a station (the map's Plot course), flies it by Shift+A, then plots another and removes it."""
+    name = 'guidance'
+    minutes = 7
+    sets = ()
+    marks = ('plotted', 'flying', 'after')
+    # Each player's own station, so a course that reached the wrong client shows: player 1 to the shipyard NLN-075,
+    # player 2 to the food factory MMJ-623 (the trade scenario's stations, ten kilometres apart).
+    TARGETS = {1: Trade.SELL, 2: Trade.BUY}
+    LIMIT = 11000
+
+    @staticmethod
+    def options(s):
+        s.add_argument('--fly-ticks', type=int, default=4500, help='how long the autopilot flies before the course is looked at again')
+
+    @staticmethod
+    def chain(k, a):
+        t, other = Guidance.TARGETS[k], Guidance.TARGETS[3 - k]
+        return [
+            ('before', 'op', 'guidance_look', t),
+            ('plot', 'op', 'guidance_set', t),                                      # Plot course
+            ('plotted', 'poll', '^guidance=[A-Z]', 5, 300, 'guidance_look', t),
+            ('autopilot', 'op', 'ap_toggle'),                                      # Shift+A: the autopilot to the course's target
+            ('flying', 'poll', 'autopilot=true', 5, 300, 'guidance_look', t),
+            # X4's guidance ends by itself within a kilometre of a station (its arrival check, now from this player)
+            ('arrived', 'try', '^guidance=none', 30, a.fly_ticks, 'guidance_look', t),
+            ('after', 'op', 'guidance_look', t),
+            ('stop', 'op', 'ap_stop'),
+            ('plot2', 'op', 'guidance_set', other),                                 # another course...
+            ('plotted2', 'poll', '^guidance=[A-Z]', 5, 300, 'guidance_look', other),
+            ('remove', 'op', 'guidance_end'),                                       # ...and Remove course
+            ('removed', 'poll', '^guidance=none', 5, 300, 'guidance_look'),
+        ]
+
+    @staticmethod
+    def watch(a):
+        return [('ship_look', 1), ('ship_look', 2)]   # the ships, on both clients (a guidance itself is its client's own)
+
+    @staticmethod
+    def plan(a):
+        kit = [(30, 'dock_kit', 1), (30, 'dock_kit', 2)]
+        return [kit + [(60 + 30 * (k - 1), 'chain', Guidance.LIMIT, Guidance.chain(k, a))] for k in PLAYERS]
+
+    @staticmethod
+    def report(check, clients, a):
+        for k in PLAYERS:
+            c = clients[k]
+            want = {Trade.SELL: 'NLN-075', Trade.BUY: 'MMJ-623'}
+            target, other = want[Guidance.TARGETS[k]], want[Guidance.TARGETS[3 - k]]
+            first, plotted, flying, after = (last_answer(c, x) for x in ('before', 'plotted', 'flying', 'after'))
+            check('plotted', bool(plotted) and ('guidance=%s/' % target) in plotted['text'],
+                  'player %d: its own client shows the course to %s: %s' % (k, target, plotted['text'] if plotted else shown(c, 'plotted')))
+            check('flying', bool(flying) and 'autopilot=true' in flying['text'],
+                  'player %d: Shift+A flies the course: %s' % (k, flying['text'] if flying else shown(c, 'flying')))
+            d0 = rig.field(first['text'], 'distance') if first else None
+            d1 = rig.field(after['text'], 'distance') if after else None
+            closer = bool(d0 and d1 and d0.isdigit() and d1.isdigit() and int(d1) < int(d0) - 1000)
+            check('closer', closer, 'player %d: %s m from %s before, %s m after the flight' % (k, d0, target, d1))
+            arrived = last_answer(c, 'arrived', 'guidance=none')
+            check.note('arrival', 'player %d: %s' % (k, 'the course ended by itself at tick %d (%s)' % (arrived['tick'], arrived['text']) if arrived else
+                       'still on at the look (%s)' % (after['text'] if after else '?')))
+            plotted2, removed = last_answer(c, 'plotted2'), last_answer(c, 'removed', 'guidance=none')
+            check('second', bool(plotted2) and ('guidance=%s/' % other) in plotted2['text'],
+                  'player %d: a second course, to %s: %s' % (k, other, plotted2['text'] if plotted2 else shown(c, 'plotted2')))
+            check('removed', bool(removed), 'player %d: Remove course %s' % (k, 'cleared it at tick %d' % removed['tick'] if removed else 'left it (%s)' % shown(c, 'removed')))
+
+
+SCENARIOS = {s.name: s for s in (Trade, Orders, Orders2, Crew, ShipBuy, Refit, RefitOrder, Repair, Wing, ShipSell, CrewMove, FleetTrade, Deploy, Rules, Systems, Settings, Storage, Exchange, Hostile, TradeLoop, Claim, Mining, WingSet, Routines, MapOpen, Guidance)}
 
 
 def ai_docks(plan):
@@ -2709,9 +2791,14 @@ def ai_dock_note(check, clients, logs):
         rows = ['%s: %s' % (name, r['text'][:140]) for name, got in clients[k]['steps'].items() for r in got
                 if r['text'].startswith(('ai_dock', 'autopilot_stop')) or (r['text'].startswith('docked after=') and 'by=ai' in r['text'])]
         check.note('ai_dock', 'player %d: %s' % (k, ' / '.join(rows) or 'no AI dock row'))
+    md_note(check, logs, 'UI_REPLAY_AI_DOCK', 'ai_dock_md')
+
+
+def md_note(check, logs, marker, name):
+    """The MD rows with that marker on each client, as a note."""
     for n, path in enumerate(logs, 1):
-        md = [re.sub(r'^.*?UI_REPLAY_AI_DOCK', 'UI_REPLAY_AI_DOCK', x.strip())[:200] for x in rig.read_lines(Path(path)) if 'UI_REPLAY_AI_DOCK' in x]
-        check.note('ai_dock_md', 'client %d: %s' % (n, ' / '.join(md) or 'no AiDock row'))
+        md = [re.sub(r'^.*?' + marker, marker, x.strip())[:200] for x in rig.read_lines(Path(path)) if marker in x]
+        check.note(name, 'client %d: %s' % (n, ' / '.join(md) or 'no %s row' % marker))
 
 
 def full_plan(scenario, args, minutes=None):
@@ -2730,6 +2817,8 @@ def report(scenario, logs, run_dir, args):
     scenario.report(check, clients, args)
     if getattr(args, 'ai_dock', False):
         ai_dock_note(check, clients, logs)
+    if scenario is Guidance:   # what the guidance script heard for players 2..N, on each client (native_gate_player_guidance.xml)
+        md_note(check, logs, 'GUIDANCE_OWNER', 'guidance_md')
     watch_check(check, clients, scenario.watch(args))
     sync_check(check, logs, run_dir, need_capture=True)
     return check.failed

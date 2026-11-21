@@ -538,8 +538,8 @@ class MdScriptTests(unittest.TestCase):
         self.assertIsNone(steps["$a.$step == 'reputation'"].find('.//add_licence'))   # a pool faction: no player licences
         # The two patches: one condition each on a stock cue, nothing else, and every overlay gets them under the stock names.
         import native_gate_defaults as defaults
-        self.assertEqual(sorted(defaults.MD_PATCHES), ['aiscripts/build.shiptrader.xml', 'md/notifications.xml', 'md/playerreputation.xml', 'md/setup.xml',
-                                                       'md/tutorial_global.xml'])
+        self.assertEqual(sorted(defaults.MD_PATCHES), ['aiscripts/build.shiptrader.xml', 'md/guidance.xml', 'md/notifications.xml', 'md/playerreputation.xml',
+                                                       'md/setup.xml', 'md/tutorial_global.xml'])
         cues = {'md/playerreputation.xml': "/mdscript/cues/cue[@name='TrackPlayerReputation']/cues/cue[@name='Base']/conditions",
                 'md/notifications.xml': "/mdscript/cues/cue[@name='Init']/cues/cue[@name='PlayerDiscountCommission']/conditions"}
         # The third: the new-game hint's timeout on (four attribute values, one per show_help of the two hint cues), nothing else.
@@ -586,13 +586,40 @@ class MdScriptTests(unittest.TestCase):
             node = [e for e in ET.fromstring(stock).iter('do_elseif') if any(c.tag == 'set_value' and c.get('name') == '$buildaborted' for c in e)]
             self.assertEqual(len(node), 1)
             self.assertEqual(' '.join(refit[0].text.replace(clause, '', 1).split()), ' '.join(node[0].get('value').split()))
+        # The sixth: X4's guidance notes whose it is where it starts or moves (the player 2..N whose own entity controls
+        # what "the player" controls in that frame), measures arrival from that player, and leaves the shared autopilot
+        # alone in a session.
+        guide = ET.fromstring((DEV / defaults.MD_PATCHES['md/guidance.xml']).read_text(encoding='utf-8'))
+        self.assertEqual([(e.tag, e.get('sel')) for e in guide][:3],
+                         [('add', "/mdscript/cues/cue[@name='Start']/cues/cue[@name='NewTarget']/actions"), ('add', "//cue[@name='UpdateTarget']/actions"),
+                          ('add', "/mdscript/cues/cue[@name='Start']/cues")])
+        for e in guide[:2]:
+            self.assertEqual((e.get('pos'), [(a.tag, a.get('ref')) for a in e]), ('prepend', [('include_actions', 'X4LAN_GuidanceOwner')]))
+        owner = guide[2][0]
+        self.assertEqual((owner.tag, owner.get('name')), ('library', 'X4LAN_GuidanceOwner'))
+        self.assertEqual((owner.find('actions')[0].tag, owner.find('actions')[0].attrib), ('remove_value', {'name': '$X4LAN_P'}))   # none: X4's own checks
+        self.assertEqual(owner.find('actions')[1].get('value'), 'global.$X4LAN_Players? and player.controlled')
+        text = (DEV / defaults.MD_PATCHES['md/guidance.xml']).read_text(encoding='utf-8')
+        self.assertEqual(text.count('<do_if value="not global.$X4LAN_Players?">'), 2)   # guidance_updated, guidance_ended
+        self.assertNotIn('player.entity.hascontext', text)
         for name, source in defaults.MD_PATCHES.items():
-            if name in ('md/tutorial_global.xml', 'md/setup.xml', 'aiscripts/build.shiptrader.xml'):
+            if name in ('md/tutorial_global.xml', 'md/setup.xml', 'aiscripts/build.shiptrader.xml', 'md/guidance.xml'):
                 continue
             diff = ET.fromstring((DEV / source).read_text(encoding='utf-8'))
             self.assertEqual(diff.tag, 'diff')
             self.assertEqual([(e.tag, e.get('sel')) for e in diff], [('add', cues[name])])
             self.assertEqual([(e.tag, e.attrib) for e in diff[0]], [('check_value', {'value': 'not @md.$X4LAN_QuietRelations'})])
+
+    # Every patch of a stock script selects exactly one node of that script (the read-only x4-re copies, when present):
+    # a selector that misses or hits twice would leave X4's script as it was or patch the wrong place.
+    @unittest.skipUnless(etree is not None and (RE / 'gamescripts/resolved/base/md/setup.xml').is_file(), 'needs lxml and the read-only x4-re scripts')
+    def test_every_stock_patch_selects_one_node(self):
+        import native_gate_defaults as defaults
+        for name, source in defaults.MD_PATCHES.items():
+            stock = etree.parse(str(RE / 'gamescripts/resolved/base' / name))
+            for op in etree.parse(str(DEV / source)).getroot():
+                if isinstance(op.tag, str):
+                    self.assertEqual(len(stock.xpath(op.get('sel'))), 1, '%s: %s' % (name, op.get('sel')))
 
     # Compiling the game schema takes about two minutes: opt in with X4LAN_MD_SCHEMA=1 (lxml + x4-re).
     @unittest.skipUnless(os.environ.get('X4LAN_MD_SCHEMA') == '1' and etree is not None and MD_XSD.is_file(),
