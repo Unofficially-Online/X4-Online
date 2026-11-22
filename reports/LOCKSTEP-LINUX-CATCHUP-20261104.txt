@@ -694,6 +694,36 @@ THE BATTLE SCOPE ON LINUX (W35 = the session defaults' battle reference, Windows
   Windows' (a golden key both gates' tests check). lx75a (lx74 + it): armed, the tick-133 island rekeyed (sorts=1
   constraints=2 unkeyed=0), 300 ticks with no world-hash split. Both are in the mixed-platform settings.
 
+WORLD CENSUS, WINDOWS AGAINST LINUX, TODAY'S DEFAULTS (22 Nov)
+  The battle census compares the twelve fixture ships; a mixed session needs the whole world. A battle overlay of today's
+  integration (Windows: the default stack; Linux: linux_gate_live.py bundle --preset linux-core --mixed-platform --battle
+  with the battle state switches) captures every one of ~522,000 objects every 30 ticks; census_compare.py names the
+  differing objects by class and decodes watched ones. The Windows side must run on today's extension base: the old
+  census base (frozen-v3) carries 29 retired x4lan MD and AI scripts, two of them stock mission patches.
+  - Tick 30: 9,988 objects apart in motion, nearly every moving ship. Bisected on Windows, one default off per run:
+    path_transforms, spline_phase, body_pose, view_points (and its family), physics_scenes, view_ui, ui_lazy, death_rng,
+    bullet_rng change nothing by tick 30 or 90; without native_gate_path_budget Windows equals Linux. The Linux gate had
+    the twin (gate_path_budget.h), but no bundle armed it: the Linux pathing round robin ran by the clock. Linux bundles
+    take --path-budget and the mixed-platform settings carry 100: all 522,467 objects equal at 30 and 60.
+  - Script RNG rows (native_gate_script_rng_rows) of ticks 1..80, 35,231 per platform once Linux bundles ship the
+    session's MD scripts and stock script patches (--session-md: the Linux bundle had none): every key and seed alike,
+    three kinds of draw counts apart. (1) The fixture fighters' fight.attack.object.fighter scopes, 9 draws on Windows,
+    11 on Linux: sound starts; Windows' sound_rng gives their pitch and sample choice private words. The Linux twin,
+    linux/gate_sound_rng.h (the sound start 0x1a62520, FloatState at 0x1a62e8e, the inlined choice's Random::I32 at
+    0x1a63a4d and 0x1a63ae4), makes them equal (lx86a: 431/331 draws private). (2) RML_SupplyFactory's
+    GenerateSupplyWareList, 5 on Windows, 10 on Linux, 10 on Windows without ui_lazy: the lazy trade offer updates that
+    ui_lazy 'key' moves to keyed words; no Linux twin yet. (3) X4Ep1_Mentor_Subscriptions.Patch_Userdata 0 / 1 (profile
+    userdata; a keyed scope with nothing random after it).
+  - Left after these: 13 objects from tick 75 (17 at 300), growing to 63 at 600, 1,216 at 900 and 10,205 at 2400 (ship
+    parts present on one side only, attention fields apart: the cascade). The first difference, with a capture every
+    tick: the crews of two ships destroyed at ticks 73/74 (a Xenon ship's pilot 0xad4ae, the Kha'ak fighter 0x9fa51's
+    pilot and two computers) are listed alive and then marked destroyed one tick later on Linux than on Windows, and at
+    tick 77 the twelve Argon and Teladi fighters that fought the Kha'ak ship in cluster_01_sector001 (low attention)
+    move a few ulps apart. The attack that killed it (FR29b rows) and its hull and shield (FR28 rows) are equal on both;
+    no Windows default tried so far moves the crews' tick (also not character_play, body_clock, move_rng, the speech
+    timers, shape_order, macro_arena, bullet_cadence, cutscene_ready, runtime_ids_barrier, death_rng, bullet_rng,
+    weapon_rng). Next: where X4 destroys a killed ship's crew on each executable (the frame phase that runs it).
+
 FUNCTION COVERAGE WITH PLAYER INPUT ON LINUX (191754a1, b1688473; lx32a, lx32b)
   native_gate_coverage_from = T (Linux gate only; linux_gate_live.py --coverage-from) puts the coverage marks in at
   tick T instead of tick 1, so a window that starts after an idle stretch counts only first runs from then on; rows
