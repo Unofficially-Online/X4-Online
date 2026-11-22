@@ -56,6 +56,9 @@ Scenarios (the snapshot is the two-player one: both ships side by side in a sect
           X4's question).
   rules   each player makes a blacklist, a fight rule and a trade rule for the faction (the global orders of the
           player information menu), sets the first two for its own ship, renames the blacklist, removes the trade rule.
+  dockpair both players dock at one station and watch their dock menus every 10 ticks while the other player docks and
+          undocks: does one player's dock or undock close the other's dock menu; after its own undock, is each player's
+          dock menu closed and the HUD's top level menu open (--swap: the other player leaves first).
   mapopen a diagnostic: one player's client opens the map and keeps it open for 100 seconds; nothing else happens.
 
 How a scenario runs: every client's plan (native_gate_ui_replay_script) holds the fixtures (X4's docking computer on
@@ -1243,6 +1246,7 @@ class CrewMove:
     # RVS-616 (two service crew) gives to LAG-170. The fleet fixture hands all four to the player faction.
     FROM = {1: '00000000000a56bf', 2: '00000000000a7949'}
     TO = {1: '00000000000a7784', 2: '00000000000a7984'}
+    ABOARD = {1: 2, 2: 3}          # people aboard each target ship once the crew member has arrived
     sets = ("native_gate_ui_replay_fleet={'%s','%s','%s','%s'}" % (FROM[1], FROM[2], TO[1], TO[2]),)
     LIMIT = 9000
 
@@ -1260,7 +1264,7 @@ class CrewMove:
             ('move', 'op', 'crew_move', source, target, a.role),               # the crew transfer's Confirm
             ('left', 'try', 'people=%d/' % 1, 10, 900, 'ship_look', source),
             # the crew list shows the person on the other ship at once; aboard it is when X4's own count says so
-            ('arrived', 'try', 'aboard=%d' % (2 if k == 1 else 3), 30, 6000, 'ship_look', target),
+            ('arrived', 'try', 'aboard=%d' % CrewMove.ABOARD[k], 30, 6000, 'ship_look', target),
             ('end_from', 'op', 'ship_look', source),
             ('end_to', 'op', 'ship_look', target),
         ]
@@ -2604,6 +2608,8 @@ class Settings:
     sets = ()
     LIMIT = 5000
     NAME = 'X4LAN_Faction'
+    # which half of the settings each player changes (--swap: the other half)
+    ROLE = {1: 'a', 2: 'b'}
 
     @staticmethod
     def options(s):
@@ -2624,7 +2630,7 @@ class Settings:
             ('wait_on_done', 'try', 'ships_wait=true', 10, 300, 'settings_look'),
             ('name', 'op', 'fac_setting', 'name', Settings.NAME),
             ('name_done', 'try', 'name=' + Settings.NAME, 10, 300, 'settings_look'),
-        ] if k == 1 else [
+        ] if Settings.ROLE[k] == 'a' else [
             # another signal's standing order, the resupply level, the turrets' default mode, the paint and the logo
             ('response_a', 'op', 'fac_response', 2, 1),
             ('response_a_wait', 'wait', 20),
@@ -2676,13 +2682,13 @@ class Settings:
                   'the standing order did not follow (the calls answered %s and %s; read: %s, then %s)' %
                   (shown(c, 'response_a', 60), shown(c, 'response', 60), was, rig.field(after, 'responses'))))
             tests = ((('waiting', 'wait_off_done', r'ships_wait=false', 'ships do not wait for the player'), ('waiting', 'wait_on_done', r'ships_wait=true', 'ships wait for the player again'),
-                      ('name', 'name_done', r'name=' + Settings.NAME, 'the faction is called ' + Settings.NAME)) if k == 1 else
+                      ('name', 'name_done', r'name=' + Settings.NAME, 'the faction is called ' + Settings.NAME)) if Settings.ROLE[k] == 'a' else
                      (('resupply', 'loadout_done', r'loadout=0\.50', 'the faction resupplies to the medium level'), ('mode', 'mode_done', r'weapon_mode=attackenemies', "the turrets' default mode is attackenemies")))
             for name, step, pattern, did in tests:
                 row = held(c, step, pattern)
                 check(name, bool(row), 'player %d: %s' % (k, '%s at tick %d' % (did, row['tick']) if row else
                       'not done: %s (the call answered %s; read: %s)' % (did, shown(c, step[:-5], 40), shown(c, step, 200))))
-            if k == 2:
+            if Settings.ROLE[k] == 'b':
                 for what in ('paint', 'logo'):
                     row = last_answer(c, what)
                     value = row['text'].split()[0] if row else None
@@ -2699,6 +2705,76 @@ class Settings:
         rows = sorted(clients[1]['ops'].get('settings_look', []))
         if rows:
             check.note('settings', 'at tick %d: %s' % (rows[-1][0], rows[-1][2][:330]))
+
+
+# ---- dock pair ------------------------------------------------------------------------------------------------------
+class DockPair:
+    """Both players dock at one station; one undocks while the other stays docked with its dock menu open: does one player's dock or undock reach the other player's screen?"""
+    name = 'dockpair'
+    minutes = 6
+    # X4's UI hears the engine's playerUndock / playerUndocked events (menu_docked.lua closes the dock menu on the first,
+    # menu_toplevel.lua opens the HUD's top level menu on the second); in a session they may be raised for one player
+    # only. The player who leaves and the one who stays (--swap exchanges them).
+    ROLE = {1: 'leaves', 2: 'stays'}
+    STATION = '0000000000040496'          # MMJ-623, where both players dock in the trade scenario
+    marks = ('menu_up', ('left', 'undocked', 'docked=false'), 'top_after')
+    sets = ()
+    LIMIT = 9000
+
+    @staticmethod
+    def options(s):
+        s.add_argument('--station', dest='dock_at', default=DockPair.STATION, help='saved ID of the station both players dock at')
+
+    @staticmethod
+    def chain(k, a):
+        leaves = DockPair.ROLE[k] == 'leaves'
+        return [
+            ('dock', 'until', '^docked', 'dock_station', a.dock_at, 9000),
+            ('menu_up', 'poll', 'shown=true', 10, 900, 'menu_look', 'DockedMenu'),     # X4 opens it a few seconds after the docking
+            # ...and keeps it open while the ship is docked: read every 10 ticks, through the other player's docking (the one
+            # who leaves waits there) and its undocking too (the one who stays); a row 'shown=false' is the tick it closed
+            ('held', 'try', 'shown=false', 10, 1500 if leaves else 3000, 'menu_look', 'DockedMenu'),
+            ('top_docked', 'op', 'menu_look', 'TopLevelMenu'),
+            ('undock_ready', 'poll', '^granted', 10, 900, 'undock_check'),
+            ('undock', 'op', 'undock'),
+            ('undocked', 'poll', 'docked=false', 30, 1800, 'foot_where'),
+            ('top_wait', 'wait', 150),            # menu_toplevel.lua opens the top level menu at the engine's playerUndocked
+            ('top_after', 'op', 'menu_look', 'TopLevelMenu'),
+            ('dock_after', 'op', 'menu_look', 'DockedMenu'),     # menu_docked.lua closes it at the engine's playerUndock
+        ] + ([('after', 'wait', 1800)] if leaves else [])
+
+    @staticmethod
+    def watch(a):
+        return []
+
+    @staticmethod
+    def plan(a):
+        kit = [(30, 'dock_kit', 1), (30, 'dock_kit', 2)]
+        return [kit + [(60 + 30 * (k - 1), 'chain', DockPair.LIMIT, DockPair.chain(k, a))] for k in PLAYERS]
+
+    @staticmethod
+    def report(check, clients, a):
+        events = {}
+        for k in PLAYERS:
+            c = clients[k]
+            docked, undock = last_answer(c, 'dock', 'docked'), last_answer(c, 'undock')
+            events[k] = {'docked': docked['tick'] if docked else None, 'undock': undock['tick'] if undock else None}
+        for k in PLAYERS:
+            c, other = clients[k], 3 - k
+            check('docked', events[k]['docked'] is not None, 'player %d (%s): %s' % (k, DockPair.ROLE[k], 'tick %d' % events[k]['docked'] if events[k]['docked'] else 'never'))
+            up = last_answer(c, 'menu_up', 'shown=true')
+            check('menu', bool(up), 'player %d: its dock menu opened after the docking%s' % (k, ' at tick %d' % up['tick'] if up else ': NEVER'))
+            if up:
+                rows = answers(c, 'held')
+                closed = next((r for r in rows if 'shown=false' in r['text']), None)
+                until = closed['tick'] if closed else (events[k]['undock'] or 10 ** 9)          # what the other player did meanwhile
+                seen = ', '.join('player %d %s at %d' % (other, name, t) for name, t in sorted(events[other].items(), key=lambda x: x[1] or 0)
+                                 if t and up['tick'] <= t <= until)
+                check('kept', closed is None, "player %d's dock menu while docked (from tick %d; %s): %s" % (
+                    k, up['tick'], seen or 'nothing of player %d meanwhile' % other, 'stayed open' if closed is None else 'CLOSED at tick %d' % closed['tick']))
+            top, still = last_answer(c, 'top_after'), last_answer(c, 'dock_after')
+            check('top', bool(top) and 'shown=true' in top['text'], "player %d: the HUD's top level menu 150 ticks after its undock: %s" % (k, top['text'][:60] if top else 'no row'))
+            check('closed', bool(still) and 'shown=false' in still['text'], "player %d: its dock menu after its undock: %s" % (k, still['text'][:60] if still else 'no row'))
 
 
 # ---- a plotted course ------------------------------------------------------------------------------------------------
@@ -2769,7 +2845,7 @@ class Guidance:
             check('removed', bool(removed), 'player %d: Remove course %s' % (k, 'cleared it at tick %d' % removed['tick'] if removed else 'left it (%s)' % shown(c, 'removed')))
 
 
-SCENARIOS = {s.name: s for s in (Trade, Orders, Orders2, Crew, ShipBuy, Refit, RefitOrder, Repair, Wing, ShipSell, CrewMove, FleetTrade, Deploy, Rules, Systems, Settings, Storage, Exchange, Hostile, TradeLoop, Claim, Mining, WingSet, Routines, MapOpen, Guidance)}
+SCENARIOS = {s.name: s for s in (Trade, Orders, Orders2, Crew, ShipBuy, Refit, RefitOrder, Repair, Wing, ShipSell, CrewMove, FleetTrade, Deploy, Rules, Systems, Settings, Storage, Exchange, Hostile, TradeLoop, Claim, Mining, WingSet, Routines, DockPair, MapOpen, Guidance)}
 
 
 def ai_docks(plan):
@@ -2801,13 +2877,45 @@ def md_note(check, logs, marker, name):
         check.note(name, 'client %d: %s' % (n, ' / '.join(md) or 'no %s row' % marker))
 
 
+def swap_targets(scenario, args):
+    """--swap: player 1 gets what the scenario gives player 2 (its fleet ships, stations, targets: the scenario's
+    {1: ..., 2: ...} tables, exchanged in place for this process) and player 2 player 1's; full_plan then starts player
+    2's chain first. Beside a plain run it tells a difference between the players that stays with the player (the
+    session's) from one that moves with the ship or the place (the world's). The names of what was exchanged."""
+    swapped, done = [], set()
+    for klass in scenario.__mro__:
+        for name, value in vars(klass).items():
+            if isinstance(value, dict) and set(value) == set(PLAYERS) and id(value) not in done:
+                done.add(id(value))
+                value[1], value[2] = value[2], value[1]
+                swapped.append(name)
+    if hasattr(args, 'station') and hasattr(args, 'station2'):          # crew: the stations each player hires at
+        args.station, args.station2 = args.station2, args.station
+        swapped.append('--station/--station2')
+    return swapped
+
+
 def full_plan(scenario, args, minutes=None):
     """The scenario's plan per client with the watch's readings added to each."""
     readings = watch_rows(scenario.watch(args), minutes or getattr(args, 'minutes', None) or scenario.minutes)
     plan = scenario.plan(args)
+    if getattr(args, 'swap', False):          # player 2's chain starts when player 1's would have, and the other way round
+        starts = [[e[0] for e in client if len(e) > 1 and e[1] == 'chain'] for client in plan]
+        if all(len(x) == 1 for x in starts):
+            plan = [[(starts[1 - i][0],) + tuple(e[1:]) if len(e) > 1 and e[1] == 'chain' else e for e in client] for i, client in enumerate(plan)]
+    for k, ticks in (getattr(args, 'delay', None) or []):          # --delay K:TICKS: player K's chain starts that much later
+        plan = [[(e[0] + ticks,) + tuple(e[1:]) if i == k - 1 and len(e) > 1 and e[1] == 'chain' else e for e in client] for i, client in enumerate(plan)]
     if getattr(args, 'ai_dock', False):
         plan = ai_docks(plan)
     return [list(client) + readings for client in plan]
+
+
+def delay_value(text):
+    """--delay K:TICKS -> (K, TICKS)."""
+    k, _, ticks = text.partition(':')
+    if int(k) not in PLAYERS or int(ticks) < 0:
+        raise argparse.ArgumentTypeError('K:TICKS with K a player (1 or 2) and TICKS >= 0')
+    return int(k), int(ticks)
 
 
 def report(scenario, logs, run_dir, args):
@@ -2888,7 +2996,7 @@ def run(scenario, args):
                 continue
             clients = {k: parse(path) for k, path in zip(PLAYERS, logs)}
             for k in PLAYERS:          # a picture of both windows when a marked step of a player has answered
-                for mark in scenario.marks:
+                for mark in tuple(scenario.marks) + tuple(getattr(args, 'mark', None) or ()):
                     # a mark is a step's name, or (picture name, step, pattern): the first row of that step that matches
                     label, step, pattern = (mark, mark, None) if isinstance(mark, str) else mark
                     rows = clients[k]['steps'].get(step) or []
@@ -2942,6 +3050,11 @@ def main(argv=None):
             one.add_argument('--ai-dock', action='store_true',
                              help="the players' own ships dock by X4's own AI, as a fleet ship ordered to dock (a debug tool: "
                                   "X4's dock_player_ship_at; the autopilot flies only to a dock's approach point)")
+            one.add_argument('--delay', action='append', type=delay_value, default=[], metavar='K:TICKS',
+                             help="player K's chain starts TICKS later (who comes second at a shared station, menu or person)")
+            one.add_argument('--swap', action='store_true',
+                             help="player 1 gets player 2's ships, stations and targets and player 2 player 1's, and player 2's "
+                                  "chain starts first (beside a plain run: is a difference between the players the session's or the world's)")
             if name == 'run':
                 one.add_argument('--snapshot', type=Path, required=True, help='the two-player snapshot save (save_009.xml.gz)')
                 one.add_argument('--gate-dll', type=Path, required=True)
@@ -2954,6 +3067,8 @@ def main(argv=None):
                 one.add_argument('--set', action='append', default=[], metavar='native_gate_KEY=LUA_VALUE')
                 one.add_argument('--keep', action='store_true', help='leave the clients running after the report')
                 one.add_argument('--no-pages', action='store_true', help="no per-object rows of the world captures (smaller logs; a world difference is then not named)")
+                one.add_argument('--mark', action='append', default=[], metavar='STEP',
+                                 help="also a picture of both windows when a player's step of that name answers (beside the scenario's own)")
             if name == 'plan':
                 one.add_argument('--minutes', type=int, help='length of the session window (default: that of the scenario)')
             if name == 'report':
@@ -2965,6 +3080,8 @@ def main(argv=None):
             print('%-10s %s' % (scenario.name, scenario.__doc__))
         return 0
     scenario = SCENARIOS[args.scenario]
+    if getattr(args, 'swap', False):
+        print('swapped between the players: %s; player 2 starts first' % (', '.join(swap_targets(scenario, args)) or 'nothing but the start'), flush=True)
     if args.command == 'plan':
         print(rig.lua(full_plan(scenario, args)))
         return 0
