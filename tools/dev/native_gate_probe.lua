@@ -5684,8 +5684,9 @@ local function frame()
                      {'native_gate_traffic_rows','traffic_rows','TRAFFIC_ROWS',true}}) do
    if cfg[g[1]] then
     -- The Linux gate has the mining group without view points yet (linux/gate_mining_camera.h): it latches the
-    -- player object's ship, as rc_shape_latch does when no view point is latched.
-    local linux_mining=g[2]=='mining' and gate.platform and gate.platform()=='linux'
+    -- player object's ship, as rc_shape_latch does when no view point is latched. Its sound group (linux/gate_sound_rng.h)
+    -- needs no view point at all: a sound start's draws are private on every client.
+    local linux_mining=(g[2]=='mining' or g[2]=='sound_rng') and gate.platform and gate.platform()=='linux'
     assert(cfg[g[1]]==g[4] and (cfg.native_gate_view_points or linux_mining) and (cfg.native_gate_mass_traffic or cfg.native_gate_region_pass) and gate.region_camera and
      gate.region_camera_frame and gate.region_camera_status and gate.region_camera(g[2])==1,
      g[3]:lower():gsub('_',' ')..' refused '..tostring(gate.region_camera_status and gate.region_camera_status()))

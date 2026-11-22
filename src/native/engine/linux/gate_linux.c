@@ -188,6 +188,9 @@ static int lxct_installed;
 static void lxio_restore(void); /* the island order's sort call back (gate_island_order.h) */
 static int lxio_check(void);
 static int lxio_installed;
+static void lxsnd_restore(void); /* the sound starts' private draws (gate_sound_rng.h) */
+static int lxsnd_check(void);
+static int lxsnd_installed;
 static int lxsr_check(void);
 static int lxsr_installed;
 /* Physics shape refresh: the fixture path and shape_refresh (gate_shape.h, included below). */
@@ -626,6 +629,8 @@ static void finish(unsigned reason) {
     if(lxwl_armed) stats.restored=0;
     lxio_restore();
     if(lxio_installed) stats.restored=0;
+    lxsnd_restore();
+    if(lxsnd_installed) stats.restored=0;
     if(lxis_installed) stats.restored=0;
     if(lxai_installed) stats.restored=0;
     if(lxvd_installed) stats.restored=0;
@@ -772,6 +777,7 @@ static void gate_tick(void *frame,unsigned char loading) {
     if(lxwp_installed && !lxwp_check()) {finish(216);gate_original_once(frame,loading);return;} /* LXWP_STOP_REASON */
     if(lxct_installed && !lxct_check()) {finish(70);gate_original_once(frame,loading);return;} /* the contact diag, as Windows */
     if(lxio_installed && !lxio_check()) {finish(215);gate_original_once(frame,loading);return;} /* LXIO_STOP_REASON, as Windows */
+    if(lxsnd_installed && !lxsnd_check()) {finish(217);gate_original_once(frame,loading);return;} /* LXSND_STOP_REASON */
     if(lxmc_installed && !lxmc_check()) {finish(166);gate_original_once(frame,loading);return;} /* LXMC_STOP_REASON */
     if((lxf_installed || lxf_ctor_installed) && (!lxf_owned() || lxf_failures)) {finish(55);gate_original_once(frame,loading);return;} /* flight, as Windows */
     if(ai_wait_armed && ai_wait_failures) {finish(88);gate_original_once(frame,loading);return;}
@@ -1007,6 +1013,7 @@ static int lua_start(lua_State *L) {
 #include "gate_flight_limits.h"
 #include "../lockstep_body_mass.h" /* the read-only census, shared with Windows */
 #include "gate_body_mass.h"
+#include "gate_sound_rng.h"
 #include "gate_mining_camera.h"
 #include "gate_flight.h"
 #include "gate_battle.h"

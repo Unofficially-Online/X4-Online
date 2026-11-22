@@ -293,6 +293,8 @@ def bundle(args):
     command += ['--world-log-mode', args.world_log_mode]
     if args.battle:
         command.append('--snapshot-prebind')
+    if getattr(args, 'mixed_platform', False):
+        command.append('--session-md')   # a Windows session's MD scripts and stock patches: every client runs the same scripts
     for name in ('actor_diag', 'strict_state', 'shield_refresh', 'order_state', 'fleet_state', 'flight_rng', 'flight_full',
                  'avoidance_refresh', 'steering_init', 'agent_full', 'spline_diag', 'spline_refresh', 'spline_state', 'params_init', 'strict_physics', 'body_diag', 'params_diag'):
         if getattr(args, name):
@@ -459,6 +461,10 @@ def bundle(args):
         command.append('--weave-phase')
     if args.island_order:
         command.append('--island-order')
+    if args.path_budget is not None:
+        command += ['--path-budget', str(args.path_budget)]
+    if args.sound_rng:
+        command += ['--sound-rng', args.sound_rng]
     if args.contact_mass:
         command.append('--contact-mass')
     if args.constraint_diag:
@@ -596,6 +602,8 @@ def bundle(args):
         'island_order',
         'constraint_diag',
         'contact_mass',
+        'path_budget',
+        'sound_rng',
         'impulse_diag',
         'ik_diag',
         'ik_step',
@@ -1426,6 +1434,9 @@ def main(argv=None):
     b.add_argument('--ik-wrap', action='store_true', help="a skeleton joint's wrapped target as (t2 + value) - pi, the Windows order (native_gate_ik_wrap)")
     b.add_argument('--probes-diag', action='store_true', help='PROBES rows: the fixture ships obstacle probe vectors (native_gate_probes_diag)')
     b.add_argument('--weave-phase', action='store_true', help="the weaving behaviours' phase as Windows computes it (native_gate_weave_phase)")
+    b.add_argument('--sound-rng', choices=('split',), help="sound starts draw from private words, as Windows' default (native_gate_sound_rng)")
+    b.add_argument('--path-budget', type=int, metavar='N', help="the pathing round robin by count, N full updates per batch and pass, "
+                   "as Windows' default (100) (native_gate_path_budget)")
     b.add_argument('--contact-mass', action='store_true', help="contact constraints' effective masses summed in the Windows build's order (native_gate_contact_mass)")
     b.add_argument('--island-order', action='store_true', help="island contacts solved in an order keyed alike on every client, as Windows' default (native_gate_island_order)")
     b.add_argument('--constraint-diag', action='store_true', help="CONSTRAINT rows: the fixture ships' contact constraints and stored lambdas, as Windows (native_gate_constraint_diag)")

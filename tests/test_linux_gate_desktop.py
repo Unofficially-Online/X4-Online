@@ -224,6 +224,8 @@ class MixedPlatformBundle(unittest.TestCase):
         self.assertIs(options['weave_phase'], True)
         self.assertIs(options['island_order'], True)
         self.assertIs(options['contact_mass'], True)
+        self.assertEqual(options['path_budget'], 100)
+        self.assertEqual(options['sound_rng'], 'split')
         self.assertEqual(options['worker_layout'], 30)
         self.assertEqual(options['body1_mass'], 'fallback')
         self.assertEqual(options['fp_redirect'], 'redirect')

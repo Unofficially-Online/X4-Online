@@ -93,7 +93,12 @@ MIXED_PLATFORM_SETS = ("native_gate_fp_redirect='redirect'", 'native_gate_fp_red
                        'native_gate_worker_layout=30',    # a Windows default already; the Linux bundle takes it too (linux/gate_worker_layout.h)
                        'native_gate_island_order=true',   # a Windows default already: without the Linux twin (linux/gate_island_order.h) every
                                                           # island of two or more contacts is solved in another order on Linux
-                       'native_gate_contact_mass=true')   # Linux-only: contact effective masses in MSVC's sum order (W36s against lx74a, tick 133)
+                       'native_gate_contact_mass=true',   # Linux-only: contact effective masses in MSVC's sum order (W36s against lx74a, tick 133)
+                       'native_gate_path_budget=100',     # a Windows default already: without it the Linux bundle's pathing round robin ran by
+                                                          # the clock, and every moving ship's motion parted by tick 30 (W37a against lx78a,
+                                                          # 9,988 objects; W39c, Windows without it, equal to lx78a)
+                       "native_gate_sound_rng='split'")   # a Windows default already: Linux sound starts drew from the scripts' words
+                                                          # (linux/gate_sound_rng.h; W46 against lx85a, the fighters' scopes 9 / 11 draws)
 NL = chr(10)
 
 

@@ -175,11 +175,12 @@ static int lxsh_rc_status(char *out,size_t size);
 static int lxsh_rc_armed;
 static int lua_region_camera(lua_State *L) {
     size_t length=0;const char *group=p_lua_tolstring(L,1,&length);
-    const int ok=group && ((length==6 && !memcmp(group,"mining",6) && lxmc_arm()) || (length==13 && !memcmp(group,"shape_refresh",13) && lxsh_rc_arm()));
+    const int ok=group && ((length==6 && !memcmp(group,"mining",6) && lxmc_arm()) || (length==13 && !memcmp(group,"shape_refresh",13) && lxsh_rc_arm()) ||
+                           (length==9 && !memcmp(group,"sound_rng",9) && lxsnd_arm()));
     p_lua_pushnumber(L,ok);return 1;
 }
 static int lua_region_camera_frame(lua_State *L) {
-    (void)L;int ok=accept_ui() && (lxmc_installed || lxsh_rc_armed);
+    (void)L;int ok=accept_ui() && (lxmc_installed || lxsh_rc_armed || lxsnd_installed);
     if(ok && lxmc_installed) lxmc_latch();
     if(ok && lxsh_rc_armed) lxsh_latch();
     p_lua_pushnumber(L,ok);return 1;
@@ -187,5 +188,6 @@ static int lua_region_camera_frame(lua_State *L) {
 static int lua_region_camera_status(lua_State *L) {
     char out[768];int n=accept_ui()?lxmc_status(out,sizeof(out)):0;
     if(n && lxsh_rc_armed) {out[n++]=' ';const int k=lxsh_rc_status(out+n,sizeof(out)-(size_t)n);n=k?n+k:n-1;}
+    if(n && (lxsnd_installed || lxsnd_restored)) {out[n++]=' ';const int k=lxsnd_status(out+n,sizeof(out)-(size_t)n);n=k?n+k:n-1;}
     if(n) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);return 1;
 }

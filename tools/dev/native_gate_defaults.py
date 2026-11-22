@@ -81,6 +81,18 @@ EXCLUDED_KEYS = [k for k, _ in TABLE['excluded']]
 TUNING_KEYS = [k for k, _ in TABLE['tuning']]
 
 
+def ship_md(out):
+    """Copies the default stack's MD scripts and the stock MD/AI script patches only (a Linux bundle of a mixed session:
+    X4 loads an extension's md/ and aiscripts/ on every platform, and the patches change what every client runs)."""
+    source = LUA.parent
+    for name in MD_FILES:
+        (out/name).parent.mkdir(parents=True, exist_ok=True)
+        (out/name).write_bytes((source/Path(name).name).read_bytes())
+    for name, patch in MD_PATCHES.items():
+        (out/name).parent.mkdir(parents=True, exist_ok=True)
+        (out/name).write_bytes((source/patch).read_bytes())
+
+
 def ship_files(out, ui_files):
     """Copies the default stack's files into an overlay directory and returns ui.xml.files' new order: the defaults
     module first, then the default adapters, then the overlay's own entries (each once)."""

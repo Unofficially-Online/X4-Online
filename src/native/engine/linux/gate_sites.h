@@ -637,6 +637,14 @@ static const lx_site lx_sites[]={
     {"wlay_emplace",0x1f3c7a0,0x6c,"c31e6d553157c4715d50fecec8671f99c1b4966ac804004ccd3a52a9f67fbebe"},
     {"wlay_vector_dtor",0x6a0bf4,0xcc,"5db8b23230f8d919f083c034846735e8c5aba8739042ae269c1a8a915deedac7"},
     {"wlay_jolt",0xed4eb0,0x21,"33827c3a1517ff7621d67c423bd22ee02da0b9fda7bb09806a351e5974eb02c3"},
+    /* the sound starts (gate_sound_rng.h): the pitch block before its FloatState call, the two sample choice calls with
+     * their blocks, FloatState and I32 */
+    {"sound_rng_pitch",0x1a62e52,0x35,"91396123db0a4f9f84dfa197c0e930b91740ac99ea2a796fde2d6da177055323"},
+    {"sound_rng_pitch_after",0x1a62e93,0xf,"cfbc8bd0eb34490f13766ddd239ffe0c1d6dc0cc405ba2d7274a4da587efea81"},
+    {"sound_rng_choice_a",0x1a63a41,0x5,"e22b32960864221a50c6b541eeea59b44d5e54fe6fecfccb944356780df06367"},
+    {"sound_rng_choice_a_after",0x1a63a52,0x9,"da87cff56fd52b6e91da24f9baaa784439fe4a53bb5dfd3191299ccad6bc28fc"},
+    {"sound_rng_choice_b",0x1a63ad8,0xc,"a2c1b0a31c252b8b96bc4d4693b7132aa16c17f17c9848621907f450a61f78f9"},
+    {"sound_rng_i32",0x1a49160,0x3d,"53870a32b654ee337f0f366d841fbe9cce8463b357777ecabd593388c71ccd6a"},
     /* the island order (gate_island_order.h): the deterministic block, the calls up to the sort call, the sort and its
      * comparator, StoreAppliedImpulses' point layout, FinishConstraintBuffer's array */
     {"iorder_block",0x1b212c8,0x1d,"ec2419c256a7f9488b3c0ce1c42e56c5ce28922bbf3b713bb6464d4ba500a74c"},
