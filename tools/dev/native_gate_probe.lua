@@ -5328,6 +5328,17 @@ local function frame()
     gate.island_order_status and gate.island_order()==1,'island order refused')
    log('ISLAND_ORDER_ARMED')
   end
+  -- Contact pairs (lockstep_contact_orient.h): which body of a pair is body 1 (the narrow phase's space, the caches'
+  -- keys, the constraint's arithmetic) follows the owners' portable IDs, not BodyIDs. Needs the world identities.
+  -- true (a default), 'observe' (Jolt's own BodyID order kept, the same counts) or 'reverse' (every pair the other way
+  -- round: what turning contacts round does to a run); both diagnostics.
+  if cfg.native_gate_contact_orient then
+   local mode=cfg.native_gate_contact_orient
+   assert((mode==true or mode=='observe' or mode=='reverse') and snapshot and cfg.native_gate_world_identities and gate.contact_orient and
+    gate.contact_orient_status and gate.contact_orient(mode==true and 'on' or mode)==1,
+    'contact orient refused '..tostring(gate.contact_orient_status and gate.contact_orient_status()))
+   log('CONTACT_ORIENT_ARMED '..tostring(gate.contact_orient_status()))
+  end
   -- Read-only (lockstep_constraint_trace.h, both gates, the same text): one CONSTRAINT row per contact constraint of a
   -- fixture ship as the velocity solve's sort leaves it (normal, masses, each point's three axis parts, the warm-start
   -- lambdas) with the lambdas the solve stored in the contact cache. Through the island order's stub (installed here
@@ -7260,6 +7271,7 @@ local function frame()
   if cfg.native_gate_player_timer then log('PLAYER_TIMER_STOP '..tostring(gate.player_timer_status())) end
   if cfg.native_gate_warp_rng then log('WARP_RNG_STOP '..tostring(gate.warp_rng_status())) end
   if cfg.native_gate_island_order then log('ISLAND_ORDER_STOP '..tostring(gate.island_order_status())) end
+  if cfg.native_gate_contact_orient then log('CONTACT_ORIENT_STOP '..tostring(gate.contact_orient_status())) end
   if cfg.native_gate_transition_rows then log('TRANSITION_ROWS_STOP '..tostring(gate.transition_rows_status())) end
   if cfg.native_gate_tempzone_order then log('TEMPZONE_ORDER_STOP '..tostring(gate.tempzone_order_status())) end
   if cfg.native_gate_warp_exit and gate.warp_exit_status then log('WARP_EXIT_STOP '..tostring(gate.warp_exit_status())) end
@@ -7676,6 +7688,9 @@ local function frame()
  end
  if cfg.native_gate_island_order then
   ticklog.status('ISLAND_ORDER',tick,gate.island_order_status,'island order status unavailable')
+ end
+ if cfg.native_gate_contact_orient then
+  ticklog.status('CONTACT_ORIENT',tick,gate.contact_orient_status,'contact orient status unavailable')
  end
  if cfg.native_gate_warp_rng then
   ticklog.status('WARP_RNG',tick,gate.warp_rng_status,'warp RNG status unavailable')

@@ -99,6 +99,10 @@ MIXED_PLATFORM_SETS = ("native_gate_fp_redirect='redirect'", 'native_gate_fp_red
                                                           # 9,988 objects; W39c, Windows without it, equal to lx78a)
                        "native_gate_sound_rng='split'")   # a Windows default already: Linux sound starts drew from the scripts' words
                                                           # (linux/gate_sound_rng.h; W46 against lx85a, the fighters' scopes 9 / 11 draws)
+# The Windows host's own part of --mixed-platform (not a Linux bundle option): Windows defaults whose Linux twin is not there
+# yet, off so that both sides run the same code. native_gate_contact_orient (lockstep_contact_orient.h): Jolt's BodyID order
+# on both sides until linux/ has the twin; then it moves to MIXED_PLATFORM_SETS as true.
+MIXED_PLATFORM_WINDOWS_SETS = ('native_gate_contact_orient=false',)
 NL = chr(10)
 
 
@@ -312,7 +316,7 @@ def main(argv=None):
     join_base, sets = [], list(args.set)
     if args.mixed_platform:
         named = {t.replace(' ', '').split('=', 1)[0] for t in sets}
-        sets += [t for t in MIXED_PLATFORM_SETS if t.split('=', 1)[0] not in named]
+        sets += [t for t in MIXED_PLATFORM_SETS + MIXED_PLATFORM_WINDOWS_SETS if t.split('=', 1)[0] not in named]
     if opened:
         sys.path.insert(0, str(DEV))
         import native_gate_join_overlays as join_overlays

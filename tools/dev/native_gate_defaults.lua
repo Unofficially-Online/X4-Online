@@ -112,6 +112,10 @@ D.ON={
  -- A hot joiner's load hands out other BodyIDs (hq129: 61 of 71 live bodies), and Jolt sorted each island's contacts by them
  -- (a docking transport's four contacts solved in another order at 21921, the census of 22200 apart).
  {'native_gate_island_order',true,'native_gate_world_identities','island contacts solved in an order keyed alike on every client'},
+ -- Which body of a contact pair is body 1 (the narrow phase's space, the contact caches' keys, the constraint's r1 + u) was
+ -- Jolt's lower BodyID: a joiner's or another process's BodyIDs can turn a pair round. Every client runs it, so the Linux
+ -- gate needs the twin before Windows and Linux players share a session.
+ {'native_gate_contact_orient',true,'native_gate_world_identities','the bodies of contact pairs in an order keyed alike on every client (not by BodyIDs)'},
  -- With the inline jobs too (complete command-list splices either way): a hot join needs the temporary zones' portable order
  -- (hjs1, 11 Nov, without it: 17 objects more on the joiner at the first step after the join).
  {'native_gate_tempzone_order','order','native_gate_world_identities native_gate_serial_pathing native_gate_travel_determinism','temporary zones in a fixed order'},
@@ -633,7 +637,7 @@ D.STOP_REASONS={[1]='the relay stopped the session',[2]='not the main thread or 
  [169]='region camera (highway rows)',[170]='UI lazy',[171]='supply wants',[172]='loadout order',[173]='order canon',[174]='pick order',
  [175]='macro arena',[176]='path budget',[177]='economy load',[178]='cutscene ready',[179]='fp redirect',[180]='path transforms',
  [181]='body pose',[182]='render frames',[183]='render display',[184]='own-ship prediction',[185]='on foot',[186]='nav mesh',
- [187]='hybrid sectors',[188]='character play',[189]='flight limits',[190]='adaptive plan',[191]='adaptive source',[192]='adaptive quiet',[193]='adaptive dropped',[194]='adaptive pilot',[195]='UI write guard',[196]='speech clock',[197]='safe pos order',[198]='nav refresh watch',[199]='spline calc watch',[204]='body1 mass',[205]='body step',[206]='impulse',[207]='impulse',[208]='ik step',[209]='ik wrap',[210]='steer roll',[212]='avoid angle',[213]='pursuit speed',[216]='weave phase',[211]='shape refresh',[224]='worker layout'}
+ [187]='hybrid sectors',[188]='character play',[189]='flight limits',[190]='adaptive plan',[191]='adaptive source',[192]='adaptive quiet',[193]='adaptive dropped',[194]='adaptive pilot',[195]='UI write guard',[196]='speech clock',[197]='safe pos order',[198]='nav refresh watch',[199]='spline calc watch',[204]='body1 mass',[205]='body step',[206]='impulse',[207]='impulse',[208]='ik step',[209]='ik wrap',[210]='steer roll',[212]='avoid angle',[213]='pursuit speed',[216]='weave phase',[211]='shape refresh',[219]='contact orient',[224]='worker layout'}
 
 local function on(v) return v~=nil and v~=false end
 local function copy(v)

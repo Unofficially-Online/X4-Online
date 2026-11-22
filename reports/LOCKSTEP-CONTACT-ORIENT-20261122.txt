@@ -1,0 +1,58 @@
+LOCKSTEP CONTACT ORIENTATION (native_gate_contact_orient), 22 Nov 2026
+
+1. THE CLASS
+Jolt puts the lower BodyID first in every contact pair at five places of X4 9.00: ProcessBodyPair 0x13d5f50 (body 1 the higher
+motion type, for equal types the lower BodyID: the narrow phase runs in body 1's space), and ContactConstraintManager's
+GetContactsFromCache 0x13e10b0, AddBodyPair 0x13e1b00, AddContactConstraint 0x13e1df0 and OnCCDContactAdded (each swaps the
+bodies so that body 1 has the lower BodyID: the contact caches are keyed that way, the constraint is built that way). A
+contact's arithmetic is not symmetric in its bodies (the non-penetration part's r1 + u reaches body 2's contact point from body
+1's centre of mass), so the same contact solved the other way round gives other impulses. BodyIDs are process-local: a hot
+joiner's load hands them out in its own order, and bodies made in one frame take them in heap-address order
+(lockstep_body_order.h). The island order (19 Nov) made the solve order portable; which body is body 1 still followed the
+BodyIDs. This was the open "ship-on-ship body order by BodyID" item of the hot join.
+
+Measured (hqc2, a late join at T=6052, the two clients read live right after the admission): 59 of 69 shared bodies have
+other BodyIDs on the joiner, and 371 of 2,346 body pairs are in the other BodyID order there (110 connection module / small
+ship, 40 defence module / small ship, 19 small ship / small ship, 10 small ship / station, ...). Any of those pairs touching
+would be oriented one way on the session and the other way on the joiner.
+
+2. THE FIX (src/native/engine/lockstep_contact_orient.h, a default, needs native_gate_world_identities)
+Each of the five compares jumps to a stub that saves rax, rcx, rdx, r8-r11 and xmm0-5, calls corient_cf(x, y, place), sets the
+carry flag from the answer, replays the displaced instructions and jumps back, so the native jae / cmovae after the compare
+take the bodies in a portable order: bodies whose owner has a portable ID by (owner's ID, which record +0x260/+0x268), then
+bodies whose owner has none by (owner's runtime ID, record), then ownerless bodies by BodyID as before. Runtime IDs are alike
+on every client (the rid digest part). All five places use one order, so the caches stay consistent (keyed by the pair in that
+order). Modes: true (on), 'observe' (Jolt's BodyID order kept, the same counts) and 'reverse' (every pair the other way round
+from the portable order); the last two are diagnostics. Status CONTACT_ORIENT: calls and flips (portable order not this
+process's BodyID order) per place, pairs with a runtime-keyed body and with an ownerless one, the last runtime-keyed owner,
+and the agree digest (GetContactsFromCache's calls: tick, pair in portable order, whether this process's BodyIDs agree).
+Pins: each place's block. Stop reason 219.
+
+3. EVIDENCE
+- C tests (synthetic): the order (portable first, runtime-keyed, ownerless by BodyID), the same answers for other BodyIDs,
+  the agree digest, observe and reverse; the generated stubs executed on a fake branch place and a fake cmov place, both
+  modes. Native image: the five pins on X4.exe, the stubs near the image, the jumps in, owned, a changed block refused,
+  the bytes restored.
+- Hot joins (two Windows clients on one PC, the session save of the hq47 rig, rebuilt overlay): hqc1 T=6061 to 9105, hqc2
+  T=6052 to 24148, hqc3 T=6032 to 24039 (with the runtime-ID rank): the digest parts equal at every tick from 6600 (before
+  6600 only the known first-capture difference of the dead temporary zones). hqc2 showed the owners without a portable ID:
+  from tick 12060 one body of nearly every contact was a station's DockArea (runtime 0x68b42, its record not one of the
+  owner's two), which fell back to BodyIDs; hqc3 orders it by runtime ID (the same decisions on both clients, flips
+  18438/16255/18918 at the cache, body pair and constraint places on both).
+- Those DockArea contacts are sensor contacts (the island order sorted no island of two contacts in 18,000 ticks): hqc4, the
+  session in observe and the joiner on, oriented ~2,800 contacts differently and stayed equal to 14,006.
+- Solid contacts, the battle census (save_009, 30 Hz, 300 ticks, two Windows clients): on (CO1, CO4) and observe (CO2) give
+  the same rows (Jolt's BodyIDs already in the portable order there: flips 0, 52 pairs, 5 constraints); reverse (CO3, both
+  clients alike, verdict pass) parts from on at tick 108, the first contact of fixture actors 1 and 2 (pose and velocity
+  ulps apart, growing; 97 ticks differ). Turning a solid contact round changes the run, so a client whose BodyIDs turn a
+  pair round parts there without the fix.
+- Python suite: 2,295 tests, only the known Linux-only geteuid error.
+
+4. MIXED PLATFORM, OPEN
+- The Linux gate has no twin yet. Every client runs the fix, so tools/build_play_overlay.py --mixed-platform sets
+  native_gate_contact_orient=false on the Windows host (MIXED_PLATFORM_WINDOWS_SETS): both sides keep Jolt's BodyID order
+  until linux/ has the twin; then it moves to MIXED_PLATFORM_SETS as true.
+- Still keyed by BodyIDs, ordering only: the island sort's tie-break (equal keys: 0 seen), the CCD sort's tie-break (equal
+  fractions), the order of Jolt's contact-removed callbacks (the cache's hash order) and the broad phase's discovery order
+  (X4's contact-added callbacks). A joiner's contact caches are its own at the admission (warm starts of contacts already
+  touching at T); not seen.

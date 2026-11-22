@@ -51,6 +51,7 @@ PROBE_OPTIONS = {
     'native_gate_nav_cadence': (('true', 'far', 'every', 'observe'),
                                 ('native_gate_nav_rng', 'native_gate_nav_diag', 'native_gate_nav_initial_refresh'), 'nav'),
     'native_gate_view_points': (('true', 'players', 'observe'), (), None),
+    'native_gate_contact_orient': (('true', 'observe', 'reverse'), (), None),
     'native_gate_mass_traffic': (('true', 'sync', 'observe'), (), None),
     'native_gate_spawn_rng': (('key', 'observe'), (), None),
     'native_gate_region_pass': (('true', 'sync', 'observe'), (), None),
