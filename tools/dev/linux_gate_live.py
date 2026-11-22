@@ -434,6 +434,8 @@ def bundle(args):
         command.append('--body-step-diag')
     if args.velocity_diag:
         command.append('--velocity-diag')
+    if args.contact_diag:
+        command.append('--contact-diag')
     if args.impulse_diag:
         command.append('--impulse-diag')
     if args.ik_diag:
@@ -446,6 +448,8 @@ def bundle(args):
         command.append('--avoid-angle')
     if args.pursuit_speed:
         command.append('--pursuit-speed')
+    if args.weave_phase:
+        command.append('--weave-phase')
     if args.probes_diag:
         command.append('--probes-diag')
     if args.ik_wrap:
@@ -574,6 +578,7 @@ def bundle(args):
         'body1_mass',
         'body_step_diag',
         'velocity_diag',
+        'contact_diag',
         'impulse_diag',
         'ik_diag',
         'ik_step',
@@ -1401,6 +1406,7 @@ def main(argv=None):
     b.add_argument('--shape-refresh', choices=('view',), help="shape refresh intervals from the player's ship on a keyed draw, due times aligned at the first call per object (native_gate_shape_refresh)")
     b.add_argument('--ik-wrap', action='store_true', help="a skeleton joint's wrapped target as (t2 + value) - pi, the Windows order (native_gate_ik_wrap)")
     b.add_argument('--probes-diag', action='store_true', help='PROBES rows: the fixture ships obstacle probe vectors (native_gate_probes_diag)')
+    b.add_argument('--weave-phase', action='store_true', help="the weaving behaviours' phase as Windows computes it (native_gate_weave_phase)")
     b.add_argument('--pursuit-speed', action='store_true', help="the pursuit behaviour's speed factor as Windows computes it (native_gate_pursuit_speed)")
     b.add_argument('--avoid-angle', action='store_true', help="the obstacle avoidance's angle scaling as Windows computes it (native_gate_avoid_angle)")
     b.add_argument('--steer-roll', action='store_true', help="the steering roll alignment as Windows computes it (native_gate_steer_roll)")
@@ -1408,6 +1414,7 @@ def main(argv=None):
     b.add_argument('--ik-diag', action='store_true', help='IKJOINT rows: the fixture ships\' and weapons\' skeleton joints (native_gate_ik_diag)')
     b.add_argument('--impulse-diag', action='store_true', help='IMPULSE rows: the impulses on fixture bodies (native_gate_impulse_diag)')
     b.add_argument('--velocity-diag', action='store_true', help="VELOCITY rows: the fixture controllers' SetVelocity calls, as Windows (native_gate_velocity_diag)")
+    b.add_argument('--contact-diag', action='store_true', help="CONTACT rows: the fixture ships' contact manifolds and settings, as Windows (native_gate_contact_diag)")
     b.add_argument('--flight-limits', action='store_true', help="the engine parameters' limit words with Windows' hoisted reciprocal (native_gate_flight_limits)")
     b.add_argument('--world-hash-shields', action='store_true', help="census shields in canonical form (native_gate_world_hash_shields = "
                    "'canonical', as the Windows default stack hashes them)")

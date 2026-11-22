@@ -627,6 +627,9 @@ static const lx_site lx_sites[]={
     {"zone_pending_frame",0xfeb82b,0x5,"4c5851c1a977f26fac2cbf050b1640cd510446befba9de17fd2990f9d7629266"}, /* UniverseFrameUpdate -> 0x1161bb0 (gate_zone_pending.h) */
     {"spline_phase_route",0x1374d90,0x40,"a57977607a6075e964d0aa1053b033f02298f3140e2855c323b49bf952003dea"}, /* the route calculation's head, Windows 0xec0cb0 (gate_spline_phase.h) */
     {"spline_phase_steer",0x10b0c90,0x128,"746b62a940333a7715e89700fa1f490ad7239fa92d5bc32709b54d84c03e87d3"}, /* the calculator's steering path job, its Unlock call 0x10b0cc1 (gate_spline_phase.h) */
+    {"weave_phase_3",0x13de0b0,0x44,"78fc8af507eb155813658990d7a163502304f2153df9f5ec8ba22d4d8c6f8655"}, /* the weave phases (gate_weave_phase.h) */
+    {"weave_phase_5",0x13de470,0x44,"f8d458214c3a7a4f2105a777d1e0f4eab3942be5a68d36ed69794d669775c43f"},
+    {"contact_listener_slots",0xee21a0,0x18,"0f84dbca83cd2e93ec6cdb335448f2e3ce830a38e91548f8f0f991ac453fdb44"}, /* XContactListener OnContactAdded/Persisted -> RecordContact 0xee1060 (gate_contact.h) */
     {"ik_wrap_tail",0x15661c0,0x60,"98e46a50b2cf8111eab6cda0ec549913e60a2356ce72f85cc33e6c00f7688f25"},
     {"body_defined_mass",0xed4cf0,0x8e,"f640dc2b2c63a1a363cc8f487544824b91ee72e7eadc3da0dcd7117084634874"},
     {"mining_search",0x1f47b20,0x6d0,"2793312d8762d21df2f389e8d00a52856fad88569264f6c63e0365e368a9ba07"},

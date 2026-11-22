@@ -393,6 +393,8 @@ static void test_frame_gate_failures(void) {
 #include "test_gate_pursuit_speed.h"
 #include "test_gate_zone_pending.h"
 #include "test_gate_spline_phase.h"
+#include "test_gate_weave_phase.h"
+#include "test_gate_contact.h"
 /* The real entry bytes: the hook patch and its exact restoration, without running them. */
 static void test_world_install_elf(void) {
     reset_session();wt_reset_identities();
@@ -463,6 +465,8 @@ int main(int argc,char **argv) {
     test_pursuit_speed_linux();
     test_zone_pending_linux();
     test_spline_phase_linux();
+    test_weave_phase_linux();
+    test_contact_linux();
     test_world_hook(); /* last on the synthetic image: it replaces the insert's bytes */
     if(argc>1) {
         /* The real executable's bytes: file pin, every site, the call, the patches. */
@@ -507,6 +511,8 @@ int main(int argc,char **argv) {
         test_pursuit_speed_elf();
         test_zone_pending_elf();
         test_spline_phase_elf();
+        test_weave_phase_elf();
+        test_contact_elf();
         test_mining_camera_elf();
         test_runtime_ids_local_elf();
         test_shield_canonical_elf();

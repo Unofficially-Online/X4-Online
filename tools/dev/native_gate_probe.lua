@@ -5292,12 +5292,18 @@ local function frame()
     'zone pending refused '..tostring(gate.zone_pending_status and gate.zone_pending_status()))
    log('ZONE_PENDING_ARMED '..tostring(gate.zone_pending_status()))
   end
+  -- The weaving behaviours' phase in the Windows order (linux/gate_weave_phase.h): t * (pi / n) for (t * pi) / n. Linux only.
+  if cfg.native_gate_weave_phase and gate.platform and gate.platform()=='linux' then
+   assert(snapshot and gate.weave_phase and gate.weave_phase_status and gate.weave_phase()==1,'weave phase refused '..tostring(gate.weave_phase_status and gate.weave_phase_status()))
+   log('WEAVE_PHASE_ARMED')
+  end
   -- Linux-only keys of the mixed-platform preset: on Windows only a note (its build is already that order).
   if not (gate.platform and gate.platform()=='linux') then
    if cfg.native_gate_ik_step then log('IK_STEP_NOOP windows: the joint step multiplies by 50.0f already') end
    if cfg.native_gate_steer_roll then log('STEER_ROLL_NOOP windows: the roll alignment multiplies by the hoisted reciprocal already') end
    if cfg.native_gate_avoid_angle then log('AVOID_ANGLE_NOOP windows: the avoidance angles multiply by 1/pi and 2/pi already') end
    if cfg.native_gate_pursuit_speed then log('PURSUIT_SPEED_NOOP windows: the speed factor multiplies by the folded 0.8/1.5 already') end
+   if cfg.native_gate_weave_phase then log('WEAVE_PHASE_NOOP windows: the weave phases multiply by the folded pi/3 and pi/5 already') end
    if cfg.native_gate_ik_wrap then log('IK_WRAP_NOOP windows: the joint wrap is (t2 + value) - pi already') end
    if cfg.native_gate_body1_mass then log('BODY1_MASS_NOOP windows: second bodies are created with an empty compound already') end
   end
@@ -7120,6 +7126,7 @@ local function frame()
   if cfg.native_gate_steer_roll and gate.steer_roll_status then log('STEER_ROLL_STOP '..tostring(gate.steer_roll_status())) end
   if cfg.native_gate_avoid_angle and gate.avoid_angle_status then log('AVOID_ANGLE_STOP '..tostring(gate.avoid_angle_status())) end
   if cfg.native_gate_pursuit_speed and gate.pursuit_speed_status then log('PURSUIT_SPEED_STOP '..tostring(gate.pursuit_speed_status())) end
+  if cfg.native_gate_weave_phase and gate.weave_phase_status then log('WEAVE_PHASE_STOP '..tostring(gate.weave_phase_status())) end
   if cfg.native_gate_ik_wrap and gate.ik_wrap_status then log('IK_WRAP_STOP '..tostring(gate.ik_wrap_status())) end
   if cfg.native_gate_draw_watch or cfg.native_gate_draw_watch_frame then log('DRAW_WATCH_STOP '..tostring(gate.draw_watch_status())) end
   if cfg.native_gate_attention_all then log('ATTENTION_ALL_STOP '..tostring(gate.attention_all_status())) end

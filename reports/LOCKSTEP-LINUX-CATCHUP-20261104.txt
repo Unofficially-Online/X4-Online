@@ -640,6 +640,21 @@ THE BATTLE SCOPE ON LINUX (W35 = the session defaults' battle reference, Windows
   -0.8) / 1.5 + 1 (0x13d7bd4). native_gate_pursuit_speed (linux/gate_pursuit_speed.h, stop 213) runs the Linux run as
   one mulss by -0.53333336. lx69a: the tick-99 word equal to W36q's; the first state apart moves from tick 124 to
   tick 133 (actor 4).
+  The Xenon fighters' turn-rate commands (FLIGHT model, Windows +0x1e0 actor 11 at tick 106, +0x1e4 actor 12 at 113,
+  +0x1e8 at 122; Linux's model is the same words 16 bytes earlier) come from two weaving behaviours that swing their
+  aim point with cos(t * pi / n), n = 3 (Windows 0xed7d30, Linux 0x13de0b0) and n = 5 (Windows 0xed81e2, Linux
+  0x13de470). MSVC folded pi / n: t * 1.0471976 and t * 0.62831855; GCC computes (t * pi) / n, two roundings.
+  native_gate_weave_phase (linux/gate_weave_phase.h, stop 216) runs each 16-byte Linux run as one mulss by the
+  Windows constant. lx70a (lx69a's recipe + --weave-phase, 300 ticks) against W36q: every FLIGHT model, input,
+  limits and params word equal through tick 133 (only a heap pointer pair, Windows model +0x278, apart), NAV and
+  AGENT rows equal. The first state apart stays at tick 133, now with another cause: actors 4 and 11 collide there
+  (BODY delta, the velocity change inside the step, equal and opposite in direction: actor 4 -0.29 -3.38 -0.18,
+  actor 11 0.27 3.12 0.17; no AddImpulse in either run after tick 112; the contact copy-back 0xbfc86 / Linux
+  0xeecb7c hands the bodies' new velocities to the controllers). Jolt's result is a few ulps apart (actor 4 delta y
+  c0585800 / c05857f8, linear y 41cf8266 / 41cf8267, angular y and z 1 and 2 ulps). The tick-108 collision of actors
+  1 and 2 (delta 5.19 -3.76 -14.97) is bit-identical on both, so the contact path itself runs alike there. Next:
+  the contact inputs at tick 133 (manifold base, normal, depth, points, settings: lockstep_contact.h on Windows,
+  RecordContact 0xb75a0; no Linux twin yet), then the solver if the inputs are equal.
 
 FUNCTION COVERAGE WITH PLAYER INPUT ON LINUX (191754a1, b1688473; lx32a, lx32b)
   native_gate_coverage_from = T (Linux gate only; linux_gate_live.py --coverage-from) puts the coverage marks in at

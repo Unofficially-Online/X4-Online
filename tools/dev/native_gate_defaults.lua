@@ -568,6 +568,7 @@ D.EXCLUDED={
  {'native_gate_ik_wrap','Linux gate only: a joint wrapped target as (t2 + value) - pi, the Windows order'},
  {'native_gate_ik_step','Linux gate only: the joints fixed-step divisions by 0.02 as Windows multiplications by 50'},
  {'native_gate_steer_roll','Linux gate only: the steering roll alignment divisions by the yaw limit as Windows multiplications by its reciprocal'},
+ {'native_gate_weave_phase','Linux gate only: the weaving behaviours phase (t * pi) / n as Windows t * (pi / n)'},
  {'native_gate_pursuit_speed','Linux gate only: the pursuit speed factor ((c+1) * -0.8) / 1.5 + 1 as Windows 1 - (c+1) * 0.53333336'},
  {'native_gate_avoid_angle','Linux gate only: the obstacle avoidance angle divisions by pi and pi/2 as Windows multiplications by 1/pi and 2/pi'},
  {'native_gate_body_step_diag','Linux gate only: the fixture bodies before and after the Jolt step (diagnostic)'},
@@ -624,7 +625,7 @@ D.STOP_REASONS={[1]='the relay stopped the session',[2]='not the main thread or 
  [169]='region camera (highway rows)',[170]='UI lazy',[171]='supply wants',[172]='loadout order',[173]='order canon',[174]='pick order',
  [175]='macro arena',[176]='path budget',[177]='economy load',[178]='cutscene ready',[179]='fp redirect',[180]='path transforms',
  [181]='body pose',[182]='render frames',[183]='render display',[184]='own-ship prediction',[185]='on foot',[186]='nav mesh',
- [187]='hybrid sectors',[188]='character play',[189]='flight limits',[190]='adaptive plan',[191]='adaptive source',[192]='adaptive quiet',[193]='adaptive dropped',[194]='adaptive pilot',[195]='UI write guard',[196]='speech clock',[197]='safe pos order',[198]='nav refresh watch',[199]='spline calc watch',[204]='body1 mass',[205]='body step',[206]='impulse',[207]='impulse',[208]='ik step',[209]='ik wrap',[210]='steer roll',[212]='avoid angle',[213]='pursuit speed',[211]='shape refresh'}
+ [187]='hybrid sectors',[188]='character play',[189]='flight limits',[190]='adaptive plan',[191]='adaptive source',[192]='adaptive quiet',[193]='adaptive dropped',[194]='adaptive pilot',[195]='UI write guard',[196]='speech clock',[197]='safe pos order',[198]='nav refresh watch',[199]='spline calc watch',[204]='body1 mass',[205]='body step',[206]='impulse',[207]='impulse',[208]='ik step',[209]='ik wrap',[210]='steer roll',[212]='avoid angle',[213]='pursuit speed',[216]='weave phase',[211]='shape refresh'}
 
 local function on(v) return v~=nil and v~=false end
 local function copy(v)

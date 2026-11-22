@@ -177,6 +177,12 @@ static int lxzp_installed_count(void);
 static void lxsp_restore(void); /* the route calculator at the frame's phase points only (gate_spline_phase.h) */
 static int lxsp_check(void);
 static int lxsp_installed;
+static void lxwp_restore(void); /* the weave phases in the Windows order (gate_weave_phase.h) */
+static int lxwp_check(void);
+static int lxwp_installed;
+static void lxct_restore(void); /* the fixture contacts traced at X4's contact listener (gate_contact.h, boot option 2^43) */
+static int lxct_check(void);
+static int lxct_installed;
 static int lxsr_check(void);
 static int lxsr_installed;
 /* Physics shape refresh: the fixture path and shape_refresh (gate_shape.h, included below). */
@@ -607,6 +613,10 @@ static void finish(unsigned reason) {
     if(lxzp_installed_count()) stats.restored=0;
     lxsp_restore();
     if(lxsp_installed) stats.restored=0;
+    lxwp_restore();
+    if(lxwp_installed) stats.restored=0;
+    lxct_restore();
+    if(lxct_installed) stats.restored=0;
     if(lxis_installed) stats.restored=0;
     if(lxai_installed) stats.restored=0;
     if(lxvd_installed) stats.restored=0;
@@ -750,6 +760,8 @@ static void gate_tick(void *frame,unsigned char loading) {
     if(lxps_installed && !lxps_check()) {finish(213);gate_original_once(frame,loading);return;} /* LXPS_STOP_REASON */
     if(lxzp_installed_count() && !lxzp_check()) {finish(214);gate_original_once(frame,loading);return;} /* LXZP_STOP_REASON */
     if(lxsp_installed && !lxsp_check()) {finish(199);gate_original_once(frame,loading);return;} /* LXSP_STOP_REASON */
+    if(lxwp_installed && !lxwp_check()) {finish(216);gate_original_once(frame,loading);return;} /* LXWP_STOP_REASON */
+    if(lxct_installed && !lxct_check()) {finish(70);gate_original_once(frame,loading);return;} /* the contact diag, as Windows */
     if(lxmc_installed && !lxmc_check()) {finish(166);gate_original_once(frame,loading);return;} /* LXMC_STOP_REASON */
     if((lxf_installed || lxf_ctor_installed) && (!lxf_owned() || lxf_failures)) {finish(55);gate_original_once(frame,loading);return;} /* flight, as Windows */
     if(ai_wait_armed && ai_wait_failures) {finish(88);gate_original_once(frame,loading);return;}
@@ -991,6 +1003,7 @@ static int lua_start(lua_State *L) {
 #include "gate_body_step.h"
 #include "gate_velocity.h"
 #include "gate_impulse.h"
+#include "gate_contact.h"
 #include "gate_ik_diag.h"
 #include "gate_ik_step.h"
 #include "gate_ik_wrap.h"
@@ -1000,6 +1013,7 @@ static int lua_start(lua_State *L) {
 #include "gate_pursuit_speed.h"
 #include "gate_zone_pending.h"
 #include "gate_spline_phase.h"
+#include "gate_weave_phase.h"
 static int lua_flight_faults(lua_State *L) {
     char out[512];int n=accept_ui()?lxf_status(out,sizeof(out)):0;
     if(n) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);return 1;
@@ -1103,13 +1117,14 @@ static int lua_read_cost(lua_State *L) {
 #define LX_BOOT_RADAR_RNG 274877906944ull     /* the fixture's radar units on their own words (gate_gravidar.h; needs the Gravidar) */
 #define LX_BOOT_RADAR_INITIAL 549755813888ull /* their times re-based at the prepare (needs the RNG one, as on Windows) */
 #define LX_BOOT_WORLD_IDENTITIES 70368744177664ull
+#define LX_BOOT_CONTACT_DIAG 8796093022208ull /* the fixture contacts' manifolds and settings traced (gate_contact.h, Windows contact_diag) */
 /* The attention hook (gate_attention.h): 2^28 attention_diag, 2^29 attention_rng, 2^30 its initial refresh, as on Windows
  * (the battle fixture's path, its rows and 'all', which needs the hook). */
 #define LX_BOOT_ATTENTION (268435456ull|536870912ull|1073741824ull)
 /* The battle fixture's steering (gate_flight.h): 4 flight_diag, 8 flight_rng, 16 flight_full install it (Windows: options&28);
  * 2^31 avoidance_refresh and 2^32 steering_init are its settings. */
 #define LX_BOOT_FLIGHT (4ull|8ull|16ull|2147483648ull|4294967296ull)
-#define LX_BOOT_OPTIONS (1ull|2ull|LX_BOOT_PARAMS_INIT|LX_BOOT_PARAMS_DIAG|LX_BOOT_VELOCITY_DIAG|LX_BOOT_NAV|LX_BOOT_SHAPE|LX_BOOT_AGENT_RNG|LX_BOOT_AGENT_FULL|LX_BOOT_AGENT_DIAG|LX_BOOT_SHIP_DIAG|LX_BOOT_SHIP_RNG|LX_BOOT_ATTENTION|LX_BOOT_GRAVIDAR|LX_BOOT_RADAR_RNG|LX_BOOT_RADAR_INITIAL|LX_BOOT_SPLINE_JOIN|LX_BOOT_SPLINE_DIAG|LX_BOOT_SPLINE_REFRESH|LX_BOOT_WORLD_IDENTITIES|LX_BOOT_FLIGHT)
+#define LX_BOOT_OPTIONS (1ull|2ull|LX_BOOT_PARAMS_INIT|LX_BOOT_PARAMS_DIAG|LX_BOOT_VELOCITY_DIAG|LX_BOOT_NAV|LX_BOOT_SHAPE|LX_BOOT_AGENT_RNG|LX_BOOT_AGENT_FULL|LX_BOOT_AGENT_DIAG|LX_BOOT_SHIP_DIAG|LX_BOOT_SHIP_RNG|LX_BOOT_ATTENTION|LX_BOOT_GRAVIDAR|LX_BOOT_RADAR_RNG|LX_BOOT_RADAR_INITIAL|LX_BOOT_SPLINE_JOIN|LX_BOOT_SPLINE_DIAG|LX_BOOT_SPLINE_REFRESH|LX_BOOT_WORLD_IDENTITIES|LX_BOOT_FLIGHT|LX_BOOT_CONTACT_DIAG)
 static int boot_gate(unsigned slot,unsigned port,const char *token,unsigned timeout,const char *hash,double options) {
     if(!isfinite(options) || options<0 || options>9007199254740991.0 || floor(options)!=options) return 10;
     if((uint64_t)options & ~LX_BOOT_OPTIONS) return LX_STOP_UNPORTED_OPTION;
@@ -1140,6 +1155,7 @@ static int boot_gate(unsigned slot,unsigned port,const char *token,unsigned time
         if(!result && (boot_options&LX_BOOT_PARAMS_INIT)) {if(!lxb_params_pinned()) {finish(35);result=35;} else lxb_params_enabled=1;} /* Windows: 35, the pin */
         if(!result && (boot_options&LX_BOOT_PARAMS_DIAG) && !lxpt_install()) {finish(39);result=39;} /* Windows: 39 */
         if(!result && (boot_options&LX_BOOT_VELOCITY_DIAG) && !lxvd_install()) {finish(43);result=43;} /* Windows: 43 */
+        if(!result && (boot_options&LX_BOOT_CONTACT_DIAG) && !lxct_install()) {finish(69);result=69;} /* Windows: 69 */
         if(!result && (boot_options&LX_BOOT_SHAPE) && !lxsh_install((boot_options&LX_BOOT_SHAPE_RNG)!=0,(boot_options&LX_BOOT_SHAPE_INITIAL)!=0)) {finish(45);result=45;} /* Windows: 45 */
         if(!result && (boot_options&LX_BOOT_NAV) && !lxn_install((boot_options&LX_BOOT_NAV_RNG)!=0,(boot_options&LX_BOOT_NAV_INITIAL)!=0)) {finish(41);result=41;} /* Windows: 41 */
         if(!result && (boot_options&28) && !lxf_install((boot_options&8)!=0,(boot_options&16)!=0,(boot_options&2147483648ull)!=0,
@@ -1181,6 +1197,7 @@ static int lua_poll(lua_State *L) {
     NUMBER("params_calls",lxb_params_calls);
     NUMBER("params_trace_calls",lxpt_calls);NUMBER("params_restored",lxpt_restored);NUMBER("params_trace_failures",lxpt_failures);
     NUMBER("velocity_calls",lxvd_calls);NUMBER("velocity_restored",lxvd_restored);NUMBER("velocity_failures",lxvd_failures);
+    NUMBER("contact_calls",lxct_calls);NUMBER("contact_restored",lxct_restored);NUMBER("contact_failures",lxct_failures);
     NUMBER("attention_calls",attention_calls);NUMBER("attention_restored",attention_restored);NUMBER("attention_failures",attention_failures);NUMBER("attention_inits",lxa_inits);
     NUMBER("shape_calls",lxsh_calls);NUMBER("shape_restored",lxsh_restored);NUMBER("shape_failures",lxsh_failures);NUMBER("shape_inits",lxsh_inits);
     {char totals[1024];const int n=lxsh_init_totals(totals,sizeof(totals));p_lua_pushlstring(L,totals,(size_t)n);p_lua_setfield(L,-2,"shape_init_totals");}
@@ -1241,8 +1258,9 @@ GATE_EXPORT int luaopen_x4lan_gate(lua_State *L) {
     METHOD(actor);METHOD(params);METHOD(snapshot_fixture);METHOD(snapshot_actor);METHOD(snapshot_enroll);METHOD(snapshot_status);
     METHOD(world_banks);METHOD(saved_identity);
     METHOD(path_determinism);METHOD(path_determinism_status);METHOD(path_budget);METHOD(path_budget_status);
-    METHOD(region_rng);METHOD(region_rng_status);METHOD(region_rng_row);METHOD(weapon_fire_rng);METHOD(weapon_fire_rng_status);METHOD(engine_refresh_rng);METHOD(engine_refresh_rng_status);METHOD(spline_join_all);METHOD(spline_join_all_status);METHOD(mass_traffic);METHOD(mass_traffic_status);METHOD(region_pass);METHOD(region_pass_status);METHOD(pass_stride);METHOD(actor_rng_all);METHOD(actor_rng_all_status);METHOD(actor_rng_rows);METHOD(actor_rng_row);METHOD(player_timer);METHOD(player_timer_status);METHOD(tempzone_order);METHOD(tempzone_order_status);METHOD(tempzone_order_row);METHOD(warp_rng);METHOD(warp_rng_status);METHOD(warp_rng_row);METHOD(warp_exit);METHOD(warp_exit_status);METHOD(flight_limits);METHOD(flight_limits_status);METHOD(body1_mass);METHOD(body1_mass_status);METHOD(body1_mass_census);METHOD(body_step_diag);METHOD(body_step_status);METHOD(body_step);METHOD(velocity);METHOD(velocity_status);METHOD(impulse_diag);METHOD(impulse_status);METHOD(impulse);METHOD(ik_joints);METHOD(ik_status);METHOD(ik_step);METHOD(ik_step_status);METHOD(nav_probes);METHOD(steer_roll);METHOD(steer_roll_status);METHOD(avoid_angle);METHOD(avoid_angle_status);METHOD(pursuit_speed);METHOD(pursuit_speed_status);METHOD(ik_wrap);METHOD(ik_wrap_status);METHOD(region_camera);METHOD(region_camera_frame);METHOD(region_camera_status);
+    METHOD(region_rng);METHOD(region_rng_status);METHOD(region_rng_row);METHOD(weapon_fire_rng);METHOD(weapon_fire_rng_status);METHOD(engine_refresh_rng);METHOD(engine_refresh_rng_status);METHOD(spline_join_all);METHOD(spline_join_all_status);METHOD(mass_traffic);METHOD(mass_traffic_status);METHOD(region_pass);METHOD(region_pass_status);METHOD(pass_stride);METHOD(actor_rng_all);METHOD(actor_rng_all_status);METHOD(actor_rng_rows);METHOD(actor_rng_row);METHOD(player_timer);METHOD(player_timer_status);METHOD(tempzone_order);METHOD(tempzone_order_status);METHOD(tempzone_order_row);METHOD(warp_rng);METHOD(warp_rng_status);METHOD(warp_rng_row);METHOD(warp_exit);METHOD(warp_exit_status);METHOD(flight_limits);METHOD(flight_limits_status);METHOD(body1_mass);METHOD(body1_mass_status);METHOD(body1_mass_census);METHOD(body_step_diag);METHOD(body_step_status);METHOD(body_step);METHOD(velocity);METHOD(velocity_status);METHOD(impulse_diag);METHOD(impulse_status);METHOD(impulse);METHOD(ik_joints);METHOD(ik_status);METHOD(ik_step);METHOD(ik_step_status);METHOD(nav_probes);METHOD(steer_roll);METHOD(steer_roll_status);METHOD(avoid_angle);METHOD(avoid_angle_status);METHOD(pursuit_speed);METHOD(pursuit_speed_status);METHOD(weave_phase);METHOD(weave_phase_status);METHOD(ik_wrap);METHOD(ik_wrap_status);METHOD(region_camera);METHOD(region_camera_frame);METHOD(region_camera_status);
     METHOD(build_rng);METHOD(build_rng_status);METHOD(build_rng_row);
+    METHOD(contact);METHOD(contact_clear);METHOD(contact_status);
     METHOD(ai_wait_rng);METHOD(ai_wait_rng_status);METHOD(ai_wait_rng_row);
     METHOD(md_resume_rng);METHOD(md_resume_rng_status);METHOD(md_resume_rng_row);
     METHOD(boot_hold);METHOD(boot_hold_status);
