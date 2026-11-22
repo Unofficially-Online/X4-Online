@@ -655,6 +655,20 @@ THE BATTLE SCOPE ON LINUX (W35 = the session defaults' battle reference, Windows
   1 and 2 (delta 5.19 -3.76 -14.97) is bit-identical on both, so the contact path itself runs alike there. Next:
   the contact inputs at tick 133 (manifold base, normal, depth, points, settings: lockstep_contact.h on Windows,
   RecordContact 0xb75a0; no Linux twin yet), then the solver if the inputs are equal.
+  Done: the Linux twin (linux/gate_contact.h, the listener vtable's two slots) and W36r (W36q + native_gate_contact_diag,
+  its STATE rows equal to W36q's) against lx71a (lx70a + the Linux diag, STATE rows equal to lx70a's): the same six
+  contacts in the same order (108..110 actors 1 and 2; 132 and twice 133 actors 4 and 11, sub shape pairs
+  fffffffc/fffffffe and fffffffe/fffffffe, four points each), and every word of every row equal (base, normal, depth,
+  both point lists, the settings before and after X4's listener, both bodies' pose and velocity) but one: tick 132's
+  first point z on body 1 (c026e123 / c026e124), a contact that changes no velocity. Jolt gets the same contacts at
+  133 and solves them apart. Ruled out: the solve order (each island's contacts sorted by the FNV-1a key of the
+  BodyID and SubShapeID pairs; the BodyIDs 00800011 and 0080001f are the same on both) and the Xenon body0 inertia
+  rotation residue (motion word 13, actors 7..12, 3a0d3ab6 / 3a0d3ab7 since tick 2): lx72a, a build that set the
+  Windows word on those bodies from tick 2, splits at 133 with the same words. Left: the contact solver's arithmetic
+  (AddContactConstraint's constraint properties, the warm start, the velocity iterations), the same instructions on
+  both (no FMA, no approximate reciprocals, no dpps in either build's Jolt code) in another order somewhere. Next: the
+  ContactConstraints (0x360 bytes each, contact manager +0xa8) of the fixture bodies read after PhysicsSystem::Update
+  on both platforms, to split the setup from the iterations.
 
 FUNCTION COVERAGE WITH PLAYER INPUT ON LINUX (191754a1, b1688473; lx32a, lx32b)
   native_gate_coverage_from = T (Linux gate only; linux_gate_live.py --coverage-from) puts the coverage marks in at
