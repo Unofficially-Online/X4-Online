@@ -5,7 +5,13 @@
  * do not create a lifetime lock or exclude an unobserved ABA. */
 #define WORLD_MOTION_WATCH_MAX 4u
 #define WORLD_MOTION_WINDOW_MAX 18000u
-#define WORLD_MOTION_ROW_BYTES 1700u
+#define WORLD_MOTION_ROW_BYTES 1800u
+/* The agent fields the Linear step reads, in Windows' agent_ext= order and sizes (lockstep_motion_watch.h
+ * motion_agent_fields); Linux offsets, +0x20 from +0x6e0 on (gate_world.h's pathing agent note). */
+static const struct {unsigned short at,size;} world_motion_agent_fields[]={
+    {0x364,4},{0x4d0,1},{0x4d2,1},{0x4d8,4},{0x518,12},{0xf53,1},{0xf7c,1},{0xf7d,1},{0xf94,1},{0xf95,1},{0xf97,1},{0xf9a,1},
+    {0xf58,8},{0xf60,8},{0x4d1,1},{0x4d3,1}};
+#define WORLD_MOTION_AGENT_EXT 47u
 typedef struct { uint64_t saved, runtime; } world_motion_target;
 typedef struct {
     uintptr_t vtable, controller, parent;
@@ -141,14 +147,24 @@ static int world_motion_capture(uint64_t tick) {
             !WREAD(model + 0x10u, model_target, sizeof(model_target)) || !WREAD(model + 0x60u, model_plan, sizeof(model_plan))) model = 0;
         /* the Linear model's plan at +0x60..+0xd0 (Windows +0x70..+0xe0, model_ext=): start position and time, last step time */
         world_motion_hex(model_plan, sizeof(model_plan), plan_text);
+        unsigned char agent_ext[WORLD_MOTION_AGENT_EXT] = {0};
+        char agent_text[sizeof(agent_ext) * 2 + 1];
+        for (unsigned i = 0, at = 0; i < sizeof(world_motion_agent_fields) / sizeof(world_motion_agent_fields[0]); i++) {
+            if (!WREAD(snapshot.links.agent + world_motion_agent_fields[i].at, agent_ext + at, world_motion_agent_fields[i].size)) {
+                memset(agent_ext, 0, sizeof(agent_ext));
+                break;
+            }
+            at += world_motion_agent_fields[i].size;
+        }
+        world_motion_hex(agent_ext, sizeof(agent_ext), agent_text);
         memcpy(&model_ref, model_target + 0x40, 8);
         world_motion_hex(model_target, sizeof(model_target), model_text);
         int length = snprintf(world_motion_rows[index], WORLD_MOTION_ROW_BYTES,
             "version=1 tick=%llu id=%016llx type=%08x flags=%08x parent=%016llx read=%u write=%u cursor=%u motion=%s timing=%s"
-            " model=%x target_ref=%016llx target=%s plan=%s",
+            " model=%x target_ref=%016llx target=%s plan=%s agent_ext=%s",
             (unsigned long long)tick, (unsigned long long)target->saved, before.type, before.flags,
             (unsigned long long)before.parent_saved, snapshot.links.read, snapshot.links.write, cursor, motion_text, timing_text,
-            model ? (unsigned)(model_vt - LX_IMAGE_BASE) : 0u, (unsigned long long)world_identity_portable(model_ref), model_text, plan_text);
+            model ? (unsigned)(model_vt - LX_IMAGE_BASE) : 0u, (unsigned long long)world_identity_portable(model_ref), model_text, plan_text, agent_text);
         world_motion_problem = "row_truncated";
         if (length < 0 || (size_t)length >= WORLD_MOTION_ROW_BYTES) return 0;
     }

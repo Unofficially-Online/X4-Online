@@ -753,6 +753,17 @@ WORLD CENSUS, WINDOWS AGAINST LINUX, TODAY'S DEFAULTS (22 Nov)
     mixed-platform settings and the bundles' --path-transforms). W73 against lx105a (today's defaults, a capture every
     tick): both divert 475 calls by tick 100 (objects=475), and all 522,467 objects are equal at every tick 1..100 except
     the four crew rows at 75-77 (the capture-phase difference above).
+  - Long run after the fix (W74 against lx106a, a capture every 300 ticks): 0 objects apart at 300 (17 before), 9 at 600
+    (63), 421 at 900, 4,026 at 2400 (10,205). Every 15 ticks (W75 against lx107a), with removed crew masked: the next
+    split is the ShipMedium 0x982b0 at 525 (motion), from its Linear step at 514. Its target (zone 0x650) and its plan
+    agree through 509; at 509 Windows' UpdatePathing (0xe8c380) leaves agent+0xf33 (Linux +0xf53) set and re-plans at 514
+    (SetTarget, a new plan from the current state), the Linux build clears it at 509 and keeps the old plan (W76 against
+    lx108a/lx109a; the Linux WORLD_MOTION row now carries Windows' agent_ext fields). Two Linux runs and the Windows runs
+    each reproduce, and Windows gives the same steps with navigation octrees native, 'observe' or 'sync' (W76/W77/W78,
+    none built then), so neither timing nor octrees. The flag's common store is 0xe8d0bb: (rbp+0x450 != 0), the path
+    point reference's pathing agent from the manager's map +0x130 or, on a miss, through 0x59e080 and 0xeae380. Next:
+    that lookup's answer on both executables at 509 (a hook in UpdatePathing and its Linux twin; the step chain does
+    not run beside the Linux path_transforms 'sim', which shares its sites).
     New diagnostics: native_gate_runtime_ids_removes, native_gate_world_controller_rows (WORLD_CONTROLLER: a watched
     object's movement controller raw), native_gate_death_all_rows (DEATH_ALL_ROW: each keyed death's time argument and
     thread clock; equal on both), the Linux WORLD_MOTION row's model= target_ref= target= plan= (Windows MOTION_WATCH's
