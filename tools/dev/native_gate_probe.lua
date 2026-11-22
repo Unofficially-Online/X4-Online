@@ -1725,7 +1725,7 @@ local probe_last_us -- previous frame() wall time, native_gate_frame_timing only
 local camera_perturb=false -- this client perturbs its camera (native_gate_camera_perturb)
 local camera_offset -- {x,y,z} when this client moves its camera (native_gate_camera_offset); {follow=slot} for native_gate_camera_anchor
 local nav_cadence_cursor=0
-local row_cursors={coverage=0,step_trace=0,fp_redirect=0,fp_attack=0,view=0,policy=0,highway=0,command_order=0,actor_rng=0,draw_watch=0,draw_watch_stray=0,warp_rng=0,transition=0,tempzone=0,gravidar_post=0,physics={[0]=0,0,0,0},body_order=0,shape_order=0,character_play=0,nav_octree=0,nav_octree_lookup=0,nav_mesh=0,vplayer_map=0,vplayer_spike='',event_rng=0,build_rng=0,economy_load_rng=0,ui_cargo=0,supply=0,ui_lazy=0,supply_wants=0,loadout_order=0,order_canon=0,address_order=0,pick_order=0,macro_arena=0,path_transforms=0,body_pose=0,render_display=0,ui_exports=0,runtime_ids=0} -- one upvalue: frame() is at LuaJIT's limit of 60
+local row_cursors={coverage=0,step_trace=0,fp_redirect=0,fp_attack=0,view=0,policy=0,highway=0,command_order=0,actor_rng=0,draw_watch=0,draw_watch_stray=0,warp_rng=0,transition=0,tempzone=0,gravidar_post=0,physics={[0]=0,0,0,0},body_order=0,shape_order=0,character_play=0,nav_octree=0,nav_octree_lookup=0,nav_mesh=0,anim_served=0,vplayer_map=0,vplayer_spike='',event_rng=0,build_rng=0,economy_load_rng=0,ui_cargo=0,supply=0,ui_lazy=0,supply_wants=0,loadout_order=0,order_canon=0,address_order=0,pick_order=0,macro_arena=0,path_transforms=0,body_pose=0,render_display=0,ui_exports=0,runtime_ids=0} -- one upvalue: frame() is at LuaJIT's limit of 60
 row_cursors.navmesh_post = 0
 row_cursors.drain_navmesh_post = function(can_resolve)
   while row_cursors.navmesh_post < 8192 do
@@ -1856,6 +1856,13 @@ local function drain_gravidar_watch(final)
    local row=gate.nav_octree_lookup_row and gate.nav_octree_lookup_row(row_cursors.nav_octree_lookup)
    if not row then break end
    ticklog.write('NAV_OCTREE_LOOKUP '..row);row_cursors.nav_octree_lookup=row_cursors.nav_octree_lookup+1 -- every tick: soaks keep them all
+  end
+ end
+ if cfg.native_gate_anim_listeners and gate.anim_listeners_row then -- animation posts this client served (lockstep_anim_listeners.h): ~650 a matrix run
+  for _=1,4096 do
+   local row=gate.anim_listeners_row(row_cursors.anim_served)
+   if not row then break end
+   ticklog.write('ANIM_SERVED_ROW '..row);row_cursors.anim_served=row_cursors.anim_served+1
   end
  end
  if cfg.native_gate_nav_mesh then -- finished interior nav helper builds (native_gate_nav_mesh): rare, written at once (not held)
@@ -6862,7 +6869,9 @@ local function frame()
     -- default, Windows gate): a client sets the animation states of what it draws, also from its render pass, and
     -- such a call served a listener (a docking bay fence's: a walk mesh rebuild) on that client alone.
     if cfg.native_gate_anim_listeners and gate.anim_listeners then
-     assert(cfg.native_gate_anim_listeners==true and gate.anim_listeners(1)==1,
+     -- true: the client's own scopes and its cache builds (Component::BuildCache) hold the posts; 'scopes': the scopes only.
+     assert((cfg.native_gate_anim_listeners==true or cfg.native_gate_anim_listeners=='scopes') and
+      gate.anim_listeners(cfg.native_gate_anim_listeners=='scopes' and 2 or 1)==1,
       'anim listeners refused '..tostring(gate.anim_listeners_status and gate.anim_listeners_status()))
      log('ANIM_LISTENERS_ARMED '..tostring(gate.anim_listeners_status()))
     end

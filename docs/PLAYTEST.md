@@ -307,6 +307,9 @@ What differs between two Windows PCs, measured on one PC by giving one client th
   threads) stayed in sync through 3,599 ticks of the same tests.
 - **All of it at once, with the fix:** client 2 laid out as a 24-thread PC and then by the fix, with the other
   settings and on 4 processors: the whole mission matrix (12 of 12 for both players) in sync through 14,479 ticks.
+- **Time zone and region: nothing to fix.** Local time is read only by XNet's packet logger (0x15828b0), and
+  no engine code reaches the C runtime's user-locale lookup (only `setlocale(..., "")` would), so numbers are
+  printed and parsed in the "C" locale on every PC.
 - **Instruction set: nothing to fix.** The engine's own `__isa_available` branches test for SSE4.2 only (every
   current CPU), the AVX2 test is in the CRT's string routines, approximate `rcpss`/`rsqrtss` are exact by default
   (`native_gate_exact_reciprocal`) and the CRT's FMA3 math goes through the portable library.

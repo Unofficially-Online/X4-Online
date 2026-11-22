@@ -82,7 +82,7 @@ PROBE_OPTIONS = {
     'native_gate_effect_rows': (('true',), (), None),
     'native_gate_swarm_seed': (('true',), (), None),
     'native_gate_zone_pending': (('true',), (), None),
-    'native_gate_anim_listeners': (('true',), (), None),
+    'native_gate_anim_listeners': (('true', 'scopes'), (), None),
     'native_gate_undock_screen': (('true',), (), None),
     'native_gate_spline_phase': (('true',), (), None),
     'native_gate_faction_present': (('true',), (), None),
