@@ -73,6 +73,10 @@ D.ON={
  -- inline. The pass took 7.5 ms instead of 6.3 ms there (two X4 on one PC).
  {'native_gate_travel_determinism',true,'native_gate_serial_pathing native_gate_path_determinism','pathing batch jobs inline in batch order'},
  {'native_gate_path_budget',100,'native_gate_serial_pathing','pathing round robin by count, not by clock'},
+ -- X4 makes its pathing batches from the PC's job thread count (a 32-thread PC: 10 + 20 batches, a 24-thread one 8 + 14) and
+ -- deals the ships into them round-robin, so the path budget's full updates went to other ships on another PC. 30 is the
+ -- layout every one-PC test ran with (lockstep_worker_layout.h).
+ {'native_gate_worker_layout',30,'native_gate_serial_pathing','pathing batches and Jolt jobs laid out as for 30 job threads on every PC'},
  {'native_gate_path_transforms','sim','native_gate_serial_pathing','pathing reads simulation transforms, not view caches'},
  {'native_gate_body_pose','sim','','new physics bodies take simulation poses'},
  {'native_gate_gravidar_key_all',true,'','Gravidar units keyed'},
@@ -340,6 +344,7 @@ D.DIAGNOSTIC={
  {'native_gate_nav_refresh_watch_handover','nav refresh rows from H-N to H+N around a hot join handover, the window set once H is known (diagnostic)'},
  {'native_gate_spline_calc_watch','spline calc rows: when the spline route calculator runs relative to the gated frames (diagnostic)'},
  {'native_gate_spline_calc_delay','test only: {slot, ms}, the route calculator of that client sleeps ms at every job (a busy PC)'},
+ {'native_gate_worker_layout_test','test only: {slot, W} that client lays out its pathing batches and Jolt jobs as for W job threads (another PC); {slot, P, W} first as X4 does for P'},
  {'native_gate_safe_pos_dump','safe pos dump rows: the GetSafePos solver calls in a tick window, every box as given (diagnostic)'},
  {'native_gate_world_static','world static rows: the published poses of uncompared positional objects at ticks (diagnostic)'},
  {'native_gate_join_jobcnt_at','hot join job count rows after a step (diagnostic)'},
@@ -625,7 +630,7 @@ D.STOP_REASONS={[1]='the relay stopped the session',[2]='not the main thread or 
  [169]='region camera (highway rows)',[170]='UI lazy',[171]='supply wants',[172]='loadout order',[173]='order canon',[174]='pick order',
  [175]='macro arena',[176]='path budget',[177]='economy load',[178]='cutscene ready',[179]='fp redirect',[180]='path transforms',
  [181]='body pose',[182]='render frames',[183]='render display',[184]='own-ship prediction',[185]='on foot',[186]='nav mesh',
- [187]='hybrid sectors',[188]='character play',[189]='flight limits',[190]='adaptive plan',[191]='adaptive source',[192]='adaptive quiet',[193]='adaptive dropped',[194]='adaptive pilot',[195]='UI write guard',[196]='speech clock',[197]='safe pos order',[198]='nav refresh watch',[199]='spline calc watch',[204]='body1 mass',[205]='body step',[206]='impulse',[207]='impulse',[208]='ik step',[209]='ik wrap',[210]='steer roll',[212]='avoid angle',[213]='pursuit speed',[216]='weave phase',[211]='shape refresh'}
+ [187]='hybrid sectors',[188]='character play',[189]='flight limits',[190]='adaptive plan',[191]='adaptive source',[192]='adaptive quiet',[193]='adaptive dropped',[194]='adaptive pilot',[195]='UI write guard',[196]='speech clock',[197]='safe pos order',[198]='nav refresh watch',[199]='spline calc watch',[204]='body1 mass',[205]='body step',[206]='impulse',[207]='impulse',[208]='ik step',[209]='ik wrap',[210]='steer roll',[212]='avoid angle',[213]='pursuit speed',[216]='weave phase',[211]='shape refresh',[224]='worker layout'}
 
 local function on(v) return v~=nil and v~=false end
 local function copy(v)

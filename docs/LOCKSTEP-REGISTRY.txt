@@ -415,7 +415,10 @@ Modules (define, owner):
                                 site_changed, block_changed, unreadable)
   216 LXWP_STOP_REASON          linux/gate_weave_phase.h (native_gate_weave_phase, Linux gate only: the phase runs'
                                 entries, the stub page or the pins; whys entry_changed, page_changed, block_changed)
-  free: 109, 114-119, 122-129, 147-149, 217-255.
+  224 WLAY_STOP_REASON          lockstep_worker_layout.h (native_gate_worker_layout, a default: the pathing batches
+                                were not laid out before the first admitted step, or Jolt's concurrency slot is no
+                                longer ours; stages occupied, unreadable, layout, not_laid_out, slot_changed)
+  free: 109, 114-119, 122-129, 147-149, 217-223, 225-255.
 Not stop reasons although named *_STOP*: PSLOT_STOP_WAIT (a wait count),
 PFIRE_STOP, PNAT_STOP_IN_MENU, PNAT_FULL_STOP (flags, 0).
 Renumbered on 1 November 2026 (integration): region camera 130 -> 165, speak

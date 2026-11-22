@@ -540,6 +540,7 @@ static int cov_load(void) {
 #include "lockstep_fp_env.h"
 #include "lockstep_decimal.h"
 #include "lockstep_path_budget.h"
+#include "lockstep_worker_layout.h"   /* every client lays out the pathing batches and Jolt's concurrency as for W workers (native_gate_worker_layout) */
 #include "lockstep_path_transforms.h"
 #include "lockstep_body_pose.h"
 static int fp_patch_overlaps(const void *source,size_t bytes) {
@@ -754,6 +755,7 @@ static void finish(unsigned reason) {
     fpenv_restore();
     pdec_restore();
     pbud_restore();
+    wlay_restore();
     ptf_restore();
     bpose_restore();
     sw_restore();
@@ -950,6 +952,9 @@ static void gate_original_once(tick_fn original,void *frame,unsigned char loadin
  * the one completion token we consumed for the original join to consume later. */
 static uint64_t path_boot_passes[3]; /* pathing passes released natively in boot phases 0-2 (loading frames) */
 static BOOL WINAPI path_release(HANDLE semaphore,LONG count,LPLONG previous) {
+    /* Worker layout (lockstep_worker_layout.h): before the first pass after the arm, while the pathing thread waits for
+     * this wake; a refusal stops the first admitted step below. */
+    if(InterlockedCompareExchange(&wlay_pending,0,0)) wlay_apply(*(unsigned char**)(image+0x6cf21c8));
     if(boot_mode && boot_phase<3) {++path_boot_passes[boot_phase>=0 && boot_phase<3?boot_phase:0];return ReleaseSemaphore(semaphore,count,previous);}
     if(boot_mode) accept_ui();
     /* A render-only frame (lockstep_render_frames.h): no pass and none of the step's work. */
@@ -959,6 +964,7 @@ static BOOL WINAPI path_release(HANDLE semaphore,LONG count,LPLONG previous) {
         count==1 && previous==NULL && semaphore==*(HANDLE*)(manager+0x18) &&
         *(int*)(manager+0x84)==2 && manager[0x88]==0;
     if(valid) gate_sim_begin();
+    if(valid && wlay_armed && !wlay_check()) {finish(WLAY_STOP_REASON);return ReleaseSemaphore(semaphore,count,previous);}
     if(valid && !snapshot_prepare()) {
         InterlockedIncrement64(&snapshot_failures);finish(74);
         return ReleaseSemaphore(semaphore,count,previous);
@@ -2082,6 +2088,17 @@ static int lua_fast_reads(lua_State *L) {(void)L;read_local_fast=1;p_lua_pushnum
 static int lua_path_budget(lua_State *L) {
     double n=p_lua_tonumber(L,1);
     p_lua_pushnumber(L,isfinite(n) && n>=1 && n<=PBUD_MAX && floor(n)==n && pbud_arm((unsigned)n));return 1;
+}
+/* gate.worker_layout(W[, P]): native_gate_worker_layout, lockstep_worker_layout.h (P, test only: first as a PC with P
+ * workers); gate.worker_layout_status(). */
+static int lua_worker_layout(lua_State *L) {
+    double w=p_lua_tonumber(L,1),pc=p_lua_tonumber(L,2);
+    int ok=accept_ui() && isfinite(w) && w>=WLAY_MIN && w<=WLAY_MAX && floor(w)==w &&
+        isfinite(pc) && (pc==0 || (pc>=WLAY_MIN && pc<=WLAY_MAX)) && floor(pc)==pc;
+    p_lua_pushnumber(L,ok && wlay_arm((unsigned)w,(unsigned)pc));return 1;
+}
+static int lua_worker_layout_status(lua_State *L) {
+    char out[320];int n=wlay_status(out,sizeof(out));p_lua_pushlstring(L,out,(size_t)(n>0?n:0));return 1;
 }
 static int lua_path_budget_status(lua_State *L) {
     char out[160];int n=accept_ui()?pbud_status(out,sizeof(out)):0;
@@ -4846,7 +4863,7 @@ __declspec(dllexport) int luaopen_x4lan_gate(lua_State *L) {
     METHOD(ui_holds);METHOD(ui_holds_status);METHOD(foot_figure_own);METHOD(foot_figure_status);METHOD(move_rng);METHOD(move_rng_status);METHOD(move_rng_rows);METHOD(move_rng_row);METHOD(body_clock);METHOD(body_clock_rows);METHOD(body_clock_row);
     METHOD(mass_traffic);METHOD(mass_traffic_status);METHOD(region_pass);METHOD(region_pass_status);METHOD(gravidar_digest);METHOD(gravidar_digest_frame);METHOD(gravidar_digest_row);
     METHOD(gravidar_deadlines);METHOD(gravidar_deadlines_status);
-    METHOD(economy_load_rng);METHOD(economy_load_rng_status);METHOD(build_rows);METHOD(build_rows_status);METHOD(build_rows_row);METHOD(flight_faults);METHOD(flight_fault_row);METHOD(play_mode);METHOD(unowned);METHOD(ui_exports);METHOD(ui_lazy_callers);METHOD(ui_exports_status);METHOD(ui_exports_row);METHOD(ui_exports_relay);METHOD(ui_exports_block);METHOD(ui_exports_relay_kinds);METHOD(ui_exports_take);METHOD(ui_exports_name);METHOD(runtime_of);METHOD(key_of);METHOD(ui_exports_address);METHOD(observer_status);METHOD(npc_action_rows);METHOD(interrupt_faults);METHOD(interrupt_fault_row);METHOD(wire);METHOD(propose);METHOD(relay_host);METHOD(lookahead);METHOD(lookahead_status);METHOD(tick_rate);METHOD(fast_reads);METHOD(path_budget);METHOD(path_budget_status);METHOD(path_transforms);METHOD(path_transforms_status);METHOD(path_transforms_row);METHOD(path_transforms_dock_rows);METHOD(body_pose);METHOD(body_pose_status);METHOD(body_pose_row);METHOD(pass_stride);METHOD(render_frames);METHOD(render_frames_status);METHOD(render_split);METHOD(lookahead_adaptive);METHOD(adaptive_status);METHOD(adaptive_plan);METHOD(wire_crypto);METHOD(wire_crypto_status);METHOD(render_camera);METHOD(render_motion);METHOD(render_display_rows);METHOD(render_display_status);METHOD(render_display_row);METHOD(peer_links);METHOD(peer_status);
+    METHOD(economy_load_rng);METHOD(economy_load_rng_status);METHOD(build_rows);METHOD(build_rows_status);METHOD(build_rows_row);METHOD(flight_faults);METHOD(flight_fault_row);METHOD(play_mode);METHOD(unowned);METHOD(ui_exports);METHOD(ui_lazy_callers);METHOD(ui_exports_status);METHOD(ui_exports_row);METHOD(ui_exports_relay);METHOD(ui_exports_block);METHOD(ui_exports_relay_kinds);METHOD(ui_exports_take);METHOD(ui_exports_name);METHOD(runtime_of);METHOD(key_of);METHOD(ui_exports_address);METHOD(observer_status);METHOD(npc_action_rows);METHOD(interrupt_faults);METHOD(interrupt_fault_row);METHOD(wire);METHOD(propose);METHOD(relay_host);METHOD(lookahead);METHOD(lookahead_status);METHOD(tick_rate);METHOD(fast_reads);METHOD(path_budget);METHOD(worker_layout);METHOD(worker_layout_status);METHOD(path_budget_status);METHOD(path_transforms);METHOD(path_transforms_status);METHOD(path_transforms_row);METHOD(path_transforms_dock_rows);METHOD(body_pose);METHOD(body_pose_status);METHOD(body_pose_row);METHOD(pass_stride);METHOD(render_frames);METHOD(render_frames_status);METHOD(render_split);METHOD(lookahead_adaptive);METHOD(adaptive_status);METHOD(adaptive_plan);METHOD(wire_crypto);METHOD(wire_crypto_status);METHOD(render_camera);METHOD(render_motion);METHOD(render_display_rows);METHOD(render_display_status);METHOD(render_display_row);METHOD(peer_links);METHOD(peer_status);
     METHOD(find_order);METHOD(find_order_status);METHOD(find_order_row);
     METHOD(region_rng);METHOD(region_rng_status);METHOD(region_rng_row);METHOD(spawn_rng);METHOD(spawn_rng_status);METHOD(spawn_rng_row);
     METHOD(register_weapon);METHOD(weapon);

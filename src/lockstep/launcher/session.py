@@ -573,8 +573,11 @@ def run(o: Options, log=print):
             installed = run_dir / f'client{k}' / 'installed'  # the census tools read the installed config here
             installed.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(target / 'ui/config.lua', installed / 'x4_lan_lab-config.lua')
+            settings = profile.client_settings(os.environ.get('X4LS_CLIENT_CONFIG'), k)
+            if settings:
+                log(f'client {k}: own X4 settings (X4LS_CLIENT_CONFIG, test) ' + ' '.join(f'{a}={b}' for a, b in settings))
             profile.prepare(profile_id, [*game.dlc_ids(view), extension.EXTENSION_ID], o.width, o.height, o.snapshot, fast=o.fast,
-                            borderless=o.borderless)
+                            borderless=o.borderless, settings=settings)
             if o.steam_fix:
                 steam.fix(o.state / 'steam-fix.json')  # Steam can reset it once a client connects
             release_beside(set(state['pids']), log)

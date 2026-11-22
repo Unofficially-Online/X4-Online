@@ -133,6 +133,7 @@ PROBE_REQUIRES_ALL = {
     'native_gate_build_rows': (('true',), ('native_gate_world_identities',)),
     'native_gate_economy_load_rng': (('true',), ('native_gate_world_identities',)),
     'native_gate_path_budget': (('25', '50', '100', '150', '200', '300', '500'), ('native_gate_serial_pathing',)),
+    'native_gate_worker_layout': (tuple(str(w) for w in range(4, 33)), ('native_gate_serial_pathing',)),
     'native_gate_pass_stride': (('1', '2', '3', '4'), ()),
     'native_gate_event_rng': (('observe', 'key'), ('native_gate_world_identities', 'native_gate_event_order')),
     'native_gate_build_rng': (('true',), ('native_gate_world_identities',)),

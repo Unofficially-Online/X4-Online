@@ -291,6 +291,26 @@ when named: `--ik-wrap --ik-step --body1-mass fallback --nav-rng --nav-initial-r
 floating-point order in the steering behaviours, still being chased). Each PC writes its own
 `errors.log`; the host's run folder also holds the relay's logs.
 
+What differs between two Windows PCs, measured on one PC by giving one client the other PC's value (21 Nov):
+- **CPU thread count: split, fixed.** X4 makes its pathing batches from the job thread count, logical
+  processors - 2 (a 32-thread PC: 10 + 20 batches of about 500 ships, a 24-thread PC 8 + 14), and the
+  session's pathing budget gives each batch 100 full updates a pass, so the two PCs updated other ships. Client 2
+  with a 24-thread PC's layout split at tick 36 (runtime IDs) and the players' mission results differed.
+  `native_gate_worker_layout = 30` (a default, lockstep_worker_layout.h) lays every client out as for 30 job
+  threads before the world loads, and gives Jolt the same count; the test key
+  `native_gate_worker_layout_test = {slot, P, W}` lays one client out as a P-thread PC first.
+- **Graphics and detail settings: no split seen.** Client 2 with `lodfactor` and `effectdistance` 1.0 (client 1:
+  0.5), lowest quality, shadows and SSAO off and a 1440x900 window against 960 wide stayed in sync through
+  3,547 ticks with combat (mission matrix flyto, collect, kill; `X4LS_CLIENT_CONFIG`, test only, sets one client's
+  X4 settings).
+- **A slower PC: no split seen.** Client 2 held to 4 logical processors (CPU affinity; X4 still makes its 30
+  threads) stayed in sync through 3,599 ticks of the same tests.
+- **All of it at once, with the fix:** client 2 laid out as a 24-thread PC and then by the fix, with the other
+  settings and on 4 processors: the whole mission matrix (12 of 12 for both players) in sync through 14,479 ticks.
+- **Instruction set: nothing to fix.** The engine's own `__isa_available` branches test for SSE4.2 only (every
+  current CPU), the AVX2 test is in the CRT's string routines, approximate `rcpss`/`rsqrtss` are exact by default
+  (`native_gate_exact_reciprocal`) and the CRT's FMA3 math goes through the portable library.
+
 ## Joining a running game (built 8 Nov; in lockstep through x4ls on one PC, 9 Nov)
 
 A slot can stay empty at the start and be taken later by a player on any PC the relay allows. Only the joiner

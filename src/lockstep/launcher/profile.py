@@ -76,6 +76,31 @@ def config_xml(width, height, fast=False, borderless=False):
             f'<res_height>{height}</res_height><antialiasing>0</antialiasing><vsync>false</vsync><confinemouse>false</confinemouse>{extra}</root>\n')
 
 
+def client_settings(spec, client):
+    """X4LS_CLIENT_CONFIG (test only): 'K:key=value,key=value;K2:...' gives client K its own X4 settings, as a person on
+    another PC has (resolution, detail distances, graphics quality). [] when the client has none."""
+    items = []
+    for part in (spec or '').split(';'):
+        head, _, body = part.partition(':')
+        if head.strip().isdigit() and int(head) == client:
+            for pair in body.split(','):
+                key, _, value = pair.partition('=')
+                if not re.fullmatch(r'[a-z_]+', key.strip()) or not re.fullmatch(r'[\w.\-]+', value.strip()):
+                    raise SystemExit(f'X4LS_CLIENT_CONFIG: bad setting {pair!r}')
+                items.append((key.strip(), value.strip()))
+    return items
+
+
+def with_settings(text, items):
+    """config.xml text with each (key, value): an element replaced where it is, else added before </root>."""
+    for key, value in items:
+        element = f'<{key}>{value}</{key}>'
+        text, n = re.subn(rf'<{key}>[^<]*</{key}>', element, text)
+        if not n:
+            text = text.replace('</root>', element + '</root>')
+    return text
+
+
 def content_xml(extension_ids):
     rows = ''.join(f'<extension id="{name}" enabled="true" />' for name in extension_ids)
     return f'<?xml version="1.0"?><content>{rows}</content>\n'
@@ -121,15 +146,15 @@ def refuse_in_use(profile):
                          'take other profiles (X4LS_FIRST_PROFILE) or end that session first')
 
 
-def prepare(profile, extension_ids, width=1280, height=720, snapshot=None, root=None, fast=False, borderless=False):
-    """Fresh profile: windowed config, autosave and protected UI off, optional snapshot."""
+def prepare(profile, extension_ids, width=1280, height=720, snapshot=None, root=None, fast=False, borderless=False, settings=()):
+    """Fresh profile: windowed config, autosave and protected UI off, optional snapshot; settings: client_settings()."""
     path = profile_dir(profile, root)
     if root is None:
         refuse_in_use(profile)   # the real profiles only: a test's own folder has no X4 on it
     if path.exists():
         shutil.rmtree(path)
     (path / 'save').mkdir(parents=True)
-    (path / 'config.xml').write_text(config_xml(width, height, fast, borderless))
+    (path / 'config.xml').write_text(with_settings(config_xml(width, height, fast, borderless), settings))
     (path / 'content.xml').write_text(content_xml(extension_ids))
     if snapshot:
         shutil.copyfile(snapshot, path / 'save' / SNAPSHOT_SLOT)

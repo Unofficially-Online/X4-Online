@@ -4949,6 +4949,23 @@ local function frame()
     gate.path_budget and gate.path_budget(n)==1,'path budget refused '..tostring(gate.path_budget_status and gate.path_budget_status()))
    log('PATH_BUDGET_ARMED n='..n)
   end
+  -- native_gate_worker_layout = W (lockstep_worker_layout.h): the pathing batches and Jolt's concurrency as X4 lays
+  -- them out for W job threads, whatever this PC has (its count decides which ships share a batch, and so the path
+  -- budget's full updates). Before the load. Test only: native_gate_worker_layout_test = {slot, W'}: that client
+  -- alone takes W' (another PC's layout as X4 makes it, without this module); {slot, P, W'}: that client is first laid
+  -- out as X4 does on a PC with P job threads, then as for W' (another PC, with this module).
+  if cfg.native_gate_worker_layout then
+   local w,pc=cfg.native_gate_worker_layout,0
+   local t=cfg.native_gate_worker_layout_test
+   if t~=nil then
+    assert(type(t)=='table' and (#t==2 or #t==3) and type(t[1])=='number' and type(t[2])=='number' and (#t==2 or type(t[3])=='number'),
+     'worker layout test refused')
+    if tonumber(tostring(cfg.slot or ''):match('%d+'))==t[1] then if #t==2 then w=t[2] else pc,w=t[2],t[3] end end
+   end
+   assert(snapshot and type(w)=='number' and w%1==0 and w>=4 and w<=32 and cfg.native_gate_serial_pathing and
+    gate.worker_layout and gate.worker_layout(w,pc)==1,'worker layout refused '..tostring(gate.worker_layout_status and gate.worker_layout_status()))
+   log('WORKER_LAYOUT_ARMED '..tostring(gate.worker_layout_status()))
+  end
   -- Runs the pathing batch jobs inline, in batch order, on the pathing thread so
   -- cross-agent reads (formation travel flags) see one fixed order. Default off.
   if cfg.native_gate_travel_determinism then
@@ -7097,6 +7114,7 @@ local function frame()
   if cfg.native_gate_path_transforms then log('PATH_TRANSFORMS_STOP '..tostring(gate.path_transforms_status())) end
   if cfg.native_gate_body_pose then log('BODY_POSE_STOP '..tostring(gate.body_pose_status())) end
   if cfg.native_gate_path_budget then log('PATH_BUDGET_STOP '..tostring(gate.path_budget_status())) end
+  if cfg.native_gate_worker_layout and gate.worker_layout_status then log('WORKER_LAYOUT_STOP '..tostring(gate.worker_layout_status())) end
   -- The Linux gate's spline join keeps its own counters (linux/gate_spline_join.h); Windows reports them in SPLINE_JOIN_ALL.
   if cfg.native_gate_spline_join_all and gate.spline_join_all_status then log('SPLINE_JOIN_ALL_STOP '..tostring(gate.spline_join_all_status())) end
   if cfg.native_gate_render_rng_split then log('RENDER_RNG_SPLIT_STOP '..tostring(gate.render_rng_split_status())) end
@@ -7650,6 +7668,7 @@ local function frame()
   end
  end
  if cfg.native_gate_path_budget then ticklog.status('PATH_BUDGET',tick,gate.path_budget_status,'path budget status unavailable') end
+ if cfg.native_gate_worker_layout then ticklog.status('WORKER_LAYOUT',tick,gate.worker_layout_status,'worker layout status unavailable') end
  -- Slot 6 runs before slot 10: frame= in the status is the previous admitted frame's render.
  if cfg.native_gate_render_rng_split then ticklog.status('RENDER_RNG_SPLIT',tick,gate.render_rng_split_status,'render RNG split status unavailable') end
  if cfg.native_gate_render_fps then ticklog.status('RENDER_FRAMES',tick,gate.render_frames_status,'render frames status unavailable') end
