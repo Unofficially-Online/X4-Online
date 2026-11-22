@@ -603,10 +603,15 @@ static void pfbody_room_install(int on) {
 static int pftr_installed;
 static volatile LONG64 pftr_notes,pftr_carried,pftr_skipped,pftr_idle;
 static void pftr_install(int on);
+/* lockstep_pilot_foot_doors.h: X4's doors open for a walking slot as for its own player. */
+static int pfdoor_installed;
+static volatile LONG64 pfdoor_asks,pfdoor_slot_asks,pfdoor_opened,pfdoor_other_room,pfdoor_far;
+static void pfdoor_install(int on);
 static void pfbody_moves_install(int on) {
     pt_slot_enter=on?pfbody_move_enter:NULL;pt_slot_leave=on?pfbody_move_leave:NULL;pt_slot_parked=on?pfbody_move_parked:NULL;
     pfbody_room_install(on);pt_slot_drive=on && pfbody_room_installed?pfbody_move_drive:NULL;
     pftr_install(on);
+    pfdoor_install(on && pfbody_room_installed);
 }
 static void pfbody_restore(void) {
     pfbody_moves_install(0);
@@ -663,7 +668,7 @@ static int pfbody_arm(void) {
     return pfbody_arm_using();
 }
 static int pfbody_status(char *out,size_t capacity) {
-    int n=snprintf(out,capacity," bodies=%s bodies_why=%s bodies_mask=%x connects=%lld/%lld body_checks=%lld parks=%lld/%lld returns=%lld kill=%d/%lld/%lld/%lld roomless=%lld held=%lld placed=%lld/%lld moves=%lld/%lld/%lld drive=%d/%lld/%lld room=%lld/%lld/%lld/%lld/%lld attn=%d travel=%d/%lld/%lld/%lld/%lld park_attn=%d/%d/%d/%lld",
+    int n=snprintf(out,capacity," bodies=%s bodies_why=%s bodies_mask=%x connects=%lld/%lld body_checks=%lld parks=%lld/%lld returns=%lld kill=%d/%lld/%lld/%lld roomless=%lld held=%lld placed=%lld/%lld moves=%lld/%lld/%lld drive=%d/%lld/%lld room=%lld/%lld/%lld/%lld/%lld attn=%d travel=%d/%lld/%lld/%lld/%lld doors=%d/%lld/%lld/%lld/%lld/%lld park_attn=%d/%d/%d/%lld",
         pfbody_stage,pfbody_why,pfbody_mask,(long long)pfbody_connects,(long long)pfbody_disconnects,(long long)pfbody_checks,(long long)pfbody_parks,
         (long long)pfbody_unparks,(long long)pfbody_returns,pfbody_kill_installed,(long long)pfbody_kill_off,(long long)pfbody_kill_spared,(long long)pfbody_kill_late,(long long)pfbody_roomless,
         (long long)pfbody_held,(long long)pfbody_marks,(long long)pfbody_unmarks,
@@ -671,6 +676,7 @@ static int pfbody_status(char *out,size_t capacity) {
         pfbody_room_installed,(long long)pfbody_drives,(long long)pfbody_drive_skips,(long long)pfbody_rooms_held,(long long)pfbody_rooms_passed,
         (long long)pfbody_rooms_moved,(long long)pfbody_rooms_home,(long long)pfbody_room_notices,pfbody_drive_attention,
         pftr_installed,(long long)pftr_notes,(long long)pftr_carried,(long long)pftr_skipped,(long long)pftr_idle,
+        pfdoor_installed,(long long)pfdoor_asks,(long long)pfdoor_slot_asks,(long long)pfdoor_opened,(long long)pfdoor_other_room,(long long)pfdoor_far,
         pfbody_park_levels[0],pfbody_park_levels[1],pfbody_park_levels[2],(long long)pfbody_park_attentions);
     return n>0 && (size_t)n<capacity?n:0;
 }

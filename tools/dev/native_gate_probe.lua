@@ -3615,6 +3615,69 @@ function pilot_view.arm_ui_replay(slot,window)
  -- player, what contains it, the ship it sits in or stands in, its room, its place in the sector.
  -- The stand-in figures (MD cue Avatar tells their IDs): where a walking player's figure stands in its station
  -- (X4's GetPositionalOffset: x, y, z, yaw), nil while it is in no room. The same answer on every client.
+ -- The transporters around each slot's walking player (MD TransporterFind, canonical at the plan's ticks; the room
+ -- tests): tools.transporters[k] = {{x,y,z,d,name},...} in the station's frame, the latest answer for slot k (name: the
+ -- slot's room and connection).
+ -- tools.transporter_near(): this client's own player's nearest one, its distance and how many there are.
+ tools.transporters={}
+ RegisterEvent('X4LAN_UiReplay.Transporter',function(_,text)
+  local k,rest=tostring(text):match('^(%d+);(.*)$')
+  if not k then return end
+  local list={}
+  for x,y,z,d,name in rest:gmatch('([^,;]+),([^,;]+),([^,;]+),([^,;]+),([^,;]*);') do
+   if tonumber(x) and tonumber(y) and tonumber(z) then list[#list+1]={x=tonumber(x),y=tonumber(y),z=tonumber(z),d=tonumber(d),name=name} end
+  end
+  tools.transporters[tonumber(k)]=list
+ end)
+ -- The player's own ship's transporter (a small ship's cockpit keypad) is not one of the station's: an answer from before
+ -- the player walked out of its ship names only that one, and the walk waits for the station's.
+ tools.transporter_near=function()
+  local list,own={},nil
+  local ship=gate.pilot_ship and gate.pilot_ship(slot)
+  if ship then own=string.format('0x%x/',ship) end
+  for _,t in ipairs(tools.transporters[tonumber(slot)] or {}) do
+   if not (own and tostring(t.name):sub(1,#own)==own) then list[#list+1]=t end
+  end
+  local me=tools.foot_pose and tools.foot_pose(slot)
+  if not me then return nil,nil,#list end
+  local best,bd=nil,nil
+  for _,t in ipairs(list) do
+   local d=math.sqrt((t.x-me.x)^2+(t.z-me.z)^2)
+   if not bd or d<bd then best,bd=t,d end
+  end
+  return best,bd,#list,me
+ end
+ -- The room a slot's figure was sent to by the guide (MD AvatarGuide, room tests), and that room's player transporter
+ -- among the slot's (tools.transporters): where the player following the figure ends its walk.
+ tools.guide_room={}
+ tools.guide_place={}
+ RegisterEvent('X4LAN_UiReplay.Guide',function(_,text)
+  local k,room,x,y,z=tostring(text):match('^(%d+);([^;]*);([^,]*),([^,]*),(.*)$')
+  if k then
+   tools.guide_room[tonumber(k)]=room
+   tools.guide_place[tonumber(k)]=tonumber(x) and tonumber(z) and {x=tonumber(x),y=tonumber(y) or 0,z=tonumber(z)} or nil
+  end
+ end)
+ -- This client's own walking player's facing in its station (radians as K.foot_walk counts them, atan2(x, z) of its
+ -- forward axis; nil from a gate that answers the place alone).
+ tools.foot_facing=function()
+  local figure=tools.foot_figures[tonumber(slot)]
+  if not figure or not gate.pilot_foot_place then return nil end
+  pcall(ffi.cdef,'UniverseID GetContextByClass(UniverseID,const char*,bool);')
+  local ok,station=pcall(ffi.C.GetContextByClass,ffi.new('UniverseID',ConvertStringTo64Bit(tostring(figure))),'station',false)
+  if not ok or tonumber(station)==0 then return nil end
+  local x,y,z,fx,fz=gate.pilot_foot_place(slot,tonumber((tostring(station):gsub('ULL$',''))))
+  if not fx or not fz then return nil end
+  return math.atan2(fx,fz),{x=x,y=y,z=z}
+ end
+ tools.transporter_guided=function()
+  local room=tools.guide_room[tonumber(slot)]
+  if not room then return nil end
+  for _,t in ipairs(tools.transporters[tonumber(slot)] or {}) do
+   if tostring(t.name):sub(1,#room+1)==room..'/' then return t end
+  end
+  return nil
+ end
  tools.foot_figures={}
  for k=1,#cfg.native_gate_pilot_slots do
   RegisterEvent('X4LAN_FootAvatar'..k,function(_,object)
@@ -3644,6 +3707,20 @@ function pilot_view.arm_ui_replay(slot,window)
   local ok2,p=pcall(ffi.C.GetPositionalOffset,id,station)
   if not ok2 then return nil end
   return {x=p.x,y=p.y,z=p.z,yaw=p.yaw}
+ end
+ -- A slot's stand-in figure's own place in its station (also this client's own figure: tools.foot_pose answers the
+ -- player's place for it), for following the figure's trail (core K.foot_follow).
+ tools.figure_pose=function(k)
+  local figure=tools.foot_figures[k]
+  if not figure then return nil end
+  pcall(ffi.cdef,'UIPosRot GetPositionalOffset(UniverseID positionalid, UniverseID spaceid);')
+  pcall(ffi.cdef,'UniverseID GetContextByClass(UniverseID,const char*,bool);')
+  local id=ffi.new('UniverseID',ConvertStringTo64Bit(tostring(figure)))
+  local ok,station=pcall(ffi.C.GetContextByClass,id,'station',false)
+  if not ok or tonumber(station)==0 then return nil end
+  local ok2,p=pcall(ffi.C.GetPositionalOffset,id,station)
+  if not ok2 then return nil end
+  return {x=p.x,y=p.y,z=p.z}
  end
  tools.foot_where=function()
   for _,line in ipairs({'UniverseID GetPlayerID(void);','UniverseID GetPlayerContainerID(void);','UniverseID GetPlayerOccupiedShipID(void);',

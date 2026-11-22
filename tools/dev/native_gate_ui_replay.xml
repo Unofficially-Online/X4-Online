@@ -236,6 +236,70 @@
     </do_all>
    </actions>
   </cue>
+  <!-- The player transporters around an entity $E (the room tests: TransporterFind, AvatarGuide): its room, the rooms
+       that room is part of (a docked player who walked out of its ship's rear stood in a part of the docking bay, whose
+       own transporter X4's find lists for the bay itself: run of 21 Nov 18:56) and each one's dynamic interior;
+       $Rooms and $Wps (X4's find_player_transporter_slot). -->
+  <library name="X4LAN_TransporterSlots" purpose="include_actions">
+   <actions>
+    <set_value name="$Rooms" exact="[]"/>
+    <set_value name="$Wps" exact="[]"/>
+    <set_value name="$R" exact="@$E.room"/>
+    <do_while value="@$R.isclass.room and $Rooms.count lt 12">
+     <append_to_list name="$Rooms" exact="$R"/>
+     <do_if value="@$R.dynamicinterior.exists">
+      <do_all exact="$R.dynamicinterior.rooms.count" counter="$I">
+       <append_to_list name="$Rooms" exact="$R.dynamicinterior.rooms.{$I}"/>
+      </do_all>
+     </do_if>
+     <set_value name="$R" exact="@$R.parent"/>
+    </do_while>
+    <!-- ...and every room of the dock area it stands on: both players who walked out of their ships' rears stood in a
+         room the two bays share, whose parent is the module (run of 21 Nov 18:56) -->
+    <do_if value="@$E.walkablemodule.exists">
+     <find_room name="$Rooms" object="$E.walkablemodule" multiple="true" append="true"/>
+    </do_if>
+    <do_all exact="$Rooms.count" counter="$I">
+     <find_player_transporter_slot name="$Wps" object="$Rooms.{$I}" multiple="true" append="true"/>
+    </do_all>
+    <!-- ...and the dock area module's own: its central transporter belongs to no room (run 1 of 21 Nov stood on it at
+         the station's x = z = 0 and was offered 7 rooms; the bays' own, connection27, X4's walk check called out of
+         reach from where the players stand, run of 19:30) -->
+    <do_if value="@$E.walkablemodule.exists">
+     <find_player_transporter_slot name="$Wps" object="$E.walkablemodule" multiple="true" append="true"/>
+    </do_if>
+    <remove_value name="$R"/>
+   </actions>
+  </library>
+  <!-- Test only, read only (script op transporter_find, in every client's plan at the same ticks): the player transporters
+       around a slot's walking player, for the room tests' walk to one (core K.foot_walk to a place). The player's room
+       and every room of its dynamic interior (a station's dock: the docking bay, the rooms behind it) are searched with
+       X4's find_player_transporter_slot; each slot's place in the station's frame (componentslot relativeposition), its
+       distance to the player and its connection go to the UI (event X4LAN_UiReplay.Transporter: "slot;x,y,z,d,name;..."),
+       where the slot's own client walks to the nearest. (First run, 21 Nov: the NPC waypoint tagged npctransport in the
+       bay is a stand place, con_npc_stand_001; the transporter the player used was connection02 of the next room.) -->
+  <cue name="TransporterFind" instantiate="true">
+   <conditions><event_ui_triggered screen="'X4LAN_UiReplay'" control="'TransporterFind'"/></conditions>
+   <actions>
+    <set_value name="$K" exact="event.param3.$slot"/>
+    <set_value name="$E" exact="@global.$X4LAN_Players.{$K}"/>
+    <set_value name="$Room" exact="@$E.room"/>
+    <set_value name="$Station" exact="@$E.station"/>
+    <set_value name="$Wps" exact="[]"/>
+    <set_value name="$Rooms" exact="[]"/>
+    <do_if value="@$Room.exists and @$Station.exists">
+     <include_actions ref="X4LAN_TransporterSlots"/>
+    </do_if>
+    <set_value name="$Text" exact="''"/>
+    <do_all exact="@$Wps.count" counter="$I">
+     <set_value name="$W" exact="$Wps.{$I}"/>
+     <set_value name="$P" exact="$W.relativeposition.{$Station}"/>
+     <set_value name="$Text" exact="$Text + '%s,%s,%s,%s,%s/%s;'.[$P.x / 1m, $P.y / 1m, $P.z / 1m, @$W.distanceto.{$E} / 1m, $W.component, $W.name]"/>
+    </do_all>
+    <debug_text text="'[X4LAN] UI_REPLAY_TRANSPORTER slot=%s player=%s room=%s/%s station=%s rooms=%s found=%s points=%s time=%s'.[$K, $E, @$Room, @$Room.macro.id, @$Station.idcode, @$Rooms.count, @$Wps.count, $Text, player.age]"/>
+    <raise_lua_event name="'X4LAN_UiReplay.Transporter'" param="'%s;%s'.[$K, $Text]"/>
+   </actions>
+  </cue>
   <!-- Test only (script op wallet, in every client's plan at the same tick): money for the player's account, so a
        scripted run can buy (a trade, a ship, a crew member's fee). -->
   <cue name="Wallet" instantiate="true">
@@ -1558,6 +1622,69 @@
       <debug_text text="'[X4LAN] FOOT_AVATAR_HOLD slot=%s held=%s time=%s'.[parent.$slot, parent.$held, player.age]"/>
      </actions>
     </cue>
+    <!-- Test only (script op avatar_guide, a signal as any player's script call: every client hears it at the same
+         time; the room tests): the figure of the slot named stops following its player and walks ahead, by X4's own NPC
+         walk (its path on the floor, round what stands in the way), to the player transporter nearest to it in its
+         player's room or a room of that room's dynamic interior (value = slot * 10 + 1); its player follows the trail
+         (core K.foot_follow). slot * 10: it follows its player again. -->
+    <cue name="AvatarGuide" instantiate="true">
+     <conditions>
+      <event_object_signalled object="player.galaxy" param="'x4lan_avatar_guide'"/>
+      <check_value value="(event.param2 == parent.$slot * 10) or (event.param2 == parent.$slot * 10 + 1)"/>
+     </conditions>
+     <actions>
+      <set_value name="parent.$held" exact="event.param2 == parent.$slot * 10 + 1"/>
+      <set_value name="$Best" exact="null"/>
+      <!-- the slot's player as the player groups name it (as TransporterFind reads it; player.room here found nothing,
+           run of 21 Nov 18:48) -->
+      <set_value name="$E" exact="@global.$X4LAN_Players.{parent.$slot}"/>
+      <set_value name="$Room" exact="@$E.room"/>
+      <set_value name="$Rooms" exact="[]"/>
+      <set_value name="$Wps" exact="[]"/>
+      <do_if value="parent.$held and @parent.$body.exists and @$Room.exists">
+       <include_actions ref="X4LAN_TransporterSlots"/>
+       <!-- X4's NPC waypoints at the transporters (tag npctransport: where its NPCs stand to use one, on their walk
+            graph) come first: X4's walk check called every player transporter slot near the players out of reach
+            (run of 21 Nov 19:30) -->
+       <set_value name="$Npc" exact="[]"/>
+       <do_all exact="$Rooms.count" counter="$I">
+        <find_npc_waypoint name="$Npc" object="$Rooms.{$I}" tags="tag.npctransport" multiple="true" append="true"/>
+       </do_all>
+       <!-- the nearest the figure can walk to (X4's own check, as the NPC state machines ask before a walk); the
+            nearest one alone was not walked to (runs of 21 Nov 19:06 and 19:20: the figure stood still) -->
+       <set_value name="$Left" exact="$Npc.clone"/>
+       <do_if value="not $Left.count">
+        <set_value name="$Left" exact="$Wps.clone"/>
+       </do_if>
+       <set_value name="$Tried" exact="0"/>
+       <do_while value="$Left.count and not $Best and $Tried lt 8">
+        <set_value name="$N" exact="1"/>
+        <do_all exact="$Left.count" counter="$I">
+         <do_if value="$Left.{$I}.distanceto.{parent.$body} lt $Left.{$N}.distanceto.{parent.$body}">
+          <set_value name="$N" exact="$I"/>
+         </do_if>
+        </do_all>
+        <set_value name="$Tried" operation="add"/>
+        <check_walk_path actor="parent.$body" end="$Left.{$N}" result="$Can" checkstate="false"/>
+        <debug_text text="'[X4LAN] FOOT_AVATAR_GUIDE_TRY slot=%s try=%s slot=%s/%s distance=%s walkable=%s time=%s'.[parent.$slot, $Tried, $Left.{$N}.component, $Left.{$N}.name, $Left.{$N}.distanceto.{parent.$body}, $Can, player.age]"/>
+        <do_if value="$Can">
+         <set_value name="$Best" exact="$Left.{$N}"/>
+        </do_if>
+        <remove_value name="$Left.{$N}"/>
+       </do_while>
+       <do_if value="$Best">
+        <start_actor_walk actor="parent.$body" target="$Best" speed="parent.$body.walkspeed" triggeranimation="false"/>
+        <!-- where it goes, for the player following it (the walk's end: that room's transporter, not the one nearest
+             the player: run of 21 Nov 20:59 took another and let the figure go 4 m outside its booth) -->
+        <!-- ...and the waypoint's place in the station (a booth's stand place: with the transporter's own it gives the
+             booth's facing, for the look at its button) -->
+        <set_value name="$P" exact="if @$E.station.exists then $Best.relativeposition.{$E.station} else null"/>
+        <raise_lua_event name="'X4LAN_UiReplay.Guide'" param="'%s;%s;%s,%s,%s'.[parent.$slot, $Best.component, @$P.x / 1m, @$P.y / 1m, @$P.z / 1m]"/>
+       </do_if>
+      </do_if>
+      <debug_text text="'[X4LAN] FOOT_AVATAR_GUIDE slot=%s held=%s player=%s room=%s rooms=%s found=%s npc=%s body=%s target=%s/%s distance=%s time=%s'.[parent.$slot, parent.$held, $E, @$Room, $Rooms.count, $Wps.count, @$Npc.count, @parent.$body, @$Best.component, @$Best.name, @$Best.distanceto.{parent.$body}, player.age]"/>
+     </actions>
+    </cue>
     <!-- One cue that arms itself again (no instance per step: an instance takes a runtime ID, ten a second per player).
          The delay is the step: a reset cue checks its condition again at once, so without it the cue would run on in
          the same instant for ever (it did, 16 Nov: both clients stood still at the tick the figures start). -->
@@ -1572,8 +1699,11 @@
        <debug_text text="'[X4LAN] FOOT_AVATAR_POLL slot=%s polls=%s occupied=%s controlled=%s room=%s body=%s time=%s'.[parent.$slot, parent.$polls, player.occupiedship, player.controlled, player.room, parent.$body, player.age]"/>
       </do_if>
       <do_if value="parent.$held">
-       <!-- held by a test (script op avatar_hold): the figure stays where it stands -->
+       <!-- held by a test (script op avatar_hold): the figure stays where it stands (avatar_guide: it walks ahead) -->
        <set_value name="parent.$heldpolls" operation="add"/>
+       <do_if value="parent.$heldpolls % 300 == 1">
+        <debug_text text="'[X4LAN] FOOT_AVATAR_HELD slot=%s polls=%s room=%s at=%s station=%s time=%s'.[parent.$slot, parent.$heldpolls, @parent.$body.room, @parent.$body.position, @parent.$body.relativeposition.{parent.$body.station}, player.age]"/>
+       </do_if>
       </do_if>
       <do_elseif value="parent.$walks and player.room">
        <set_value name="$yaw" exact="player.entity.rotation.yaw"/>

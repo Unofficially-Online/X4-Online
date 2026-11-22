@@ -188,15 +188,16 @@ static void test_ui_compslot(void) {
          assert(!ret && uics_refused==refused+1 && uics_instant==instant+1);InterlockedExchange64(&uics_refused,refused);InterlockedExchange64(&uics_instant,instant);}
         uics_armed=armed;uics_action_index=was;
     }
-    /* the transporter room's terminal: only a walking slot 2..N at a terminal of its own ship; the menu's spacesuit
-     * target (a zone) is refused outside a capture and for another entry is not this module's */
+    /* the transporter room's terminal: a walking slot 2..N at any transporter (its own ship's, a station's); the
+     * menu's spacesuit target (a zone) is refused outside a capture and for another entry is not this module's */
     {   static unsigned char ship[0x80],room[0x80],other[0x80];unsigned char *p;uint64_t frame[12]={0},ret=7;
         const int armed=uics_armed,farmed=pfslot_armed,fwalking=pfslots[2].walking,capturing=pstk_capturing;const unsigned slot=pstk_capture_slot,was=uics_transport_index;
         unsigned char *const sship=pslots[2].ship;
         memset(ship,0,sizeof(ship));memset(room,0,sizeof(room));memset(other,0,sizeof(other));p=ship;memcpy(room+0x70,&p,8);
         pslots[2].ship=ship;pfslot_armed=1;pfslots[2].walking=1;pstk_capturing=1;pstk_capture_slot=2;
         assert(uics_slot_terminal(2,UICS_CLASS_TRANSPORTER,room) && uics_slot_terminal(2,UICS_CLASS_TRANSPORTER,ship) &&
-               !uics_slot_terminal(2,UICS_CLASS_TRANSPORTER,other) && !uics_slot_terminal(2,UICS_CLASS_CONTROL,room) &&
+               uics_slot_terminal(2,UICS_CLASS_TRANSPORTER,other) && !uics_slot_terminal(2,UICS_CLASS_TRANSPORTER,NULL) &&
+               !uics_slot_terminal(2,UICS_CLASS_CONTROL,room) &&
                uics_slot_terminal(1,UICS_CLASS_TRANSPORTER,room) && uics_slot_terminal(1,UICS_CLASS_TRANSPORTER,other) &&   /* slot 1: X4's own tests */
                !uics_slot_terminal(1,UICS_CLASS_CONTROL,room));
         /* slot 1's command is its own class: slot 1 only, never the action's class as an event */

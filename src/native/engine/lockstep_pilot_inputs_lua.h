@@ -422,9 +422,10 @@ static int lua_pilot_foot_floor(lua_State *L) {
     return 1;
 }
 /* gate.pilot_foot_place(slot, space): x, y, z of that slot's walking player in the component `space` (a station:
- * the game's GetTransformRelativeTo at the thread's game time), or nil. Read only, for the test ops: a walking
- * player's figure walks after it, so the figure's place is not the player's while it moves, and for a slot 2..N
- * the UI's own player is not that slot's player object. */
+ * the game's GetTransformRelativeTo at the thread's game time), then the x and z of its forward axis there (the
+ * transform's third row: the way it faces, for the room tests' look at a transporter's button), or nil. Read only,
+ * for the test ops: a walking player's figure walks after it, so the figure's place is not the player's while it
+ * moves, and for a slot 2..N the UI's own player is not that slot's player object. */
 static int lua_pilot_foot_place(lua_State *L) {
     double slot=p_lua_tonumber(L,1),space=p_lua_tonumber(L,2);int ok=0;__attribute__((aligned(16))) float m[16];
     if(accept_ui() && pftr_relative && isfinite(slot) && floor(slot)==slot && slot>=1 && slot<=PILOT_SLOTS &&
@@ -439,7 +440,9 @@ static int lua_pilot_foot_place(lua_State *L) {
         }
     }
     if(!ok || !isfinite(m[0]) || !isfinite(m[1]) || !isfinite(m[2])) {p_lua_pushnil(L);return 1;}
-    p_lua_pushnumber(L,m[0]);p_lua_pushnumber(L,m[1]);p_lua_pushnumber(L,m[2]);return 3;
+    p_lua_pushnumber(L,m[0]);p_lua_pushnumber(L,m[1]);p_lua_pushnumber(L,m[2]);
+    if(!isfinite(m[12]) || !isfinite(m[14])) return 3;
+    p_lua_pushnumber(L,m[12]);p_lua_pushnumber(L,m[14]);return 5;
 }
 static int lua_pilot_foot_walking(lua_State *L) {
     double slot=p_lua_tonumber(L,1);int walking=0;

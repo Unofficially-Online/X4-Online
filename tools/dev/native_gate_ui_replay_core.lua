@@ -1068,7 +1068,7 @@ function K.station_call(what)
 end
 -- A canonical op is the probe's own call, not a person's click: a test fixture that every client's plan holds at the same
 -- tick (MD runs it on every client alike, nothing is captured).
-K.CANONICAL={panel_look=true,refit_why=true,station_blueprints=true,mis_fixture=true,mt_offer=true,gm_limit=true,slot_kill=true,slot_airlock=true,launch_stock=true,hold_stock=true,hull_set=true,marines_stock=true,abandon=true,dock_kit=true,wallet=true,probe_far=true,groups_look=true,inv_seed=true,inv_look=true,inv_join_state=true,inv_join_give=true}
+K.CANONICAL={panel_look=true,refit_why=true,station_blueprints=true,mis_fixture=true,mt_offer=true,gm_limit=true,slot_kill=true,slot_airlock=true,launch_stock=true,hold_stock=true,hull_set=true,marines_stock=true,abandon=true,dock_kit=true,wallet=true,probe_far=true,groups_look=true,inv_seed=true,inv_look=true,inv_join_state=true,inv_join_give=true,transporter_find=true}
 -- Refused entries the stock HUD calls by itself, not on a person's action: logged, no info line. AddKnownItem: the
 -- encyclopedia entry the HUD adds for whatever comes into view (45 refusals and their info lines in a playtest of 9 Nov).
 K.GUARD_QUIET={AddKnownItem=true}
@@ -1479,28 +1479,60 @@ end
 -- way in the station's frame it learns from the first turn. Done when the other is `distance` away or nearer.
 -- Keys: FP_MOVE_FORWARD 26, FP_TURN_LEFT 28, FP_TURN_RIGHT 29.
 K.FOOT_TURN=0.2333
+-- Within K.FOOT_NEAR of the place the walk ends in measured steps: turned to face it, then as many ticks of walking as
+-- the distance takes at the speed the walk measured, then the heading read again from that step. Ten ticks of walking
+-- at a time overshot a place 1.4 m off and circled it for minutes (room tests, 21 Nov 20:08).
+K.FOOT_NEAR=2.5
+-- `slot` may also be a function that answers the place to walk to ({x,y,z} in the station's frame, nil: not known yet).
 function K.foot_walk(tools,slot,distance)
  local F={held={},sign=1,phase='walk',ticks=0,turns=0}
+ local target=type(slot)=='function' and slot or function() return tools.foot_pose(slot) end
  local function key(id,on)
   on=on and true or false
   if (F.held[id] or false)~=on then F.held[id]=on;tools.gate.pilot_stock_inject('state',id,on and 1 or 0) end
  end
  local function release() key(26,false);key(28,false);key(29,false) end
  local function wrap(a) return (a+math.pi)%(2*math.pi)-math.pi end
- function F.start() return 'towards slot '..tostring(slot)..' to '..tostring(distance)..' m' end
+ function F.start() return 'towards '..(type(slot)=='function' and 'a place' or 'slot '..tostring(slot))..' to '..tostring(distance)..' m' end
  function F.step(i)
   if F.done then return nil end
-  local me,other=tools.foot_pose(tools.own_slot),tools.foot_pose(slot)
+  local me,other=tools.foot_pose(tools.own_slot),target()
   if not me or not other then release();F.phase='walk';F.ticks=0;F.mark=nil;return i%150==0 and 'waits for both figures' or nil end
   local dx,dz=other.x-me.x,other.z-me.z
   local d=math.sqrt(dx*dx+dz*dz)
-  if d<=distance then
+  if d<=distance and not other.crumb then
    F.done=true;release()
    return string.format('there after=%d distance=%.1f heading=%s bearing=%.2f turns=%d sign=%d me=%.1f/%.1f/%.1f other=%.1f/%.1f/%.1f',
     i,d,F.heading and string.format('%.2f',F.heading) or '-',math.atan2(dx,dz),F.turns,F.sign,me.x,me.y,me.z,other.x,other.y,other.z)
   end
   F.ticks=F.ticks+1
-  if F.phase=='turn' then
+  -- near the place: a measured step (K.FOOT_NEAR), with the heading and the speed the walk has measured
+  -- (also for a trail's crumbs: without it the walk circled each crumb 1.3 m off, run of 21 Nov 20:53)
+  if F.phase=='walk' and d<K.FOOT_NEAR and F.heading and F.speed and F.speed>0.005 then
+   local err=wrap(math.atan2(dx,dz)-F.heading)
+   if math.abs(err)>0.15 then
+    key(26,false)
+    F.need=math.max(1,math.floor(math.abs(err)/K.FOOT_TURN+0.5));F.turns=F.turns+1
+    local right=err*F.sign>0
+    key(29,right);key(28,not right);F.phase='turn';F.ticks=0
+    F.heading=wrap(F.heading+(err>0 and 1 or -1)*F.need*K.FOOT_TURN);F.near=true
+   else
+    key(26,true);F.phase='step';F.ticks=0;F.from={x=me.x,z=me.z}
+    F.need=math.max(1,math.floor(math.max(d-distance*0.5,0.1)/F.speed+0.5))
+   end
+   return i%60==0 and string.format('distance=%.1f phase=near heading=%.2f speed=%.3f',d,F.heading,F.speed) or nil
+  end
+  if F.phase=='step' then
+   if F.ticks>=F.need then key(26,false);F.phase='after';F.ticks=0 end
+  elseif F.phase=='after' then           -- the step's way out of the records and the body's last slide
+   if F.ticks>=8 then
+    local vx,vz=me.x-F.from.x,me.z-F.from.z
+    -- a step that moved the player: its heading; one that did not (something in the way): the walk's own way round
+    -- (ten ticks of walking and its quarter turns), until a walk has measured the heading again
+    if vx*vx+vz*vz>=0.0225 then F.heading=math.atan2(vx,vz) else F.heading=nil;F.stuck=(F.stuck or 0)+1 end
+    F.phase='walk';F.ticks=0;F.mark=nil
+   end
+  elseif F.phase=='turn' then
    if F.ticks>F.need then
     key(28,false);key(29,false);F.phase='settle';F.ticks=0
    end
@@ -1513,6 +1545,7 @@ function K.foot_walk(tools,slot,distance)
     local vx,vz=me.x-F.mark.x,me.z-F.mark.z
     if vx*vx+vz*vz>=0.25 then
      local heading=math.atan2(vx,vz)
+     F.speed=math.sqrt(vx*vx+vz*vz)/math.max(F.ticks,1)
      if F.turned and F.heading and math.abs(F.turned)>=0.4 then   -- which way the last turn went
       local went=wrap(heading-F.heading)
       if went*F.turned<0 and math.abs(went)>0.3 then F.sign=-F.sign end
@@ -1543,6 +1576,293 @@ function K.foot_walk(tools,slot,distance)
  end
  F.release=release
  return F
+end
+-- A walking player follows its own figure's trail to a place the figure walks to by X4's NPC walk (the op walk_guided,
+-- after avatar_guide): the figure's places are taken every K.TRAIL_EVERY ticks once it has moved K.TRAIL_STEP metres,
+-- the player walks to each in turn (K.foot_walk; one within K.TRAIL_NEAR is passed: farther, the player cut the trail's
+-- corners into the walkway's railing, 21 Nov 20:18), and when the figure has stood
+-- still for K.TRAIL_STILL ticks and the trail is walked, to `final()` itself (the transporter's own point), done within
+-- `distance`. A straight walk ran into the docking bay's wall 25 m short (room tests, 21 Nov).
+K.TRAIL_EVERY,K.TRAIL_STEP,K.TRAIL_NEAR,K.TRAIL_STILL=10,0.7,1.0,90
+-- Once the figure has stood still that long it is let go (`release`: it follows its player again) and the trail's
+-- last K.TRAIL_FIGURE metres are dropped: the figure's own body stood there, beside the transporter, and the player
+-- stopped a metre short of it (run of 21 Nov 20:25).
+-- A transporter used as a person uses it (core op transporter_ui): the player stands on its pad, looks at its button
+-- until X4's crosshair names the transporter's action, clicks, and travels with X4's TransporterMenu.
+-- The button: a station's transporter booth (interiors_arg_airlock_01_body, a dock bay's connection27 holds its
+-- part_main) is used by a part tagged trigger_interact ui on its side wall (ConnectionFordetail_l_button): in the
+-- booth's frame 1.21 m along +x from part_main, 0.09 m along -z, 0.02 m up; its NPC stand place
+-- (con_npc_stand_001, where the guide sent the figure) lies 0.1 m along -z from part_main, so the two give the booth's
+-- facing: the button is 1.21 m to the left of the way in (+x is -z turned a quarter). Neither the pad nor the doors
+-- carry an action.
+-- The look: the player's facing (the gate's transform of its player, tools.foot_facing) turned to the button by the
+-- turn keys (K.FOOT_TURN a tick, 13 degrees), then finer by the FP_YAW axis (K.UI_YAW_RATE a tick at 1.0) with the
+-- facing read again, then the view tilted by the FP_PITCH axis (above 0 looks down, K.UI_PITCH_RATE a tick) to
+-- K.UI_ABOVE above the button's angle and down one tick at a time from there with the crosshair read after each
+-- (K.UI_SWEEP ticks), and with no hit a few degrees to either side and the sweep again. Both axes are walking inputs of
+-- the slot (recorded, replayed on every client); the calibration run of 21 Nov 22:44 (rooms --calibrate) found
+-- MOUSELOOK yaw and pitch moving nothing on foot, recorded or local, and every local look refused while walking.
+-- The click is TARGETMOUSE_SELECT (state 0x82: a left click on foot).
+-- The menu's row for the room is chosen with the table's own SelectRow and "Travel to" is the button's own handler.
+K.UI_SETTLE,K.UI_FP_YAW,K.UI_FP_PITCH=6,0xd,0xe
+-- An axis is pressed one tick at a time (set, then 0 the next tick, K.UI_PULSE_GAP ticks between): held longer, X4's view
+-- speeds up (13 ticks of FP_PITCH at 1.0 looked straight down, run of 21 Nov 22:52). One pulse turns about
+-- K.UI_YAW_RATE or tilts about K.UI_PITCH_RATE (the calibration's pictures: six pulses, five degrees).
+K.UI_PULSE_GAP,K.UI_YAW_RATE,K.UI_PITCH_RATE=2,0.016,0.014
+-- The sides: the button's place from the booth's data was 25 degrees right of the panel seen (run of 21 Nov 22:58:
+-- the panel beside the booth's door frame, at the crosshair's height; run of 23:04: aimed at -0.36 and -0.48), so the
+-- sweep begins there and then goes to either side.
+K.UI_ABOVE,K.UI_SWEEP,K.UI_SIDES,K.UI_EYE,K.UI_FINES=0.16,40,{-0.36,-0.48,-0.24,-0.6,-0.12,0,0.12,0.24},0.0,40
+K.BOOTH_BUTTON_SIDE,K.BOOTH_BUTTON_IN,K.BOOTH_BUTTON_UP=1.21,0.09,0.02
+-- Where a booth's button is, from its transporter (t) and its stand place (w), both in the station's frame; nil when
+-- the two give no facing.
+function K.booth_button(t,w)
+ if not t or not w then return nil end
+ local ux,uz=w.x-t.x,w.z-t.z
+ local n=math.sqrt(ux*ux+uz*uz)
+ if n<0.02 then return nil end
+ ux,uz=ux/n,uz/n
+ return {x=t.x-uz*K.BOOTH_BUTTON_SIDE+ux*K.BOOTH_BUTTON_IN,y=t.y+K.BOOTH_BUTTON_UP,z=t.z+ux*K.BOOTH_BUTTON_SIDE+uz*K.BOOTH_BUTTON_IN}
+end
+K.UI_MOUSELOOK_YAW,K.UI_MOUSELOOK_PITCH,K.UI_SELECT=7,8,0x82
+-- mode 'aim': the look alone (ends at 'aimed ...' or 'aim_failed ...'); 'use': the click and the menu alone (the
+-- crosshair already on the button); else both.
+function K.transporter_ui(tools,room,mode)
+ local U={phase=mode=='use' and 'click' or 'look',ticks=0,turns=0,pitches=0,held={},seen={},rows=nil,errors=0}
+ pcall(ffi.cdef,'typedef struct { uint32_t messageID; bool obstructed; } CrosshairMessage;')
+ pcall(ffi.cdef,'CrosshairMessage GetCurrentCrosshairMessage();')
+ pcall(ffi.cdef,'typedef struct { uint64_t poiID; UniverseID componentID; const char* messageType; const char* connectionName; bool isAssociative; bool isMissionTarget; bool isPriorityMissionTarget; bool showIndicator; bool hasAdditionalOffset; } MessageDetails3;')
+ pcall(ffi.cdef,'MessageDetails3 GetMessageDetails3(const uint32_t messageid);')
+ pcall(ffi.cdef,'typedef struct { UniverseID component; const char* connection; } UIComponentSlot;')
+ pcall(ffi.cdef,'const char* GetTransporterLocationName(UIComponentSlot target);')
+ local function key(id,on)
+  on=on and true or false
+  if (U.held[id] or false)~=on then U.held[id]=on;tools.gate.pilot_stock_inject('state',id,on and 1 or 0) end
+ end
+ local function release() key(28,false);key(29,false) end
+ local function crosshair()
+  local ok,m=pcall(function() return tools.C.GetCurrentCrosshairMessage() end)
+  if not ok then U.errors=U.errors+1;U.error=U.error or tostring(m);return nil end
+  if not m or m.messageID==0 then return nil end
+  local id=m.messageID
+  local okn,name,possible=pcall(tools.env.GetActionInfo,id)
+  local okd,d=pcall(function() return tools.C.GetMessageDetails3(id) end)
+  local r={id=id,name=okn and tostring(name) or '?',possible=okn and tostring(possible) or '?',
+   comp=okd and tostring(d.componentID):gsub('ULL$','') or '?',conn=okd and d.connectionName~=nil and ffi.string(d.connectionName) or '?',
+   kind=okd and d.messageType~=nil and ffi.string(d.messageType) or '?'}
+  r.text=string.format('id=%d name=%s possible=%s comp=%s conn=%s type=%s obstructed=%s',r.id,r.name,r.possible,r.comp,r.conn,r.kind,tostring(m.obstructed))
+  return r
+ end
+ local function wanted(r)
+  local n,c=r.name:lower(),r.conn:lower()
+  return n:find('transport') or c:find('transport') or c:find('button')
+ end
+ local function menu()
+  for _,m in ipairs(tools.env.Menus or {}) do
+   if type(m)=='table' and m.name=='TransporterMenu' and m.shown then return m end
+  end
+ end
+ local function rows(m)
+  local out={}
+  local map=m.rowDataMap and m.defaulttable and m.rowDataMap[m.defaulttable] or {}
+  for r,data in pairs(map) do
+   if type(data)=='table' and data.target then
+    local ok,name=pcall(function() return ffi.string(tools.C.GetTransporterLocationName(data.target)) end)
+    out[#out+1]={row=r,data=data,name=ok and name or '?'}
+   end
+  end
+  table.sort(out,function(a,b) return a.row<b.row end)
+  return out
+ end
+ function U.start() return 'uses the transporter to '..tostring(room) end
+ function U.release() release() end
+ function U.step(i)
+  if U.done then return nil end
+  U.ticks=U.ticks+1
+  if U.phase=='look' then
+   local function wrap(x) return (x+math.pi)%(2*math.pi)-math.pi end
+   -- an axis pressed one tick at a time, n times, then the view's settling
+   if U.pulse then
+    local P=U.pulse
+    if P.on then
+     tools.gate.pilot_stock_inject('range',P.axis,0);P.on=false;U.ticks=0
+     return nil
+    end
+    if U.ticks<K.UI_PULSE_GAP then return nil end
+    if P.left>0 then P.left=P.left-1;tools.gate.pilot_stock_inject('range',P.axis,P.value);P.on=true;U.ticks=0;return nil end
+    U.pulse=nil;U.ticks=0;U.wait=K.UI_SETTLE;return nil
+   end
+   if U.wait and U.ticks<U.wait then return nil end
+   U.wait=nil
+   if U.turning then key(28,false);key(29,false);U.turning=nil;U.ticks=0;U.wait=K.UI_SETTLE;return nil end
+   local function pulse(axis,value,n)
+    U.pulse={axis=axis,value=value,left=math.max(1,math.floor(n+0.5)),on=false};U.ticks=K.UI_PULSE_GAP
+   end
+   if not U.button then
+    U.button=K.booth_button(tools.transporter_guided and tools.transporter_guided() or nil,tools.guide_place and tools.guide_place[tonumber(tools.own_slot)] or nil)
+    if not U.button then U.done=true;return 'aim_failed no booth button (transporter or stand place unknown)' end
+    U.stage='turn';U.side=1;U.tilted=0
+   end
+   local yaw,me
+   if tools.foot_facing then yaw,me=tools.foot_facing() end
+   if not yaw or not me then U.done=true;return 'aim_failed no facing (a gate without the facing)' end
+   local dx,dz=U.button.x-me.x,U.button.z-me.z
+   local flat=math.sqrt(dx*dx+dz*dz)
+   local err=wrap(math.atan2(dx,dz)+K.UI_SIDES[U.side]-yaw)
+   if U.stage=='turn' then
+    -- the keys, as near as one tick allows
+    if math.abs(err)>K.FOOT_TURN*0.5 and U.turns<8 then
+     local n=math.max(1,math.floor(math.abs(err)/K.FOOT_TURN+0.5))
+     U.turns=U.turns+1
+     if U.last_err and math.abs(err)>math.abs(U.last_err)+0.05 then U.sign=-(U.sign or 1) end
+     U.last_err=err
+     local right=err*(U.sign or 1)>0
+     key(29,right);key(28,not right);U.turning=true;U.ticks=0;U.wait=n
+     return nil
+    end
+    U.stage='fine';U.fines=0
+    return nil
+   elseif U.stage=='fine' then
+    -- the yaw axis, with the facing read after each try (its rate a pulse measured from the try before)
+    if math.abs(err)>0.012 and U.fines<K.UI_FINES then
+     if U.fine_from then
+      local turned=wrap(yaw-U.fine_from.yaw)
+      if math.abs(turned)>0.002 then U.yaw_rate=math.abs(turned)/U.fine_from.n end
+     end
+     local rate=U.yaw_rate or K.UI_YAW_RATE
+     local n=math.min(8,math.max(1,math.floor(math.abs(err)/rate+0.5)))
+     U.fines=U.fines+1;U.fine_from={yaw=yaw,n=n}
+     pulse(K.UI_FP_YAW,err>0 and 1 or -1,n)
+     return nil
+    end
+    -- then down to a little above the button's angle (the eye at the player's place, K.UI_EYE above it)
+    U.want_pitch=math.atan2(me.y+K.UI_EYE-U.button.y,flat)
+    U.stage='sweep';U.swept=0
+    local pre=math.max(0,U.want_pitch-K.UI_ABOVE)/K.UI_PITCH_RATE
+    if pre>=1 then pulse(K.UI_FP_PITCH,1,pre);U.tilted=math.floor(pre+0.5) end
+    return string.format('faces the button at %.1f/%.1f/%.1f distance=%.2f down=%.2f error=%.3f turns=%d fines=%d yaw_rate=%s side=%.2f',
+     U.button.x,U.button.y,U.button.z,flat,U.want_pitch,err,U.turns,U.fines,U.yaw_rate and string.format('%.4f',U.yaw_rate) or '-',K.UI_SIDES[U.side])
+   end
+   -- the sweep: read, then one tick further down
+   local r=crosshair()
+   local row
+   if r and not U.seen[r.text] then U.seen[r.text]=true;row=string.format('sees down=%d side=%d %s',U.tilted,U.side,r.text) end
+   if r and wanted(r) then
+    U.phase='click';U.ticks=0;U.hit=r
+    if mode=='aim' then U.done=true end
+    return string.format('aimed down=%d side=%d %s',U.tilted,U.side,r.text)
+   end
+   if U.swept>=K.UI_SWEEP then
+    -- back up, and the next side
+    if U.tilted>0 then pulse(K.UI_FP_PITCH,-1,U.tilted) end
+    U.tilted=0;U.side=U.side+1
+    if not K.UI_SIDES[U.side] then U.done=true;return 'aim_failed sides='..#K.UI_SIDES..' seen='..(function() local n=0 for _ in pairs(U.seen) do n=n+1 end return n end)()..' reads_failed='..U.errors..(U.error and ' error='..U.error or '') end
+    U.stage='turn';U.turns=0;U.last_err=nil;U.fine_from=nil
+    return row or 'swept '..K.UI_SWEEP..' ticks down, nothing: the next side '..K.UI_SIDES[U.side]
+   end
+   U.swept=U.swept+1;U.tilted=U.tilted+1
+   pulse(K.UI_FP_PITCH,1,1)
+   return row
+  elseif U.phase=='click' then
+   -- the click as this client's own input (a presentation id), else as a recorded one (a replay id: X4's handler of
+   -- the click, 71c640, then runs it on every client in the click's slot)
+   if U.ticks==1 then
+    U.how=tools.gate.pilot_stock_local('state',K.UI_SELECT,1)==1 and 'local' or tools.gate.pilot_stock_inject('state',K.UI_SELECT,1)==1 and 'record' or 'refused'
+    return 'click '..U.how
+   end
+   if U.ticks==3 then
+    if U.how=='local' then tools.gate.pilot_stock_local('state',K.UI_SELECT,0) elseif U.how=='record' then tools.gate.pilot_stock_inject('state',K.UI_SELECT,0) end
+    return nil
+   end
+   local m=menu()
+   if m then U.phase='menu';U.ticks=0;U.menu=m;return 'menu open from='..tostring(m.transportercomponent)..'/'..tostring(m.transporterconnection) end
+   if U.ticks>=240 then U.done=true;return 'no menu after the click '..(U.hit and U.hit.text or '') end
+   return nil
+  elseif U.phase=='menu' then
+   if U.ticks<20 then return nil end
+   local m=U.menu
+   if U.ticks==20 then
+    local list=rows(m);U.rows=list
+    local names={}
+    for _,x in ipairs(list) do names[#names+1]=x.row..':'..x.name..(x.data.issubtarget and '(sub)' or '')..(x.data.hassubentries and '(+)' or '') end
+    for _,x in ipairs(list) do if x.name==room then U.want=x end end
+    if not U.want then
+     -- a room inside a category that is closed: the category's own "+" (buttonExtendCategory), then the rows again
+     for _,x in ipairs(list) do
+      if x.data.hassubentries and not U.extended and type(m.buttonExtendCategory)=='function' then
+       U.extended=true;pcall(m.buttonExtendCategory,tostring(x.data.target.component));U.ticks=0
+       return 'rows '..table.concat(names,' ')..' -> opens '..x.name
+      end
+     end
+     U.done=true;return 'no row '..tostring(room)..': '..table.concat(names,' ')
+    end
+    local ok=pcall(tools.env.SelectRow,m.defaulttable,U.want.row)
+    return 'selects row='..U.want.row..' '..U.want.name..' ok='..tostring(ok)..' rows '..table.concat(names,' ')
+   end
+   if U.ticks==50 then
+    local sel=m.currentselection and m.currentselection.target
+    if not (sel and U.want and tostring(sel.component)==tostring(U.want.data.target.component) and ffi.string(sel.connection)==ffi.string(U.want.data.target.connection)) then
+     -- the selection did not reach the menu's row handler: the handler as the table calls it
+     Helper.currentTableRow[m.defaulttable]=U.want.row
+     pcall(m.onRowChanged,U.want.row,U.want.data)
+     return 'selection by the row handler'
+    end
+    return nil
+   end
+   if U.ticks==80 then
+    local ok,why=pcall(m.buttonGoTo)
+    U.done=true
+    return 'there pressed travel ok='..tostring(ok)..(ok and '' or ' '..tostring(why))..' to='..U.want.name
+   end
+   return nil
+  end
+ end
+ return U
+end
+-- The figure counts as arrived only when it stands still within K.TRAIL_ARRIVED of the place the walk ends (or has stood
+-- still K.TRAIL_GIVE_UP ticks): it also stands still on its way, at a door that opens before it (run of 21 Nov 20:45
+-- let it go at a door, 7 m short, and the door closed between the player and the booth).
+K.TRAIL_FIGURE,K.TRAIL_ARRIVED,K.TRAIL_GIVE_UP=2.0,3.0,900
+function K.foot_follow(tools,figure,final,distance,release)
+ local T={crumbs={},still=0,tick=0}
+ local function arrived()
+  if T.still<K.TRAIL_STILL then return false end
+  if T.still>=K.TRAIL_GIVE_UP then return true end
+  local goal,at=final(),T.last
+  return goal and at and math.sqrt((goal.x-at.x)^2+(goal.z-at.z)^2)<=K.TRAIL_ARRIVED or false
+ end
+ local function target()
+  local me=tools.foot_pose(tools.own_slot)
+  if not T.released and arrived() then
+   T.released=true
+   if release then pcall(release) end
+   local at=T.last
+   while at and T.crumbs[#T.crumbs] and math.sqrt((T.crumbs[#T.crumbs].x-at.x)^2+(T.crumbs[#T.crumbs].z-at.z)^2)<=K.TRAIL_FIGURE do table.remove(T.crumbs) end
+  end
+  while me and T.crumbs[1] and math.sqrt((T.crumbs[1].x-me.x)^2+(T.crumbs[1].z-me.z)^2)<=K.TRAIL_NEAR do table.remove(T.crumbs,1) end
+  if T.crumbs[1] then return T.crumbs[1] end
+  if T.released then return final() end
+  return nil
+ end
+ local walk=K.foot_walk(tools,target,distance)
+ local step=walk.step
+ function walk.step(i)
+  T.tick=T.tick+1
+  -- (none once the figure is let go: it walks back to its player then, and its way back is no trail)
+  if T.tick%K.TRAIL_EVERY==0 and not T.released then
+   local f=figure()
+   if f then
+    local last=T.crumbs[#T.crumbs] or T.last
+    if not last or math.sqrt((f.x-last.x)^2+(f.z-last.z)^2)>=K.TRAIL_STEP then
+     T.crumbs[#T.crumbs+1]={x=f.x,y=f.y,z=f.z,crumb=true};T.last=T.crumbs[#T.crumbs];T.still=0
+    else T.still=T.still+K.TRAIL_EVERY end
+   end
+  end
+  local out=step(i)
+  if out and i%60==0 then out=out..' crumbs='..#T.crumbs..' still='..T.still end
+  return out
+ end
+ return walk
 end
 -- A chain of script ops (the op chain): steps one after the other, each begun when the one before it has ended, for
 -- runs whose steps wait for the game (fly and dock, then buy, then undock, then dock elsewhere...). A step is
@@ -1660,6 +1980,9 @@ function K.script(plan,start,tools)
   elseif op=='target_none' then call=function() return tools.env.RemoveSofttarget() end
   elseif op=='match' then call=function() return tools.gate.pilot_stock_inject('state',0x5b,e[3]) end
   elseif op=='input' then call=function() return tools.gate.pilot_stock_inject(e[3],e[4],e[5]) end
+  -- {tick,'input_local',KIND,ID,VALUE}: the same as this client's own key or mouse (pstk_local_press: X4's handler on
+  -- this client, then the record as a person's input is captured), for presentation ids such as the camera's look.
+  elseif op=='input_local' then call=function() return tools.gate.pilot_stock_local(e[3],e[4],e[5]) end
   -- This client's guns without a person: {tick,'aim_fire',1} aims with the aim assist at its player's target and holds
   -- the primary trigger, {tick,'aim_fire',0} lets go (gate.pilot_aim_script). A trigger injected as an input state
   -- (state 24) is a key press: it counts only in the window that has the focus (two windows on one PC), so a plan
@@ -1829,6 +2152,79 @@ function K.script(plan,start,tools)
   elseif op=='foot_meet' then
     local limit=e[5] or 900
     local walk=K.foot_walk(tools,e[3],e[4] or 3)
+    call=walk.start
+    for i=1,limit do
+     by[at+i]=by[at+i] or {};by[at+i][#by[at+i]+1]={op=op,quiet=true,call=function()
+      if i==limit then walk.release();return 'ends' end
+      return walk.step(i) end}
+    end
+  -- The room tests. Test only, read only, canonical (in every client's plan at the same ticks): {tick,'transporter_find',
+  -- SLOT}: MD finds the transporters around that slot's walking player (TransporterFind) and tells every UI.
+  -- {tick,'transporter_look'}: this client's own player's nearest one ('points=N nearest=D at=X/Y/Z', none: points=0).
+  -- {tick,'walk_transporter'[,metres[,limit]]}: this client's walking player walks to its nearest transporter, chosen
+  -- when the walk begins (K.foot_walk to a place; 0.6 m, 1200 ticks).
+  elseif op=='transporter_find' then call=function()
+    tools.env.AddUITriggeredEvent('X4LAN_UiReplay','TransporterFind',{slot=e[3]});return 'lua' end
+  -- Read only: {tick,'figure_look'}: every slot's stand-in figure's place in its station (the same on every client).
+  elseif op=='figure_look' then call=function()
+    local parts={}
+    for k=1,tools.slots or 2 do
+     local f=tools.figure_pose and tools.figure_pose(k)
+     parts[#parts+1]=k..'='..(f and string.format('%.1f/%.1f/%.1f',f.x,f.y,f.z) or 'none')
+    end
+    return table.concat(parts,' ') end
+  elseif op=='transporter_look' then call=function()
+    local t,d,n=tools.transporter_near()
+    return 'points='..tostring(n)..(t and string.format(' nearest=%.1f at=%.1f/%.1f/%.1f slot=%s',d,t.x,t.y,t.z,tostring(t.name)) or '') end
+  -- {tick,'avatar_guide',true|false}: this client's player's figure walks ahead to the nearest player transporter (MD
+  -- AvatarGuide; the signal travels as the slot's script calls do), or follows its player again.
+  -- {tick,'walk_guided'[,metres[,limit]]}: this client's walking player follows that figure's trail to the transporter
+  -- (K.foot_follow; 0.5 m, 2400 ticks).
+  elseif op=='avatar_guide' then call=function()
+    tools.env.SignalObject(tools.galaxy_lua(),'x4lan_avatar_guide',tools.own_slot*10+(e[3] and 1 or 0));return 'lua' end
+  elseif op=='walk_guided' then
+    local limit,pick=e[4] or 2400,nil
+    local walk=K.foot_follow(tools,function() return tools.figure_pose(tools.own_slot) end,function()
+      if not pick then pick=tools.transporter_guided and tools.transporter_guided() or nil end
+      return pick end,e[3] or 0.5,
+      function() tools.env.SignalObject(tools.galaxy_lua(),'x4lan_avatar_guide',tools.own_slot*10) end)
+    call=walk.start
+    for i=1,limit do
+     by[at+i]=by[at+i] or {};by[at+i][#by[at+i]+1]={op=op,quiet=true,call=function()
+      if i==limit then walk.release();return 'ends' end
+      return walk.step(i) end}
+    end
+  -- {tick,'walk_point',X,Z[,metres[,limit]]}: this client's walking player walks to a place of its station's frame
+  -- (a known transporter pad of a test station; 0.5 m, 1800 ticks).
+  elseif op=='walk_point' then
+    local limit=e[6] or 1800
+    local walk=K.foot_walk(tools,function() return {x=e[3],y=0,z=e[4]} end,e[5] or 0.5)
+    call=walk.start
+    for i=1,limit do
+     by[at+i]=by[at+i] or {};by[at+i][#by[at+i]+1]={op=op,quiet=true,call=function()
+      if i==limit then walk.release();return 'ends' end
+      return walk.step(i) end}
+    end
+  -- {tick,'transporter_ui',ROOM[,limit]}: this client's player on a transporter's pad travels to ROOM as a person does
+  -- (K.transporter_ui: look round until the crosshair names the transporter, click, X4's TransporterMenu, its row,
+  -- "Travel to"); 'there pressed travel ...' when the button was pressed (2400 ticks).
+  -- {tick,'transporter_aim'[,limit]} and {tick,'transporter_use',ROOM[,limit]}: the same in two steps (a picture of
+  -- what the crosshair is on between them).
+  elseif op=='transporter_ui' or op=='transporter_aim' or op=='transporter_use' then
+    local room=op~='transporter_aim' and e[3] or nil
+    local limit=(op=='transporter_aim' and e[3] or e[4]) or 2400
+    local ui=K.transporter_ui(tools,room,op=='transporter_aim' and 'aim' or op=='transporter_use' and 'use' or nil)
+    call=ui.start
+    for i=1,limit do
+     by[at+i]=by[at+i] or {};by[at+i][#by[at+i]+1]={op=op,quiet=true,call=function()
+      if i==limit then ui.release();return 'ends' end
+      return ui.step(i) end}
+    end
+  elseif op=='walk_transporter' then
+    local limit,pick=e[4] or 1200,nil
+    local walk=K.foot_walk(tools,function()
+      if not pick then pick=tools.transporter_near() end
+      return pick end,e[3] or 0.6)
     call=walk.start
     for i=1,limit do
      by[at+i]=by[at+i] or {};by[at+i][#by[at+i]+1]={op=op,quiet=true,call=function()

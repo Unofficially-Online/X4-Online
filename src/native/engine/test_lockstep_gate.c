@@ -1124,6 +1124,7 @@ static void test_dynamic_registry(void) {
 #include "test_lockstep_zone_pending.h"
 #include "test_lockstep_faction_present.h"
 #include "test_lockstep_conversation_owner.h"
+#include "test_lockstep_pilot_foot_doors.h"   /* after the image mapper (test_lockstep_portable_math.h) */
 #include "test_lockstep_spline_calc_watch.h"
 #include "test_lockstep_step_chain.h"
 #include "test_lockstep_path_transforms.h"
@@ -1147,7 +1148,7 @@ int main(int argc,char **argv) {
     if(argc==2) test_view_cameras_native_image(argv[1]);
     if(argc==2) test_scan_long_native_image(argv[1]);
     if(argc==2) test_scan_mode_native_image(argv[1]);
-    if(argc==2) {test_conversation_owner_native_image(argv[1]);test_mission_owners_native_image(argv[1]);test_pilot_aim_native_image(argv[1]);test_ui_missions_native_image(argv[1]);}
+    if(argc==2) {test_conversation_owner_native_image(argv[1]);test_pilot_foot_doors_native_image(argv[1]);test_mission_owners_native_image(argv[1]);test_pilot_aim_native_image(argv[1]);test_ui_missions_native_image(argv[1]);}
     if(argc==2) test_ui_trade_native_image(argv[1]);
     if(argc==2) test_ui_faction_native_image(argv[1]);
     if(argc==2) test_faction_present_native_image(argv[1]);
@@ -1234,6 +1235,7 @@ int main(int argc,char **argv) {
     test_ui_holds();
     test_foot_figure();
     test_pilot_foot_transport();
+    test_pilot_foot_doors();
     test_draw_watch();
     test_draw_watch_frame();
     test_player_timer();

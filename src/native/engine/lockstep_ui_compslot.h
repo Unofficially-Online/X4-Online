@@ -50,8 +50,11 @@
  *             its sit-down, an allowed class becomes the same event (the action's index as the container takes it).
  *   terminal  the transporter room's terminal (U::ActivateTransporterRoomAction, an instant action; in a small ship the
  *             keypad at the back of the cockpit: "Use Transporter Room"). Its execute (35d5c0) only opens the menu
- *             TransporterMenu for the room (UI, this client's), so for a walking slot at a terminal of its own ship X4's
- *             own PerformAction runs (through the guard's trampoline, in the presentation scope the UI is in; no event).
+ *             TransporterMenu for the room (UI, this client's), so for a walking slot at any transporter's terminal (its
+ *             own ship's, or a station's booth: the room tests of 21 Nov, where the own-ship rule refused player 2's
+ *             click on its dock bay's booth) X4's own PerformAction runs (through the guard's trampoline, in the
+ *             presentation scope the UI is in; no event), and X4's own check of the action (the floor under the player
+ *             must be the transporter's) decides as for its own player.
  *             The menu lists the room's targets (GetValidTransporterTargets2); every way out of it ends in the export
  *             TransportPlayerToTarget(UIComponentSlot) [F 1bcc70], which moves X4's own player and is refused by the
  *             guard. Its entry is claimed: the target "Use Spacesuit" is a zone (the menu's own test, class 0x6d),
@@ -316,13 +319,12 @@ static size_t uics_name(const char *from,char name[UICS_NAME_MAX+1]) {
     }
     return 0;
 }
-/* A transporter terminal whose menu this client may open: slot 1's (X4's own player and its own tests), or slot k's at a
- * terminal of its own ship while it walks (header, terminal). */
+/* A transporter terminal whose menu this client may open: slot 1's (X4's own player and its own tests), or slot k's at
+ * any transporter while it walks (header, terminal: X4's own action check decides the rest). */
 static int uics_slot_terminal(unsigned k,uint32_t klass,const unsigned char *component) {
-    if(klass!=UICS_CLASS_TRANSPORTER) return 0;
+    if(klass!=UICS_CLASS_TRANSPORTER || !component) return 0;
     if(k==1) return 1;
-    if(k<2 || k>PILOT_SLOTS || !pfslot_own_walking()) return 0;
-    return uics_under(component,pslots[k].ship);
+    return k>=2 && k<=PILOT_SLOTS && pfslot_own_walking();
 }
 static int uics_is_zone(unsigned char *component) {
     int zone=0;

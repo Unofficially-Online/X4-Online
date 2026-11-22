@@ -2716,6 +2716,141 @@ class Settings:
             check.note('settings', 'at tick %d: %s' % (rows[-1][0], rows[-1][2][:330]))
 
 
+# ---- the transporter between a station's rooms ------------------------------------------------------------------------
+class Rooms:
+    """Each player docks at a station, gets up, walks to the dock's transporter and travels to another room of the station."""
+    name = 'rooms'
+    minutes = 10
+    sets = ()
+    marks = ('out', 'at_pad', 'aimed', 'room', 'look_1', 'look_2', 'look_3', 'look_4') + tuple('cal_%d' % n for n in range(9))
+    STATION = '00000000000434b1'      # the Argon factory of the station walk tests
+    GET_UP, BACK, TURN_RIGHT = 0x115, 27, 29   # INPUT_ACTION_GET_UP; FP_MOVE_BACKWARD (a docked small ship is left backwards); FP_TURN_RIGHT
+    LIMIT = 17000
+    FIND_EVERY = 300
+
+    # The dock area's central transporter of CZF-533, in the station's frame (x, z): its floor (a docking bay's
+    # connection02) offered the station's rooms, and the walk there from a ship's rear is open (run 1 of 21 Nov). The
+    # bays' own transporters (connection27, X4's find_player_transporter_slot) lie behind walls: X4's walk check called
+    # them out of reach and a straight walk stopped 25 m short.
+    PAD = (0.0, 0.0)
+
+    @staticmethod
+    def options(s):
+        s.add_argument('--station', default=Rooms.STATION, help='saved ID of the station to dock at')
+        s.add_argument('--room', default='Security Office', help="the room to travel to (a name in the transporter's list)")
+        s.add_argument('--pad', type=float, nargs=2, default=Rooms.PAD, metavar=('X', 'Z'),
+                       help="the transporter pad to walk to, in the station's frame")
+        s.add_argument('--look', action='store_true', help='a look round only: out of the ship, then a picture of both windows at each quarter turn')
+        s.add_argument('--direct', action='store_true', help="travel by the menu's call (TransportPlayerToTarget) instead of the crosshair, click and menu")
+        s.add_argument('--calibrate', action='store_true', help='on the pad: each way of tilting and turning the view (recorded or local; mouselook or the FP axes), a picture after each')
+
+    @staticmethod
+    def chain(k, a):
+        return [
+            ('dock', 'until', '^docked', 'ai_dock_station', a.station, 9000),
+            ('settle', 'wait', 150),
+            ('seat', 'op', 'foot_where'),
+            ('up', 'op', 'input', 'action', Rooms.GET_UP, 0),
+            ('up_wait', 'wait', 150),
+            ('stood', 'op', 'foot_where'),
+            ('back_on', 'op', 'input', 'state', Rooms.BACK, 1),
+            ('back', 'wait', 200),
+            ('back_off', 'op', 'input', 'state', Rooms.BACK, 0),
+            ('out', 'op', 'foot_where'),
+            # the transporters around this player (MD finds them every FIND_EVERY ticks, canonical), the nearest walked to
+        ] + ([step for n in range(1, 5) for step in (
+                ('turn_%d_on' % n, 'op', 'input', 'state', Rooms.TURN_RIGHT, 1), ('turn_%d' % n, 'wait', 7),
+                ('turn_%d_off' % n, 'op', 'input', 'state', Rooms.TURN_RIGHT, 0), ('settle_%d' % n, 'wait', 45),
+                ('look_%d' % n, 'op', 'foot_where'), ('look_%d_wait' % n, 'wait', 60))] if a.look else []) + ([] if a.look else [
+            # what the transporters around it are (MD, every FIND_EVERY ticks), and what the floor it stands on offers
+            ('found', 'try', 'points=[1-9]', 30, 900, 'transporter_look'),
+            ('targets_out', 'op', 'transport_list'),
+            # the player's figure walks ahead by X4's NPC walk to the transporter's NPC waypoint (round the ledge
+            # between the walkway and the pads), the player follows its trail and steps onto the nearest player
+            # transporter; then the figure follows its player again (--pad X Z: a straight walk to a known pad instead)
+        ] + ([('walk', 'until', '^there', 'walk_point', a.pad[0], a.pad[1], 0.5, 2400)] if a.pad != Rooms.PAD else [
+            ('guide', 'op', 'avatar_guide', True),
+            ('walk', 'until', '^there', 'walk_guided', 0.5, 5400),
+            ('unguide', 'op', 'avatar_guide', False),
+        ]) + [
+            ('at_pad', 'op', 'foot_where'),
+            ('targets', 'op', 'transport_list'),
+            # as a person: look at the transporter, click, X4's TransporterMenu, the room's row, "Travel to"
+            # (--direct: the menu's call itself, TransportPlayerToTarget)
+        ] + (Rooms.calibration() if a.calibrate else []) + ([] if a.calibrate else [('travel', 'op', 'transport_named', a.room)] if a.direct else [
+            ('aim', 'until', '^aim', 'transporter_aim', 4200),
+            ('aimed', 'op', 'foot_where'),
+            ('travel', 'until', '^there', 'transporter_use', a.room, 900),
+        ]) + [
+            ('travel_wait', 'wait', 300),
+            ('room', 'op', 'foot_where'),
+            ('targets_room', 'op', 'transport_list'),
+        ])
+
+    # The calibration (--calibrate): (name, op, kind, id, value, times) - each pressed `times` times 5 ticks apart, then
+    # 40 ticks and a picture (mark cal_N). MOUSELOOK_YAW/PITCH 7/8, FP_YAW/FP_PITCH 0xd/0xe (an axis: set, then 0).
+    CALIBRATION = [
+        ('cal_1', 'input', 'range', 8, -0.1, 6),          # recorded mouselook pitch, down
+        ('cal_2', 'input_local', 'range', 8, -0.1, 6),    # local mouselook pitch, down
+        ('cal_3', 'input', 'range', 0xe, -1.0, 6),        # recorded FP pitch axis
+        ('cal_4', 'input_local', 'range', 0xe, -1.0, 6),  # local FP pitch axis
+        ('cal_5', 'input', 'range', 7, 0.1, 6),           # recorded mouselook yaw
+        ('cal_6', 'input_local', 'range', 7, 0.1, 6),     # local mouselook yaw
+        ('cal_7', 'input', 'range', 0xd, 1.0, 6),         # recorded FP yaw axis
+        ('cal_8', 'input_local', 'range', 0xd, 1.0, 6),   # local FP yaw axis
+    ]
+
+    @staticmethod
+    def calibration():
+        steps = [('cal_0', 'op', 'foot_where')]
+        for name, op, kind, ident, value, times in Rooms.CALIBRATION:
+            for n in range(times):
+                steps.append(('%s_%d' % (name, n), 'op', op, kind, ident, value))
+                if ident in (0xd, 0xe):
+                    steps.append(('%s_%d_zero' % (name, n), 'op', op, kind, ident, 0.0))
+                steps.append(('%s_%d_wait' % (name, n), 'wait', 5))
+            steps += [('%s_settle' % name, 'wait', 40), (name, 'op', 'foot_where'), ('%s_look' % name, 'wait', 30)]
+        return steps
+
+    @staticmethod
+    def watch(a):
+        return [('ship_look', 1), ('ship_look', 2), ('figure_look',)]
+
+    @staticmethod
+    def plan(a):
+        kit = [(30, 'dock_kit', 1), (30, 'dock_kit', 2)]
+        find = [(t, 'transporter_find', k) for t in range(1500, Rooms.LIMIT, Rooms.FIND_EVERY) for k in PLAYERS]
+        return [kit + find + [(60 + 30 * (k - 1), 'chain', Rooms.LIMIT, Rooms.chain(k, a))] for k in PLAYERS]
+
+    @staticmethod
+    def report(check, clients, a):
+        for k in PLAYERS:
+            c = clients[k]
+            docked = last_answer(c, 'dock', 'docked')
+            check('docked', bool(docked), 'player %d at the station: %s' % (k, 'tick %d' % docked['tick'] if docked else shown(c, 'dock')))
+            out = last_answer(c, 'out')
+            check('out', bool(out) and 'docked=' in out['text'], 'player %d out of its ship: %s' % (k, out['text'][:200] if out else shown(c, 'out')))
+            found = last_answer(c, 'found', 'points=')
+            check.note('found', 'player %d: player transporters around it (X4\'s find): %s; where it stood: %s' %
+                       (k, found['text'][:160] if found else shown(c, 'found'), shown(c, 'targets_out', 160)))
+            there = last_answer(c, 'walk', 'there')
+            check('walked', bool(there), 'player %d: %s' % (k, 'at the pad at tick %d (%s)' % (there['tick'], there['text'][:160]) if there else shown(c, 'walk')))
+            targets = last_answer(c, 'targets')
+            check('targets', bool(targets) and a.room in targets['text'], "player %d: the transporter offers %s: %s" % (k, a.room, targets['text'][:300] if targets else shown(c, 'targets')))
+            pad, room, went = last_answer(c, 'at_pad'), last_answer(c, 'room'), last_answer(c, 'travel')
+            r0 = rig.field(pad['text'], 'room') if pad else None
+            r1 = rig.field(room['text'], 'room') if room else None
+            # the room the transporter offered under that name (its list where the player stood on the pad)
+            offered = re.search(r'(\d+)/[a-z]+/[^/ ]+/' + re.escape(a.room), targets['text']) if targets else None
+            to = offered.group(1) if offered else None
+            if not a.direct:
+                aimed, opened = last_answer(c, 'aim', 'aimed'), last_answer(c, 'travel', 'menu open')
+                check('aimed', bool(aimed), 'player %d: %s' % (k, aimed['text'][:220] if aimed else shown(c, 'aim', 220)))
+                check('menu', bool(opened), 'player %d: %s' % (k, opened['text'][:160] if opened else shown(c, 'travel', 160)))
+            check('travelled', bool(r0 and r1 and r0 != r1 and to and r1 == to), 'player %d: room %s at the pad, room %s after "Travel to" %s (%s)' %
+                  (k, r0, r1, a.room, went['text'][:120] if went else shown(c, 'travel', 160)))
+
+
 # ---- dock pair ------------------------------------------------------------------------------------------------------
 class DockPair:
     """Both players dock at one station; one undocks while the other stays docked with its dock menu open: does one player's dock or undock reach the other player's screen?"""
@@ -3170,7 +3305,7 @@ class Hack:
                   "player %d's decryption systems read in its scope: first %s, last %s" % (k, first[-60:], last[-60:]))
 
 
-SCENARIOS = {s.name: s for s in (Trade, Orders, Orders2, Crew, ShipBuy, Refit, RefitOrder, Repair, Wing, ShipSell, CrewMove, FleetTrade, Deploy, Rules, Systems, Settings, Storage, Exchange, Hostile, TradeLoop, Claim, Mining, WingSet, Routines, DockPair, MapOpen, Guidance, Reps, ItemTrader, Hack)}
+SCENARIOS = {s.name: s for s in (Trade, Orders, Orders2, Crew, ShipBuy, Refit, RefitOrder, Repair, Wing, ShipSell, CrewMove, FleetTrade, Deploy, Rules, Systems, Settings, Storage, Exchange, Hostile, TradeLoop, Claim, Mining, WingSet, Routines, DockPair, MapOpen, Guidance, Reps, ItemTrader, Hack, Rooms)}
 
 
 def ai_docks(plan):
@@ -3262,6 +3397,11 @@ def report(scenario, logs, run_dir, args):
         ai_dock_note(check, clients, logs)
     if scenario is Guidance:   # what the guidance script heard for players 2..N, on each client (native_gate_player_guidance.xml)
         md_note(check, logs, 'GUIDANCE_OWNER', 'guidance_md')
+    if scenario is Rooms:      # the transporters MD found around each player, on each client
+        md_note(check, logs, 'UI_REPLAY_TRANSPORTER slot=', 'transporter_md')
+        md_note(check, logs, 'FOOT_AVATAR_GUIDE', 'guide_md')
+        md_note(check, logs, 'FOOT_AVATAR_HELD', 'held_md')
+        md_note(check, logs, 'FOOT_AVATAR_GUIDE_TRY', 'guide_try_md')
     if scenario in (Reps, ItemTrader, Crew):   # the conversation's picture on its owner's monitor only (lockstep_md_media.h talk)
         media_note(check, logs)
     watch_check(check, clients, scenario.watch(args))

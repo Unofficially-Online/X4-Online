@@ -370,6 +370,7 @@ static int world_nav_live_prefixes(void) {
 #include "lockstep_foot_figure.h"      /* a client does not draw its own stand-in figure */
 #include "lockstep_ui_holds.h"         /* a client's UI holds no temporary component in the simulation (native_gate_ui_holds) */
 #include "lockstep_pilot_foot_slots.h"  /* slots 2..N get up and walk (native_gate_pilot_foot_slots) */
+#include "lockstep_pilot_foot_doors.h"  /* X4's doors open for slots 2..N on foot (with the bodies' room change) */
 #include "lockstep_pilot_join.h"        /* a join save inside the window: the bodies off around it, P_k's IDs (W3) */
 #include "lockstep_own_predict.h"
 #include "lockstep_crash_note.h"

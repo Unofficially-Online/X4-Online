@@ -1117,11 +1117,18 @@ In the integration branch since 17 Nov. Run with scripted input, not by people.
   - Rooms (17 Nov). A player 2..N who walks out of its ship is now in the station's rooms as player 1 is: X4's
     scripts see it there and hear the change of room and of ship/station. Before, it stayed counted in its cockpit.
     Sitting down is still the get-up key from anywhere on the dock (the player is put back in its seat).
-  - The transporter for a player 2..N (17 Nov): built, not yet seen moving anyone. The menu's "Travel to" of a
-    walking player 2..N is taken like player 1's, and the gate puts that player at the target with X4's own
-    routines. The only place the test can reach is a docked small ship's own cockpit, and from there X4 carries
-    nobody (player 1 stays where it stands too); the test checks that a player 2..N is treated the same. A travel
-    between a station's rooms, or in a ship with a transporter room, has not been run.
+  - The transporter for a player 2..N: since 21 Nov it moves players 2..N between a station's rooms, run with two
+    scripted clients (scenario `rooms` of `tools/dev/action_tests.py`, below). The menu's "Travel to" of a walking
+    player 2..N is taken like player 1's, and the gate puts that player at the target with X4's own routines.
+  - Fixed 21 Nov: doors did not open for players 2..N (a playtest report: player 2 stood at the closed door of a
+    dock bay's transporter booth). X4 opens a door when someone stands at it, counting the people of the station's
+    lists; a player 2..N is not in them, and its figure is a person without a post, which X4 does not count. The
+    gate now asks X4's own test for every walking player as well (`lockstep_pilot_foot_doors.h`, with the bodies'
+    room change; status `doors=` in the bodies row). Doors open for players 2..N as for player 1 and close after
+    them.
+  - Fixed 21 Nov: a player 2..N could open a transporter's menu only at its own ship's keypad. A station's
+    transporter booth (its button beside the door: "Use Transporter Room") now opens X4's menu for every player,
+    and X4's own check decides as for player 1 (the player must stand in the booth).
   - Fixed 17 Nov: when player 1 had docked and stood up while player 2 was still flying in on its autopilot, player
     2's ship stopped 2.5 km out and never docked, and the clients' world check differed five minutes later. While
     anyone is on foot the other players' player objects are held outside X4's room tree, and X4 then ran them as
@@ -1197,6 +1204,22 @@ In the integration branch since 17 Nov. Run with scripted input, not by people.
   each client, the other player's figure three metres away. `walk`: get up, a few steps, player 2 sits down and
   undocks. `undock`: both undock from their seats and fly off. The snapshot is the two-player one (both ships side by
   side).
+
+### Between a station's rooms (21 Nov; two scripted clients on one PC)
+
+Scenario `rooms` of `tools/dev/action_tests.py`, station CZF-533 of snapshot 005: both players dock with X4's own
+docking AI (`--ai-dock`), stand up and walk out backwards; each player's figure walks ahead with X4's NPC walk to its
+dock bay's transporter booth (the booth's NPC stand place) and the player follows its trail, through the booth's
+door, onto the pad. There the player looks at the booth's button until X4's crosshair shows "Use Transporter Room",
+clicks, and in X4's TransporterMenu chooses the Security Office and presses "Travel to". Both players arrive in the
+Security Office; the clients agree at every tick (run of 21 Nov 23:27, 7,464 ticks). `--direct` travels by the menu's
+own call instead of the click and the menu; `--look` and `--calibrate` take pictures while looking round on the pad.
+
+- Looking round on foot by script: the FP_YAW and FP_PITCH axes move the view one tick at a time (held longer, X4
+  speeds the view up); mouselook moves nothing on foot. The scripted look starts from the booth's data and sweeps a
+  few angles to the side (the button sat 20 to 27 degrees left of where the booth's data put it).
+- Known: closing the menu after "Travel to" on player 2's client shows a refused ReturnFromMenu in `errors.log`;
+  the menu closes and the travel happens.
 
 ## Building a station (17 Nov; two clients on one PC, the stock menus clicked with the real mouse)
 
