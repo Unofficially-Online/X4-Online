@@ -648,6 +648,13 @@ static const lx_site lx_sites[]={
     /* a ship's death draws (gate_death_rng.h): U::Ship's KillEvent listener from its entry through the six FloatState
      * draws and the wreck controller's allocation (the order lockstep_death_all.h relies on) */
     {"death_rng_listener",0x12adf40,0x381,"e965770b3f042b5eb23729ce74405abc80f50cbf7520270f18745a3d3932c282"},
+    /* contact pairs in the portable order (gate_contact_orient.h): each Jolt function's head through its BodyID compare */
+    {"corient_pair",0x1b1fae0,0x57,"8af39837fd6e9725cc52a51867961d65ef89c3c4a900600ba8cace140c95ae3a"},
+    {"corient_pair_window",0x1b1ff18,0xc,"0c2d63886e2e8dc091c5b40654815c44788bb67ca69bc6074df1db5f589e9683"},
+    {"corient_cache",0x1af6210,0x3b,"dc93d26c63980d85762fa4e33ed59933cdbb953a7dfb5d925d62b6c85f6a05ea"},
+    {"corient_constraint",0x1afa480,0x54,"1c66a71098e9287a76e31bd7b9d729a515a99f93473b3cf1ff665cf160f074c2"},
+    {"corient_ccd",0x1afeae0,0xa5,"b34bc920c62a42ab7a153f97b7d3681e30df5b59e88a595fc5187ca5eb0487f3"},
+    {"corient_body_pair",0x1afa180,0x29,"a81fd3de9462f0cf2a0892b03764a07ace44649daca3c0a40486f6049eef7ed0"},
     /* the island order (gate_island_order.h): the deterministic block, the calls up to the sort call, the sort and its
      * comparator, StoreAppliedImpulses' point layout, FinishConstraintBuffer's array */
     {"iorder_block",0x1b212c8,0x1d,"ec2419c256a7f9488b3c0ce1c42e56c5ce28922bbf3b713bb6464d4ba500a74c"},

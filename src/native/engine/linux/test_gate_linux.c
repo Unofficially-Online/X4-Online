@@ -399,6 +399,7 @@ static void test_frame_gate_failures(void) {
 #include "test_gate_island_order.h"
 #include "test_gate_sound_rng.h"
 #include "test_gate_death_rng.h"
+#include "test_gate_contact_orient.h"
 /* The real entry bytes: the hook patch and its exact restoration, without running them. */
 static void test_world_install_elf(void) {
     reset_session();wt_reset_identities();
@@ -476,6 +477,7 @@ int main(int argc,char **argv) {
     test_contact_mass_linux();
     test_sound_rng_linux();
     test_death_rng_linux();
+    test_contact_orient_linux();
     test_world_hook(); /* last on the synthetic image: it replaces the insert's bytes */
     if(argc>1) {
         /* The real executable's bytes: file pin, every site, the call, the patches. */
@@ -526,6 +528,7 @@ int main(int argc,char **argv) {
         test_island_order_elf();
         test_sound_rng_elf();
         test_death_rng_elf();
+        test_contact_orient_elf();
         test_mining_camera_elf();
         test_runtime_ids_local_elf();
         test_shield_canonical_elf();

@@ -191,6 +191,9 @@ static int lxio_installed;
 static void lxsnd_restore(void); /* the sound starts' private draws (gate_sound_rng.h) */
 static int lxsnd_check(void);
 static int lxsnd_installed;
+static void lxco_restore(void); /* contact pairs in the portable order (gate_contact_orient.h) */
+static int lxco_check(void);
+static int lxco_installed;
 static void lxd_restore(void); /* a ship's death draws keyed (gate_death_rng.h) */
 static int lxd_check(void);
 static int lxd_installed;
@@ -633,6 +636,8 @@ static void finish(unsigned reason) {
     lxio_restore();
     if(lxio_installed) stats.restored=0;
     lxsnd_restore();
+    lxco_restore();
+    if(lxco_installed) stats.restored=0;
     if(lxsnd_installed) stats.restored=0;
     lxd_restore();
     if(lxd_installed) stats.restored=0;
@@ -783,6 +788,7 @@ static void gate_tick(void *frame,unsigned char loading) {
     if(lxct_installed && !lxct_check()) {finish(70);gate_original_once(frame,loading);return;} /* the contact diag, as Windows */
     if(lxio_installed && !lxio_check()) {finish(215);gate_original_once(frame,loading);return;} /* LXIO_STOP_REASON, as Windows */
     if(lxsnd_installed && !lxsnd_check()) {finish(217);gate_original_once(frame,loading);return;} /* LXSND_STOP_REASON */
+    if(lxco_installed && !lxco_check()) {finish(219);gate_original_once(frame,loading);return;} /* LXCO_STOP_REASON */
     if(lxd_installed && !lxd_check()) {finish(218);gate_original_once(frame,loading);return;} /* LXD_STOP_REASON */
     if(lxmc_installed && !lxmc_check()) {finish(166);gate_original_once(frame,loading);return;} /* LXMC_STOP_REASON */
     if((lxf_installed || lxf_ctor_installed) && (!lxf_owned() || lxf_failures)) {finish(55);gate_original_once(frame,loading);return;} /* flight, as Windows */
@@ -1030,6 +1036,7 @@ static int lua_start(lua_State *L) {
 #include "gate_impulse.h"
 #include "gate_contact.h"
 #include "gate_island_order.h"
+#include "gate_contact_orient.h"
 #include "gate_worker_layout.h"
 #include "gate_ik_diag.h"
 #include "gate_ik_step.h"
@@ -1289,7 +1296,7 @@ GATE_EXPORT int luaopen_x4lan_gate(lua_State *L) {
     METHOD(build_rng);METHOD(build_rng_status);METHOD(build_rng_row);
     METHOD(contact);METHOD(contact_clear);METHOD(contact_status);
     METHOD(worker_layout);METHOD(worker_layout_status);
-    METHOD(island_order);METHOD(island_order_status);METHOD(constraint_diag);METHOD(constraint);METHOD(constraint_clear);METHOD(constraint_status);METHOD(contact_mass);METHOD(contact_mass_status);
+    METHOD(island_order);METHOD(island_order_status);METHOD(contact_orient);METHOD(contact_orient_status);METHOD(constraint_diag);METHOD(constraint);METHOD(constraint_clear);METHOD(constraint_status);METHOD(contact_mass);METHOD(contact_mass_status);
     METHOD(ai_wait_rng);METHOD(ai_wait_rng_status);METHOD(ai_wait_rng_row);
     METHOD(md_resume_rng);METHOD(md_resume_rng_status);METHOD(md_resume_rng_row);
     METHOD(boot_hold);METHOD(boot_hold_status);

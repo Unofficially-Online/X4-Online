@@ -101,14 +101,15 @@ MIXED_PLATFORM_SETS = ("native_gate_fp_redirect='redirect'", 'native_gate_fp_red
                        "native_gate_death_rng='all'",     # a Windows default already: wreck drift keyed by ship (linux/gate_death_rng.h;
                                                           # W67 against lx94a, 22 Nov: a Kha'ak wreck drifted apart and 12 fighters
                                                           # aiming at it turned 1e-4 apart at tick 77)
-                       "native_gate_path_transforms='sim'")  # a Windows default already: pathing jobs compose a wreck's pose at the
+                       "native_gate_path_transforms='sim'",  # a Windows default already: pathing jobs compose a wreck's pose at the
                                                           # pass time (linux/gate_path_transform_observe.h); without it Linux read
                                                           # the published view cache, a tick of the wreck's drift behind
                                                           # (linux/gate_sound_rng.h; W46 against lx85a, the fighters' scopes 9 / 11 draws)
+                       'native_gate_contact_orient=true')  # a Windows default already: contact pairs in the portable order
+                                                          # (linux/gate_contact_orient.h, the five sites of lockstep_contact_orient.h)
 # The Windows host's own part of --mixed-platform (not a Linux bundle option): Windows defaults whose Linux twin is not there
-# yet, off so that both sides run the same code. native_gate_contact_orient (lockstep_contact_orient.h): Jolt's BodyID order
-# on both sides until linux/ has the twin; then it moves to MIXED_PLATFORM_SETS as true.
-MIXED_PLATFORM_WINDOWS_SETS = ('native_gate_contact_orient=false',)
+# yet, off so that both sides run the same code. Empty since contact_orient's twin (linux/gate_contact_orient.h) landed.
+MIXED_PLATFORM_WINDOWS_SETS = ()
 NL = chr(10)
 
 

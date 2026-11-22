@@ -769,6 +769,26 @@ WORLD CENSUS, WINDOWS AGAINST LINUX, TODAY'S DEFAULTS (22 Nov)
     thread clock; equal on both), the Linux WORLD_MOTION row's model= target_ref= target= plan= (Windows MOTION_WATCH's
     target= and model_ext=).
 
+CONTACT ORIENTATION ON LINUX (linux/gate_contact_orient.h; lx110a, lx111a against W79, W80)
+  Windows' default native_gate_contact_orient (lockstep_contact_orient.h) puts the two bodies of a contact pair in the
+  order of their owners' portable keys at Jolt's five BodyID decisions; mixed sessions had it off on the Windows host
+  (MIXED_PLATFORM_WINDOWS_SETS) until the Linux gate had it. GCC inlined the ContactConstraintManager into fewer
+  functions, but each decision has exactly one compare of the two BodyIDs on Linux (the others are the island sort's or
+  min/max keys, symmetric in the pair): pair ProcessBodyPair 0x1b1ff1c (equal motion types), cache GetContactsFromCache
+  0x1af6238, body_pair AddBodyPair 0x1afa193, constraint AddContactConstraint 0x1afa4ca, ccd OnCCDContactAdded 0x1afeb7a.
+  Each window (one 16-byte line, nothing branches into it, and every resume point writes the flags before it reads
+  them) becomes a jmp to a stub that replays what came before the compare, skips the red zone, pushes the bodies and
+  the site and calls a common routine: it keeps rax..r11 and xmm0-15, asks Windows' order (corient_cf line for line;
+  owner records at +0x258/+0x260) and leaves the answer in CF; the stub then takes the branch it displaced. Same status
+  text, Lua (contact_orient 'on'|'observe'|'reverse', contact_orient_status) and stop reason 219 as Windows.
+  The census (battle scope, 300 ticks, today's Windows defaults with the mixed Windows settings, overlay W79/W80):
+  calls 52/52/50/5/0 and agree 99af78788f8e5ef1 on both builds; lx110a ('on') equals W79 and lx111a ('reverse') equals
+  W80 in STATE (every tick), BODY, VELOCITY and IMPULSE, CONSTRAINT bar the known zero bias's sign at 132; W79 and W80
+  part at 108 (a reversed solid contact), so Linux's reversed sites are the ones Windows reverses. Windows runs without
+  the mixed settings (fp_redirect) are 1 ulp apart from any mixed Linux run from tick 14 (the ships' first velocity).
+  native_gate_contact_orient=true is now in MIXED_PLATFORM_SETS (the bundle's --contact-orient; observe and reverse on
+  the command line override it), and MIXED_PLATFORM_WINDOWS_SETS is empty.
+
 FUNCTION COVERAGE WITH PLAYER INPUT ON LINUX (191754a1, b1688473; lx32a, lx32b)
   native_gate_coverage_from = T (Linux gate only; linux_gate_live.py --coverage-from) puts the coverage marks in at
   tick T instead of tick 1, so a window that starts after an idle stretch counts only first runs from then on; rows

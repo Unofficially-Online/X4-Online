@@ -425,7 +425,8 @@ Modules (define, owner):
                                 pin changed; whys slot_changed, block_changed)
   219 CORIENT_STOP_REASON       lockstep_contact_orient.h (native_gate_contact_orient, a default: one of the five pair
                                 compares' jumps or stubs no longer ours, the pins, or a body the stub could not read;
-                                whys site_changed, block_changed, unreadable)
+                                whys site_changed, block_changed, unreadable); on the Linux gate 219 LXCO_STOP_REASON
+                                (linux/gate_contact_orient.h, the same five decisions, order, status text and whys)
   224 WLAY_STOP_REASON          lockstep_worker_layout.h (native_gate_worker_layout, a default: the pathing batches
                                 were not laid out before the first admitted step, or Jolt's concurrency slot is no
                                 longer ours; stages occupied, unreadable, layout, not_laid_out, slot_changed); on the

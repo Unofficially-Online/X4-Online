@@ -15,7 +15,8 @@ ALIASES = {'LMT_STOP_REASON': 'MT_STOP_REASON', 'LXMC_STOP_REASON': 'RC_MINING_S
            'LXSH_STOP_KEYS': 'RC_STOP_REASON',   # the Linux shape refresh's region-camera keys
            'LXSP_STOP_REASON': 'SCW_STOP_REASON',   # the Linux spline phase (Windows: the spline calc watch's 199)
            'LXWL_STOP_REASON': 'WLAY_STOP_REASON',  # the Linux worker layout (Windows' 224)
-           'LXIO_STOP_REASON': 'IORDER_STOP_REASON'}  # the Linux island order (Windows' 215)
+           'LXIO_STOP_REASON': 'IORDER_STOP_REASON',  # the Linux island order (Windows' 215)
+           'LXCO_STOP_REASON': 'CORIENT_STOP_REASON'}  # the Linux contact orient (Windows' 219)
 # Module defines that carry a core code: 96 world created, 58 spline, the Linux gate's nav (41/42) and shape (45/46) ports.
 CORE_PORTS = {'CREATED_STOP_REASON': 96, 'LSJ_STOP_REASON': 58, 'LXN_INSTALL_STOP': 41, 'LXN_STOP_REASON': 42,
               'LXSH_STOP_INSTALL': 45, 'LXSH_STOP_FAILURE': 46}
