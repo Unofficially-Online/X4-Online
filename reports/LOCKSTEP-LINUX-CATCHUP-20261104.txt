@@ -669,6 +669,30 @@ THE BATTLE SCOPE ON LINUX (W35 = the session defaults' battle reference, Windows
   both (no FMA, no approximate reciprocals, no dpps in either build's Jolt code) in another order somewhere. Next: the
   ContactConstraints (0x360 bytes each, contact manager +0xa8) of the fixture bodies read after PhysicsSystem::Update
   on both platforms, to split the setup from the iterations.
+  Done (22 Nov): the battle census is equal on Windows and Linux through all 300 ticks. The CONSTRAINT trace
+  (native_gate_constraint_diag, lockstep_constraint_trace.h, one text on both gates) keeps each fixture contact
+  constraint at the velocity solve's sort (after AddContactConstraint, before the warm start) and the lambdas the
+  solve stored in the contact cache. W36s (W36q's DLL source aa54051b, X4-Multiplayer-impulse-build, + the trace: STATE
+  rows equal to W36r's) against lx74a (lx71 + the trace: STATE rows equal to lx71a's): the six constraints alike in
+  every input (normal, friction, inverse masses and inertia scales, each part's r1 + u x axis, r2 x axis and both
+  inverse-inertia products), the effective masses 1 ulp apart in 9 of 54 axis parts (ticks 132 and 133), and from them
+  the stored lambdas at 133 5..25 ulps apart. Jolt's TemplatedCalculateInverseEffectiveMass adds m1 + d1 + m2 + d2;
+  GCC keeps that order (all 54 Linux words), MSVC reassociated it per inlined copy: in AddContactConstraint for two
+  dynamic bodies (0x13e43b0) the non-penetration part (0x13e4efb..0x13e4fa2) sums (((p1x + p1y) + p1z) + m1) +
+  ((p2x + p2y) + (p2z + m2)), both friction parts (0x13e5145..0x13e51cf, 0x13e52c8..0x13e533e) ((p2x + p2y) +
+  (p2z + m2)) + ((p1x + p1y) + (p1z + m1)); these give all 54 Windows words. Fix, Linux only: native_gate_contact_mass
+  (linux/gate_island_order.h) recomputes the effective masses of every constraint of two dynamic bodies in that order
+  through the island sort's stub. lx76a (lx74 + it): 9 parts changed, every CONSTRAINT word equal to W36s's including
+  the stored lambdas (left: the sign of a zero friction bias at 132), STATE rows equal at every tick 2..300, BODY,
+  VELOCITY, IMPULSE rows equal, CONTACT rows as before (tick 132's 1-ulp point without a velocity change). Open: the
+  other motion-type pairs and GetContactsFromCache's copies (0x13e82e0, 0x13e8e00, 0x13ea720), each to decode against
+  rows the census does not produce yet (counted as other in its status).
+  Also (a mixed session's default, found on the way): Windows rekeys every island's contacts by their owners'
+  portable IDs before Jolt's sort (native_gate_island_order, 19 Nov); the Linux gate kept Jolt's BodyID key, so any
+  island of two or more contacts was solved in another order on Linux. linux/gate_island_order.h is its twin (Linux's
+  sort call 0x1b21769, QuickSort 0x1ae7a00, the array at manager +0xb0, owners' records 8 lower), the key's bytes
+  Windows' (a golden key both gates' tests check). lx75a (lx74 + it): armed, the tick-133 island rekeyed (sorts=1
+  constraints=2 unkeyed=0), 300 ticks with no world-hash split. Both are in the mixed-platform settings.
 
 FUNCTION COVERAGE WITH PLAYER INPUT ON LINUX (191754a1, b1688473; lx32a, lx32b)
   native_gate_coverage_from = T (Linux gate only; linux_gate_live.py --coverage-from) puts the coverage marks in at

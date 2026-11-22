@@ -36,9 +36,10 @@ static void test_island_order(void) {
     {unsigned char *array=(unsigned char *)tio_constraints;memset(tio_manager,0,sizeof(tio_manager));memcpy(tio_manager+IORDER_ARRAY,&array,8);}
     tio_constraint(0,0,2,0.9f,2);tio_constraint(1,1,2,0.3f,1);tio_constraint(2,0,3,0.6f,3);
     uint32_t order[3]={0,1,2};
-    iorder_sorts=iorder_constraints=iorder_unkeyed=iorder_ties=iorder_pointerish=iorder_badcount=0;iorder_failures=0;
+    iorder_sorts=iorder_constraints=iorder_unkeyed=iorder_ties=iorder_pointerish=iorder_badcount=0;iorder_failures=0;iorder_rekey=1;
     iorder_sort(order,order+3,tio_manager);
     uint64_t k1[3];tio_keys(k1);
+    assert(k1[0]==0x40890a03abd7bd5dull);   /* the golden key the Linux gate's test checks too (linux/test_gate_island_order.h) */
     assert(tio_original_calls==1 && iorder_sorts==1 && iorder_constraints==3 && iorder_unkeyed==1 && !iorder_ties && !iorder_pointerish && !iorder_badcount);
     assert(k1[0] && k1[1] && k1[2] && k1[0]!=k1[1] && k1[0]!=k1[2] && k1[1]!=k1[2]);
     for(unsigned i=1;i<3;i++) {uint64_t a,b;memcpy(&a,tio_constraints[order[i-1]]+0x10,8);memcpy(&b,tio_constraints[order[i]]+0x10,8);assert(a<b);}
@@ -66,6 +67,25 @@ static void test_island_order(void) {
     /* an unreadable manager: counted as a failure, the original still called */
     {unsigned char empty[0x100];memset(empty,0,sizeof(empty));iorder_sort(order,order+3,empty);assert(iorder_failures==1 && tio_original_calls==calls+2);}
     {char status[512];assert(iorder_status(status,sizeof(status)) && strstr(status,"installed=0 sorts=") && strstr(status," failures=1"));}
-    iorder_failures=0;iorder_owner_key=owner_key;iorder_original=NULL;
-    puts("island order: keys from owners, records, normals and points (not BodyIDs), unkeyed bodies by BodyID, layout counters PASS");
+    iorder_failures=0;
+    /* the CONSTRAINT trace with the rekey off: constraint 2 (body 3 = actor 11) kept, its cache point read at the text */
+    tio_constraint(0,0,2,0.9f,2);tio_constraint(1,1,2,0.3f,1);tio_constraint(2,0,3,0.6f,1);
+    {static _Alignas(16) unsigned char cached[0x40];unsigned char *p=cached;const float cache[9]={1,2,3,4,5,6,0.5f,0.25f,-0.125f};
+     memcpy(cached,cache,36);memcpy(tio_constraints[2]+0x40+0xc0,&p,8);
+     const float part[16]={1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16};memcpy(tio_constraints[2]+0x40,part,64);
+     const uint64_t jolt_key=0x1122334455667788ull;memcpy(tio_constraints[2]+0x10,&jolt_key,8);
+     void *component=tio_owners[2];const uint64_t component_id=0x53u;void *saved_component=actor_components[10];const uint64_t saved_id=actor_ids[10];
+     actor_components[10]=component;actor_ids[10]=component_id;
+     iorder_rekey=0;ctrace_actor=iorder_trace_actor;ctrace_on=1;ctrace_clear();ctrace_failures=ctrace_seen=ctrace_ordinal=0;
+     const uint64_t sorts0=iorder_sorts,issued=stats.issued;stats.issued=133;{uint32_t id=0x00800099u;memcpy(tio_bodies[3]+0x70,&id,4);}
+     order[0]=0;order[1]=1;order[2]=2;iorder_sort(order,order+3,tio_manager);
+     assert(iorder_sorts==sorts0 && ctrace_rows_held()==1 && ctrace_seen==3 && !ctrace_failures);
+     char out[4096];const int n=ctrace_row_text(1,out,sizeof(out));
+     assert(n && strstr(out,"tick=133 ordinal=1 index=2 size=3 body1=0:00800030 body2=11:00800099 key=1122334455667788 count=1 head=3f19999a3f0000003e800000"));
+     assert(strstr(out," point0=3f80000040000000") && strstr(out," cached0=3f800000400000004040000040800000"
+                                                                "40a0000040c000003f0000003e800000be000000") && !strstr(out,"point1"));
+     ctrace_clear();assert(!ctrace_rows_held());
+     ctrace_on=0;ctrace_actor=NULL;ctrace_seen=ctrace_ordinal=0;stats.issued=issued;actor_components[10]=saved_component;actor_ids[10]=saved_id;}
+    iorder_owner_key=owner_key;iorder_original=NULL;iorder_rekey=0;
+    puts("island order: keys from owners, records, normals and points (not BodyIDs, golden as on Linux), unkeyed bodies by BodyID, layout counters, the CONSTRAINT trace PASS");
 }

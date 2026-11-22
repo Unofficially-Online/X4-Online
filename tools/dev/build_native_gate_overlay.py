@@ -151,6 +151,12 @@ def main():
                    "in a portable order (native_gate_tempzone_order = 'order', on by default on Windows; needs --travel-snapshot)")
     p.add_argument('--probes-diag', action='store_true', help='PROBES rows: the fixture ships obstacle probe ranges and vectors (native_gate_probes_diag)')
     p.add_argument('--weave-phase', action='store_true', help="the Linux gate: the weaving behaviours' phase with Windows' folded pi/n constants (native_gate_weave_phase)")
+    p.add_argument('--contact-mass', action='store_true', help="the Linux gate: contact constraints' effective masses summed in the "
+                   "Windows build's order (native_gate_contact_mass)")
+    p.add_argument('--island-order', action='store_true', help="island contacts solved in an order keyed alike on every client "
+                   "(native_gate_island_order, a Windows default; the Linux gate's twin; needs the world identities)")
+    p.add_argument('--constraint-diag', action='store_true', help="CONSTRAINT rows: the fixture ships' contact constraints at the "
+                   "velocity solve and the lambdas the solve stored (native_gate_constraint_diag, both gates)")
     p.add_argument('--pursuit-speed', action='store_true', help="the Linux gate: the pursuit behaviour's speed factor with Windows' folded constant (native_gate_pursuit_speed)")
     p.add_argument('--avoid-angle', action='store_true', help="the Linux gate: the obstacle avoidance's angle divisions by pi and pi/2 as "
                    "Windows' multiplications by 1/pi and 2/pi (native_gate_avoid_angle)")
@@ -605,7 +611,7 @@ def main():
             p.error('--gate-so supports the snapshot boot with --mode clock or battle only')
         if args.mode == 'battle' and not args.snapshot_prebind:
             p.error('--gate-so --mode battle needs --snapshot-prebind (the Linux gate binds the snapshot fixture)')
-        allowed = {'gate_so', 'snapshot', 'mode', 'session_clients', 'seed_rng', 'out', 'serial_pathing', 'path_determinism', 'region_rng', 'ai_wait_rng', 'md_resume_rng', 'boot_hold', 'event_order', 'event_rows', 'event_rng', 'event_rng_rows_window', 'build_rng', 'economy_load_rng', 'gravidar', 'gravidar_deadlines', 'travel_snapshot', 'runtime_ids', 'runtime_id_callers', 'runtime_ids_local','script_rng', 'script_rng_mask', 'script_rng_rows', 'script_rng_rows_window', 'script_rng_trace', 'script_rng_natural', 'script_rng_unmapped', 'md_timed_rng', 'find_order', 'loadout_order', 'loadout_order_rows', 'attention_all', 'nav_key', 'step_trace', 'step_trace_ticks', 'step_chain', 'fp_redirect', 'fp_redirect_watch', 'fp_redirect_ticks', 'fp_redirect_solver', 'coverage', 'coverage_list', 'coverage_from', 'tick_hz','gravidar_wide', 'spawn_rng', 'weapon_fire_rng', 'engine_refresh_rng', 'spline_join_all', 'actor_rng_all', 'actor_rng_rows', 'player_timer', 'tempzone_order', 'warp_rng', 'warp_exit', 'flight_limits', 'body1_mass', 'body_step_diag', 'velocity_diag', 'impulse_diag', 'ik_diag', 'ik_step', 'ik_wrap', 'mining_camera', 'mass_traffic', 'region_pass', 'pass_stride', 'created_identities', 'created_load', 'portable_created', 'nav_cadence', 'nav_params_init', 'nav_probe_init', 'nav_diag', 'nav_rng', 'nav_initial_refresh', 'attention_diag', 'attention_rng', 'attention_initial_refresh', 'shape_diag', 'shape_rng', 'shape_initial_refresh', 'shape_refresh', 'radar_rng', 'radar_initial_refresh', 'steer_roll', 'avoid_angle', 'probes_diag', 'pursuit_speed', 'weave_phase', 'contact_diag', 'worker_layout',
+        allowed = {'gate_so', 'snapshot', 'mode', 'session_clients', 'seed_rng', 'out', 'serial_pathing', 'path_determinism', 'region_rng', 'ai_wait_rng', 'md_resume_rng', 'boot_hold', 'event_order', 'event_rows', 'event_rng', 'event_rng_rows_window', 'build_rng', 'economy_load_rng', 'gravidar', 'gravidar_deadlines', 'travel_snapshot', 'runtime_ids', 'runtime_id_callers', 'runtime_ids_local','script_rng', 'script_rng_mask', 'script_rng_rows', 'script_rng_rows_window', 'script_rng_trace', 'script_rng_natural', 'script_rng_unmapped', 'md_timed_rng', 'find_order', 'loadout_order', 'loadout_order_rows', 'attention_all', 'nav_key', 'step_trace', 'step_trace_ticks', 'step_chain', 'fp_redirect', 'fp_redirect_watch', 'fp_redirect_ticks', 'fp_redirect_solver', 'coverage', 'coverage_list', 'coverage_from', 'tick_hz','gravidar_wide', 'spawn_rng', 'weapon_fire_rng', 'engine_refresh_rng', 'spline_join_all', 'actor_rng_all', 'actor_rng_rows', 'player_timer', 'tempzone_order', 'warp_rng', 'warp_exit', 'flight_limits', 'body1_mass', 'body_step_diag', 'velocity_diag', 'impulse_diag', 'ik_diag', 'ik_step', 'ik_wrap', 'mining_camera', 'mass_traffic', 'region_pass', 'pass_stride', 'created_identities', 'created_load', 'portable_created', 'nav_cadence', 'nav_params_init', 'nav_probe_init', 'nav_diag', 'nav_rng', 'nav_initial_refresh', 'attention_diag', 'attention_rng', 'attention_initial_refresh', 'shape_diag', 'shape_rng', 'shape_initial_refresh', 'shape_refresh', 'radar_rng', 'radar_initial_refresh', 'steer_roll', 'avoid_angle', 'probes_diag', 'pursuit_speed', 'weave_phase', 'contact_diag', 'worker_layout', 'island_order', 'constraint_diag', 'contact_mass',
                    'fork_save', 'fork_save_budget_ms', 'fork_save_watchdog', 'fork_save_every', 'fork_save_slot', 'world_identities', 'world_hash_stride', 'world_hash_schema', 'world_hash_watch', 'world_hash_shields',
                    'fp_redirect_drones', 'world_health_ticks', 'fp_attack_capture', 'fp_attack_watch'}
         allowed.add('travel_determinism')
@@ -935,6 +941,21 @@ X4LAN_CONFIG.slot = "@X4LANE_SLOT@"
             p.error('--weave-phase needs --gate-so and the snapshot boot')
         with (args.out/'ui/config.lua.append').open('a') as config:
             config.write('X4LAN_CONFIG.native_gate_weave_phase = true'+chr(10))
+    if args.contact_mass:
+        if not args.gate_so or not args.snapshot:
+            p.error('--contact-mass needs --gate-so and the snapshot boot')
+        with (args.out/'ui/config.lua.append').open('a') as config:
+            config.write('X4LAN_CONFIG.native_gate_contact_mass = true'+chr(10))
+    if args.island_order:
+        if not args.snapshot or not args.world_identities:
+            p.error('--island-order needs the snapshot boot and the world identities')
+        with (args.out/'ui/config.lua.append').open('a') as config:
+            config.write('X4LAN_CONFIG.native_gate_island_order = true'+chr(10))
+    if args.constraint_diag:
+        if not args.snapshot or args.mode != 'battle':
+            p.error('--constraint-diag needs a battle snapshot (the fixture actors)')
+        with (args.out/'ui/config.lua.append').open('a') as config:
+            config.write('X4LAN_CONFIG.native_gate_constraint_diag = true'+chr(10))
     if args.pursuit_speed:
         if not args.gate_so or not args.snapshot:
             p.error('--pursuit-speed needs --gate-so and the snapshot boot')

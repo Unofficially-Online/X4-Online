@@ -22,7 +22,10 @@
  * BodyIDs), pointer-like words among the hashed bytes (a layout check, 0 expected) and out-of-range counts.
  * The key is the solve order's only input the stub changes; the contact cache keeps its own hashes. Armed before the first
  * frame on the UI thread, the session's clients and a joiner alike. Pins: the deterministic block (with the call restored),
- * the comparator, an AddContactConstraint store. Any failure stops the gate with reason 215. */
+ * the comparator, an AddContactConstraint store. Any failure stops the gate with reason 215.
+ * The same stub carries the CONSTRAINT trace (native_gate_constraint_diag, lockstep_constraint_trace.h, the text the
+ * Linux gate prints too): it installs the stub alone, without the rekey, when the island order is off. The Linux
+ * gate's twin is linux/gate_island_order.h (the key's bytes alike; test_island_order checks the same golden key). */
 #define IORDER_SITE 0x13d71ddu
 #define IORDER_SORT 0x13eb190u
 #define IORDER_STRIDE 0x360u
@@ -38,13 +41,14 @@ static const struct {unsigned rva,size;const char *sha;} iorder_pins[]={
     {0x13e4776u,0x2eu,"6a8c3a3ec82bb8168bc8cf46c98e90a026bef597ef42435c3958063dfc0cd7e5"},   /* AddContactConstraint: 0x360, bodies, key */
 };
 static unsigned char *iorder_stub;
-static int iorder_installed,iorder_restored;
+static int iorder_installed,iorder_restored,iorder_rekey;   /* rekey 0: the stub for the CONSTRAINT trace alone */
 static const char *iorder_stage="idle";
 static volatile LONG64 iorder_failures;
 static uint64_t iorder_sorts,iorder_constraints,iorder_unkeyed,iorder_ties,iorder_pointerish,iorder_badcount;
 static uint64_t iorder_owner_key_native(uint64_t runtime) {unsigned klass;return world_identity_key(runtime,&klass);}
 static uint64_t (*iorder_owner_key)(uint64_t)=iorder_owner_key_native;   /* tests replace it */
 static void (*iorder_original)(uint32_t *,uint32_t *,void *);             /* tests replace it (0: the image's sort) */
+#include "lockstep_constraint_trace.h"
 static uint64_t iorder_fnv(uint64_t h,const void *p,size_t n) {
     const unsigned char *b=p;for(size_t i=0;i<n;i++) {h^=b[i];h*=0x100000001b3ull;}return h;
 }
@@ -87,7 +91,7 @@ static uint64_t iorder_key(const unsigned char *c) {
     return h?h:1u;
 }
 /* The keys of the constraints [begin, end) of the manager's array; 1, 0 when one was unreadable. */
-static int iorder_rekey(uint32_t *begin,uint32_t *end,const unsigned char *manager) {
+static int iorder_rekey_range(uint32_t *begin,uint32_t *end,const unsigned char *manager) {
     unsigned char *array=NULL;
     if(!begin || end<begin || !manager || !read_local(manager+IORDER_ARRAY,&array,8) || !array) return 0;
     for(uint32_t *i=begin;i<end;i++) {
@@ -109,12 +113,26 @@ static uint64_t iorder_ties_in(const uint32_t *begin,const uint32_t *end,const u
 }
 static void iorder_sort(uint32_t *begin,uint32_t *end,void *manager) {
     iorder_sort_fn original=iorder_original?iorder_original:(iorder_sort_fn)(void *)(image+IORDER_SORT);
-    if(end>begin+1) {
+    const int rekey=iorder_rekey && end>begin+1;
+    if(rekey) {
         ++iorder_sorts;iorder_constraints+=(uint64_t)(end-begin);
-        if(!iorder_rekey(begin,end,manager)) InterlockedIncrement64(&iorder_failures);
+        if(!iorder_rekey_range(begin,end,manager)) InterlockedIncrement64(&iorder_failures);
     }
     original(begin,end,manager);
-    if(end>begin+1) iorder_ties+=iorder_ties_in(begin,end,manager);
+    if(rekey) iorder_ties+=iorder_ties_in(begin,end,manager);
+    if(ctrace_on && end>begin) {
+        unsigned char *array=NULL;
+        if(manager && read_local((unsigned char *)manager+IORDER_ARRAY,&array,8) && array) ctrace_capture(begin,end,array,stats.issued);
+        else InterlockedIncrement64(&ctrace_failures);
+    }
+}
+/* The CONSTRAINT trace's fixture actor (1..12) for a body, as lockstep_contact.h's contact_actor without the registry. */
+static unsigned iorder_trace_actor(const unsigned char *body) {
+    void *record=NULL,*component=NULL;uint64_t id=0;
+    if(!body || !read_local(body+0x50,&record,8) || !record || !read_local(record,&component,8) || !component ||
+       !read_local((unsigned char *)component+8,&id,8)) return 0;
+    for(unsigned i=0;i<ACTOR_CAPACITY;i++) if(component==actor_components[i] && id==actor_ids[i]) return i+1;
+    return 0;
 }
 static int32_t iorder_rel_to(const void *target) {return (int32_t)((intptr_t)target-(intptr_t)(image+IORDER_SITE+5));}
 /* 0 original, 1 ours, -1 anything else. */
@@ -157,10 +175,8 @@ static int iorder_stub_owned(void) {
 static int iorder_cas(int32_t expected,int32_t value) {
     unsigned char e[4],v[4];memcpy(e,&expected,4);memcpy(v,&value,4);return view_cas_bytes(IORDER_SITE+1,e,v,4);
 }
-static int iorder_arm(void) {
-    if(iorder_installed) return stats.active;   /* identical rerun after a loading-UI reload */
+static int iorder_install(int rekey) {
     if(!stats.active || (boot_mode && boot_phase) || stats.issued || GetCurrentThreadId()!=ui_thread) return 0;
-    if(!world_identity_installed) {iorder_stage="needs";return 0;}
     if(iorder_call_state()!=0) {iorder_stage="site";return 0;}
     if(!iorder_pins_ok()) {iorder_stage="pins";return 0;}
     if(!iorder_stub) iorder_stub=iorder_alloc_near();
@@ -172,24 +188,39 @@ static int iorder_arm(void) {
     if(!VirtualProtect(iorder_stub,IORDER_STUB_SIZE,PAGE_EXECUTE_READ,&ignored)) {iorder_stage="stub";return 0;}
     FlushInstructionCache(GetCurrentProcess(),iorder_stub,IORDER_STUB_SIZE);
     iorder_sorts=iorder_constraints=iorder_unkeyed=iorder_ties=iorder_pointerish=iorder_badcount=0;iorder_failures=0;
-    if(!iorder_cas(iorder_rel_to(image+IORDER_SORT),iorder_rel_to(iorder_stub))) {iorder_stage="cas";return 0;}
+    iorder_rekey=rekey;
+    if(!iorder_cas(iorder_rel_to(image+IORDER_SORT),iorder_rel_to(iorder_stub))) {iorder_rekey=0;iorder_stage="cas";return 0;}
     iorder_installed=1;iorder_restored=0;iorder_stage="armed";return 1;
+}
+static int iorder_arm(void) {
+    if(iorder_installed && iorder_rekey) return stats.active;   /* identical rerun after a loading-UI reload */
+    if(!stats.active || (boot_mode && boot_phase) || stats.issued || GetCurrentThreadId()!=ui_thread) return 0;
+    if(!world_identity_installed) {iorder_stage="needs";return 0;}
+    if(iorder_installed) {iorder_rekey=1;iorder_stage="armed";return 1;}   /* the trace's stub, now rekeying */
+    return iorder_install(1);
+}
+/* gate.constraint_diag(): the CONSTRAINT trace through the island order's stub (installed here when it is off). */
+static int iorder_trace_arm(void) {
+    if(!iorder_installed && !iorder_install(0)) return 0;
+    ctrace_actor=iorder_trace_actor;ctrace_on=1;return 1;
 }
 static int iorder_owned(void) {return !iorder_installed || (iorder_call_state()==1 && iorder_stub_owned());}
 /* Main-thread tick check; any failure stops the gate with reason 215. */
 static int iorder_check(void) {
     if(InterlockedCompareExchange64(&iorder_failures,0,0)) {iorder_stage="unreadable";return 0;}
+    if(InterlockedCompareExchange64(&ctrace_failures,0,0)) {iorder_stage="trace";return 0;}
     const char *why=!iorder_owned()?"site_changed":!iorder_pins_ok()?"block_changed":NULL;
     if(why) {iorder_stage=why;InterlockedIncrement64(&iorder_failures);return 0;}
     return 1;
 }
 static void iorder_restore(void) {
     if(!iorder_installed) return;
+    ctrace_on=0;
     if(iorder_call_state()==1 && iorder_cas(iorder_rel_to(iorder_stub),iorder_rel_to(image+IORDER_SORT))) {iorder_installed=0;iorder_restored=1;}
 }
 static int iorder_status(char *out,size_t cap) {
     const int n=snprintf(out,cap,"installed=%d sorts=%llu constraints=%llu unkeyed=%llu ties=%llu pointerish=%llu badcount=%llu restored=%d "
-        "stage=%s failures=%lld",iorder_installed,(unsigned long long)iorder_sorts,(unsigned long long)iorder_constraints,
+        "stage=%s failures=%lld",iorder_installed && iorder_rekey,(unsigned long long)iorder_sorts,(unsigned long long)iorder_constraints,
         (unsigned long long)iorder_unkeyed,(unsigned long long)iorder_ties,(unsigned long long)iorder_pointerish,
         (unsigned long long)iorder_badcount,iorder_restored,iorder_stage,(long long)iorder_failures);
     return n>0 && (size_t)n<cap?n:0;

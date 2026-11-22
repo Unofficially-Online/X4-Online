@@ -90,7 +90,10 @@ MIXED_PLATFORM_SETS = ("native_gate_fp_redirect='redirect'", 'native_gate_fp_red
                        'native_gate_avoid_angle=true',  # Linux-only (01133ea9: the avoidance's evasion angles by folded 1/pi, 2/pi)
                        'native_gate_pursuit_speed=true',  # Linux-only (c1c0a23e: the pursuit's speed factor in MSVC's folded form)
                        'native_gate_weave_phase=true',    # Linux-only (91aec2c2: the weaving behaviours' phase, MSVC's folded pi/n)
-                       'native_gate_worker_layout=30')    # a Windows default already; the Linux bundle takes it too (linux/gate_worker_layout.h)
+                       'native_gate_worker_layout=30',    # a Windows default already; the Linux bundle takes it too (linux/gate_worker_layout.h)
+                       'native_gate_island_order=true',   # a Windows default already: without the Linux twin (linux/gate_island_order.h) every
+                                                          # island of two or more contacts is solved in another order on Linux
+                       'native_gate_contact_mass=true')   # Linux-only: contact effective masses in MSVC's sum order (W36s against lx74a, tick 133)
 NL = chr(10)
 
 

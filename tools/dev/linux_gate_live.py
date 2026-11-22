@@ -457,6 +457,12 @@ def bundle(args):
         command.append('--pursuit-speed')
     if args.weave_phase:
         command.append('--weave-phase')
+    if args.island_order:
+        command.append('--island-order')
+    if args.contact_mass:
+        command.append('--contact-mass')
+    if args.constraint_diag:
+        command.append('--constraint-diag')
     if args.probes_diag:
         command.append('--probes-diag')
     if args.ik_wrap:
@@ -587,6 +593,9 @@ def bundle(args):
         'velocity_diag',
         'contact_diag',
         'worker_layout',
+        'island_order',
+        'constraint_diag',
+        'contact_mass',
         'impulse_diag',
         'ik_diag',
         'ik_step',
@@ -1417,6 +1426,9 @@ def main(argv=None):
     b.add_argument('--ik-wrap', action='store_true', help="a skeleton joint's wrapped target as (t2 + value) - pi, the Windows order (native_gate_ik_wrap)")
     b.add_argument('--probes-diag', action='store_true', help='PROBES rows: the fixture ships obstacle probe vectors (native_gate_probes_diag)')
     b.add_argument('--weave-phase', action='store_true', help="the weaving behaviours' phase as Windows computes it (native_gate_weave_phase)")
+    b.add_argument('--contact-mass', action='store_true', help="contact constraints' effective masses summed in the Windows build's order (native_gate_contact_mass)")
+    b.add_argument('--island-order', action='store_true', help="island contacts solved in an order keyed alike on every client, as Windows' default (native_gate_island_order)")
+    b.add_argument('--constraint-diag', action='store_true', help="CONSTRAINT rows: the fixture ships' contact constraints and stored lambdas, as Windows (native_gate_constraint_diag)")
     b.add_argument('--pursuit-speed', action='store_true', help="the pursuit behaviour's speed factor as Windows computes it (native_gate_pursuit_speed)")
     b.add_argument('--avoid-angle', action='store_true', help="the obstacle avoidance's angle scaling as Windows computes it (native_gate_avoid_angle)")
     b.add_argument('--steer-roll', action='store_true', help="the steering roll alignment as Windows computes it (native_gate_steer_roll)")

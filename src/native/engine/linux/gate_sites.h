@@ -637,6 +637,13 @@ static const lx_site lx_sites[]={
     {"wlay_emplace",0x1f3c7a0,0x6c,"c31e6d553157c4715d50fecec8671f99c1b4966ac804004ccd3a52a9f67fbebe"},
     {"wlay_vector_dtor",0x6a0bf4,0xcc,"5db8b23230f8d919f083c034846735e8c5aba8739042ae269c1a8a915deedac7"},
     {"wlay_jolt",0xed4eb0,0x21,"33827c3a1517ff7621d67c423bd22ee02da0b9fda7bb09806a351e5974eb02c3"},
+    /* the island order (gate_island_order.h): the deterministic block, the calls up to the sort call, the sort and its
+     * comparator, StoreAppliedImpulses' point layout, FinishConstraintBuffer's array */
+    {"iorder_block",0x1b212c8,0x1d,"ec2419c256a7f9488b3c0ce1c42e56c5ce28922bbf3b713bb6464d4ba500a74c"},
+    {"iorder_calls",0x1b21742,0x27,"ca23d0a481d9ceae2738b57151d86c13a7a4e690e1073a23d2fb1e237178815a"},
+    {"iorder_sort",0x1ae7a00,0xe3,"0da653d63b9ad96398ff87ce6fc1660edae65552855b58a0533afa8dd4a2bb7c"},
+    {"iorder_store",0x1b21691,0x9f,"3f3cc45670ba58c6945868de831332b127bbf2a23b756ce91a16c531b0886ca6"},
+    {"iorder_buffer",0x1b1ef14,0x35,"e71e2af469611fdf57503f4f8d93e39d135cbcd6b6e6323d54a2dec152022562"},
     {"contact_listener_slots",0xee21a0,0x18,"0f84dbca83cd2e93ec6cdb335448f2e3ce830a38e91548f8f0f991ac453fdb44"}, /* XContactListener OnContactAdded/Persisted -> RecordContact 0xee1060 (gate_contact.h) */
     {"ik_wrap_tail",0x15661c0,0x60,"98e46a50b2cf8111eab6cda0ec549913e60a2356ce72f85cc33e6c00f7688f25"},
     {"body_defined_mass",0xed4cf0,0x8e,"f640dc2b2c63a1a363cc8f487544824b91ee72e7eadc3da0dcd7117084634874"},

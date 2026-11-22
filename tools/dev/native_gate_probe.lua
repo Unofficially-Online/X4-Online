@@ -1671,6 +1671,13 @@ local function drain_contacts()
  end
  assert(gate.contact_clear()==1,'contact trace clear refused')
 end
+-- CONSTRAINT rows (lockstep_constraint_trace.h, both gates): drained after the frame, when the contact cache still holds
+-- the lambdas the step stored.
+local function drain_constraints()
+ if not cfg.native_gate_constraint_diag then return end
+ for i=1,assert(gate.constraint(0)) do log('CONSTRAINT '..assert(gate.constraint(i))) end
+ assert(gate.constraint_clear()==1,'constraint trace clear refused')
+end
 local function drain_shape_lifetimes()
  if not cfg.native_gate_shape_lifetimes then return end
  for i=1,assert(gate.shape_lifetime(0)) do log('SHAPE_LIFETIME '..assert(gate.shape_lifetime(i))) end
@@ -1699,7 +1706,7 @@ end
 -- Every frame, held ticks too: the clears empty the native event buffers, whose overflow stops the
 -- gate (bullets: reason 48). One function, one upvalue of frame().
 local function drain_traces()
- drain_bullets();drain_deaths();drain_mass();drain_radar();drain_damage();drain_interrupts();drain_contacts();drain_shape_lifetimes();drain_flight_faults();drain_build_rows()
+ drain_bullets();drain_deaths();drain_mass();drain_radar();drain_damage();drain_interrupts();drain_contacts();drain_constraints();drain_shape_lifetimes();drain_flight_faults();drain_build_rows()
 end
 local radar_objects={}
 local world_actors={} -- WORLD_ACTOR logged (log only): a joiner logs its own at T+1, with the saved-identity check
@@ -5321,6 +5328,15 @@ local function frame()
     gate.island_order_status and gate.island_order()==1,'island order refused')
    log('ISLAND_ORDER_ARMED')
   end
+  -- Read-only (lockstep_constraint_trace.h, both gates, the same text): one CONSTRAINT row per contact constraint of a
+  -- fixture ship as the velocity solve's sort leaves it (normal, masses, each point's three axis parts, the warm-start
+  -- lambdas) with the lambdas the solve stored in the contact cache. Through the island order's stub (installed here
+  -- when the island order is off: Jolt's own keys then). Diagnostic, default off.
+  if cfg.native_gate_constraint_diag then
+   assert(cfg.native_gate_constraint_diag==true and snapshot and gate.constraint_diag and gate.constraint and gate.constraint_clear and
+    gate.constraint_status and gate.constraint_diag()==1,'constraint diag refused '..tostring(gate.island_order_status and gate.island_order_status()))
+   log('CONSTRAINT_DIAG_ARMED '..tostring(gate.constraint_status()))
+  end
   -- Read-only: one TRANSITION_ROW per TransitionEvent delivered to a gate
   -- (highway entries): gate and ship keys, the event's post time, the delivery
   -- time. Needs the world identities. Default off.
@@ -5407,6 +5423,12 @@ local function frame()
    assert(snapshot and gate.weave_phase and gate.weave_phase_status and gate.weave_phase()==1,'weave phase refused '..tostring(gate.weave_phase_status and gate.weave_phase_status()))
    log('WEAVE_PHASE_ARMED')
   end
+  -- Contact constraints' effective masses in MSVC's order (linux/gate_island_order.h, through the island sort's stub):
+  -- Jolt's m1 + d1 + m2 + d2 as Windows' build reassociated it. Linux only.
+  if cfg.native_gate_contact_mass and gate.platform and gate.platform()=='linux' then
+   assert(snapshot and gate.contact_mass and gate.contact_mass_status and gate.contact_mass()==1,'contact mass refused '..tostring(gate.contact_mass_status and gate.contact_mass_status()))
+   log('CONTACT_MASS_ARMED '..tostring(gate.contact_mass_status()))
+  end
   -- Linux-only keys of the mixed-platform preset: on Windows only a note (its build is already that order).
   if not (gate.platform and gate.platform()=='linux') then
    if cfg.native_gate_ik_step then log('IK_STEP_NOOP windows: the joint step multiplies by 50.0f already') end
@@ -5414,6 +5436,7 @@ local function frame()
    if cfg.native_gate_avoid_angle then log('AVOID_ANGLE_NOOP windows: the avoidance angles multiply by 1/pi and 2/pi already') end
    if cfg.native_gate_pursuit_speed then log('PURSUIT_SPEED_NOOP windows: the speed factor multiplies by the folded 0.8/1.5 already') end
    if cfg.native_gate_weave_phase then log('WEAVE_PHASE_NOOP windows: the weave phases multiply by the folded pi/3 and pi/5 already') end
+   if cfg.native_gate_contact_mass then log('CONTACT_MASS_NOOP windows: the effective masses are summed in MSVC order already') end
    if cfg.native_gate_ik_wrap then log('IK_WRAP_NOOP windows: the joint wrap is (t2 + value) - pi already') end
    if cfg.native_gate_body1_mass then log('BODY1_MASS_NOOP windows: second bodies are created with an empty compound already') end
   end
@@ -7249,6 +7272,7 @@ local function frame()
   if cfg.native_gate_avoid_angle and gate.avoid_angle_status then log('AVOID_ANGLE_STOP '..tostring(gate.avoid_angle_status())) end
   if cfg.native_gate_pursuit_speed and gate.pursuit_speed_status then log('PURSUIT_SPEED_STOP '..tostring(gate.pursuit_speed_status())) end
   if cfg.native_gate_weave_phase and gate.weave_phase_status then log('WEAVE_PHASE_STOP '..tostring(gate.weave_phase_status())) end
+  if cfg.native_gate_contact_mass and gate.contact_mass_status then log('CONTACT_MASS_STOP '..tostring(gate.contact_mass_status())) end
   if cfg.native_gate_ik_wrap and gate.ik_wrap_status then log('IK_WRAP_STOP '..tostring(gate.ik_wrap_status())) end
   if cfg.native_gate_draw_watch or cfg.native_gate_draw_watch_frame then log('DRAW_WATCH_STOP '..tostring(gate.draw_watch_status())) end
   if cfg.native_gate_attention_all then log('ATTENTION_ALL_STOP '..tostring(gate.attention_all_status())) end
@@ -7369,6 +7393,7 @@ local function frame()
   end
   if cfg.native_gate_damage_diag then log('DAMAGE_STOP calls='..s.damage_calls..' restored='..s.damage_restored..' failures='..s.damage_failures) end
   if cfg.native_gate_contact_diag then log('CONTACT_STOP calls='..s.contact_calls..' restored='..s.contact_restored..' failures='..s.contact_failures) end
+  if cfg.native_gate_constraint_diag and gate.constraint_status then log('CONSTRAINT_STOP '..tostring(gate.constraint_status())..' '..tostring(gate.island_order_status and gate.island_order_status())) end
   if cfg.native_gate_contact_properties then log('CONTACT_PROPERTIES_STOP calls='..s.contact_properties_calls..' restored='..s.contact_properties_restored..' failures='..s.contact_failures) end
   if cfg.native_gate_radar_serial then
    log('GRAVIDAR_STOP frames='..s.gravidar_frames..' waits='..s.gravidar_waits..' timeouts='..s.gravidar_timeouts..' calls='..s.gravidar_calls..' restored='..s.gravidar_restored..' failures='..s.gravidar_failures)
