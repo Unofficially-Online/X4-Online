@@ -236,6 +236,14 @@ static int lua_runtime_ids_map_row(lua_State *L) {
     if(n) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);
     return 1;
 }
+/* runtime_ids_removes(): native_gate_runtime_ids_removes (lockstep_runtime_ids.h); runtime_ids_remove_row(i): RUNTIME_IDS_REMOVE i. */
+static int lua_runtime_ids_removes(lua_State *L) {p_lua_pushnumber(L,accept_ui() && rid_removes_arm());return 1;}
+static int lua_runtime_ids_remove_row(lua_State *L) {
+    double index=p_lua_tonumber(L,1);char out[512];int n=0;
+    if(accept_ui() && isfinite(index) && index>=0 && index<9007199254740992.0 && floor(index)==index) n=rid_remove_row((uint64_t)index,out,sizeof(out));
+    if(n) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);
+    return 1;
+}
 static int lua_runtime_ids_caller_row(lua_State *L) {
     double index=p_lua_tonumber(L,1);char out[256];
     int n=accept_ui() && isfinite(index) && index>=0 && index<RID_CALLERS && floor(index)==index?rid_caller_row((unsigned)index,out,sizeof(out)):0;

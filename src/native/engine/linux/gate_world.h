@@ -880,6 +880,34 @@ static int world_health_row(unsigned index,uint64_t tick,char *out,size_t size) 
     }
     return n>0 && (size_t)n<size?n:0;
 }
+/* Diagnostic, read-only (native_gate_world_controller_rows): watch i's movement controller as it is now, its vtable
+ * (image offset) and its first 0xc0 bytes; the census decodes only the navigation controller, so a wreck's
+ * (U::LinearDecelerationController, set by the ship's KillEvent listener) is otherwise invisible. Windows: lockstep_world_hash.h, the same
+ * text (the layouts differ). */
+static int world_controller_row(unsigned index,uint64_t tick,char *out,size_t size) {
+    if(index>=world_hash_watch_count || !world_hash_scans || world_hash_failures || !size) return 0;
+    const world_hash_watch *watch=&world_hash_watches[index];
+    lxw_find_fn find=world_find?world_find:(lxw_find_fn)(void*)LX(LX_FIND_VA);
+    uint64_t id;void *map=NULL;unsigned char *controller=NULL,bytes[0xc0];void *vt=NULL;int n;
+    if(!WREAD(world_component_map?world_component_map:(void**)LX(LX_COMPONENT_MAP_VA),&map,8)) return 0;
+    unsigned char *object=map && watch->runtime?find(map,watch->runtime,4,0):NULL;
+    if(object && (!WREAD(object+LXW_OBJ_RUNTIME,&id,8) || id!=watch->runtime)) object=NULL;
+    if(object && (!WREAD(object+LXW_OBJ_CONTROLLER,&controller,8) || (controller && (!WREAD(controller,&vt,8) ||
+       !WREAD(controller,bytes,sizeof(bytes)))))) return 0;
+    n=snprintf(out,size,"tick=%llu id=%016llx present=%d ctl=%08x bytes=",(unsigned long long)tick,(unsigned long long)watch->saved,
+        object!=NULL,controller?(unsigned)((uintptr_t)vt-LX_IMAGE_BASE):0u);
+    static const char digits[]="0123456789abcdef";
+    if(n<0 || (size_t)n+sizeof(bytes)*2>=size) return 0;
+    for(unsigned i=0;controller && i<sizeof(bytes);i++) {out[n++]=digits[bytes[i]>>4];out[n++]=digits[bytes[i]&15];}
+    /* Linux only: the 0x58 bytes before the pointer (the ship holds the MovementControllerInterface base at +0x58 of a
+     * U::LinearVelocityController: its base pose +0x10..+0x50 and the pose's time +0x50 are there). */
+    unsigned char pre[0x58];
+    if(controller && WREAD(controller-0x58,pre,sizeof(pre)) && (size_t)n+6+sizeof(pre)*2<size) {
+        memcpy(out+n," pre=",5);n+=5;
+        for(unsigned i=0;i<sizeof(pre);i++) {out[n++]=digits[pre[i]>>4];out[n++]=digits[pre[i]&15];}
+    }
+    out[n]=0;return n;
+}
 
 /* ---- Lua (lockstep_gate.c formats) ---- */
 static int lua_world_watch(lua_State *L) {
@@ -901,6 +929,14 @@ static int lua_world_detail(lua_State *L) {
     if(n<0 || (size_t)n+data->length*2>=sizeof(out)) {p_lua_pushnil(L);return 1;}
     for(unsigned i=0;i<data->length;i++) {out[n++]=digits[data->data[i]>>4];out[n++]=digits[data->data[i]&15];}
     p_lua_pushlstring(L,out,(size_t)n);return 1;
+}
+/* world_controller(0) = the watch count; world_controller(i) = watch i's WORLD_CONTROLLER row now (diagnostic). */
+static int lua_world_controller(lua_State *L) {
+    double number=p_lua_tonumber(L,1);char out[900];int n=0;
+    if(!accept_ui() || !isfinite(number) || number<0 || floor(number)!=number) {p_lua_pushnil(L);return 1;}
+    if(number==0) {p_lua_pushnumber(L,world_hash_watch_count);return 1;}
+    if(number<=world_hash_watch_count) n=world_controller_row((unsigned)number-1,stats.issued,out,sizeof(out));
+    if(n>0) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);return 1;
 }
 /* world_health(0) = the watch count; world_health(i) = watch i's WORLD_HEALTH row now. */
 static int lua_world_health(lua_State *L) {

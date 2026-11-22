@@ -4787,7 +4787,7 @@ local function frame()
     +(cfg.native_gate_velocity_diag and 524288 or 0)
     +(cfg.native_gate_shape_diag and 1048576 or 0)+(cfg.native_gate_shape_rng and 2097152 or 0)+(cfg.native_gate_shape_initial_refresh and 4194304 or 0)
     +(cfg.native_gate_bullet_diag and 8388608 or 0)+(cfg.native_gate_bullet_rng and 16777216 or 0)
-    +(cfg.native_gate_death_diag and 33554432 or 0)+(cfg.native_gate_death_rng and 67108864 or 0)
+    +(cfg.native_gate_death_diag and 33554432 or 0)+(cfg.native_gate_death_rng and not (gate.platform and gate.platform()=='linux') and 67108864 or 0)
     +(cfg.native_gate_mass_diag and 134217728 or 0)
     +(cfg.native_gate_attention_diag and 268435456 or 0)+(cfg.native_gate_attention_rng and 536870912 or 0)+(cfg.native_gate_attention_initial_refresh and 1073741824 or 0)
     +(cfg.native_gate_avoidance_refresh and 2147483648 or 0)
@@ -5338,6 +5338,23 @@ local function frame()
     gate.contact_orient_status and gate.contact_orient(mode==true and 'on' or mode)==1,
     'contact orient refused '..tostring(gate.contact_orient_status and gate.contact_orient_status()))
    log('CONTACT_ORIENT_ARMED '..tostring(gate.contact_orient_status()))
+  end
+  -- Every ship's death draws (lockstep_death_all.h; Linux gate_death_rng.h): 'all' keys the wreck's drift by the tick, the
+  -- ship's portable key and the reason, not by the UI thread's word, which the two executables move by different counts.
+  -- Windows needs the boot install of native_gate_death_rng first; the Linux gate arms here alone. A default.
+  -- (the Linux gate has no boot install and no actor-only mode: only 'all', armed here)
+  assert(cfg.native_gate_death_rng==nil or cfg.native_gate_death_rng=='all' or not (gate.platform and gate.platform()=='linux'),
+   "death rng refused: the Linux gate keys every ship (native_gate_death_rng = 'all') or none")
+  -- Diagnostic: every wreck pose read in a tick window (WRECK_CLOCK rows; lockstep_death_all.h, both gates).
+  local wc=cfg.native_gate_wreck_clock_rows
+  if wc then
+   assert(type(wc)=='table' and gate.wreck_clock and gate.wreck_clock(wc[1],wc[2])==1,'wreck clock refused')
+   log('WRECK_CLOCK_ARMED first='..wc[1]..' last='..wc[2])
+  end
+  if cfg.native_gate_death_rng=='all' then
+   assert(gate.death_all and gate.death_all_status and gate.death_all()==1,
+    'death all refused '..tostring(gate.death_all_status and gate.death_all_status()))
+   log('DEATH_ALL_ARMED')
   end
   -- Read-only (lockstep_constraint_trace.h, both gates, the same text): one CONSTRAINT row per contact constraint of a
   -- fixture ship as the velocity solve's sort leaves it (normal, masses, each point's three axis parts, the warm-start
@@ -7465,6 +7482,14 @@ local function frame()
     'runtime ids rows refused '..tostring(gate.runtime_ids_status and gate.runtime_ids_status()))
    log('RUNTIME_IDS_ROWS_ARMED')
   end
+  -- Saved objects' removals (RUNTIME_IDS_REMOVE: the tick, the place among the tick's removals and the stack of each
+  -- Remove of an object with a saved ID), both gates; a diagnostic, default off.
+  if cfg.native_gate_runtime_ids_removes then
+   assert(cfg.native_gate_runtime_ids_removes==true and cfg.native_gate_runtime_ids~=nil and cfg.native_gate_runtime_ids~='observe' and
+    gate.runtime_ids_removes and gate.runtime_ids_remove_row and gate.runtime_ids_removes()==1,
+    'runtime ids removes refused '..tostring(gate.runtime_ids_status and gate.runtime_ids_status()))
+   log('RUNTIME_IDS_REMOVES_ARMED')
+  end
   -- What only the view asks for (UI elements, ICom, effects, slots 6 and 10, a presentation scope) takes its IDs from its own lists.
   if cfg.native_gate_runtime_ids_local then
    assert(cfg.native_gate_runtime_ids_local==true and cfg.native_gate_runtime_ids~=nil and cfg.native_gate_runtime_ids~='observe' and cfg.native_gate_created_identities and
@@ -7625,6 +7650,13 @@ local function frame()
     ticklog.write('RUNTIME_IDS_ROW '..row);row_cursors.runtime_ids=row_cursors.runtime_ids+1
    end
   end
+  if cfg.native_gate_runtime_ids_removes then
+   for _=1,1024 do
+    local row=gate.runtime_ids_remove_row(row_cursors.runtime_ids_removes or 0)
+    if not row then break end
+    ticklog.write('RUNTIME_IDS_REMOVE '..row);row_cursors.runtime_ids_removes=(row_cursors.runtime_ids_removes or 0)+1
+   end
+  end
  end
  if cfg.native_gate_weapon_fire_rng then
   ticklog.status('WEAPON_FIRE_RNG',tick,gate.weapon_fire_rng_status,'weapon fire rng status unavailable')
@@ -7660,6 +7692,22 @@ local function frame()
  end
  if cfg.native_gate_ship_sound_rng then
   ticklog.status('SHIP_SOUND_RNG',tick,gate.ship_sound_rng_status,'ship sound RNG status unavailable')
+ end
+ if cfg.native_gate_death_rng=='all' then ticklog.status('DEATH_ALL',tick,gate.death_all_status,'death all status unavailable') end
+ if cfg.native_gate_wreck_clock_rows and gate.view_slots then ticklog.write('VIEW_SLOTS tick='..tick..' '..tostring(gate.view_slots())) end
+ if cfg.native_gate_wreck_clock_rows and gate.wreck_clock_row then
+  for _=1,4096 do
+   local row=gate.wreck_clock_row(row_cursors.wreck_clock or 0)
+   if not row then break end
+   ticklog.write('WRECK_CLOCK '..row);row_cursors.wreck_clock=(row_cursors.wreck_clock or 0)+1
+  end
+ end
+ if cfg.native_gate_death_all_rows and gate.death_all_row then
+  for _=1,256 do
+   local row=gate.death_all_row(row_cursors.death_all or 0)
+   if not row then break end
+   ticklog.write('DEATH_ALL_ROW '..row);row_cursors.death_all=(row_cursors.death_all or 0)+1
+  end
  end
  if cfg.native_gate_ui_holds then
   ticklog.status('UI_HOLDS',tick,gate.ui_holds_status,'ui holds status unavailable')
@@ -8074,6 +8122,13 @@ local function frame()
   if health and health[1]<=tick and tick<=health[2] then
    for i=1,assert(gate.world_health(0),'world health unavailable') do
     ticklog.write('WORLD_HEALTH '..assert(gate.world_health(i),'world health row unavailable '..i))
+   end
+  end
+  -- Diagnostic, read-only: every watched object's movement controller, raw (WORLD_CONTROLLER; both gates, their layouts).
+  local ctl=cfg.native_gate_world_controller_rows
+  if ctl and ctl[1]<=tick and tick<=ctl[2] then
+   for i=1,assert(gate.world_controller and gate.world_controller(0),'world controller unavailable') do
+    ticklog.write('WORLD_CONTROLLER '..assert(gate.world_controller(i),'world controller row unavailable '..i))
    end
   end
   data=data..'|'..assert(world_hash_state,'world hash baseline missing')

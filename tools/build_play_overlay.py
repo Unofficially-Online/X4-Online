@@ -97,7 +97,13 @@ MIXED_PLATFORM_SETS = ("native_gate_fp_redirect='redirect'", 'native_gate_fp_red
                        'native_gate_path_budget=100',     # a Windows default already: without it the Linux bundle's pathing round robin ran by
                                                           # the clock, and every moving ship's motion parted by tick 30 (W37a against lx78a,
                                                           # 9,988 objects; W39c, Windows without it, equal to lx78a)
-                       "native_gate_sound_rng='split'")   # a Windows default already: Linux sound starts drew from the scripts' words
+                       "native_gate_sound_rng='split'",   # a Windows default already: Linux sound starts drew from the scripts' words
+                       "native_gate_death_rng='all'",     # a Windows default already: wreck drift keyed by ship (linux/gate_death_rng.h;
+                                                          # W67 against lx94a, 22 Nov: a Kha'ak wreck drifted apart and 12 fighters
+                                                          # aiming at it turned 1e-4 apart at tick 77)
+                       "native_gate_path_transforms='sim'")  # a Windows default already: pathing jobs compose a wreck's pose at the
+                                                          # pass time (linux/gate_path_transform_observe.h); without it Linux read
+                                                          # the published view cache, a tick of the wreck's drift behind
                                                           # (linux/gate_sound_rng.h; W46 against lx85a, the fighters' scopes 9 / 11 draws)
 # The Windows host's own part of --mixed-platform (not a Linux bundle option): Windows defaults whose Linux twin is not there
 # yet, off so that both sides run the same code. native_gate_contact_orient (lockstep_contact_orient.h): Jolt's BodyID order

@@ -354,9 +354,55 @@ static rid_local_t *rid_local_of(uint32_t slot) {
     if(!rid_local_built) return NULL;
     return block==RID_LOCAL_UI_BLOCK?&rid_local[RID_ROUTE_UI]:block==RID_LOCAL_VIEW_BLOCK?&rid_local[RID_ROUTE_VIEW]:NULL;
 }
+/* Saved objects' removals, DEFAULT OFF (native_gate_runtime_ids_removes, a diagnostic; both gates, the same text):
+ *   RUNTIME_IDS_REMOVE index= tick= saved= seq= thread=ui|main|other frames=
+ * one row per Remove of an object that has a saved ID, after the seal, with the gate tick it ran in, its
+ * place among this tick's removals of every object (seq), and the X4 return addresses (innermost first;
+ * Windows RVAs, Linux VA - 0x400000). 22 Nov: a killed ship's crew left the object table one tick later on
+ * Linux than on Windows, with the kill events delivered at the same tick on both; these rows name the
+ * delete on each build. Read on the UI thread from a ring; writers take one slot each. */
+#define RID_REMOVE_RING 1024u
+typedef struct {uint64_t tick,saved;uint32_t seq,count;uint32_t frames[RID_FRAMES];unsigned char thread;} rid_remove_row_t;
+static rid_remove_row_t rid_remove_ring[RID_REMOVE_RING];
+static volatile LONG64 rid_remove_rows;
+static volatile LONG rid_removes_on;
+static volatile LONG64 rid_remove_seq;
+static uint64_t rid_remove_tick;
+static uint64_t world_identity_lookup(uint64_t runtime);
+static unsigned rid_frames_of(void *caller,uint32_t *frames);
+static void rid_remove_note(uint64_t id,void *caller) {
+    const uint32_t seq=(uint32_t)InterlockedIncrement64(&rid_remove_seq);
+    const uint64_t saved=world_identity_lookup(id);
+    if(!saved) return;
+    uint32_t frames[RID_STACK];const unsigned count=rid_frames_of(caller,frames);
+    const DWORD thread=GetCurrentThreadId();
+    const LONG64 index=InterlockedIncrement64(&rid_remove_rows)-1;
+    rid_remove_row_t *r=&rid_remove_ring[(uint64_t)index%RID_REMOVE_RING];
+    r->tick=rid_remove_tick;r->saved=saved;r->seq=seq;r->count=count;r->thread=(unsigned char)(thread==ui_thread?0u:thread==main_thread?1u:2u);
+    memset(r->frames,0,sizeof(r->frames));memcpy(r->frames,frames,(count<RID_FRAMES?count:RID_FRAMES)*sizeof(*frames));
+}
+/* The gate boundary: the tick that the next removals belong to, their sequence from 0. */
+__attribute__((unused)) static void rid_remove_frame(uint64_t tick) {rid_remove_tick=tick;InterlockedExchange64(&rid_remove_seq,0);}
+__attribute__((unused)) static int rid_removes_arm(void) {
+    if(!rid_mode || !rid_installed) return 0;
+    InterlockedExchange(&rid_removes_on,1);return 1;
+}
+__attribute__((unused)) static int rid_remove_row(uint64_t index,char *out,size_t capacity) {
+    const LONG64 count=InterlockedCompareExchange64(&rid_remove_rows,0,0);int n;
+    if((LONG64)index>=count) return 0;
+    if(count>(LONG64)RID_REMOVE_RING && index<(uint64_t)(count-(LONG64)RID_REMOVE_RING))
+        return (n=snprintf(out,capacity,"index=%llu evicted=1",(unsigned long long)index))>0 && (size_t)n<capacity?n:0;
+    const rid_remove_row_t *r=&rid_remove_ring[index%RID_REMOVE_RING];
+    static const char *const threads[3]={"ui","main","other"};
+    n=snprintf(out,capacity,"index=%llu tick=%llu saved=%016llx seq=%u thread=%s frames=",(unsigned long long)index,(unsigned long long)r->tick,
+        (unsigned long long)r->saved,r->seq,threads[r->thread<3?r->thread:2]);
+    for(unsigned i=0;n>0 && (size_t)n<capacity && i<RID_FRAMES;i++) n+=snprintf(out+n,capacity-(size_t)n,"%s%x",i?",":"",r->frames[i]);
+    return n>0 && (size_t)n<capacity?n:0;
+}
 /* Remove's entry. A local slot goes back on its list; a shared one comes off the tail again, nothing recycles. Recursive critical section. */
 static uint64_t rid_remove_call(rid_remove_fn original,void *map,uint64_t id) {
     const uint32_t slot=(uint32_t)id&0x1ffffffu;
+    if(InterlockedCompareExchange(&rid_removes_on,0,0) && rid_sealed && slot && map==(void*)rid_map()) rid_remove_note(id,__builtin_return_address(0));
     if(!InterlockedCompareExchange(&rid_active,0,0) || !slot || map!=(void*)rid_map()) return original(map,id);
     CRITICAL_SECTION *lock=(CRITICAL_SECTION*)((unsigned char*)map+0x10);EnterCriticalSection(lock);
     rid_local_t *list=rid_local_of(slot);uint64_t removed;
@@ -844,6 +890,7 @@ static int rid_frame(uint64_t tick) {
     CRITICAL_SECTION *lock=(CRITICAL_SECTION*)(map+0x10);EnterCriticalSection(lock);rid_now=rid_counts(map);rid_next_id=rid_next(map);memcpy(rid_local_now,rid_local,sizeof(rid_local_now));LeaveCriticalSection(lock);
     rid_digest=lockstep_mix(lockstep_mix(rid_digest^tick)^rid_next_id);++rid_frames_done;
     rid_row_close(tick,rid_next_id);
+    rid_remove_frame(tick+1u);
 #ifndef RID_OWN_PLATFORM
     if(!glocal_frame()) rid_fail(glocal_stage);
 #endif

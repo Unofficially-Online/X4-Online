@@ -420,6 +420,9 @@ Modules (define, owner):
   217 LXSND_STOP_REASON         linux/gate_sound_rng.h (native_gate_sound_rng on the Linux gate: a sound start's pitch and
                                 sample choice on private words; a site, the stub page or the pins changed, or a draw
                                 without the thread word; whys site_changed, page_changed, block_changed, failures)
+  218 LXD_STOP_REASON           linux/gate_death_rng.h (native_gate_death_rng = 'all' on the Linux gate: a ship's death
+                                draws on a word from the tick and its portable key; a ship vtable slot or the listener's
+                                pin changed; whys slot_changed, block_changed)
   219 CORIENT_STOP_REASON       lockstep_contact_orient.h (native_gate_contact_orient, a default: one of the five pair
                                 compares' jumps or stubs no longer ours, the pins, or a body the stub could not read;
                                 whys site_changed, block_changed, unreadable)
@@ -427,7 +430,7 @@ Modules (define, owner):
                                 were not laid out before the first admitted step, or Jolt's concurrency slot is no
                                 longer ours; stages occupied, unreadable, layout, not_laid_out, slot_changed); on the
                                 Linux gate 224 LXWL_STOP_REASON (linux/gate_worker_layout.h, the same stages)
-  free: 109, 114-119, 122-129, 147-149, 218, 220-223, 225-255.
+  free: 109, 114-119, 122-129, 147-149, 220-223, 225-255.
 Not stop reasons although named *_STOP*: PSLOT_STOP_WAIT (a wait count),
 PFIRE_STOP, PNAT_STOP_IN_MENU, PNAT_FULL_STOP (flags, 0).
 Renumbered on 1 November 2026 (integration): region camera 130 -> 165, speak

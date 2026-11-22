@@ -306,8 +306,10 @@ class TableTests(unittest.TestCase):
                     differ[key] = (values[key], value)
             else:
                 self.assertTrue(key in defaults.DIAGNOSTIC_KEYS + defaults.EXCLUDED_KEYS + defaults.TUNING_KEYS + defaults.TABLE['session'], key)
-        # The stack is Play42P's plus every UI family; the controls stay open 40 minutes (Play42P's run ended at 36000).
-        self.assertEqual(sorted(differ), ['native_gate_pilot_window', 'native_gate_ui_replay'])
+        # The stack is Play42P's plus every UI family; the controls stay open 40 minutes (Play42P's run ended at 36000);
+        # death draws keyed for every ship ('all', 22 Nov), where Play42P keyed the fixture's actors only (true).
+        self.assertEqual(sorted(differ), ['native_gate_death_rng', 'native_gate_pilot_window', 'native_gate_ui_replay'])
+        self.assertEqual(differ['native_gate_death_rng'], ("'all'", 'true'))
         self.assertEqual(set(defaults.modes(play['native_gate_ui_replay'])) - set(defaults.modes(values['native_gate_ui_replay'])), set())
         # What the defaults add to Play42P: the newer features.
         added = sorted(set(rep['applied']) - set(play))

@@ -645,6 +645,9 @@ static const lx_site lx_sites[]={
     {"sound_rng_choice_a_after",0x1a63a52,0x9,"da87cff56fd52b6e91da24f9baaa784439fe4a53bb5dfd3191299ccad6bc28fc"},
     {"sound_rng_choice_b",0x1a63ad8,0xc,"a2c1b0a31c252b8b96bc4d4693b7132aa16c17f17c9848621907f450a61f78f9"},
     {"sound_rng_i32",0x1a49160,0x3d,"53870a32b654ee337f0f366d841fbe9cce8463b357777ecabd593388c71ccd6a"},
+    /* a ship's death draws (gate_death_rng.h): U::Ship's KillEvent listener from its entry through the six FloatState
+     * draws and the wreck controller's allocation (the order lockstep_death_all.h relies on) */
+    {"death_rng_listener",0x12adf40,0x381,"e965770b3f042b5eb23729ce74405abc80f50cbf7520270f18745a3d3932c282"},
     /* the island order (gate_island_order.h): the deterministic block, the calls up to the sort call, the sort and its
      * comparator, StoreAppliedImpulses' point layout, FinishConstraintBuffer's array */
     {"iorder_block",0x1b212c8,0x1d,"ec2419c256a7f9488b3c0ce1c42e56c5ce28922bbf3b713bb6464d4ba500a74c"},

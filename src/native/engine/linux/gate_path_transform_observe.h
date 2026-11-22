@@ -1,4 +1,15 @@
-/* Default-off diagnostic for the pinned Linux ordered pathing experiment.
+/* Default-off diagnostic for the pinned Linux ordered pathing experiment, and the Linux 'sim' of
+ * native_gate_path_transforms (lockstep_path_transforms.h, a Windows default).
+ *
+ * 'sim' (gate.path_transforms('sim'), the session defaults' value): the five calls of the hierarchy transform
+ * 0x18a2900 (Windows 0x3dde10) that pathing batch jobs reach, inside a joined pass on an inline job (TLS view 0, an
+ * admitted frame), whose live chain up to the target holds an object with a known non-navigation controller (a wreck's
+ * U::LinearDecelerationController) and no navigation one, are answered by the live composition 0x18a0090 (Windows
+ * GetTransformRelativeTo 0x3db8a0) at the pass's game time (manager+0x390, Windows +0x200), as Windows does; every
+ * other call stays native. 22 Nov (W72 against lx104a): without it a Linux fighter aiming at the Kha'ak wreck 0x9fa51
+ * took the wreck's pose from the published view cache, one tick of its 931 m/s drift behind Windows' composition at
+ * the pass time (Windows' pose reads at tick 77 came from 0xe8a41b; the Linux build made none), and the twelve fighters
+ * of the battle census turned 1e-4 apart. No rows; status diverted= (calls answered) seen= (eligible scope).
  *
  * A native hierarchy call always runs exactly once and its result is returned.
  * For eligible calls in an ordered batch, the time-based live transform runs on
@@ -46,6 +57,8 @@ static unsigned path_transform_observer_done, path_transform_observer_restored;
 static unsigned __int128 path_transform_observer_original[PATH_TRANSFORM_OBSERVER_SITES], path_transform_observer_patched[PATH_TRANSFORM_OBSERVER_SITES];
 static uint64_t path_transform_observer_from_tick, path_transform_observer_to_tick, path_transform_observer_seen, path_transform_observer_compared, path_transform_observer_dropped, path_transform_observer_row_count;
 static volatile unsigned long path_transform_observer_scope_thread;
+static int path_transform_sim;              /* 'sim': the live composition is the answer */
+static volatile uint64_t path_transform_diverted;
 static volatile long path_transform_observer_failures;
 static const char *path_transform_observer_stage = "idle";
 
@@ -77,7 +90,7 @@ static int path_transform_observer_scoped(void) {
         !__atomic_load_n(&path_transform_observer_failures, __ATOMIC_SEQ_CST) &&
         __atomic_load_n(&path_transform_observer_scope_thread, __ATOMIC_SEQ_CST) == (unsigned long)GetCurrentThreadId() &&
         InterlockedCompareExchange(&path_pass_open, 0, 0) &&
-        stats.issued >= path_transform_observer_from_tick && stats.issued <= path_transform_observer_to_tick;
+        (path_transform_sim || (stats.issued >= path_transform_observer_from_tick && stats.issued <= path_transform_observer_to_tick));
 }
 /* Validate every link through the live parent chain. A component classified as
  * an object must have a known non-nav controller; nav getters may update banks.
@@ -120,6 +133,31 @@ static void *path_transform_observer_call(unsigned site, void *from, float *matr
         return native(from, matrix, to, flag);
     __atomic_add_fetch(&path_transform_observer_seen, 1, __ATOMIC_RELAXED);
     if (!path_transform_observer_chain(from, to)) return native(from, matrix, to, flag);
+    if (path_transform_sim) {
+        unsigned char *manager = NULL, *tls = gate_tls_self();
+        double time = 0;
+        float sim[16] __attribute__((aligned(16)));
+        if (!tls || !gate_read_local(LX(LX_PATH_MANAGER_VA), &manager, 8) || !manager ||
+            !gate_read_local(manager + PATH_TRANSFORM_OBSERVER_MANAGER_TIME, &time, 8) || !isfinite(time) ||
+            !gate_read_local(matrix, sim, sizeof(sim))) {
+            __atomic_add_fetch(&path_transform_observer_failures, 1, __ATOMIC_SEQ_CST);
+            return native(from, matrix, to, flag);
+        }
+        uint64_t old_time, old_previous, old_rng;
+        uint32_t old_view;
+        memcpy(&old_time, tls + GATE_TLS_LINUX_TIME, 8);
+        memcpy(&old_previous, tls + GATE_TLS_LINUX_PREVIOUS_TIME, 8);
+        memcpy(&old_rng, tls + GATE_TLS_LINUX_RNG, 8);
+        memcpy(&old_view, tls + GATE_TLS_LINUX_VIEW, 4);
+        live(from, sim, time, to, 0);
+        memcpy(tls + GATE_TLS_LINUX_TIME, &old_time, 8);
+        memcpy(tls + GATE_TLS_LINUX_PREVIOUS_TIME, &old_previous, 8);
+        memcpy(tls + GATE_TLS_LINUX_RNG, &old_rng, 8);
+        memcpy(tls + GATE_TLS_LINUX_VIEW, &old_view, 4);
+        memcpy(matrix, sim, sizeof(sim));
+        __atomic_add_fetch(&path_transform_diverted, 1, __ATOMIC_RELAXED);
+        return matrix;
+    }
     unsigned from_kind, to_kind;
     uint64_t from_id = path_transform_observer_key(from, &from_kind);
     uint64_t to_id = path_transform_observer_key(to, &to_kind);
@@ -250,14 +288,14 @@ static int path_transform_observer_check(void) {
     }
     return 1;
 }
-static int path_transform_observer_arm(uint64_t first_tick, uint64_t last_tick) {
+static int path_transform_observer_arm_mode(uint64_t first_tick, uint64_t last_tick, int sim) {
     if (path_transform_observer_installed)
-        return stats.active && path_transform_observer_owned() && !path_transform_observer_failures &&
+        return stats.active && path_transform_observer_owned() && !path_transform_observer_failures && sim == path_transform_sim &&
             first_tick == path_transform_observer_from_tick && last_tick == path_transform_observer_to_tick;
     path_transform_observer_stage = "state";
     if (!stats.active || !boot_mode || boot_phase || stats.issued || GetCurrentThreadId() != ui_thread ||
         !travel_inline_installed || !lxt_inline_owned() || tsnap_installed || st_chain_wanted || st_chain_installed ||
-        !world_identity_installed || first_tick == 0 || last_tick < first_tick || last_tick - first_tick >= 600) return 0;
+        !world_identity_installed || first_tick == 0 || last_tick < first_tick || (!sim && last_tick - first_tick >= 600)) return 0;
     path_transform_observer_stage = "pins";
     for (unsigned i = 0; i < sizeof(path_transform_observer_pins) / sizeof(path_transform_observer_pins[0]); ++i)
         if (!hash_ok(LX(path_transform_observer_pins[i].address), path_transform_observer_pins[i].length, path_transform_observer_pins[i].sha)) return 0;
@@ -276,6 +314,8 @@ static int path_transform_observer_arm(uint64_t first_tick, uint64_t last_tick) 
     }
     path_transform_observer_from_tick = first_tick;
     path_transform_observer_to_tick = last_tick;
+    path_transform_sim = sim;
+    path_transform_diverted = 0;
     path_transform_observer_seen = path_transform_observer_compared = path_transform_observer_dropped = path_transform_observer_row_count = 0;
     path_transform_observer_failures = 0;
     path_transform_observer_done = path_transform_observer_restored = 0;
@@ -291,6 +331,30 @@ static int path_transform_observer_arm(uint64_t first_tick, uint64_t last_tick) 
     path_transform_observer_stage = "armed";
     return 1;
 }
+static int path_transform_observer_arm(uint64_t first_tick, uint64_t last_tick) {
+    return path_transform_observer_arm_mode(first_tick, last_tick, 0);
+}
+/* gate.path_transforms('sim'): Windows' call (lockstep_gate.c) with its one Linux mode; no row window here. */
+static int lua_path_transforms(lua_State *L) {
+    size_t length = 0;
+    const char *mode = p_lua_tolstring(L, 1, &length);
+    const double window = p_lua_tonumber(L, 2);
+    p_lua_pushnumber(L, accept_ui() && mode && length == 3 && !memcmp(mode, "sim", 3) && !(isfinite(window) && window != 0) &&
+        path_transform_observer_arm_mode(1, UINT64_MAX, 1));
+    return 1;
+}
+static int lua_path_transforms_status(lua_State *L) {
+    char text[256];
+    int length = accept_ui() ? snprintf(text, sizeof(text),
+        "mode=%s installed=%d restored=%u stage=%s seen=%llu diverted=%llu failures=%ld",
+        path_transform_sim ? "sim" : "observe", path_transform_observer_installed, path_transform_observer_restored,
+        path_transform_observer_stage, (unsigned long long)path_transform_observer_seen,
+        (unsigned long long)path_transform_diverted, path_transform_observer_failures) : 0;
+    if (length > 0 && (size_t)length < sizeof(text)) p_lua_pushlstring(L, text, (size_t)length);
+    else p_lua_pushnil(L);
+    return 1;
+}
+static int lua_path_transforms_row(lua_State *L) {(void)L;p_lua_pushnil(L);return 1;} /* no rows on the Linux gate */
 static int lua_path_transform_observe(lua_State *L) {
     double first = p_lua_tonumber(L, 1), last = p_lua_tonumber(L, 2);
     int valid = isfinite(first) && isfinite(last) && first >= 1 && last >= first &&

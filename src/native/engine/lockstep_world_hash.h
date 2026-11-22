@@ -593,3 +593,24 @@ static int world_health_row(unsigned index,uint64_t tick,char *out,size_t size) 
     }
     return n>0 && (size_t)n<size?n:0;
 }
+/* Diagnostic, read-only (native_gate_world_controller_rows): watch i's movement controller as it is now, its vtable
+ * (image offset) and its first 0xc0 bytes; the census decodes only the navigation controller, so a wreck's
+ * (U::LinearDecelerationController, set by the ship's KillEvent listener) is otherwise invisible. Same text on the
+ * Linux gate (linux/gate_world.h; its layout differs). */
+static int world_controller_row(unsigned index,uint64_t tick,char *out,size_t size) {
+    if(index>=world_hash_watch_count || !world_hash_scans || world_hash_failures || !size) return 0;
+    const world_hash_watch *watch=&world_hash_watches[index];
+    world_hash_find_fn find=world_health_find?world_health_find:(world_hash_find_fn)(image+0xced70);
+    uint64_t id;void *map=NULL;unsigned char *controller=NULL,bytes[0xc0];void *vt=NULL;int n;
+    if(!world_hash_reader(image+0x6cf1500,&map,8)) return 0;
+    unsigned char *object=map && watch->runtime?find(map,watch->runtime,4):NULL;
+    if(object && (!world_hash_reader(object+8,&id,8) || id!=watch->runtime)) object=NULL;
+    if(object && (!world_hash_reader(object+0x200,&controller,8) || (controller && (!world_hash_reader(controller,&vt,8) ||
+       !world_hash_reader(controller,bytes,sizeof(bytes)))))) return 0;
+    n=snprintf(out,size,"tick=%llu id=%016llx present=%d ctl=%08x bytes=",(unsigned long long)tick,(unsigned long long)watch->saved,
+        object!=NULL,controller?(unsigned)((unsigned char*)vt-image):0u);
+    static const char digits[]="0123456789abcdef";
+    if(n<0 || (size_t)n+sizeof(bytes)*2>=size) return 0;
+    for(unsigned i=0;controller && i<sizeof(bytes);i++) {out[n++]=digits[bytes[i]>>4];out[n++]=digits[bytes[i]&15];}
+    out[n]=0;return n;
+}

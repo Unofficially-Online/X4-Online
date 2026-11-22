@@ -2076,6 +2076,24 @@ int main(int argc,char **argv) {
     assert(out1!=out2 && test_rng==222);
     death_seeded=0;death_execute(test_death_original,&de,&test_rng,&out2,&out2,7.0,6,&test_calls);
     assert(test_rng==out2);
+    /* 'all' (lockstep_death_all.h): the M and L slots join after the boot install, the tick check sees all four, restore
+     * puts all four back; the seed follows tick, key and reason. */
+    *(void**)(image+DEATH_ENTRY)=image+DEATH_LISTENER;*(void**)(image+DEATH_XL_ENTRY)=image+DEATH_LISTENER;
+    *(void**)(image+DEATH_M_ENTRY)=image+DEATH_LISTENER;*(void**)(image+DEATH_L_ENTRY)=image+DEATH_LISTENER;
+    {const uint64_t issued=stats.issued;const DWORD keep=ui_thread;stats.issued=0;ui_thread=GetCurrentThreadId();
+     assert(!death_all_arm());                                         /* not before the boot install */
+     assert(death_install_slots() && death_owned_slots==3);
+     assert(death_all_arm() && death_all && death_owned_slots==15 && death_all_owned() && death_all_arm());
+     assert(*(void**)(image+DEATH_M_ENTRY)==(void*)death_listener && *(void**)(image+DEATH_L_ENTRY)==(void*)death_listener);
+     *(void**)(image+DEATH_L_ENTRY)=image+DEATH_LISTENER;assert(!death_all_owned());*(void**)(image+DEATH_L_ENTRY)=(void*)death_listener;
+     {char status[256];assert(death_all_status(status,sizeof(status)) && strstr(status,"all=1 slots=f "));}
+     death_restore();
+     assert(death_restored && !death_installed && !death_owned_slots && !death_all && death_all_owned());
+     assert(*(void**)(image+DEATH_M_ENTRY)==image+DEATH_LISTENER && *(void**)(image+DEATH_L_ENTRY)==image+DEATH_LISTENER &&
+            *(void**)(image+DEATH_ENTRY)==image+DEATH_LISTENER && *(void**)(image+DEATH_XL_ENTRY)==image+DEATH_LISTENER);
+     stats.issued=issued;ui_thread=keep;}
+    assert(death_all_seed(75,0x9fa51,3)!=death_all_seed(76,0x9fa51,3) && death_all_seed(75,0x9fa51,3)!=death_all_seed(75,0x9fa52,3) &&
+           death_all_seed(75,0x9fa51,3)!=death_all_seed(75,0x9fa51,4));
     mass_original_word=0x485810588948c48bULL;mass_patched_word=0x48909000000000e9ULL;
     memcpy(image+MASS_ENTRY,&mass_original_word,8);assert(mass_swap(mass_original_word,mass_patched_word));
     assert(!mass_swap(mass_original_word,0));mass_installed=1;mass_restore();

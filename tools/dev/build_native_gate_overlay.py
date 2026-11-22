@@ -153,6 +153,10 @@ def main():
     p.add_argument('--weave-phase', action='store_true', help="the Linux gate: the weaving behaviours' phase with Windows' folded pi/n constants (native_gate_weave_phase)")
     p.add_argument('--sound-rng', choices=('split',), help="sound starts draw from private words (native_gate_sound_rng, a Windows "
                    "default; the Linux gate's twin linux/gate_sound_rng.h)")
+    p.add_argument('--path-transforms', choices=('sim',), help="the Linux gate: pathing reads simulation transforms at the pass time where a wreck is in the chain (Windows' default native_gate_path_transforms)")
+    p.add_argument('--wreck-clock-rows', type=int, nargs=2, metavar=('FIRST', 'LAST'), help='WRECK_CLOCK rows in these ticks (diagnostic)')
+    p.add_argument('--death-all-rows', action='store_true', help='DEATH_ALL_ROW rows: each keyed death, its time argument and thread clock (diagnostic, with --death-all)')
+    p.add_argument('--death-all', action='store_true', help="native_gate_death_rng = 'all': every ship's death draws keyed by tick and portable key (both gates; lockstep_death_all.h)")
     p.add_argument('--session-md', action='store_true', help="the default stack's MD scripts and stock MD/AI script patches without "
                    "its Lua (a mixed session's Linux bundle: every client runs the same scripts)")
     p.add_argument('--path-budget', type=int, metavar='N', help="the pathing round robin by count: N full agent updates per batch "
@@ -244,6 +248,8 @@ def main():
                    help='native_gate_worker_layout: pathing batches and Jolt jobs laid out as for W job threads (the session defaults: 30; needs --serial-pathing)')
     p.add_argument('--loadout-order-rows', type=int, nargs=2, metavar=('FROM', 'TO'), help='LOADOUT_ROWs in this tick window, at most 600 ticks (needs --loadout-order and --world-identities)')
     p.add_argument('--runtime-id-callers', action='store_true', help='the Linux gate: the table of who allocates runtime IDs, RUNTIME_IDS_CALLER rows (needs --runtime-ids)')
+    p.add_argument('--world-controller-rows', type=int, nargs=2, metavar=('FIRST', 'LAST'), help='WORLD_CONTROLLER rows of the watched objects in these ticks (diagnostic)')
+    p.add_argument('--runtime-id-removes', action='store_true', help='the Linux gate: RUNTIME_IDS_REMOVE rows, the tick and stack of every removal of a saved object (needs --runtime-ids)')
     p.add_argument('--runtime-ids-local', action='store_true', help='the Linux gate: what only the view asks for takes runtime IDs from its own lists (native_gate_runtime_ids_local; needs --runtime-ids and --created-identities)')
     p.add_argument('--travel-snapshot', action='store_true', help='the Linux gate: the wingman travel decision reads a per-pass snapshot of the leader flag (needs --serial-pathing and path determinism bit 2)')
     p.add_argument('--travel-determinism', action='store_true',
@@ -617,7 +623,7 @@ def main():
             p.error('--gate-so supports the snapshot boot with --mode clock or battle only')
         if args.mode == 'battle' and not args.snapshot_prebind:
             p.error('--gate-so --mode battle needs --snapshot-prebind (the Linux gate binds the snapshot fixture)')
-        allowed = {'gate_so', 'snapshot', 'mode', 'session_clients', 'seed_rng', 'out', 'serial_pathing', 'path_determinism', 'region_rng', 'ai_wait_rng', 'md_resume_rng', 'boot_hold', 'event_order', 'event_rows', 'event_rng', 'event_rng_rows_window', 'build_rng', 'economy_load_rng', 'gravidar', 'gravidar_deadlines', 'travel_snapshot', 'runtime_ids', 'runtime_id_callers', 'runtime_ids_local','script_rng', 'script_rng_mask', 'script_rng_rows', 'script_rng_rows_window', 'script_rng_trace', 'script_rng_natural', 'script_rng_unmapped', 'md_timed_rng', 'find_order', 'loadout_order', 'loadout_order_rows', 'attention_all', 'nav_key', 'step_trace', 'step_trace_ticks', 'step_chain', 'fp_redirect', 'fp_redirect_watch', 'fp_redirect_ticks', 'fp_redirect_solver', 'coverage', 'coverage_list', 'coverage_from', 'tick_hz','gravidar_wide', 'spawn_rng', 'weapon_fire_rng', 'engine_refresh_rng', 'spline_join_all', 'actor_rng_all', 'actor_rng_rows', 'player_timer', 'tempzone_order', 'warp_rng', 'warp_exit', 'flight_limits', 'body1_mass', 'body_step_diag', 'velocity_diag', 'impulse_diag', 'ik_diag', 'ik_step', 'ik_wrap', 'mining_camera', 'mass_traffic', 'region_pass', 'pass_stride', 'created_identities', 'created_load', 'portable_created', 'nav_cadence', 'nav_params_init', 'nav_probe_init', 'nav_diag', 'nav_rng', 'nav_initial_refresh', 'attention_diag', 'attention_rng', 'attention_initial_refresh', 'shape_diag', 'shape_rng', 'shape_initial_refresh', 'shape_refresh', 'radar_rng', 'radar_initial_refresh', 'steer_roll', 'avoid_angle', 'probes_diag', 'pursuit_speed', 'weave_phase', 'contact_diag', 'worker_layout', 'island_order', 'constraint_diag', 'contact_mass', 'path_budget', 'session_md', 'sound_rng',
+        allowed = {'gate_so', 'snapshot', 'mode', 'session_clients', 'seed_rng', 'out', 'serial_pathing', 'path_determinism', 'region_rng', 'ai_wait_rng', 'md_resume_rng', 'boot_hold', 'event_order', 'event_rows', 'event_rng', 'event_rng_rows_window', 'build_rng', 'economy_load_rng', 'gravidar', 'gravidar_deadlines', 'travel_snapshot', 'runtime_ids', 'runtime_id_callers', 'runtime_id_removes', 'world_controller_rows', 'runtime_ids_local','script_rng', 'script_rng_mask', 'script_rng_rows', 'script_rng_rows_window', 'script_rng_trace', 'script_rng_natural', 'script_rng_unmapped', 'md_timed_rng', 'find_order', 'loadout_order', 'loadout_order_rows', 'attention_all', 'nav_key', 'step_trace', 'step_trace_ticks', 'step_chain', 'fp_redirect', 'fp_redirect_watch', 'fp_redirect_ticks', 'fp_redirect_solver', 'coverage', 'coverage_list', 'coverage_from', 'tick_hz','gravidar_wide', 'spawn_rng', 'weapon_fire_rng', 'engine_refresh_rng', 'spline_join_all', 'actor_rng_all', 'actor_rng_rows', 'player_timer', 'tempzone_order', 'warp_rng', 'warp_exit', 'flight_limits', 'body1_mass', 'body_step_diag', 'velocity_diag', 'impulse_diag', 'ik_diag', 'ik_step', 'ik_wrap', 'mining_camera', 'mass_traffic', 'region_pass', 'pass_stride', 'created_identities', 'created_load', 'portable_created', 'nav_cadence', 'nav_params_init', 'nav_probe_init', 'nav_diag', 'nav_rng', 'nav_initial_refresh', 'attention_diag', 'attention_rng', 'attention_initial_refresh', 'shape_diag', 'shape_rng', 'shape_initial_refresh', 'shape_refresh', 'radar_rng', 'radar_initial_refresh', 'steer_roll', 'avoid_angle', 'probes_diag', 'pursuit_speed', 'weave_phase', 'contact_diag', 'worker_layout', 'island_order', 'constraint_diag', 'contact_mass', 'path_budget', 'session_md', 'sound_rng', 'death_all', 'death_all_rows', 'wreck_clock_rows', 'path_transforms',
                    'fork_save', 'fork_save_budget_ms', 'fork_save_watchdog', 'fork_save_every', 'fork_save_slot', 'world_identities', 'world_hash_stride', 'world_hash_schema', 'world_hash_watch', 'world_hash_shields',
                    'fp_redirect_drones', 'world_health_ticks', 'fp_attack_capture', 'fp_attack_watch'}
         allowed.add('travel_determinism')
@@ -955,6 +961,27 @@ X4LAN_CONFIG.slot = "@X4LANE_SLOT@"
             p.error('--sound-rng needs the snapshot boot and --mass-traffic or --region-pass (the region camera group)')
         with (args.out/'ui/config.lua.append').open('a') as config:
             config.write(f"X4LAN_CONFIG.native_gate_sound_rng = '{args.sound_rng}'"+chr(10))
+    if args.death_all:
+        if not args.snapshot:
+            p.error('--death-all needs the snapshot boot (the world identities key the ships)')
+        with (args.out/'ui/config.lua.append').open('a') as config:
+            config.write("X4LAN_CONFIG.native_gate_death_rng = 'all'"+chr(10))
+    if args.path_transforms:
+        if not args.snapshot or not args.serial_pathing or not args.travel_determinism:
+            p.error('--path-transforms needs the snapshot boot, --serial-pathing and --travel-determinism (the inline batch jobs)')
+        with (args.out/'ui/config.lua.append').open('a') as config:
+            config.write(f"X4LAN_CONFIG.native_gate_path_transforms = '{args.path_transforms}'"+chr(10))
+    if args.wreck_clock_rows:
+        first, last = args.wreck_clock_rows
+        if not 1 <= first <= last:
+            p.error('--wreck-clock-rows FIRST LAST needs 1 <= FIRST <= LAST')
+        with (args.out/'ui/config.lua.append').open('a') as config:
+            config.write(f'X4LAN_CONFIG.native_gate_wreck_clock_rows = {{{first}, {last}}}'+chr(10))
+    if args.death_all_rows:
+        if not args.death_all:
+            p.error('--death-all-rows needs --death-all')
+        with (args.out/'ui/config.lua.append').open('a') as config:
+            config.write('X4LAN_CONFIG.native_gate_death_all_rows = true'+chr(10))
     if args.path_budget is not None:
         if not args.snapshot or not args.serial_pathing or args.path_budget < 1:
             p.error('--path-budget N needs N >= 1, the snapshot boot and --serial-pathing')
@@ -1194,6 +1221,17 @@ X4LAN_CONFIG.slot = "@X4LANE_SLOT@"
             p.error('--runtime-id-callers needs --runtime-ids')
         with (args.out/'ui/config.lua.append').open('a') as config:
             config.write('X4LAN_CONFIG.native_gate_runtime_ids_callers = true\n')
+    if args.runtime_id_removes:
+        if not args.runtime_ids:
+            p.error('--runtime-id-removes needs --runtime-ids')
+        with (args.out/'ui/config.lua.append').open('a') as config:
+            config.write('X4LAN_CONFIG.native_gate_runtime_ids_removes = true\n')
+    if args.world_controller_rows:
+        first, last = args.world_controller_rows
+        if not args.world_hash_watch or not 1 <= first <= last:
+            p.error('--world-controller-rows FIRST LAST needs --world-hash-watch and 1 <= FIRST <= LAST')
+        with (args.out/'ui/config.lua.append').open('a') as config:
+            config.write(f'X4LAN_CONFIG.native_gate_world_controller_rows = {{{first}, {last}}}\n')
     if args.runtime_ids_local:
         if not args.runtime_ids or not args.created_identities:
             p.error('--runtime-ids-local needs --runtime-ids and --created-identities')

@@ -191,6 +191,9 @@ static int lxio_installed;
 static void lxsnd_restore(void); /* the sound starts' private draws (gate_sound_rng.h) */
 static int lxsnd_check(void);
 static int lxsnd_installed;
+static void lxd_restore(void); /* a ship's death draws keyed (gate_death_rng.h) */
+static int lxd_check(void);
+static int lxd_installed;
 static int lxsr_check(void);
 static int lxsr_installed;
 /* Physics shape refresh: the fixture path and shape_refresh (gate_shape.h, included below). */
@@ -631,6 +634,8 @@ static void finish(unsigned reason) {
     if(lxio_installed) stats.restored=0;
     lxsnd_restore();
     if(lxsnd_installed) stats.restored=0;
+    lxd_restore();
+    if(lxd_installed) stats.restored=0;
     if(lxis_installed) stats.restored=0;
     if(lxai_installed) stats.restored=0;
     if(lxvd_installed) stats.restored=0;
@@ -778,6 +783,7 @@ static void gate_tick(void *frame,unsigned char loading) {
     if(lxct_installed && !lxct_check()) {finish(70);gate_original_once(frame,loading);return;} /* the contact diag, as Windows */
     if(lxio_installed && !lxio_check()) {finish(215);gate_original_once(frame,loading);return;} /* LXIO_STOP_REASON, as Windows */
     if(lxsnd_installed && !lxsnd_check()) {finish(217);gate_original_once(frame,loading);return;} /* LXSND_STOP_REASON */
+    if(lxd_installed && !lxd_check()) {finish(218);gate_original_once(frame,loading);return;} /* LXD_STOP_REASON */
     if(lxmc_installed && !lxmc_check()) {finish(166);gate_original_once(frame,loading);return;} /* LXMC_STOP_REASON */
     if((lxf_installed || lxf_ctor_installed) && (!lxf_owned() || lxf_failures)) {finish(55);gate_original_once(frame,loading);return;} /* flight, as Windows */
     if(ai_wait_armed && ai_wait_failures) {finish(88);gate_original_once(frame,loading);return;}
@@ -1014,6 +1020,8 @@ static int lua_start(lua_State *L) {
 #include "../lockstep_body_mass.h" /* the read-only census, shared with Windows */
 #include "gate_body_mass.h"
 #include "gate_sound_rng.h"
+#include "lockstep_death_all.h"
+#include "gate_death_rng.h"
 #include "gate_mining_camera.h"
 #include "gate_flight.h"
 #include "gate_battle.h"
@@ -1273,7 +1281,7 @@ GATE_EXPORT int luaopen_x4lan_gate(lua_State *L) {
     METHOD(economy_load_rng);METHOD(economy_load_rng_status);METHOD(economy_load_rng_row);
     METHOD(navmesh_post_observe);METHOD(navmesh_post_observe_status);METHOD(navmesh_post_observe_row);
     METHOD(economy_watch_config);METHOD(economy_watch_capture);METHOD(economy_watch_status);
-    METHOD(world_watch);METHOD(world_capture);METHOD(world_capture_nav_v2);METHOD(world_capture_rolling);METHOD(world_page);METHOD(world_detail);METHOD(world_health);METHOD(world_hash_shields);METHOD(world_hash_shields_status);METHOD(flight_faults);METHOD(flight);METHOD(avoidance);METHOD(agent);METHOD(ship);METHOD(spline);METHOD(body);
+    METHOD(world_watch);METHOD(world_capture);METHOD(world_capture_nav_v2);METHOD(world_capture_rolling);METHOD(world_page);METHOD(world_detail);METHOD(world_health);METHOD(world_controller);METHOD(world_hash_shields);METHOD(world_hash_shields_status);METHOD(flight_faults);METHOD(flight);METHOD(avoidance);METHOD(agent);METHOD(ship);METHOD(spline);METHOD(body);
     METHOD(actor);METHOD(params);METHOD(snapshot_fixture);METHOD(snapshot_actor);METHOD(snapshot_enroll);METHOD(snapshot_status);
     METHOD(world_banks);METHOD(saved_identity);
     METHOD(path_determinism);METHOD(path_determinism_status);METHOD(path_budget);METHOD(path_budget_status);
@@ -1294,8 +1302,8 @@ GATE_EXPORT int luaopen_x4lan_gate(lua_State *L) {
     METHOD(gravidar_deadlines);METHOD(gravidar_deadlines_status);
     METHOD(travel_snapshot);METHOD(travel_snapshot_status);
     METHOD(travel_determinism);METHOD(travel_determinism_status);
-    METHOD(runtime_ids);METHOD(runtime_ids_status);METHOD(runtime_ids_word);METHOD(runtime_ids_map_row);METHOD(runtime_ids_caller_row);METHOD(runtime_ids_callers);METHOD(runtime_ids_local);METHOD(runtime_ids_probe);
-    METHOD(script_rng);METHOD(script_rng_status);METHOD(script_rng_row);METHOD(script_rng_own_entries);METHOD(md_timed_rng);METHOD(md_timed_rng_status);METHOD(find_order);METHOD(find_order_status);METHOD(find_order_row);METHOD(loadout_order);METHOD(loadout_order_status);METHOD(loadout_order_row);METHOD(nav_key);METHOD(nav);METHOD(attention);METHOD(shape);METHOD(attention_all);METHOD(attention_all_status);METHOD(path_transform_observe);METHOD(path_transform_observe_status);METHOD(path_transform_observe_row);METHOD(step_trace);METHOD(step_trace_arm);METHOD(step_trace_status);METHOD(step_trace_row);METHOD(step_chain);METHOD(fp_redirect);METHOD(fp_redirect_watch);METHOD(fp_redirect_status);METHOD(fp_redirect_row);METHOD(fp_redirect_solver);METHOD(coverage);METHOD(coverage_frame);METHOD(coverage_status);METHOD(coverage_row);METHOD(nav_cadence);METHOD(nav_cadence_status);METHOD(nav_cadence_row);METHOD(nav_cadence_watch);METHOD(nav_probe_init);METHOD(nav_params_init);METHOD(created_identities);METHOD(portable_created);METHOD(created_load);METHOD(created_identities_status);METHOD(created_row);METHOD(created_identity);METHOD(created_runtime);METHOD(gravidar_wide);METHOD(gravidar_wide_status);METHOD(spawn_rng);METHOD(spawn_rng_status);METHOD(spawn_rng_row);
+    METHOD(runtime_ids);METHOD(runtime_ids_status);METHOD(runtime_ids_word);METHOD(runtime_ids_map_row);METHOD(runtime_ids_caller_row);METHOD(runtime_ids_callers);METHOD(runtime_ids_removes);METHOD(runtime_ids_remove_row);METHOD(death_all);METHOD(death_all_status);METHOD(death_all_row);METHOD(wreck_clock);METHOD(wreck_clock_row);METHOD(view_slots);METHOD(runtime_ids_local);METHOD(runtime_ids_probe);
+    METHOD(script_rng);METHOD(script_rng_status);METHOD(script_rng_row);METHOD(script_rng_own_entries);METHOD(md_timed_rng);METHOD(md_timed_rng_status);METHOD(find_order);METHOD(find_order_status);METHOD(find_order_row);METHOD(loadout_order);METHOD(loadout_order_status);METHOD(loadout_order_row);METHOD(nav_key);METHOD(nav);METHOD(attention);METHOD(shape);METHOD(attention_all);METHOD(attention_all_status);METHOD(path_transform_observe);METHOD(path_transform_observe_status);METHOD(path_transform_observe_row);METHOD(path_transforms);METHOD(path_transforms_status);METHOD(path_transforms_row);METHOD(step_trace);METHOD(step_trace_arm);METHOD(step_trace_status);METHOD(step_trace_row);METHOD(step_chain);METHOD(fp_redirect);METHOD(fp_redirect_watch);METHOD(fp_redirect_status);METHOD(fp_redirect_row);METHOD(fp_redirect_solver);METHOD(coverage);METHOD(coverage_frame);METHOD(coverage_status);METHOD(coverage_row);METHOD(nav_cadence);METHOD(nav_cadence_status);METHOD(nav_cadence_row);METHOD(nav_cadence_watch);METHOD(nav_probe_init);METHOD(nav_params_init);METHOD(created_identities);METHOD(portable_created);METHOD(created_load);METHOD(created_identities_status);METHOD(created_row);METHOD(created_identity);METHOD(created_runtime);METHOD(gravidar_wide);METHOD(gravidar_wide_status);METHOD(spawn_rng);METHOD(spawn_rng_status);METHOD(spawn_rng_row);
     METHOD(read_cost);METHOD(fork_save);METHOD(fork_save_status);METHOD(fp_redirect_drones);METHOD(fp_attack);METHOD(fp_attack_watch);METHOD(fp_attack_status);METHOD(fp_attack_row);
 #undef METHOD
     return 1;

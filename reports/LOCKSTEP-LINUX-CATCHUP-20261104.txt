@@ -723,6 +723,40 @@ WORLD CENSUS, WINDOWS AGAINST LINUX, TODAY'S DEFAULTS (22 Nov)
     no Windows default tried so far moves the crews' tick (also not character_play, body_clock, move_rng, the speech
     timers, shape_order, macro_arena, bullet_cadence, cutscene_ready, runtime_ids_barrier, death_rng, bullet_rng,
     weapon_rng). Next: where X4 destroys a killed ship's crew on each executable (the frame phase that runs it).
+  - The crews are not the cause (22 Nov evening). native_gate_runtime_ids_removes (both gates, RUNTIME_IDS_REMOVE rows:
+    tick, place among the frame's removals, stack of each removal of a saved object) shows the four crew members
+    deleted in the same frame and at the same place among that frame's removals on both executables (W65 against
+    lx93a), inside the UI thread's event dispatch. The Windows census captures after that work and the Linux census
+    before it, so the census lists them one tick apart (nav_raw's double-buffer flag is also one tick out of phase at
+    every tick on the two gates); nothing diverged there.
+  - The twelve fighters' move target is the Kha'ak ship 0x9fa51 (Windows motion watch: MOTION_TARGET ref=9fa51,
+    FlightControlModel::SetTarget W 0xeaf620 / L 0x141d140, the Linear model's target transform at +0x20 / +0x10),
+    the ship killed at tick 75. U::Ship's KillEvent listener (W 0x7cd610 in slot 8 of the S/M/L/XL vtables, L 0x12adf40
+    in slot 9) gives the wreck a U::LinearDecelerationController: six Random::FloatState draws for its linear and angular
+    drift (W 0x7d3bf0 through 0x14ddc90, L inlined), the same component order on both executables, from the delivering
+    UI thread's word. That word ends frames 1, 25-35, 51-61 and 75 differently on the two executables (RNG rows).
+    native_gate_death_rng = 'all' (a new Windows default, in the mixed-platform settings; lockstep_death_all.h, Windows
+    lockstep_death.h with the M and L slots, Linux linux/gate_death_rng.h, stop reason 218) runs the listener on a word
+    from the tick, the ship's portable key and the reason. With it the wreck controllers are byte-equal on both: base
+    pose, start time 9.5497 (the kill's due time), velocities (-9.498, 10.17, -931.1), spin, duration 10 s (W69
+    against lx97a/lx100a, WORLD_CONTROLLER rows).
+  - Then the pose read (fixed). The fighters' Linear step has the same start time on both (plan +0x80 / +0x70:
+    9.649667, tick 77), but the target point it took from the wreck was one tick of drift further on Windows (z -13537.50
+    against -13506.72; the wreck moves 931 m/s). WRECK_CLOCK rows (native_gate_wreck_clock_rows: every call of the wreck
+    controller's pose function, W slot 6 0xe27580, L 0x14ddcd0 through an entry detour since GCC calls it directly) showed
+    the same UI-thread reads on both at 74-76 (6, 104, 4) and, at 77, twelve Windows reads from the pathing batch jobs
+    (0xe8a41b, time 9.6497) that the Linux build never made. That is Windows' default native_gate_path_transforms = 'sim'
+    (lockstep_path_transforms.h): in a batch job a span holding an object without an Agent (a wreck) is composed with
+    GetTransformRelativeTo 0x3db8a0 at the pass time, where native 0x3dde10 reads the published view cache (the render's
+    copy). The Linux gate had only a diagnostic observer of the same five calls (gate_path_transform_observe.h); it now
+    has 'sim' too: the live composition 0x18a0090 at manager+0x390 is the answer (gate.path_transforms('sim'), in the
+    mixed-platform settings and the bundles' --path-transforms). W73 against lx105a (today's defaults, a capture every
+    tick): both divert 475 calls by tick 100 (objects=475), and all 522,467 objects are equal at every tick 1..100 except
+    the four crew rows at 75-77 (the capture-phase difference above).
+    New diagnostics: native_gate_runtime_ids_removes, native_gate_world_controller_rows (WORLD_CONTROLLER: a watched
+    object's movement controller raw), native_gate_death_all_rows (DEATH_ALL_ROW: each keyed death's time argument and
+    thread clock; equal on both), the Linux WORLD_MOTION row's model= target_ref= target= plan= (Windows MOTION_WATCH's
+    target= and model_ext=).
 
 FUNCTION COVERAGE WITH PLAYER INPUT ON LINUX (191754a1, b1688473; lx32a, lx32b)
   native_gate_coverage_from = T (Linux gate only; linux_gate_live.py --coverage-from) puts the coverage marks in at

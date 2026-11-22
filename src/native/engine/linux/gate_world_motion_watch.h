@@ -5,7 +5,7 @@
  * do not create a lifetime lock or exclude an unobserved ABA. */
 #define WORLD_MOTION_WATCH_MAX 4u
 #define WORLD_MOTION_WINDOW_MAX 18000u
-#define WORLD_MOTION_ROW_BYTES 1100u
+#define WORLD_MOTION_ROW_BYTES 1700u
 typedef struct { uint64_t saved, runtime; } world_motion_target;
 typedef struct {
     uintptr_t vtable, controller, parent;
@@ -131,10 +131,24 @@ static int world_motion_capture(uint64_t tick) {
         world_motion_hex(timing, sizeof(timing), timing_text);
         uint32_t cursor;
         memcpy(&cursor, snapshot.nav + 8, 4);
+        /* The agent's flight control model (agent+0xf30; Windows +0xf10): its vtable and its target, the transform at
+         * +0x10..+0x50 and the reference ID at +0x50 (Windows +0x20/+0x60, lockstep_motion_watch.h target=), as read. */
+        uintptr_t model = 0, model_vt = 0;
+        unsigned char model_target[0x48] = {0}, model_plan[0x70] = {0};
+        char model_text[sizeof(model_target) * 2 + 1], plan_text[sizeof(model_plan) * 2 + 1];
+        uint64_t model_ref = 0;
+        if (!WREAD(snapshot.links.agent + 0xf30u, &model, 8) || !model || !WREAD(model, &model_vt, 8) ||
+            !WREAD(model + 0x10u, model_target, sizeof(model_target)) || !WREAD(model + 0x60u, model_plan, sizeof(model_plan))) model = 0;
+        /* the Linear model's plan at +0x60..+0xd0 (Windows +0x70..+0xe0, model_ext=): start position and time, last step time */
+        world_motion_hex(model_plan, sizeof(model_plan), plan_text);
+        memcpy(&model_ref, model_target + 0x40, 8);
+        world_motion_hex(model_target, sizeof(model_target), model_text);
         int length = snprintf(world_motion_rows[index], WORLD_MOTION_ROW_BYTES,
-            "version=1 tick=%llu id=%016llx type=%08x flags=%08x parent=%016llx read=%u write=%u cursor=%u motion=%s timing=%s",
+            "version=1 tick=%llu id=%016llx type=%08x flags=%08x parent=%016llx read=%u write=%u cursor=%u motion=%s timing=%s"
+            " model=%x target_ref=%016llx target=%s plan=%s",
             (unsigned long long)tick, (unsigned long long)target->saved, before.type, before.flags,
-            (unsigned long long)before.parent_saved, snapshot.links.read, snapshot.links.write, cursor, motion_text, timing_text);
+            (unsigned long long)before.parent_saved, snapshot.links.read, snapshot.links.write, cursor, motion_text, timing_text,
+            model ? (unsigned)(model_vt - LX_IMAGE_BASE) : 0u, (unsigned long long)world_identity_portable(model_ref), model_text, plan_text);
         world_motion_problem = "row_truncated";
         if (length < 0 || (size_t)length >= WORLD_MOTION_ROW_BYTES) return 0;
     }

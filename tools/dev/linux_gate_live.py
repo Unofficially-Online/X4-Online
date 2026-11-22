@@ -349,6 +349,10 @@ def bundle(args):
         command.append('--runtime-ids')
     if args.runtime_id_callers:
         command.append('--runtime-id-callers')
+    if args.runtime_id_removes:
+        command.append('--runtime-id-removes')
+    if args.world_controller_rows:
+        command += ['--world-controller-rows', *map(str, args.world_controller_rows)]
     if args.runtime_ids_local:
         command.append('--runtime-ids-local')
     if args.script_rng:
@@ -465,6 +469,14 @@ def bundle(args):
         command += ['--path-budget', str(args.path_budget)]
     if args.sound_rng:
         command += ['--sound-rng', args.sound_rng]
+    if args.death_rng == 'all':
+        command.append('--death-all')
+    if args.death_all_rows:
+        command.append('--death-all-rows')
+    if args.wreck_clock_rows:
+        command += ['--wreck-clock-rows', *map(str, args.wreck_clock_rows)]
+    if args.path_transforms:
+        command += ['--path-transforms', args.path_transforms]
     if args.contact_mass:
         command.append('--contact-mass')
     if args.constraint_diag:
@@ -559,6 +571,8 @@ def bundle(args):
         'probe_profile',
         'runtime_ids',
         'runtime_id_callers',
+        'runtime_id_removes',
+        'world_controller_rows',
         'runtime_ids_local',
         'script_rng',
         'script_rng_mask',
@@ -604,6 +618,10 @@ def bundle(args):
         'contact_mass',
         'path_budget',
         'sound_rng',
+        'death_rng',
+        'death_all_rows',
+        'wreck_clock_rows',
+        'path_transforms',
         'impulse_diag',
         'ik_diag',
         'ik_step',
@@ -1368,6 +1386,8 @@ def main(argv=None):
     b.add_argument('--md-resume-rng', action='store_true', help='load-time MD cue delays on per-cue streams')
     b.add_argument('--runtime-ids', action='store_true', help='the same runtime IDs on every client (set mode)')
     b.add_argument('--runtime-id-callers', action='store_true', help='the table of who allocates runtime IDs (needs --runtime-ids)')
+    b.add_argument('--world-controller-rows', type=int, nargs=2, metavar=('FIRST', 'LAST'), help='WORLD_CONTROLLER rows of the watched objects in these ticks (diagnostic)')
+    b.add_argument('--runtime-id-removes', action='store_true', help='RUNTIME_IDS_REMOVE rows: the tick and stack of every removal of a saved object (needs --runtime-ids)')
     b.add_argument('--runtime-ids-local', action='store_true', help='what only the view asks for takes runtime IDs from its own lists (needs --runtime-ids and --created-identities)')
     b.add_argument('--script-rng', choices=('observe', 'key'), help='AI scripts and MD cues on per-script streams')
     b.add_argument('--script-rng-mask', type=int, choices=range(1, 8), metavar='1..7', help='1 AI scripts, 2 MD cues, 4 also boot phase 2 (default 3)')
@@ -1435,6 +1455,10 @@ def main(argv=None):
     b.add_argument('--probes-diag', action='store_true', help='PROBES rows: the fixture ships obstacle probe vectors (native_gate_probes_diag)')
     b.add_argument('--weave-phase', action='store_true', help="the weaving behaviours' phase as Windows computes it (native_gate_weave_phase)")
     b.add_argument('--sound-rng', choices=('split',), help="sound starts draw from private words, as Windows' default (native_gate_sound_rng)")
+    b.add_argument('--path-transforms', choices=('sim',), help="pathing reads simulation transforms where a wreck is in the chain, as Windows' default (native_gate_path_transforms)")
+    b.add_argument('--wreck-clock-rows', type=int, nargs=2, metavar=('FIRST', 'LAST'), help='WRECK_CLOCK rows in these ticks (diagnostic)')
+    b.add_argument('--death-all-rows', action='store_true', help='DEATH_ALL_ROW rows (diagnostic, with --death-rng all)')
+    b.add_argument('--death-rng', choices=('all',), help="every ship's death draws keyed by tick and portable key, as Windows' default (native_gate_death_rng)")
     b.add_argument('--path-budget', type=int, metavar='N', help="the pathing round robin by count, N full updates per batch and pass, "
                    "as Windows' default (100) (native_gate_path_budget)")
     b.add_argument('--contact-mass', action='store_true', help="contact constraints' effective masses summed in the Windows build's order (native_gate_contact_mass)")

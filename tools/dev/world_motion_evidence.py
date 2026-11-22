@@ -14,7 +14,7 @@ ARMED = re.compile(r'NATIVE_GATE WORLD_MOTION_ARMED version=1 first=(\d+) last=(
 ROW = re.compile(
     r'NATIVE_GATE WORLD_MOTION version=1 tick=(\d+) id=([0-9a-f]{16}) '
     r'type=([0-9a-f]{8}) flags=([0-9a-f]{8}) parent=([0-9a-f]{16}) '
-    r'read=([01]) write=([01]) cursor=([012]) motion=([0-9a-f]{412}) timing=([0-9a-f]{190})\s*$')
+    r'read=([01]) write=([01]) cursor=([012]) motion=([0-9a-f]{412}) timing=([0-9a-f]{190})(?: model=[0-9a-f]+ target_ref=[0-9a-f]{16} target=[0-9a-f]{144} plan=[0-9a-f]{224})?\s*$')
 FOOTER = re.compile(r'NATIVE_GATE WORLD_MOTION_STOP count=(\d+) first=(\d+) last=(\d+) samples=(\d+) failures=(\d+)\s*$')
 STOP = re.compile(r'NATIVE_GATE STOP slot=p(\d+) completed=(\d+) reason=(\d+) restored=(\d+)(?:\s|$)')
 
