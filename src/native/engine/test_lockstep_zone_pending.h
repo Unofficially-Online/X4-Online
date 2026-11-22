@@ -59,6 +59,7 @@ static void test_near_page(void) {
     NEAR_STUB("zone pending",ZPEND_STUB,0x20);NEAR_STUB("controller end",PSLOT_CTL_END_STUB,0x20);NEAR_STUB("controller end trampoline",PSLOT_CTL_END_TRAMPOLINE,0x20);
     NEAR_STUB("menu",PVEHK_MENU_STUB,0x20);NEAR_STUB("menu trampoline",PVEHK_MENU_TRAMPOLINE,0x20);
     NEAR_STUB("ui holds add",UIH_STUB_ADD,0x20);NEAR_STUB("ui holds drop",UIH_STUB_DROP,0x20);NEAR_STUB("transporter",PFTR_CARRY_STUB,0x20);NEAR_STUB("figure",FFIG_BODY_STUB,0x20);
+    NEAR_STUB("undock events",UDSCR_STUB,0x20);NEAR_STUB("undock events trampoline",UDSCR_TRAMPOLINE,0x20);
     NEAR_STUB("media conversation",MDV_CONV_STUB,0x20);
     #undef NEAR_STUB
     for(unsigned i=0;i<n;i++) {

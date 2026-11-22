@@ -920,6 +920,24 @@ function K.session(p)
      e.scoped and (scoped and ' scope=1' or ' scope=0') or '')) end
   end
  end
+ -- A slot 2..N's own undock end (lockstep_undock_screen.h): X4 raises the UI event playerUndocked only for its own
+ -- player's ship, slot 1's, so on a client of slot 2..N the HUD's top level menu never came back after an undock
+ -- (menu_toplevel.lua opens it on that event) and the menu helper stayed "undocking". The client raises it itself, as a
+ -- person's UI does: in its presentation scope, at the tick its own ship is no longer docked. Row UI_REPLAY_UNDOCKED.
+ local undock_was
+ local function undock_watch(tick)
+  if not p.undocked_event or not p.own_docked or (p.own_slot or 1)<2 or not p.present then return end
+  if not p.present(true) then return end
+  if p.local_mark then p.local_mark(0) end
+  local ok,docked=pcall(p.own_docked)
+  local raised,why
+  if ok and docked==false and undock_was==true then raised,why=pcall(p.undocked_event) end
+  if p.local_mark then p.local_mark(1) end
+  p.present(false)
+  if raised~=nil then log('UI_REPLAY_UNDOCKED tick='..tick..' slot='..tostring(p.own_slot)..' '..(raised and 'raised' or 'error:'..tostring(why))) end
+  if ok and docked~=nil then undock_was=docked end
+ end
+ S.undock_watch=undock_watch
  -- Test console (native_gate_ui_replay_console, default off): p.console() loads a Lua file of this client that the
  -- person at the test rig rewrites while the session runs: `return {n=NUMBER, run=function(tools,S) ... end}`. A
  -- number above the last one seen runs once, where a scripted op runs: as a person's click (not the probe's own
@@ -1019,6 +1037,7 @@ function K.session(p)
   protect(tick)
   run_script(tick)
   run_console(tick)
+  undock_watch(tick)
   guard_frame(tick)
   local refusals=gate.ui_replay_refusals()
   if refusals then log('UI_REPLAY_REFUSED_NATIVE tick='..tick..' '..refusals) end

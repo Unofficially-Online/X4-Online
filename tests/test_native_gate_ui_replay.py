@@ -915,6 +915,48 @@ class PlotSignalTests(unittest.TestCase):
         self.assertEqual(values(g.logs)[-2:], ['PLOT_READY tick=140 code=1 signalled', 'PLOT_DEBUG tick=600 code=101 signalled'])
 
 
+class UndockWatchTests(unittest.TestCase):
+    """A slot 2..N's own playerUndocked (S.undock_watch; lockstep_undock_screen.h: X4 raises it for player 1's ship only):
+    raised once, inside the client's presentation scope and outside the probe's mark, at the tick its own ship is no
+    longer docked. Mocked exports: the calls and the row, not the game."""
+
+    def session(self, own_slot=2, event=True):
+        lua, g = client()
+        lua.execute('''
+          calls={};DOCKED=nil
+          function make(own_slot,event)
+            return X4LAN_UI_REPLAY_CORE.session({gate=gate,C=C,env=env,log=log,mask=7,slot_ships=function() return {} end,own_slot=own_slot,
+              present=function(on) calls[#calls+1]='present:'..tostring(on);return true end,
+              local_mark=function(on) calls[#calls+1]='mark:'..on end,
+              own_docked=function() return DOCKED end,
+              undocked_event=event and function() calls[#calls+1]='playerUndocked' end or nil})
+          end
+        ''')
+        lua.execute('S=make(%d,%s)' % (own_slot, 'true' if event else 'false'))
+        return lua, g
+
+    def watch(self, lua, g, states):
+        for tick, docked in states:
+            g.DOCKED = docked
+            lua.execute('S.undock_watch(%d)' % tick)
+
+    def test_raised_once_when_the_own_ship_leaves_its_dock(self):
+        lua, g = self.session()
+        self.watch(lua, g, ((10, False), (11, True), (12, True), (13, False), (14, False), (15, None), (16, False)))
+        calls = values(g.calls)
+        self.assertEqual(calls.count('playerUndocked'), 1)
+        at = calls.index('playerUndocked')
+        self.assertEqual(calls[at - 2:at + 3], ['present:true', 'mark:0', 'playerUndocked', 'mark:1', 'present:false'])
+        self.assertEqual(calls.count('present:true'), calls.count('present:false'))
+        self.assertEqual([l for l in values(g.logs) if l.startswith('UI_REPLAY_UNDOCKED')], ['UI_REPLAY_UNDOCKED tick=13 slot=2 raised'])
+
+    def test_slot_one_and_a_session_without_it_do_nothing(self):
+        for own_slot, event in ((1, True), (2, False)):
+            lua, g = self.session(own_slot, event)
+            self.watch(lua, g, ((10, True), (11, False)))
+            self.assertEqual(values(g.calls), [])
+
+
 class OptionTests(unittest.TestCase):
     def test_rules(self):
         self.assertEqual(failures(stock_config()), [])

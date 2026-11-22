@@ -3848,6 +3848,15 @@ function pilot_view.arm_ui_replay(slot,window)
   fleet=cfg.native_gate_ui_replay_fleet,fleet_tick=window[1]-4,saved_lua=tools.saved_lua,queue_of=queue_of,
   local_mark=(cfg.native_gate_runtime_ids_local or guard or math.floor(mask/core.FAMILY.events)%2==1 or math.floor(mask/core.FAMILY.trade)%2==1) and gate.runtime_ids_probe or nil,present=present,
   min_hull=min_hull,slots=#cfg.native_gate_pilot_slots,slot_lua=tools.slot_lua,own_slot=slot,guard=guard,pss=pss,pss_spawn=pss_spawn,
+  -- a slot 2..N's own playerUndocked (lockstep_undock_screen.h: X4 raises it for player 1's ship only), read and raised in
+  -- this client's presentation scope by the core's undock_watch
+  undocked_event=cfg.native_gate_undock_screen==true and gate.undock_screen and type(CallEventScripts)=='function' and
+   function() CallEventScripts('playerUndocked') end or nil,
+  own_docked=function()
+   local ship=ConvertStringTo64Bit(tostring(ffi.C.GetPlayerOccupiedShipID()))
+   if ship==0 then return nil end
+   return GetComponentData(ship,'isdocked') and true or false
+  end,
   -- the test console's file of this client (native_gate_ui_replay_console: a path with %d for the slot), and what its chunk gets
   console=type(cfg.native_gate_ui_replay_console)=='string' and function() local chunk=loadfile(string.format(cfg.native_gate_ui_replay_console,slot));if chunk then return chunk() end end or nil,console_tools=tools,
   mpp=cfg.native_gate_missions_per_player==true,   -- slots 2+ capture the events and missions families, applied in their own scope
@@ -6780,6 +6789,15 @@ local function frame()
       'anim listeners refused '..tostring(gate.anim_listeners_status and gate.anim_listeners_status()))
      log('ANIM_LISTENERS_ARMED '..tostring(gate.anim_listeners_status()))
     end
+    -- An undock's UI events reach the undocking player's screen only (lockstep_undock_screen.h; a session default,
+    -- Windows gate): X4 raised playerUndock on every client (one player's undock closed the other's dock menu) and
+    -- playerUndocked for player 1's ship only (no top level menu after player 2's undock; the UI replay core raises
+    -- a slot 2..N's own, undock_watch).
+    if cfg.native_gate_undock_screen and gate.undock_screen then
+     assert(cfg.native_gate_undock_screen==true and gate.undock_screen(1)==1,
+      'undock screen refused '..tostring(gate.undock_screen_status and gate.undock_screen_status()))
+     log('UNDOCK_SCREEN_ARMED '..tostring(gate.undock_screen_status()))
+    end
     -- The frame's pending physics work runs in every frame (lockstep_zone_pending.h; a session default, Windows gate):
     -- X4 skips it when another thread holds a lock at that moment, and two clients then build the same bodies a tick apart.
     if cfg.native_gate_zone_pending and gate.zone_pending and not (gate.platform and gate.platform()=='linux') then
@@ -7431,6 +7449,7 @@ local function frame()
   if cfg.native_gate_swarm_seed and gate.swarm_seed_status then ticklog.status('SWARM_SEED',tick,gate.swarm_seed_status,'swarm seed status unavailable') end
   if cfg.native_gate_zone_pending and gate.zone_pending_status then ticklog.status('ZONE_PENDING',tick,gate.zone_pending_status,'zone pending status unavailable') end
   if cfg.native_gate_anim_listeners and gate.anim_listeners_status then ticklog.status('ANIM_LISTENERS',tick,gate.anim_listeners_status,'anim listeners status unavailable') end
+  if cfg.native_gate_undock_screen and gate.undock_screen_status then ticklog.status('UNDOCK_SCREEN',tick,gate.undock_screen_status,'undock screen status unavailable') end
   if cfg.native_gate_faction_present and gate.faction_present_status then ticklog.status('FACTION_PRESENT',tick,gate.faction_present_status,'faction present status unavailable') end
   if cfg.native_gate_view_cameras and gate.view_cameras_status then ticklog.status('VIEW_CAMERAS',tick,gate.view_cameras_status,'view cameras status unavailable') end
   if cfg.native_gate_scan_long and gate.scan_long_status then ticklog.status('SCAN_LONG',tick,gate.scan_long_status,'scan long status unavailable') end

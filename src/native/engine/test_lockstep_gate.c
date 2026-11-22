@@ -1120,6 +1120,7 @@ static void test_dynamic_registry(void) {
 #include "test_lockstep_scan_mode.h"
 #include "test_lockstep_pilot_deliver.h"
 #include "test_lockstep_anim_listeners.h"
+#include "test_lockstep_undock_screen.h"
 #include "test_lockstep_zone_pending.h"
 #include "test_lockstep_faction_present.h"
 #include "test_lockstep_conversation_owner.h"
@@ -1136,6 +1137,7 @@ int main(int argc,char **argv) {
     if(argc==2) test_runtime_ids_native_image(argv[1]);
     if(argc==2) test_guidance_local_native_image(argv[1]);
     if(argc==2) test_swarm_seed_native_image(argv[1]);
+    if(argc==2) test_undock_screen_native_image(argv[1]);
     if(argc==2) test_ui_replay_native_image(argv[1]);
     if(argc==2) test_ui_guard_native_image(argv[1]);
     if(argc==2) test_ui_build_native_image(argv[1]);
@@ -1278,6 +1280,7 @@ int main(int argc,char **argv) {
     test_scan_mode();
     test_pilot_deliver();
     test_anim_listeners();
+    test_undock_screen();
     test_zone_pending();
     test_near_page();
     test_faction_present();
