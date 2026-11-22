@@ -105,8 +105,11 @@ MIXED_PLATFORM_SETS = ("native_gate_fp_redirect='redirect'", 'native_gate_fp_red
                                                           # pass time (linux/gate_path_transform_observe.h); without it Linux read
                                                           # the published view cache, a tick of the wreck's drift behind
                                                           # (linux/gate_sound_rng.h; W46 against lx85a, the fighters' scopes 9 / 11 draws)
-                       'native_gate_contact_orient=true')  # a Windows default already: contact pairs in the portable order
+                       'native_gate_contact_orient=true',  # a Windows default already: contact pairs in the portable order
                                                           # (linux/gate_contact_orient.h, the five sites of lockstep_contact_orient.h)
+                       "native_gate_ui_lazy='key'")       # a Windows default already: the UI's lazy container updates skipped
+                                                          # and the simulation's keyed (linux/gate_ui_lazy.h; W82 against lx113a,
+                                                          # 22 Nov: a ShipMedium re-planned ten ticks later on Linux, apart at 525)
 # The Windows host's own part of --mixed-platform (not a Linux bundle option): Windows defaults whose Linux twin is not there
 # yet, off so that both sides run the same code. Empty since contact_orient's twin (linux/gate_contact_orient.h) landed.
 MIXED_PLATFORM_WINDOWS_SETS = ()

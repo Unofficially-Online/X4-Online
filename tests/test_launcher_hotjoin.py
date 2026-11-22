@@ -340,7 +340,7 @@ class MixedPlatformTests(unittest.TestCase):
             for key in ("native_gate_fp_redirect='redirect'", "native_gate_fp_redirect_solver='redirect'",
                         "native_gate_fp_redirect_drones='redirect'", 'native_gate_fp_redirect_ticks=5', 'native_gate_nav_rng=true',
                         'native_gate_nav_initial_refresh=true', 'native_gate_attention_rng=true', 'native_gate_shape_initial_refresh=true',
-                        "native_gate_shape_refresh='view'", 'native_gate_radar_initial_refresh=true', 'native_gate_steer_roll=true', 'native_gate_avoid_angle=true', 'native_gate_pursuit_speed=true', 'native_gate_weave_phase=true', 'native_gate_island_order=true', 'native_gate_contact_mass=true', 'native_gate_path_budget=100', "native_gate_sound_rng='split'", "native_gate_death_rng='all'", "native_gate_path_transforms='sim'", 'native_gate_contact_orient=true'):
+                        "native_gate_shape_refresh='view'", 'native_gate_radar_initial_refresh=true', 'native_gate_steer_roll=true', 'native_gate_avoid_angle=true', 'native_gate_pursuit_speed=true', 'native_gate_weave_phase=true', 'native_gate_island_order=true', 'native_gate_contact_mass=true', 'native_gate_path_budget=100', "native_gate_sound_rng='split'", "native_gate_death_rng='all'", "native_gate_path_transforms='sim'", 'native_gate_contact_orient=true', "native_gate_ui_lazy='key'"):
                 self.assertIn(key, sets)
             self.assertNotIn('native_gate_fp_redirect_ticks=3', sets)   # the builder's own value wins
             self.assertNotIn('native_gate_contact_orient=false', sets)  # the Linux twin is there: on in mixed sessions too

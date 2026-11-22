@@ -789,6 +789,32 @@ CONTACT ORIENTATION ON LINUX (linux/gate_contact_orient.h; lx110a, lx111a agains
   native_gate_contact_orient=true is now in MIXED_PLATFORM_SETS (the bundle's --contact-orient; observe and reverse on
   the command line override it), and MIXED_PLATFORM_WINDOWS_SETS is empty.
 
+THE UI'S LAZY CONTAINER UPDATES ON LINUX (linux/gate_ui_lazy.h; W82, W85 against lx113a, lx114a)
+  With contact orientation on both builds the 600-tick census every 15 ticks (W81 against lx112a) was equal through 510
+  and had the ShipMedium 0x982b0 apart at 525, as before. The motion rows now carry UpdatePathing's reference agent
+  (pt_map=, both gates: the PathingManager's tree, manager+0x130 / Linux +0x260, for the first path point's reference
+  and its parents): zone 0x650 has none on either build, so the flag agent+0xf33 (Linux +0xf53) comes from the store
+  of a point that cannot be put in the frame (0xe8d6c3, no SetTarget that tick). Its on-phases: 495-503 on both, then
+  509-513 on Windows and 519-523 on Linux. Windows with one default off each (W83 area_jobs, W84 body_pose, W85
+  ui_lazy): only ui_lazy off moves Windows to 519-523, and W85 equals lx113a in all 525,740 objects at 525.
+  Windows' default native_gate_ui_lazy = 'key' (lockstep_ui_lazy.h) skips the Lua UI's lazy container updates and keys
+  the simulation's own: their production-cycle, trade-offer and unit draws come from a word seeded by the container's
+  portable key and the time or tick, not from the calling thread's stream. Linux had no twin, so its stations' updates
+  moved the UI thread's stream. The five Linux targets, each found by its logic and fields: cargo 0x184dfa0 (+0xa48;
+  Windows 0x41a910 +0xa18), trade 0x1851fd0 (+0x938; Windows 0x4079e0 +0x928), units 0x17acbf0 (Container/Defensible
+  slot 1123, the two vtables' differing slots 18 further on than Windows' 1105; +0x670/+0x674 against +0x680/+0x684),
+  build 0x185f500 (+0xa88; Windows 0x4280e0 +0xa58), map 0x15286d0 (Windows 0xdcaa00, the 0x20f event's drop and
+  post). The open map's draw routine 0x1538d70 asks shown stations' cargo through 0x1850ff0 (Windows 0x3f9760),
+  0x185c130 (Windows 0x4254a0) and 0x18515b0: their return addresses are the display sites. A UI query is a LuaJIT frame
+  (libluajit-5.1.so.2's code, dl_iterate_phdr) or a display site on the stack (glibc backtrace). Entry detours as on
+  Windows; the same rows, status text, Lua API and stop reason 170. lx114a: sim=411/368/68 keyed=216/134/60
+  unkeyed=437 build=0/299/0, Windows' W82 numbers exactly; the flag's phase 509-513 as Windows'; all 525,740 objects
+  equal at 525 (one crew row at 450 is the capture-phase artifact). native_gate_ui_lazy = 'key' joins
+  MIXED_PLATFORM_SETS (the bundle's --ui-lazy).
+  The long run (W86 against lx115a, today's defaults and mixed settings, a capture every 300 ticks): 0 objects apart at
+  300 and 600, 4 at 900, 22 at 1200, 45 at 2400 (W74 against lx106a before contact orientation and ui_lazy: 0, 9, 421,
+  4,026). The next split lies between 600 and 900.
+
 FUNCTION COVERAGE WITH PLAYER INPUT ON LINUX (191754a1, b1688473; lx32a, lx32b)
   native_gate_coverage_from = T (Linux gate only; linux_gate_live.py --coverage-from) puts the coverage marks in at
   tick T instead of tick 1, so a window that starts after an idle stretch counts only first runs from then on; rows

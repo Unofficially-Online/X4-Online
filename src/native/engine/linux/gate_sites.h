@@ -655,6 +655,16 @@ static const lx_site lx_sites[]={
     {"corient_constraint",0x1afa480,0x54,"1c66a71098e9287a76e31bd7b9d729a515a99f93473b3cf1ff665cf160f074c2"},
     {"corient_ccd",0x1afeae0,0xa5,"b34bc920c62a42ab7a153f97b7d3681e30df5b59e88a595fc5187ca5eb0487f3"},
     {"corient_body_pair",0x1afa180,0x29,"a81fd3de9462f0cf2a0892b03764a07ace44649daca3c0a40486f6049eef7ed0"},
+    /* the UI's lazy container updates (gate_ui_lazy.h): each function's head through the fields it decides on, and
+     * the map draw routine's three calls that bring shown stations' cargo up to now */
+    {"ui_lazy_cargo",0x184dfa0,0x50,"9d034d2f87b84697502def5339db04ca5117b16015612730a332a7950ed50caf"},
+    {"ui_lazy_trade",0x1851fd0,0x70,"a242eda8e597edfd34bc47a0c864642032f4ad48f8ad5936ed2de220cd0e733f"},
+    {"ui_lazy_units",0x17acbf0,0x160,"c847e9dc87b428a1e1e52b3cb4eab84408c37ec533eb6e1e09ba85db91f5dacc"},
+    {"ui_lazy_build",0x185f500,0x58,"8f4f866a254ec750485a9b685b9b6f1f9a86a1a267943982d2381364252481d8"},
+    {"ui_lazy_map",0x15286d0,0x72,"7b93166be574c8856ef3e79f2b26ec4b066f27d9fd76bae4115175628d50311f"},
+    {"ui_lazy_display_cargo",0x153d423,0x5,"564bae76bbc46b97478817dad9f17abf70ec819d299b33c464cd6d4ac9c2af84"},
+    {"ui_lazy_display_station",0x153f182,0x5,"b0db2e31b69b63f22ed1ea568917eb29aa4b77f521dfd1cc4c331e435e80395c"},
+    {"ui_lazy_display_amount",0x153d6e1,0x5,"856bca14a5cbad3b6d674d677f13e91a982fb54735b2b3db0e5d3dd8d623fe0c"},
     /* the island order (gate_island_order.h): the deterministic block, the calls up to the sort call, the sort and its
      * comparator, StoreAppliedImpulses' point layout, FinishConstraintBuffer's array */
     {"iorder_block",0x1b212c8,0x1d,"ec2419c256a7f9488b3c0ce1c42e56c5ce28922bbf3b713bb6464d4ba500a74c"},

@@ -5,7 +5,7 @@
  * do not create a lifetime lock or exclude an unobserved ABA. */
 #define WORLD_MOTION_WATCH_MAX 4u
 #define WORLD_MOTION_WINDOW_MAX 18000u
-#define WORLD_MOTION_ROW_BYTES 1800u
+#define WORLD_MOTION_ROW_BYTES 2048u
 /* The agent fields the Linear step reads, in Windows' agent_ext= order and sizes (lockstep_motion_watch.h
  * motion_agent_fields); Linux offsets, +0x20 from +0x6e0 on (gate_world.h's pathing agent note). */
 static const struct {unsigned short at,size;} world_motion_agent_fields[]={
@@ -86,6 +86,50 @@ static int world_motion_read_metadata(uintptr_t object, world_motion_metadata *m
     return 1;
 }
 
+/* The pathing manager's agent for a runtime ID, as UpdatePathing 0x1431270 asks 0x13d0b50 (Windows inline at 0xe8c45d):
+ * the tree at manager+0x260 (Windows +0x130), a node's left +0x8, right +0x10, key +0x20, agent +0x28; 0 none. */
+static uintptr_t world_motion_agent_of(uint64_t id) {
+    uintptr_t manager = 0, node = 0, best, next;
+    uint64_t key;
+    if (!WREAD(LX(LX_PATH_MANAGER_VA), &manager, 8) || !manager) return 0;
+    const uintptr_t head = manager + 0x260u;
+    if (!WREAD(head + 8u, &node, 8)) return 0;
+    best = head;
+    for (unsigned depth = 0; node; depth++) {
+        if (depth >= 64u || !WREAD(node + 0x20u, &key, 8)) return 0;
+        if (key < id) { if (!WREAD(node + 0x10u, &next, 8)) return 0; }
+        else { best = node; if (!WREAD(node + 8u, &next, 8)) return 0; }
+        node = next;
+    }
+    uintptr_t agent = 0;
+    if (best == head || !WREAD(best + 0x20u, &key, 8) || id < key || !WREAD(best + 0x28u, &agent, 8)) return 0;
+    return agent;
+}
+/* pt_ref= / pt_map=: the agent's first path point's reference (agent+0x6d0 begin, its ID at +0x8; Windows +0x6a8 /
+ * +0x10), and the first of it and its parents (+0x70) with an agent in the manager's tree: depth/the agent owner's
+ * (+0xf10) portable ID; none/0 when none of 9 levels has one (UpdatePathing's reference agent: the point's own or, on
+ * a miss, an ancestor's; agent+0xf53 (Windows +0xf33) is set when it has one). */
+static void world_motion_point_agent(uintptr_t agent, void *map, lxw_find_fn find, uint64_t *ref_key, char *text, size_t cap) {
+    uintptr_t begin = 0, end = 0, object, owner = 0, found = 0;
+    uint64_t id = 0, owner_id = 0;
+    unsigned depth = 0;
+    *ref_key = 0;
+    snprintf(text, cap, "none/0");
+    if (!WREAD(agent + 0x6d0u, &begin, 8) || !WREAD(agent + 0x6d8u, &end, 8) || !begin || end <= begin ||
+        !WREAD(begin + 8u, &id, 8) || !id) return;
+    *ref_key = world_identity_portable(id);
+    object = (uintptr_t)find(map, id, 4, 0);
+    for (; depth <= 8u; depth++) {
+        if ((found = world_motion_agent_of(id))) break;
+        uintptr_t parent = 0;
+        if (!object || !WREAD(object + LXW_OBJ_PARENT, &parent, 8) || !parent || !WREAD(parent + LXW_OBJ_RUNTIME, &id, 8) || !id) return;
+        object = parent;
+    }
+    if (!found) return;
+    if (WREAD(found + LXW_AGENT_OWNER, &owner, 8) && owner) WREAD(owner + LXW_OBJ_RUNTIME, &owner_id, 8);
+    snprintf(text, cap, "%u/%016llx", depth, (unsigned long long)(owner_id ? world_identity_portable(owner_id) : 0));
+}
+
 static void world_motion_hex(const unsigned char *bytes, size_t length, char *text) {
     static const char digits[] = "0123456789abcdef";
     for (size_t index = 0; index < length; ++index) {
@@ -159,12 +203,16 @@ static int world_motion_capture(uint64_t tick) {
         world_motion_hex(agent_ext, sizeof(agent_ext), agent_text);
         memcpy(&model_ref, model_target + 0x40, 8);
         world_motion_hex(model_target, sizeof(model_target), model_text);
+        uint64_t point_ref = 0;
+        char point_agent[40];
+        world_motion_point_agent(snapshot.links.agent, map, find, &point_ref, point_agent, sizeof(point_agent));
         int length = snprintf(world_motion_rows[index], WORLD_MOTION_ROW_BYTES,
             "version=1 tick=%llu id=%016llx type=%08x flags=%08x parent=%016llx read=%u write=%u cursor=%u motion=%s timing=%s"
-            " model=%x target_ref=%016llx target=%s plan=%s agent_ext=%s",
+            " model=%x target_ref=%016llx target=%s plan=%s agent_ext=%s pt_ref=%016llx pt_map=%s",
             (unsigned long long)tick, (unsigned long long)target->saved, before.type, before.flags,
             (unsigned long long)before.parent_saved, snapshot.links.read, snapshot.links.write, cursor, motion_text, timing_text,
-            model ? (unsigned)(model_vt - LX_IMAGE_BASE) : 0u, (unsigned long long)world_identity_portable(model_ref), model_text, plan_text, agent_text);
+            model ? (unsigned)(model_vt - LX_IMAGE_BASE) : 0u, (unsigned long long)world_identity_portable(model_ref), model_text, plan_text, agent_text,
+            (unsigned long long)point_ref, point_agent);
         world_motion_problem = "row_truncated";
         if (length < 0 || (size_t)length >= WORLD_MOTION_ROW_BYTES) return 0;
     }

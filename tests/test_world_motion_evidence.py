@@ -47,6 +47,15 @@ class MotionEvidenceTests(unittest.TestCase):
         self.assertTrue(result['world_motion_ok'])
         self.assertEqual(result['world_motion_compared_pairs'], 0)
         self.assertIsNone(result['world_motion_peer_equal'])
+    def test_rows_with_the_model_and_path_point_fields_parse(self):
+        from world_motion_evidence import ROW
+        extra = (' model=3b62558 target_ref=0000000000000650 target=' + '0' * 144 + ' plan=' + '0' * 224 +
+                 ' agent_ext=' + '0' * 94)
+        self.assertTrue(ROW.search(motion_row(2) + extra))
+        self.assertTrue(ROW.search(motion_row(2) + extra + ' pt_ref=0000000000000650 pt_map=none/0'))
+        self.assertTrue(ROW.search(motion_row(2) + extra + ' pt_ref=0000000000000650 pt_map=1/000000000009fa51'))
+        self.assertFalse(ROW.search(motion_row(2) + extra + ' pt_ref=0000000000000650 pt_map=x'))
+
     def test_physical_selector_swaps_do_not_compare(self):
         result = compare_evidence([parsed(motion_log()), parsed(motion_log(2, swapped=True), 2)])
         self.assertTrue(result['world_motion_ok'], result)

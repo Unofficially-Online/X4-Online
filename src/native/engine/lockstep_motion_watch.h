@@ -145,7 +145,7 @@ typedef struct {uint64_t tick,saved;int attention;uint32_t ctrl_vt,model_vt,inde
     uint32_t spline_count[2],spline_segments,spline_core,spline_requests,spline_obstacles;uint64_t spline_obstacle_time;unsigned char spline_progress[16];
     uint32_t flight_obstacles;uint64_t flight_avoid_time;unsigned char flight_angles[8];
     uint32_t flight_contacts_n;unsigned char flight_contacts[4][0x80];uint32_t flight_contact_fnv_n,flight_contact_fnv[64];
-    uint32_t slotx[2];} motion_watch_row_t;   /* slotx: each pathing slot's +0x60..+0x19f (the digest's slotx=, of the current one) */
+    uint32_t slotx[2];uint32_t pt_depth;uint64_t pt_owner;} motion_watch_row_t;   /* slotx: each pathing slot's +0x60..+0x19f (the digest's slotx=, of the current one) */
 #define MOTION_PATHING_INDEX2 0x2f4b6f4u /* g_PathingStateBufferIndex2 */
 /* Flight parameter fields of one 0x1a0 slot: +0x24, +0x190..+0x193, +0x194, +0x198. */
 static int motion_fp_fields(const unsigned char *slot,unsigned char out[16]) {
@@ -432,6 +432,40 @@ static void motion_spline_fields(const unsigned char *model,motion_watch_row_t *
     r->spline_obstacles=ok?(uint32_t)((size_t)(end-begin)/0x80):0;
     if(ok) r->flags|=4096;
 }
+/* The PathingManager's (0x6cf21c8) agent for a runtime ID, as UpdatePathing reads it at 0xe8c45d (Linux 0x13d0b50):
+ * the tree at manager+0x130 (Linux +0x260), a node's left +0x8, right +0x10, key +0x20, agent +0x28; NULL none. */
+static const unsigned char *motion_watch_agent_of(uint64_t id) {
+    const unsigned char *manager=NULL,*node=NULL,*best,*next,*agent=NULL;uint64_t key;
+    if(!read_local(image+0x6cf21c8,&manager,8) || !manager) return NULL;
+    const unsigned char *head=manager+0x130;
+    if(!read_local(head+8,&node,8)) return NULL;
+    best=head;
+    for(unsigned depth=0;node;depth++) {
+        if(depth>=64u || !read_local(node+0x20,&key,8)) return NULL;
+        if(key<id) {if(!read_local(node+0x10,&next,8)) return NULL;}
+        else {best=node;if(!read_local(node+8,&next,8)) return NULL;}
+        node=next;
+    }
+    if(best==head || !read_local(best+0x20,&key,8) || id<key || !read_local(best+0x28,&agent,8)) return NULL;
+    return agent;
+}
+/* pt_map=: the first of the first path point's reference and its parents (+0x70) with an agent in the manager's tree
+ * (UpdatePathing's [rbp+0x450]: the point's own agent or, on a miss, an ancestor's; agent+0xf33 is set when it has
+ * one): the depth and the agent owner's (+0xef0) portable key; none/0 when none of 9 levels has one. */
+static void motion_watch_point_agent(uint64_t id,motion_watch_row_t *r) {
+    r->pt_depth=0xffu;r->pt_owner=0;
+    unsigned char *object=id?motion_watch_lookup(id):NULL;const unsigned char *found=NULL;unsigned depth=0;
+    for(;id && depth<=8u;depth++) {
+        if((found=motion_watch_agent_of(id))) break;
+        unsigned char *parent=NULL;
+        if(!object || !read_local(object+0x70,&parent,8) || !parent || !read_local(parent+8,&id,8) || !id) return;
+        object=parent;
+    }
+    if(!found) return;
+    const unsigned char *owner=NULL;uint64_t owner_id=0;unsigned klass;
+    if(read_local(found+0xef0,&owner,8) && owner) read_local(owner+8,&owner_id,8);
+    r->pt_depth=depth;r->pt_owner=owner_id?world_identity_key(owner_id,&klass):0;
+}
 /* The agent's path: count and the first FlightPoint (flags 16 and 32). */
 static void motion_watch_path(const unsigned char *agent,motion_watch_row_t *r) {
     unsigned char *begin=NULL,*end=NULL;
@@ -441,12 +475,13 @@ static void motion_watch_path(const unsigned char *agent,motion_watch_row_t *r) 
     if(r->path_count && read_local(begin+0x10,r->path0,0x50)) {
         uint64_t ref,connection;memcpy(&ref,r->path0,8);memcpy(&connection,r->path0+8,8);
         r->path_ref=motion_watch_ref(ref);r->path_conn=connection!=0;memset(r->path0,0,16);r->flags|=32;
+        motion_watch_point_agent(ref,r);
     }
 }
 /* One row from a resolved object; 0 when the layout does not match (counted). */
 static int motion_watch_read(const unsigned char *object,uint64_t saved,uint64_t tick,motion_watch_row_t *r,void **agent_out) {
     memset(r,0,sizeof(*r));r->tick=tick;r->saved=saved;r->ctrl_vt=r->model_vt=0xffffffffu;
-    r->target_ref=r->path_ref=r->leader=r->wingman0=r->parent=motion_watch_ref(0);
+    r->target_ref=r->path_ref=r->leader=r->wingman0=r->parent=motion_watch_ref(0);r->pt_depth=0xffu;
     if(agent_out) *agent_out=NULL;
     unsigned char *ctrl=NULL,*back=NULL,*slots=NULL,*agent=NULL,*model=NULL,*parent=NULL;void *vt=NULL;uint64_t parent_id=0;
     if(!read_local(object+0x1ec,&r->attention,4)) return 0;
@@ -591,13 +626,16 @@ static int motion_watch_row(uint64_t index,char *out,size_t cap) {
     for(uint32_t k=0;k<r->wingmen && k<8u;k++) wn+=(size_t)snprintf(wings+wn,sizeof(wings)-wn,"%s%016llx",k?",":"",(unsigned long long)r->wings[k]);
     if(!wn) wings[wn++]='-';
     wings[wn]=0;
+    char pt_map[40];
+    if(r->pt_depth==0xffu) snprintf(pt_map,sizeof(pt_map),"none/0");
+    else snprintf(pt_map,sizeof(pt_map),"%u/%016llx",r->pt_depth,(unsigned long long)r->pt_owner);
     n=snprintf(out,cap,"index=%llu tick=%llu saved=%016llx attention=%d ctrl=%08x model=%08x flags=%u cur=%s prev=%s cache=%s target=%s "
         "target_ref=%s path=%u path0=%s path0_ref=%s/%u model_ext=%s agent_ext=%s formation=%u leader=%s leader_ext=%s ship_ext=%s wingmen=%u wingman0=%s fp=%s "
-        "parent=%s dock=%s spline=%u/%u/%08x/%08x/%s requests=%u obstacles=%u/%016llx flight=%u/%016llx/%s contacts=%s contact_fnv=%s wings=%s",
+        "parent=%s dock=%s spline=%u/%u/%08x/%08x/%s requests=%u obstacles=%u/%016llx flight=%u/%016llx/%s contacts=%s contact_fnv=%s wings=%s pt_map=%s",
         (unsigned long long)index,(unsigned long long)r->tick,(unsigned long long)r->saved,r->attention,r->ctrl_vt,r->model_vt,r->flags,
         cur,prev,cache,target,target_ref,r->path_count,path0,path_ref,r->path_conn,model_ext,agent_ext,r->formation,leader,leader_ext,ship_ext,r->wingmen,wingman0,fp,
         parent,r->dock[0]?r->dock:"-",r->spline_count[0],r->spline_count[1],r->spline_segments,r->spline_core,progress,r->spline_requests,r->spline_obstacles,
-        (unsigned long long)r->spline_obstacle_time,r->flight_obstacles,(unsigned long long)r->flight_avoid_time,angles,contacts,fnvs,wings);
+        (unsigned long long)r->spline_obstacle_time,r->flight_obstacles,(unsigned long long)r->flight_avoid_time,angles,contacts,fnvs,wings,pt_map);
     return n>0 && (size_t)n<cap?n:0;
 }
 /* FNV-1a 32 of field groups (motion_fnv, above); references by their fields (no struct padding). */
