@@ -629,6 +629,14 @@ static const lx_site lx_sites[]={
     {"spline_phase_steer",0x10b0c90,0x128,"746b62a940333a7715e89700fa1f490ad7239fa92d5bc32709b54d84c03e87d3"}, /* the calculator's steering path job, its Unlock call 0x10b0cc1 (gate_spline_phase.h) */
     {"weave_phase_3",0x13de0b0,0x44,"78fc8af507eb155813658990d7a163502304f2153df9f5ec8ba22d4d8c6f8655"}, /* the weave phases (gate_weave_phase.h) */
     {"weave_phase_5",0x13de470,0x44,"f8d458214c3a7a4f2105a777d1e0f4eab3942be5a68d36ed69794d669775c43f"},
+    /* the worker layout (gate_worker_layout.h): the count, the constructor's split, the dealer, the vector code, Jolt's concurrency */
+    {"wlay_count",0x730d96,0x41,"c251c67f409acce4a1aab48ea6d8d98409b8bf28e9af2aabef7743b3e7451167"},
+    {"wlay_ctor_block",0x13e92c0,0xb8,"778d57928230d915faf6d925233e0dc92428f862eb0c0d8c283e714707618d1e"},
+    {"wlay_assign",0x13c7580,0x188,"2f35803be702aec6b16b05b4c0e47156206be035e766d4a1f549e25598e79f6e"},
+    {"wlay_reserve",0x13d0190,0x3a,"4c31c6462d572e0c375d99a20a69fa2b663265a65932840e1fea463a27bad12a"},
+    {"wlay_emplace",0x1f3c7a0,0x6c,"c31e6d553157c4715d50fecec8671f99c1b4966ac804004ccd3a52a9f67fbebe"},
+    {"wlay_vector_dtor",0x6a0bf4,0xcc,"5db8b23230f8d919f083c034846735e8c5aba8739042ae269c1a8a915deedac7"},
+    {"wlay_jolt",0xed4eb0,0x21,"33827c3a1517ff7621d67c423bd22ee02da0b9fda7bb09806a351e5974eb02c3"},
     {"contact_listener_slots",0xee21a0,0x18,"0f84dbca83cd2e93ec6cdb335448f2e3ce830a38e91548f8f0f991ac453fdb44"}, /* XContactListener OnContactAdded/Persisted -> RecordContact 0xee1060 (gate_contact.h) */
     {"ik_wrap_tail",0x15661c0,0x60,"98e46a50b2cf8111eab6cda0ec549913e60a2356ce72f85cc33e6c00f7688f25"},
     {"body_defined_mass",0xed4cf0,0x8e,"f640dc2b2c63a1a363cc8f487544824b91ee72e7eadc3da0dcd7117084634874"},

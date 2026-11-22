@@ -181,6 +181,8 @@ static void lxwp_restore(void); /* the weave phases in the Windows order (gate_w
 static int lxwp_check(void);
 static int lxwp_installed;
 static void lxct_restore(void); /* the fixture contacts traced at X4's contact listener (gate_contact.h, boot option 2^43) */
+static void lxwl_restore(void); /* the worker layout's Jolt slot back (gate_worker_layout.h) */
+static int lxwl_armed;
 static int lxct_check(void);
 static int lxct_installed;
 static int lxsr_check(void);
@@ -617,6 +619,8 @@ static void finish(unsigned reason) {
     if(lxwp_installed) stats.restored=0;
     lxct_restore();
     if(lxct_installed) stats.restored=0;
+    lxwl_restore();
+    if(lxwl_armed) stats.restored=0;
     if(lxis_installed) stats.restored=0;
     if(lxai_installed) stats.restored=0;
     if(lxvd_installed) stats.restored=0;
@@ -1004,6 +1008,7 @@ static int lua_start(lua_State *L) {
 #include "gate_velocity.h"
 #include "gate_impulse.h"
 #include "gate_contact.h"
+#include "gate_worker_layout.h"
 #include "gate_ik_diag.h"
 #include "gate_ik_step.h"
 #include "gate_ik_wrap.h"
@@ -1261,6 +1266,7 @@ GATE_EXPORT int luaopen_x4lan_gate(lua_State *L) {
     METHOD(region_rng);METHOD(region_rng_status);METHOD(region_rng_row);METHOD(weapon_fire_rng);METHOD(weapon_fire_rng_status);METHOD(engine_refresh_rng);METHOD(engine_refresh_rng_status);METHOD(spline_join_all);METHOD(spline_join_all_status);METHOD(mass_traffic);METHOD(mass_traffic_status);METHOD(region_pass);METHOD(region_pass_status);METHOD(pass_stride);METHOD(actor_rng_all);METHOD(actor_rng_all_status);METHOD(actor_rng_rows);METHOD(actor_rng_row);METHOD(player_timer);METHOD(player_timer_status);METHOD(tempzone_order);METHOD(tempzone_order_status);METHOD(tempzone_order_row);METHOD(warp_rng);METHOD(warp_rng_status);METHOD(warp_rng_row);METHOD(warp_exit);METHOD(warp_exit_status);METHOD(flight_limits);METHOD(flight_limits_status);METHOD(body1_mass);METHOD(body1_mass_status);METHOD(body1_mass_census);METHOD(body_step_diag);METHOD(body_step_status);METHOD(body_step);METHOD(velocity);METHOD(velocity_status);METHOD(impulse_diag);METHOD(impulse_status);METHOD(impulse);METHOD(ik_joints);METHOD(ik_status);METHOD(ik_step);METHOD(ik_step_status);METHOD(nav_probes);METHOD(steer_roll);METHOD(steer_roll_status);METHOD(avoid_angle);METHOD(avoid_angle_status);METHOD(pursuit_speed);METHOD(pursuit_speed_status);METHOD(weave_phase);METHOD(weave_phase_status);METHOD(ik_wrap);METHOD(ik_wrap_status);METHOD(region_camera);METHOD(region_camera_frame);METHOD(region_camera_status);
     METHOD(build_rng);METHOD(build_rng_status);METHOD(build_rng_row);
     METHOD(contact);METHOD(contact_clear);METHOD(contact_status);
+    METHOD(worker_layout);METHOD(worker_layout_status);
     METHOD(ai_wait_rng);METHOD(ai_wait_rng_status);METHOD(ai_wait_rng_row);
     METHOD(md_resume_rng);METHOD(md_resume_rng_status);METHOD(md_resume_rng_row);
     METHOD(boot_hold);METHOD(boot_hold_status);

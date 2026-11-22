@@ -149,7 +149,12 @@ def mixed_platform_options():
         if not key.startswith('native_gate_'):
             raise SystemExit(f'--mixed-platform: unexpected key {key}')
         value = value.strip()
-        options[key[len('native_gate_'):]] = value.strip("'") if value.startswith("'") else int(value)
+        if value.startswith("'"):
+            options[key[len('native_gate_'):]] = value.strip("'")
+        elif value in ('true', 'false'):   # the switches (ik_wrap=true, ...): store_true options
+            options[key[len('native_gate_'):]] = value == 'true'
+        else:
+            options[key[len('native_gate_'):]] = int(value)
     return options
 
 
@@ -384,6 +389,8 @@ def bundle(args):
             command += ['--coverage-from', str(args.coverage_from)]
     if args.tick_hz is not None:
         command += ['--tick-hz', str(args.tick_hz)]
+    if args.worker_layout is not None:
+        command += ['--worker-layout', str(args.worker_layout)]
     if args.loadout_order_rows:
         command += ['--loadout-order-rows', *(str(t) for t in args.loadout_order_rows)]
     if args.gravidar_wide:
@@ -579,6 +586,7 @@ def bundle(args):
         'body_step_diag',
         'velocity_diag',
         'contact_diag',
+        'worker_layout',
         'impulse_diag',
         'ik_diag',
         'ik_step',
@@ -1368,6 +1376,8 @@ def main(argv=None):
     b.add_argument('--mixed-platform', action='store_true',
                    help="a mixed Windows/Linux session's settings, tools/build_play_overlay.py MIXED_PLATFORM_SETS (fp_redirect, its "
                         "ticks, solver and drones), imported so both sides match")
+    b.add_argument('--worker-layout', type=int, choices=range(4, 33), metavar='W',
+                   help="pathing batches and Jolt jobs laid out as for W job threads, as a Windows session's defaults (30) (native_gate_worker_layout)")
     b.add_argument('--tick-hz', type=int, choices=(60, 40, 30, 20),
                    help="the clients' native_gate_tick_hz and the relay's --tick-hz (default 60; the session defaults and W35 use 30)")
     b.add_argument('--attention-all', action='store_true', help="every portable object's attention timer keyed by (tick, ID), its first due at the first admitted call")

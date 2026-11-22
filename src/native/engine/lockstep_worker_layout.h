@@ -25,7 +25,8 @@
  * Test only: native_gate_worker_layout_test = {slot, W'} gives one client W' (another PC's layout on this one, as
  * without this module); {slot, P, W'} first lays that client out as X4 does on a PC with P workers, then as for W'
  * (another PC with this module).
- * Linux (linux/gate_path.h): X4's Linux build counts sysconf(_SC_NPROCESSORS_ONLN) - 2; not ported here. */
+ * Linux: X4's Linux build counts sysconf(_SC_NPROCESSORS_ONLN) - 2; the twin is linux/gate_worker_layout.h (same Lua
+ * calls, status text and stop reason 224). */
 #define WLAY_JTM 0x6cf1540u              /* JobThreadManager* */
 #define WLAY_JTM_WORKERS 0x528u          /* its worker count (unsigned) */
 #define WLAY_VECTORS 0x180u              /* the batch vectors {begin, end, capacity}: kind 0 at +0x180, kind 1 at +0x198 */

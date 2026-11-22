@@ -214,5 +214,24 @@ class DesktopSetup(unittest.TestCase):
                 live.compose_extension_template(overlay, Path(directory) / 'bad-extension')
 
 
+class MixedPlatformBundle(unittest.TestCase):
+    """linux_gate_live.py bundle --mixed-platform: tools/build_play_overlay.py MIXED_PLATFORM_SETS as bundle options
+    (the switches as true, the modes as text, the counts as numbers), every key a bundle option. Nothing is built."""
+
+    def test_every_mixed_platform_key_is_a_bundle_option(self):
+        options = live.mixed_platform_options()
+        self.assertIs(options['ik_wrap'], True)
+        self.assertIs(options['weave_phase'], True)
+        self.assertEqual(options['body1_mass'], 'fallback')
+        self.assertEqual(options['fp_redirect'], 'redirect')
+        self.assertEqual(options['fp_redirect_ticks'], 3)
+        command = ['bundle', '--zig', '/unused/zig', '--snapshot', '/unused/save', '--out', '/unused/output', '--mixed-platform']
+        with mock.patch.object(live, 'bundle') as build:
+            live.main(command)
+        args = build.call_args.args[0]
+        for name, value in options.items():
+            self.assertEqual(getattr(args, name), value, name)
+
+
 if __name__ == '__main__':
     unittest.main()

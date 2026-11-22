@@ -99,8 +99,14 @@ static int lxb_prepare(void);
 /* SPLINE_PHASE (gate_spline_phase.h): the route calculator's queues drained at the frame's two phase points; 0 stops the
  * gate with reason 199, as Windows' path_release. */
 static int lxsp_drain(void);
+/* Worker layout (gate_worker_layout.h): the batches laid out at the first pathing wake after the arm; every admitted
+ * step checks it (0 stops the gate with reason 224, as Windows' path_release). */
+static void lxwl_wake(void);
+static int lxwl_check(void);
+static int lxwl_armed;
 static void lxp_path_release(void *semaphore,unsigned count) {
     const lxp_release_fn release=(lxp_release_fn)(void*)LX(LX_SEM_RELEASE_VA);
+    lxwl_wake();
     if(boot_mode && boot_phase<3) {release(semaphore,count);return;}
     if(boot_mode) accept_ui();
     unsigned char *manager=*(unsigned char**)LX(LX_PATH_MANAGER_VA);
@@ -108,6 +114,7 @@ static void lxp_path_release(void *semaphore,unsigned count) {
     if(manager) memcpy(&state,manager+LXP_STATE,4);
     int valid=stats.active && GetCurrentThreadId()==ui_thread && manager && count==1 &&
         semaphore==(void*)(manager+LXP_RELEASE_SEMAPHORE) && state==2 && manager[LXP_JOINED]==0;
+    if(valid && lxwl_armed && !lxwl_check()) {finish(224);release(semaphore,count);return;} /* LXWL_STOP_REASON */
     if(valid && !lxb_prepare()) {__atomic_add_fetch(&lxb_failures,1,__ATOMIC_SEQ_CST);finish(74);release(semaphore,count);return;}
     if(valid && !lxg_before_release()) {release(semaphore,count);return;}
     if(valid && (path_det_mask&PATH_DET_BUDGET_BIT) && !path_det_budget_frame(manager)) {
