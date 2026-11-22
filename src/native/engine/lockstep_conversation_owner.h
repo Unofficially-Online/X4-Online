@@ -61,6 +61,8 @@ static int cvo_take(unsigned slot,uint64_t tick) {
     if(cvo_owner || !cvo_idle()) {InterlockedIncrement64(&cvo_busy);return 0;}
     cvo_owner=slot;cvo_owner_tick=tick;cvo_owner_left_idle=0;InterlockedIncrement64(&cvo_taken);return 1;
 }
+/* The conversation's owner slot (0: nobody, or not armed): whose client shows its picture (lockstep_md_media.h talk). */
+static unsigned cvo_owner_now(void) {return cvo_armed?cvo_owner:0;}
 /* May slot answer the conversation of now? Its owner; slot 1 also when nobody owns it (a conversation MD started). */
 static int cvo_may(unsigned slot) {
     if(!cvo_armed) return slot==1;

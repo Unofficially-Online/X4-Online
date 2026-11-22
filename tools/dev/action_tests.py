@@ -60,6 +60,15 @@ Scenarios (the snapshot is the two-player one: both ships side by side in a sect
           undocks: does one player's dock or undock close the other's dock menu; after its own undock, is each player's
           dock menu closed and the HUD's top level menu open (--swap: the other player leaves first).
   mapopen a diagnostic: one player's client opens the map and keeps it open for 100 seconds; nothing else happens.
+  reps    each player comms the Argon representative (one conversation at a time: player 1 first), chooses "I would
+          like to buy a blueprint", picks the cheapest blueprint it lacks and presses Confirm, then "Show me your
+          licences" and the same for a licence (the shop's own handlers), and ends the conversation. Each player docks
+          at the Argon headquarters NLN-075 first: the representative has its shop only while X4 gives it an office
+          there. --players 2: player 2 alone at the headquarters, player 1 stays out.
+  itemtrader each player docks at a station, comms an item trader of its docks, opens its wares, buys one piece and ends
+          the conversation; checks that player's own inventory.
+  hack    each player docks, gets up, takes the transporter to the station's Security Office and hacks one of its
+          control panels (the question's Yes) with a Security Decryption System from its own inventory.
 
 How a scenario runs: every client's plan (native_gate_ui_replay_script) holds the fixtures (X4's docking computer on
 the players' ships, the money) and one `chain` for its own player: steps that each begin when the one before has ended
@@ -2845,7 +2854,323 @@ class Guidance:
             check('removed', bool(removed), 'player %d: Remove course %s' % (k, 'cleared it at tick %d' % removed['tick'] if removed else 'left it (%s)' % shown(c, 'removed')))
 
 
-SCENARIOS = {s.name: s for s in (Trade, Orders, Orders2, Crew, ShipBuy, Refit, RefitOrder, Repair, Wing, ShipSell, CrewMove, FleetTrade, Deploy, Rules, Systems, Settings, Storage, Exchange, Hostile, TradeLoop, Claim, Mining, WingSet, Routines, DockPair, MapOpen, Guidance)}
+# ---- a faction representative's blueprints and licences ---------------------------------------------------------------
+class Reps:
+    """Each player docks at a faction's headquarters, comms the faction's representative, buys a blueprint and then a
+    licence through the conversation's shop (BlueprintOrLicenceTraderMenu), and ends the conversation."""
+    name = 'reps'
+    minutes = 10
+    sets = ()
+    marks = ('bp_bought', 'lic_bought', 'bye_look')
+    FACTION = 'argon'
+    # The representative has its shop only while X4 has given it an office on the headquarters (md/npc_factionrepresentative.xml
+    # CreateFactionRepresentativeInterior: when the headquarters comes near a player); from afar its conversation is the
+    # generic one ("Where can I find...?", "Goodbye": run 20261121-184129). The Argon headquarters is the shipyard NLN-075 of
+    # the snapshot's sector.
+    HQ = Crew.YARD
+    BLUEPRINTS, LICENCES = 2, 1      # the conversation's choices: 'I would like to buy a blueprint' (left), 'Show me your licences' (top left)
+    LIMIT = 16000
+
+    @staticmethod
+    def options(s):
+        s.add_argument('--faction', default=Reps.FACTION, help="the faction whose representative each player talks to")
+        s.add_argument('--hq', default=Reps.HQ, help="saved ID of the faction's headquarters each player docks at first")
+        s.add_argument('--no-dock', dest='dock', action='store_false', help='talk by comm from where the players start (no office, no shop)')
+        s.add_argument('--players', default='1,2', help="the players who take part, e.g. '2': player 2 alone at the headquarters, player 1 stays out")
+        s.add_argument('--credits', type=int, default=20000000, help='money the fixture adds to the account before the run')
+        s.add_argument('--no-licence', dest='licence', action='store_false', help='buy only a blueprint')
+
+    @staticmethod
+    def who(a):
+        return [int(x) for x in str(a.players).split(',') if x.strip()]
+
+    @staticmethod
+    def shop(k, a, tag, choice):
+        """One visit of the shop from the conversation: the choice, the menu on this player's screen, a pick, Confirm."""
+        return [
+            (tag + '_choice', 'op', 'dialog', choice),
+            (tag + '_menu', 'try', 'shown=BlueprintOrLicenceTraderMenu', 5, 300, 'trader_look'),
+            (tag + '_before', 'op', 'library_look', a.faction),
+            (tag + '_bought', 'op', 'trader_pick', 1),
+            (tag + '_wait', 'wait', 150),
+            (tag + '_after', 'op', 'library_look', a.faction),
+            (tag + '_back', 'try', 'shown=none', 5, 300, 'trader_look'),
+            (tag + '_back_wait', 'wait', 60),
+        ]
+
+    @staticmethod
+    def chain(k, a):
+        # X4 has one conversation at a time: player 1 talks first, player 2 when it is free again
+        dock = [
+            ('rep_far', 'op', 'rep_look', a.faction),
+            ('dock', 'until', '^docked', 'dock_station', a.hq, 9000),
+            ('settle', 'wait', 240),
+        ] if a.dock else []
+        steps = dock + [
+            ('rep_near', 'op', 'rep_look', a.faction),
+            ('stagger', 'wait', 1 + 300 * (k - 1)),
+            ('free', 'poll', 'owner=0 .*manager=1%.0 ', 30, 9000, 'conversation_look'),
+            ('start', 'op', 'library_look', a.faction),
+            ('talk', 'op', 'rep_talk', a.faction),
+            ('owned', 'try', 'owner=%d ' % k, 5, 150, 'conversation_look'),
+            ('talk_wait', 'wait', 90),
+        ] + Reps.shop(k, a, 'bp', Reps.BLUEPRINTS)
+        if a.licence:
+            steps += Reps.shop(k, a, 'lic', Reps.LICENCES)
+        return steps + [
+            ('bye', 'op', 'conv_cancel'), ('bye_wait', 'wait', 60), ('bye_look', 'op', 'conversation_look'),
+            # the other player's conversation held back on this screen too, its dialogs and its shop (it may come later)
+            ('screen_end', 'try', 'dialogs=[1-9]%d*/[1-9]%d* menus=[1-9]%d*/[1-9]', 30, 4800, 'conversation_look'),
+            ('end', 'op', 'library_look', a.faction),
+        ]
+
+    @staticmethod
+    def watch(a):
+        return [('library_look', a.faction), ('rep_look', a.faction)]
+
+    @staticmethod
+    def plan(a):
+        kit = [(30, 'dock_kit', 1), (30, 'dock_kit', 2), (40, 'wallet', a.credits)]
+        return [kit + ([(60 + 30 * (k - 1), 'chain', Reps.LIMIT, Reps.chain(k, a) if k in Reps.who(a) else [('idle', 'wait', 30)])]) for k in PLAYERS]
+
+    @staticmethod
+    def report(check, clients, a):
+        def num(text, name):
+            v = rig.field(text or '', name)
+            return int(v) if v and v.lstrip('-').isdigit() else None
+        def held(c, name, pattern):
+            rows = [x for x in answers(c, name) if x['ok'] and re.search(pattern, x['text'])]
+            return rows[-1] if rows else None
+        for k in PLAYERS:
+            if k not in Reps.who(a):
+                check.note('out', 'player %d takes no part (--players %s)' % (k, a.players))
+                continue
+            c = clients[k]
+            if a.dock:
+                docked = last_answer(c, 'dock', 'docked')
+                check('docked', bool(docked), 'player %d at the headquarters: %s' % (k, 'tick %d' % docked['tick'] if docked else shown(c, 'dock')))
+            far, near = last_answer(c, 'rep_far'), last_answer(c, 'rep_near')
+            check.note('office', 'player %d: the representative before the dock: %s; after: %s' % (k, far['text'] if far else '-', near['text'] if near else '-'))
+            mine = held(c, 'owned', r'owner=%d ' % k)
+            check('talked', bool(mine), 'player %d: %s (talk %s)' % (k, "the conversation was this player's from tick %d" % mine['tick'] if mine else
+                  "the conversation was not this player's (%s)" % shown(c, 'owned'), shown(c, 'talk')))
+            visits = [('bp', 'blueprints', 'blueprint')] + ([('lic', 'licences', 'licence')] if a.licence else [])
+            for tag, count, mode in visits:
+                menu = last_answer(c, tag + '_menu', 'shown=BlueprintOrLicenceTraderMenu')
+                check(tag + '_menu', bool(menu) and ('mode=%s ' % mode) in menu['text'],
+                      "player %d: the %s shop on its own screen: %s" % (k, mode, menu['text'] if menu else shown(c, tag + '_menu')))
+                bought = last_answer(c, tag + '_bought', 'bought')
+                none = last_answer(c, tag + '_bought', 'nothing_to_buy offers=0')
+                if none and menu:
+                    # the shop showed, but X4 lets this player buy nothing there (a licence needs its faction's standing
+                    # or the licence before it: the game's rule, Select greyed out); Cancel closed it
+                    check.note(tag + '_bought', 'player %d: the shop offers nothing this player may buy (%s)' % (k, none['text']))
+                    back = last_answer(c, tag + '_back', 'shown=none')
+                    check(tag + '_closed', bool(back), 'player %d: the shop closed by its Cancel (%s)' % (k, back['text'] if back else shown(c, tag + '_back')))
+                    continue
+                check(tag + '_bought', bool(bought), 'player %d: %s' % (k, bought['text'] if bought else 'nothing bought (%s)' % shown(c, tag + '_bought')))
+                b0, b1 = (last_answer(c, tag + x) for x in ('_before', '_after'))
+                n0, n1 = num(b0 and b0['text'], count), num(b1 and b1['text'], count)
+                m0, m1 = num(b0 and b0['text'], 'money'), num(b1 and b1['text'], 'money')
+                check(tag + '_held', n0 is not None and n1 is not None and n1 > n0,
+                      'player %d: %s %s -> %s, money %s -> %s' % (k, count, n0, n1, m0, m1))
+                if bought and m0 is not None and m1 is not None:
+                    price = num(bought['text'], 'price')
+                    check.note(tag + '_paid', 'player %d: paid %s for a price of %s (one wallet for both players in coop)' % (k, m0 - m1, price))
+                back = last_answer(c, tag + '_back', 'shown=none')
+                check(tag + '_closed', bool(back), 'player %d: the shop closed after Confirm (%s)' % (k, back['text'] if back else shown(c, tag + '_back')))
+            look = last_answer(c, 'screen_end') or last_answer(c, 'bye_look')
+            screen = re.search(r'dialogs=(\d+)/(\d+) menus=(\d+)/(\d+)', look['text'] if look else '')
+            if screen:
+                ds, dh, ms, mh = (int(x) for x in screen.groups())
+                check('screen', ds > 0 and dh > 0 and ms > 0 and mh > 0,
+                      "player %d's client: dialogs shown %d, held back %d; conversation menus shown %d, held back %d" % (k, ds, dh, ms, mh))
+
+
+# ---- an item trader on a station's dock ------------------------------------------------------------------------------
+class ItemTrader:
+    """Each player docks at a station, comms an item trader of its docks (a platform actor), opens 'Show me your
+    wares' (InventoryTraderMenu), buys one piece of the cheapest ware the trader holds and ends the conversation."""
+    name = 'itemtrader'
+    minutes = 10
+    sets = ()
+    marks = ('bought', 'after', 'bye_look')
+    STATION = Trade.BUY
+    LIMIT = 16000
+    INVENTORY = 1                   # the trader's choice 'Show me your wares' (top left)
+
+    @staticmethod
+    def options(s):
+        s.add_argument('--station', default=ItemTrader.STATION, help='saved ID of the station both players dock at')
+        s.add_argument('--type', default='trader', help="the person's type: 'trader' or 'shadyguy'")
+        s.add_argument('--players', default='1,2', help="the players who take part, e.g. '2'")
+        s.add_argument('--credits', type=int, default=2000000, help='money the fixture adds to the account before the run')
+
+    @staticmethod
+    def who(a):
+        return [int(x) for x in str(a.players).split(',') if x.strip()]
+
+    @staticmethod
+    def chain(k, a):
+        return [
+            ('dock', 'until', '^docked', 'dock_station', a.station, 9000),
+            ('settle', 'wait', 300),
+            ('stagger', 'wait', 1 + 300 * (k - 1)),
+            ('free', 'poll', 'owner=0 .*manager=1%.0 ', 30, 9000, 'conversation_look'),
+            ('before', 'op', 'inv_total'),
+            ('talk', 'poll', 'name=', 60, 1800, 'npc_talk', a.station, a.type),
+            ('owned', 'try', 'owner=%d ' % k, 5, 150, 'conversation_look'),
+            ('talk_wait', 'wait', 90),
+            ('choice', 'op', 'dialog', ItemTrader.INVENTORY),
+            ('menu', 'try', 'shown=InventoryTraderMenu', 5, 300, 'trader_look'),
+            ('bought', 'op', 'itemtrader_buy', 1),
+            ('wait', 'wait', 150),
+            ('after', 'op', 'inv_total'),
+            ('back', 'try', 'shown=none', 5, 300, 'trader_look'),
+            ('bye', 'op', 'conv_cancel'), ('bye_wait', 'wait', 60), ('bye_look', 'op', 'conversation_look'),
+        ]
+
+    @staticmethod
+    def watch(a):
+        return []
+
+    @staticmethod
+    def plan(a):
+        kit = [(30, 'dock_kit', 1), (30, 'dock_kit', 2), (40, 'wallet', a.credits)]
+        return [kit + [(60 + 30 * (k - 1), 'chain', ItemTrader.LIMIT, ItemTrader.chain(k, a) if k in ItemTrader.who(a) else [('idle', 'wait', 30)])]
+                for k in PLAYERS]
+
+    @staticmethod
+    def report(check, clients, a):
+        def held(c, name, pattern):
+            rows = [x for x in answers(c, name) if x['ok'] and re.search(pattern, x['text'])]
+            return rows[-1] if rows else None
+
+        def num(text, name):
+            v = rig.field(text or '', name)
+            return int(v) if v and v.lstrip('-').isdigit() else None
+        for k in PLAYERS:
+            if k not in ItemTrader.who(a):
+                check.note('out', 'player %d takes no part (--players %s)' % (k, a.players))
+                continue
+            c = clients[k]
+            docked = last_answer(c, 'dock', 'docked')
+            check('docked', bool(docked), 'player %d at the station: %s' % (k, 'tick %d' % docked['tick'] if docked else shown(c, 'dock')))
+            talk = held(c, 'talk', r'name=')
+            check('trader', bool(talk), 'player %d: %s' % (k, 'talks to %s' % talk['text'] if talk else 'no %s on the station (%s)' % (a.type, shown(c, 'talk'))))
+            mine = held(c, 'owned', r'owner=%d ' % k)
+            check('talked', bool(mine), 'player %d: %s' % (k, "the conversation was this player's" if mine else "not this player's (%s)" % shown(c, 'owned')))
+            menu = held(c, 'menu', r'^shown=InventoryTraderMenu')
+            check('menu', bool(menu), "player %d: the trader's wares on its own screen: %s" % (k, menu['text'] if menu else shown(c, 'menu')))
+            bought = held(c, 'bought', r'^bought')
+            check('bought', bool(bought), 'player %d: %s' % (k, bought['text'] if bought else 'nothing bought (%s)' % shown(c, 'bought')))
+            b0, b1 = last_answer(c, 'before'), last_answer(c, 'after')
+            n0, n1 = num(b0 and b0['text'], 'pieces'), num(b1 and b1['text'], 'pieces')
+            m0, m1 = num(b0 and b0['text'], 'money'), num(b1 and b1['text'], 'money')
+            check('inventory', n0 is not None and n1 == n0 + 1,
+                  "player %d's own inventory: %s -> %s pieces, money %s -> %s" % (k, n0, n1, m0, m1))
+            back = held(c, 'back', r'^shown=none')
+            check('closed', bool(back), 'player %d: the menu closed after Confirm (%s)' % (k, back['text'] if back else shown(c, 'back')))
+
+
+# ---- a station's control panel ----------------------------------------------------------------------------------------
+class Hack:
+    """Each player docks at a station, gets up, walks out of its ship onto the station and hacks a control panel of the
+    station's Security Office (the question's Yes: StartControlPanelHack) with a Security Decryption System from its
+    own inventory. The room is found by the dock's transporter (its target 'Security Office'); the player does not walk
+    there (the walk to a transporter pad is x4mods-ed's open Rooms work), and X4's hack does not ask where the player
+    stands, only that it is on the station. The transporter's 'Security Office' is the interior's corridor; the panels
+    are connections of the office room beside it (room_gen_securityoffice_01: connection32 hack_watchdogs, 34
+    hack_all_turrets, 37 hack_shieldgenerators, 40 hack_engineer), found by --office among the room IDs next to the
+    corridor's. Passed for player 2 alone (run 20261121-211253)."""
+    name = 'hack'
+    minutes = 8
+    sets = ()
+    marks = ('out', 'hack_wait', 'panels_after')
+    STATION = '00000000000434b1'     # CZF-533, an Argon factory: its transporters offer a Security Office (x4mods-ed)
+    GET_UP, BACK = 0x115, 27         # INPUT_ACTION_GET_UP; FP_MOVE_BACKWARD (a docked small ship is left backwards)
+    TYPES = {1: 'hack_shieldgenerators', 2: 'hack_watchdogs'}
+    WARE = 'inv_securitydecryptionsystem'
+    LIMIT = 13000
+
+    @staticmethod
+    def options(s):
+        s.add_argument('--station', default=Hack.STATION, help='saved ID of the station to dock at')
+        s.add_argument('--room', default='Security', help="the room with the panels, by a part of its transporter name")
+        s.add_argument('--office', default='securityoffice', help="the panels' room beside it, by a part of its macro ('' : the transporter's room)")
+        s.add_argument('--players', default='1,2', help="the players who take part, e.g. '2'")
+
+    @staticmethod
+    def who(a):
+        return [int(x) for x in str(a.players).split(',') if x.strip()]
+
+    # the dock's transporter slots (x4mods-ed: each bay's own is <bay>/connection27) asked from where the player stands
+    sets = ("native_gate_transport_connection={'connection27','connection02'}",)
+
+    @staticmethod
+    def chain(k, a):
+        return [
+            ('dock', 'until', '^docked', 'dock_station', a.station, 9000),
+            ('settle', 'wait', 240),
+            ('up', 'op', 'input', 'action', Hack.GET_UP, 0),
+            ('up_wait', 'wait', 150),
+            ('seat', 'op', 'foot_where'),
+            ('back_on', 'op', 'input', 'state', Hack.BACK, 1),
+            ('back', 'wait', 200),
+            ('back_off', 'op', 'input', 'state', Hack.BACK, 0),
+            ('out', 'op', 'foot_where'),
+            ('targets', 'op', 'transport_list'),
+            ('panels', 'op', 'panel_find', a.room, a.office),
+            ('inv_before', 'op', 'inv_read', Hack.WARE),
+            ('hack', 'op', 'hack_yes', Hack.TYPES[k], a.room, a.office),
+            ('hack_wait', 'wait', 150),
+            ('inv_after', 'op', 'inv_read', Hack.WARE),
+            ('panels_after', 'op', 'panel_find', a.room, a.office),
+        ]
+
+    @staticmethod
+    def watch(a):
+        return [('inv_look', k, Hack.WARE) for k in Hack.who(a)]
+
+    @staticmethod
+    def plan(a):
+        kit = [(30, 'dock_kit', 1), (30, 'dock_kit', 2)] + [(45, 'inv_seed', k, Hack.WARE, 3) for k in Hack.who(a)]
+        return [kit + [(60 + 30 * (k - 1), 'chain', Hack.LIMIT, Hack.chain(k, a) if k in Hack.who(a) else [('idle', 'wait', 30)])]
+                for k in PLAYERS]
+
+    @staticmethod
+    def report(check, clients, a):
+        def num(text, name):
+            v = rig.field(text or '', name)
+            return int(v) if v and v.lstrip('-').isdigit() else None
+        for k in PLAYERS:
+            if k not in Hack.who(a):
+                check.note('out', 'player %d takes no part (--players %s)' % (k, a.players))
+                continue
+            c, kind = clients[k], Hack.TYPES[k]
+            docked = last_answer(c, 'dock', 'docked')
+            check('docked', bool(docked), 'player %d at the station: %s' % (k, 'tick %d' % docked['tick'] if docked else shown(c, 'dock')))
+            check.note('targets', 'player %d: %s' % (k, shown(c, 'targets', 600)))
+            out = last_answer(c, 'out')
+            check('out', bool(out), 'player %d out of its ship: %s' % (k, out['text'][:200] if out else shown(c, 'out')))
+            panels = last_answer(c, 'panels')
+            check('panels', bool(panels) and kind in panels['text'], 'player %d: %s' % (k, panels['text'] if panels else shown(c, 'panels')))
+            hack = last_answer(c, 'hack', 'asked')
+            check('asked', bool(hack), 'player %d: %s' % (k, hack['text'] if hack else shown(c, 'hack')))
+            w0 = num((last_answer(c, 'inv_before') or {}).get('text'), Hack.WARE)
+            w1 = num((last_answer(c, 'inv_after') or {}).get('text'), Hack.WARE)
+            check('ware', w0 is not None and w1 == w0 - 1, "player %d's own %s: %s -> %s" % (k, Hack.WARE, w0, w1))
+            after = last_answer(c, 'panels_after')
+            check.note('panels_after', 'player %d: %s' % (k, after['text'][:300] if after else shown(c, 'panels_after')))
+            # the hack applied on every client: the ware left the player's own inventory in its scope, on both clients
+            # alike (the readings), and each client's compslot status counted the hack applied
+            mine = [r for r in c['ops'].get('inv_look', []) if r[2].startswith('slot=%d ' % k)]
+            first, last = (mine[0][2] if mine else ''), (mine[-1][2] if mine else '')
+            check('used', bool(mine) and '=3' in first.split()[-1] and first.split()[-1].endswith('=3') and last.split()[-1].endswith('=2'),
+                  "player %d's decryption systems read in its scope: first %s, last %s" % (k, first[-60:], last[-60:]))
+
+
+SCENARIOS = {s.name: s for s in (Trade, Orders, Orders2, Crew, ShipBuy, Refit, RefitOrder, Repair, Wing, ShipSell, CrewMove, FleetTrade, Deploy, Rules, Systems, Settings, Storage, Exchange, Hostile, TradeLoop, Claim, Mining, WingSet, Routines, DockPair, MapOpen, Guidance, Reps, ItemTrader, Hack)}
 
 
 def ai_docks(plan):
@@ -2868,6 +3193,16 @@ def ai_dock_note(check, clients, logs):
                 if r['text'].startswith(('ai_dock', 'autopilot_stop')) or (r['text'].startswith('docked after=') and 'by=ai' in r['text'])]
         check.note('ai_dock', 'player %d: %s' % (k, ' / '.join(rows) or 'no AI dock row'))
     md_note(check, logs, 'UI_REPLAY_AI_DOCK', 'ai_dock_md')
+
+
+def media_note(check, logs):
+    """Each client's last MD_MEDIA row: conversation pictures taken over (conv=installed/adds) and what its monitor was
+    not told (ui=starts/none/stops/releases/hidden/shown: hidden = another player's picture)."""
+    for n, path in enumerate(logs, 1):
+        rows = [x for x in rig.read_lines(Path(path)) if 'MD_MEDIA tick=' in x]
+        last = rows[-1] if rows else ''
+        conv, ui = re.search(r' conv=(\S+)', last), re.search(r' ui=(\S+)', last)
+        check.note('media', 'client %d: conv=%s ui=%s' % (n, conv.group(1) if conv else '-', ui.group(1) if ui else '-'))
 
 
 def md_note(check, logs, marker, name):
@@ -2927,6 +3262,8 @@ def report(scenario, logs, run_dir, args):
         ai_dock_note(check, clients, logs)
     if scenario is Guidance:   # what the guidance script heard for players 2..N, on each client (native_gate_player_guidance.xml)
         md_note(check, logs, 'GUIDANCE_OWNER', 'guidance_md')
+    if scenario in (Reps, ItemTrader, Crew):   # the conversation's picture on its owner's monitor only (lockstep_md_media.h talk)
+        media_note(check, logs)
     watch_check(check, clients, scenario.watch(args))
     sync_check(check, logs, run_dir, need_capture=True)
     return check.failed

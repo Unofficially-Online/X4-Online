@@ -61,6 +61,8 @@ static void test_mdv_remove(void *notes,int *id) {
     }
 }
 static void *test_mdv_make_fn(void *self) {return self;}
+static unsigned test_mdv_adds;
+static void test_mdv_add(void *note,void *person,void *third,uintptr_t fourth,uintptr_t fifth) {(void)note;(void)person;(void)third;(void)fourth;(void)fifth;++test_mdv_adds;}
 /* The interaction handle table and the UI's answer: one descriptor of the test's, its ID at +8. */
 static unsigned char *test_mdv_ask;
 static int test_mdv_ask_id,test_mdv_raised_id;
@@ -211,12 +213,26 @@ static void test_md_media(void) {
      test_mdv_plant(5,0x47,0.0f,0);test_mdv_make_next=6;{const unsigned starts=test_mdv_starts;mdv_action(NULL,NULL,NULL);assert(mdv_full==1 && test_mdv_starts==starts);}
      memcpy(mdv,kept,sizeof(kept));test_mdv_make_next=0;}
     {char status[400];assert(mdv_status(status,sizeof(status))>0 && strstr(status,"armed=1 installed=0/0/0 live=2/1 ") && strstr(status," started=5 replaced=3 failed=1 interactive=1 full=1 timeouts=1 "));}
+    /* A conversation's picture (header, talk): X4's add, then the start; owned by the conversation's owner (hidden on the
+     * other clients), without an owner by the frame's slot (here none: every client). */
+    {const int armed_was=cvo_armed;const unsigned owner_was=cvo_owner;const LONG64 started=mdv_started;
+     mdv_fn.add=test_mdv_add;test_mdv_adds=0;cvo_armed=1;cvo_owner=2;
+     test_mdv_plant(5,0x48,0.0f,0);mdv_conv_add(test_mdv_note[5],NULL,NULL,0,0);
+     assert(test_mdv_adds==1 && mdv_conv_adds==1 && mdv_started==started+1 && mdv_ui_note(0x48,0)==3);   /* client 1: player 2's */
+     stats.slot=2;assert(mdv_ui_note(0x48,0)==1);stats.slot=1;
+     {int id=0x48;test_mdv_remove(test_mdv_notes,&id);}(void)mdv_frame();
+     cvo_owner=0;test_mdv_plant(5,0x49,0.0f,0);mdv_conv_add(test_mdv_note[5],NULL,NULL,0,0);
+     assert(test_mdv_adds==2 && mdv_started==started+2 && mdv_ui_note(0x49,0)==1);
+     {int id=0x49;test_mdv_remove(test_mdv_notes,&id);}(void)mdv_frame();
+     ui_thread=GetCurrentThreadId()+1;mdv_conv_add(test_mdv_note[5],NULL,NULL,0,0);assert(test_mdv_adds==3 && mdv_conv_adds==2);   /* not live: X4's add alone */
+     ui_thread=GetCurrentThreadId();cvo_armed=armed_was;cvo_owner=owner_was;
+     {char status[400];assert(mdv_status(status,sizeof(status))>0 && strstr(status," conv=0/2"));}}
     /* The end: the table is empty and nothing is answered. */
     mdv_restore();assert(!mdv_armed && !mdv[0].used && !mdv_ui_note(0x41,0) && !strcmp(mdv_why,"-"));
     mdv_pin=mdv_pins;mdv_why="-";memset(&mdv_fn,0,sizeof(mdv_fn));mdv_install_tried=0;memset(mdv_ui_original,0,sizeof(mdv_ui_original));
     memcpy(image+MDV_MANAGER,manager_was,8);memcpy(image+MDV_NOTES,notes_was,8);memcpy(image+MDV_ACTION_VTABLE+MDV_SLOT,slot_bytes_was,8);
     pstk_scope_slot=scope_was;mpp_depth=depth_was;mpp_depth1=depth1_was;stats.issued=issued_was;ui_thread=ui_was;stats.active=active_was;stats.slot=slot_was;
-    printf("md media: a notification's cutscene started in the UI's place, owner, UI answers, timeout, upkeep, refusals PASS\n");
+    printf("md media: a notification's cutscene started in the UI's place, owner, UI answers, timeout, upkeep, refusals, a conversation's picture PASS\n");
 }
 /* The real image: every pinned routine, the vtable slot, the constructor's call inside one 16-byte block. */
 static void test_md_media_native_image(const char *path) {
@@ -229,6 +245,11 @@ static void test_md_media_native_image(const char *path) {
     memcpy(&rel,image+0xb130c4u+1,4);assert(image[0xb130c4u]==0xe8 && 0xb130c4u+5u+(uint32_t)rel==MDV_START);
     {static const unsigned char id_field[7]={0x45,0x8b,0xa5,0xa4,0x00,0x00,0x00};assert(!memcmp(image+0xb12facu,id_field,7));}   /* mov r12d,[r13+0xa4] */
     {static const unsigned char dtor_id[6]={0x8b,0x93,0xa0,0x00,0x00,0x00};assert(!memcmp(image+0x156c78u,dtor_id,6));}        /* mov edx,[rbx+0xa0] */
+    /* a conversation's add: Move pinned, its call of the add inside one 16-byte block, the notification in RCX (mov rcx,r12) */
+    assert(hash_ok(image+MDV_CONV_MOVE,MDV_CONV_MOVE_SIZE,MDV_CONV_MOVE_SHA));
+    assert(image[MDV_CONV_SITE]==0xe8 && (MDV_CONV_SITE&~15u)==((MDV_CONV_SITE+4u)&~15u));
+    memcpy(&rel,image+MDV_CONV_SITE+1,4);assert(MDV_CONV_SITE+5u+(uint32_t)rel==MDV_ADD);
+    {static const unsigned char rcx_note[3]={0x49,0x8b,0xcc};assert(!memcmp(image+MDV_CONV_SITE-3u,rcx_note,3));}
     image=prior;
     for(unsigned i=0;i<MDV_UI;i++) assert((mdv_ui[i].rva&15u)==0);   /* an entry's six bytes inside one 16-byte block */
     printf("pinned native image md media verified (the action, the UI's four functions, the manager's start and stop, the notification's routines)\n");

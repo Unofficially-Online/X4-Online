@@ -49,6 +49,15 @@
  *            the notification on every client at one tick (gate.md_media_frame, the probe's frame). The ID the UI says
  *            it displays (notification manager +0x50, what AbortCurrentNotification removes) is cleared there when it
  *            is one of ours.
+ *   talk     a conversation's picture (21 Nov): Conv::ConversationManager::Move 0x1177d60 makes the face of the person
+ *            spoken to as a Notification of its own (constructor 0x156980 at 0x117800a, descriptor +0x78, no timeout)
+ *            and posts it with the add the action uses (0x156f30, called at 0x11781d3 with the notification in RCX); it
+ *            takes it away itself at the conversation's end (0x157860 at 0x1177f22). Left to every client's UI, the
+ *            person one player talked to showed on every player's monitor, with its lines, and stayed there after the
+ *            conversation (run 20261121-185246: player 2 at the Argon representative, the face on player 1's monitor).
+ *            The add's call is ours: after X4's add the picture starts here as an action's does, owned by the
+ *            conversation's owner (lockstep_conversation_owner.h), without one by the frame's slot as above. Move is
+ *            pinned; on another build the conversation's picture stays the UI's (conv=0 in the status).
  * One notification cutscene at a time stays X4's rule: a second call ends the first one's picture (its lines go on,
  * on their owner's client). Not covered: the owner's monitor that takes the notification up after its ready event (it
  * shows the caption over noise), a joiner during a call (the join package does not carry notifications), full-screen
@@ -61,6 +70,12 @@
 #define MDV_MAKE_SITE 0x10d2adbu         /* the target monitor branch: the call of the Notification's constructor */
 #define MDV_MAKE 0x156980u
 #define MDV_MAKE_STUB 0x300u             /* on the slots' near page, after the suit's zone (0x1c0, 0x1e0) */
+#define MDV_ADD 0x156f30u                /* the notification's add (to the manager, the UI told), the action's and Move's */
+#define MDV_CONV_SITE 0x11781d3u         /* Conv::ConversationManager::Move: its call of the add (header, talk) */
+#define MDV_CONV_STUB 0x980u             /* on the slots' near page */
+#define MDV_CONV_MOVE 0x1177d60u
+#define MDV_CONV_MOVE_SIZE 0x713u
+#define MDV_CONV_MOVE_SHA "19727b1f6e42e583b92ce52e1b17d453a205928a914a370a480cf1f474d0b56d"
 #define MDV_LUA_START 0xb12e20u          /* the UI's StartCutscene: what mdv_begin does in its place */
 #define MDV_LUA_START_SIZE 0x39au
 #define MDV_LUA_START_SHA "1e98264a2c335829a0329a707ec46ac368ebc96002fa6d4d1cdaa2694f2e6d81"
@@ -104,8 +119,9 @@ typedef void (*mdv_remove_fn)(void *,int *);
 typedef void *(*mdv_target_fn)(uint64_t *,const void *,int);
 typedef void *(*mdv_interaction_fn)(int);
 typedef void *(*mdv_raise_fn)(void *,void *,int);
+typedef void (*mdv_add_fn)(void *,void *,void *,uintptr_t,uintptr_t);
 typedef struct {mdv_action_fn action;mdv_make_fn make;mdv_start_fn start;mdv_stop_fn stop;mdv_find_fn find;mdv_remove_fn remove;
-    mdv_target_fn target;int (*now)(double *);mdv_interaction_fn interaction;mdv_raise_fn raise;} mdv_fns;
+    mdv_target_fn target;int (*now)(double *);mdv_interaction_fn interaction;mdv_raise_fn raise;mdv_add_fn add;} mdv_fns;
 static mdv_fns mdv_fn;                   /* the image's; tests set their own */
 static unsigned char *mdv_base;          /* the image, or a test region */
 typedef struct {unsigned char *note,*desc;double end;int id,cutscene;unsigned owner,seq;unsigned char used;} mdv_t;
@@ -123,7 +139,10 @@ static mdv_lua_fn mdv_ui_original[MDV_UI];   /* the trampolines; tests set their
 static int mdv_ui_installed[MDV_UI];
 static unsigned char mdv_ui_patched[MDV_UI][6];
 static int mdv_lua_priority(lua_State *L),mdv_lua_start(lua_State *L),mdv_lua_stop(lua_State *L),mdv_lua_release(lua_State *L);   /* lockstep_gate.c */
-static unsigned char mdv_site_patched[5];
+static unsigned char mdv_site_patched[5],mdv_conv_patched[5];
+static int mdv_conv_pinned,mdv_conv_installed;
+static volatile LONG64 mdv_conv_adds;
+static unsigned cvo_owner_now(void);     /* lockstep_conversation_owner.h: the conversation's owner slot, 0 nobody */
 static unsigned char *mdv_made;          /* the notification the action that runs now has made */
 static volatile LONG64 mdv_actions,mdv_started,mdv_replaced,mdv_failed,mdv_interactive,mdv_full,mdv_timeouts,mdv_gone,
                        mdv_ui_starts,mdv_ui_none,mdv_ui_stops,mdv_ui_releases,mdv_ui_hidden,mdv_ui_shown;
@@ -157,8 +176,9 @@ static int mdv_running(const mdv_t *e) {
        !read_local(now+8,&id,4)) return 0;
     return id==e->cutscene?id:0;
 }
-/* After the action: its notification's cutscene starts here, as the UI's StartCutscene 0xb12e20 starts it. */
-static void mdv_begin(unsigned char *note) {
+/* After the action (or a conversation's add): its notification's cutscene starts here, as the UI's StartCutscene
+ * 0xb12e20 starts it; owner: the slot whose client shows it (0 every client). */
+static void mdv_begin(unsigned char *note,unsigned owner) {
     unsigned char *desc=NULL,*interaction=NULL,*manager=NULL,*running=NULL,*cutscene=NULL;
     int id=0,mode=0,cid=0;float seconds=0;double now=0;uint64_t target=0;unsigned char on=0;mdv_t *e=NULL;
     if(!read_local(note+8,&id,4) || !id || !read_local(note+0x78,&desc,8) || !desc || !read_local(note+0x80,&interaction,8) ||
@@ -183,7 +203,7 @@ static void mdv_begin(unsigned char *note) {
     memcpy(manager+0xa8,&cutscene,8);
     if(!cutscene) {InterlockedIncrement64(&mdv_failed);return;}   /* a key the manager does not know: X4 says so in its log */
     memcpy(&cid,cutscene+8,4);memcpy(desc+0xa0,&cid,4);
-    memset(e,0,sizeof(*e));e->note=note;e->desc=desc;e->id=id;e->cutscene=cid;e->owner=mpp_show_slot();e->seq=++mdv_seq;
+    memset(e,0,sizeof(*e));e->note=note;e->desc=desc;e->id=id;e->cutscene=cid;e->owner=owner;e->seq=++mdv_seq;
     if(seconds>0 && mdv_fn.now && mdv_fn.now(&now)) e->end=now+(double)seconds;
     e->used=1;InterlockedIncrement64(&mdv_started);
 }
@@ -195,7 +215,15 @@ static void mdv_action(void *node,void *exec,void *frame) {
     InterlockedIncrement64(&mdv_actions);
     original(node,exec,frame);
     unsigned char *const made=mdv_made;mdv_made=outer;
-    if(made) mdv_begin(made);
+    if(made) mdv_begin(made,mpp_show_slot());
+}
+/* A conversation's call of the add (header, talk): X4's add, then its picture starts as an action's does. */
+__attribute__((noinline)) static void mdv_conv_add(void *note,void *person,void *third,uintptr_t fourth,uintptr_t fifth) {
+    mdv_fn.add(note,person,third,fourth,fifth);
+    if(!mdv_live() || !note) return;
+    const unsigned owner=cvo_owner_now();
+    InterlockedIncrement64(&mdv_conv_adds);
+    mdv_begin((unsigned char *)note,owner?owner:mpp_show_slot());
 }
 /* The action's call of the Notification's constructor. */
 __attribute__((noinline)) static void *mdv_make(void *self) {
@@ -309,6 +337,8 @@ static int mdv_arm(void) {
     mdv_fn.stop=(mdv_stop_fn)(image+MDV_STOP);mdv_fn.find=(mdv_find_fn)(image+MDV_FIND);mdv_fn.remove=(mdv_remove_fn)(image+MDV_REMOVE);
     mdv_fn.target=(mdv_target_fn)(image+MDV_TARGET);mdv_fn.now=pnat_time_tls;
     mdv_fn.interaction=(mdv_interaction_fn)(image+MDV_INTERACTION);mdv_fn.raise=(mdv_raise_fn)(image+MDV_RAISE);
+    mdv_fn.add=(mdv_add_fn)(image+MDV_ADD);
+    mdv_conv_pinned=hash_ok(image+MDV_CONV_MOVE,MDV_CONV_MOVE_SIZE,MDV_CONV_MOVE_SHA);mdv_conv_adds=0;
     memset(mdv,0,sizeof(mdv));mdv_made=NULL;mdv_install_tried=0;mdv_seq=0;mdv_answers=mdv_answers_gone=0;
     mdv_actions=mdv_started=mdv_replaced=mdv_failed=mdv_interactive=mdv_full=mdv_timeouts=mdv_gone=0;
     mdv_ui_starts=mdv_ui_none=mdv_ui_stops=mdv_ui_releases=mdv_ui_hidden=mdv_ui_shown=0;
@@ -334,7 +364,8 @@ static int mdv_uninstall(void) {
     for(unsigned i=0;i<MDV_UI;i++) if(mdv_ui_installed[i] && pview_cas(mdv_ui[i].rva,mdv_ui_patched[i],mdv_ui[i].head,6)) mdv_ui_installed[i]=0;
     if(mdv_slot_installed && mdv_slot_swap((void*)mdv_action,(void*)mdv_fn.action)) mdv_slot_installed=0;
     if(mdv_site_installed && pres_site_uninstall(MDV_MAKE_SITE,MDV_MAKE,mdv_site_patched)) mdv_site_installed=0;
-    int left=mdv_slot_installed || mdv_site_installed;
+    if(mdv_conv_installed && pres_site_uninstall(MDV_CONV_SITE,MDV_ADD,mdv_conv_patched)) mdv_conv_installed=0;
+    int left=mdv_slot_installed || mdv_site_installed || mdv_conv_installed;
     for(unsigned i=0;i<MDV_UI;i++) left|=mdv_ui_installed[i];
     return !left;
 }
@@ -348,6 +379,8 @@ static void mdv_install(void) {
     mdv_site_installed=1;
     if(!mdv_slot_swap((void*)mdv_fn.action,(void*)mdv_action)) {mdv_uninstall();mdv_why="slot";return;}
     mdv_slot_installed=1;
+    /* the conversation's picture (header, talk): with Move pinned; without it the UI's, as before */
+    if(mdv_conv_pinned && pres_site_install(MDV_CONV_SITE,MDV_ADD,MDV_CONV_STUB,(void*)mdv_conv_add,mdv_conv_patched)) mdv_conv_installed=1;
 }
 /* gate.md_media_frame(): once per step, in the probe's frame, on every client. The notifications that are gone leave
  * the table, a timeout that is over removes its notification (its destructor stops the cutscene), and the UI's
@@ -382,9 +415,9 @@ static int mdv_status(char *out,size_t capacity) {
     for(unsigned i=0;i<MDV_MAX;i++) if(mdv[i].used) {++live;owned+=mdv[i].owner!=0;}
     for(unsigned i=0;i<MDV_UI;i++) hooks+=mdv_ui_installed[i]!=0;
     int n=snprintf(out,capacity,"armed=%d installed=%d/%d/%u live=%u/%u actions=%lld started=%lld replaced=%lld failed=%lld interactive=%lld full=%lld "
-        "timeouts=%lld gone=%lld ui=%lld/%lld/%lld/%lld/%lld/%lld why=%s",mdv_armed,mdv_site_installed,mdv_slot_installed,hooks,live,owned,
+        "timeouts=%lld gone=%lld ui=%lld/%lld/%lld/%lld/%lld/%lld why=%s conv=%d/%lld",mdv_armed,mdv_site_installed,mdv_slot_installed,hooks,live,owned,
         (long long)mdv_actions,(long long)mdv_started,(long long)mdv_replaced,(long long)mdv_failed,(long long)mdv_interactive,(long long)mdv_full,
         (long long)mdv_timeouts,(long long)mdv_gone,(long long)mdv_ui_starts,(long long)mdv_ui_none,(long long)mdv_ui_stops,
-        (long long)mdv_ui_releases,(long long)mdv_ui_hidden,(long long)mdv_ui_shown,mdv_why);
+        (long long)mdv_ui_releases,(long long)mdv_ui_hidden,(long long)mdv_ui_shown,mdv_why,mdv_conv_installed,(long long)mdv_conv_adds);
     return n>0 && (size_t)n<capacity?n:0;
 }

@@ -209,13 +209,20 @@ static void pres_rng_back(uint64_t *rng,uint64_t word) {
  * target (a run of 12 Nov: the terminal was the crosshair message and targetable, no label, the click nothing; in the plain
  * game the label and one click for the menu). While this client's slot walks, the scope puts P_k's list words on the
  * player and P_k's floor words into the player's controller; slot 1's go back at the exit. They point into P_k's own state
- * (X4's UI reads it): list words that changed in a scope are counted (foot=scopes/moved) and carried nowhere. */
+ * (X4's UI reads it): list words that changed in a scope are counted (foot=scopes/moved) and carried nowhere.
+ * The same scope puts P_k's inventory on the player (Player+0x398, the inventory's object): a station's control panel
+ * (U::HackPanelAction, lockstep_ui_compslot.h hack) is possible only while the player holds the panel type's wares, and
+ * the target monitor lists them against the player's inventory; with slot 1's on X4's player, client k's panel was
+ * offered by what player 1 carried. A pointer that changed in the scope is counted with the list (moved). */
 #define PRES_FOOT_LIST 0x8a698u         /* Player: the interactables list (head, count) */
+#define PRES_FOOT_INVENTORY 0x398u      /* Player: its inventory */
 #define PRES_FOOT_LIST_SIZE 16u
 #define PRES_FOOT_FLOOR 0x380u          /* FirstPersonController: component, part, component id, part */
 #define PRES_FOOT_FLOOR_SIZE 0x20u
 static unsigned char pres_foot_list_saved[PRES_FOOT_LIST_SIZE],pres_foot_floor_saved[PRES_FOOT_FLOOR_SIZE],*pres_foot_ctl;
 static unsigned pres_foot_list_at,pres_foot_floor_at;   /* 0: off; the two offsets with the real image (pres_use_image), a test's own */
+static unsigned pres_foot_inventory_at;                   /* 0: off; PRES_FOOT_INVENTORY with the real image */
+static unsigned char *pres_foot_inventory_saved;
 static int pres_foot_open;
 static volatile LONG64 pres_foot_scopes,pres_foot_moved;
 static void pres_foot_enter(unsigned char *p1,const pslot_slot *s,unsigned k) {
@@ -226,6 +233,7 @@ static void pres_foot_enter(unsigned char *p1,const pslot_slot *s,unsigned k) {
        (vt!=(void*)peye_fpc_stock && vt!=(void*)&peye_vt[1])) return;
     memcpy(pres_foot_list_saved,p1+pres_foot_list_at,PRES_FOOT_LIST_SIZE);memcpy(p1+pres_foot_list_at,s->player+pres_foot_list_at,PRES_FOOT_LIST_SIZE);
     memcpy(pres_foot_floor_saved,ctl+pres_foot_floor_at,PRES_FOOT_FLOOR_SIZE);memcpy(ctl+pres_foot_floor_at,fpc+pres_foot_floor_at,PRES_FOOT_FLOOR_SIZE);
+    if(pres_foot_inventory_at) {memcpy(&pres_foot_inventory_saved,p1+pres_foot_inventory_at,8);memcpy(p1+pres_foot_inventory_at,s->player+pres_foot_inventory_at,8);}
     pres_foot_ctl=ctl;pres_foot_open=1;InterlockedIncrement64(&pres_foot_scopes);
 }
 static void pres_foot_leave(unsigned char *p1,const pslot_slot *s) {
@@ -233,6 +241,10 @@ static void pres_foot_leave(unsigned char *p1,const pslot_slot *s) {
     pres_foot_open=0;
     if(memcmp(p1+pres_foot_list_at,s->player+pres_foot_list_at,PRES_FOOT_LIST_SIZE)) InterlockedIncrement64(&pres_foot_moved);
     memcpy(p1+pres_foot_list_at,pres_foot_list_saved,PRES_FOOT_LIST_SIZE);
+    if(pres_foot_inventory_at) {
+        if(memcmp(p1+pres_foot_inventory_at,s->player+pres_foot_inventory_at,8)) InterlockedIncrement64(&pres_foot_moved);
+        memcpy(p1+pres_foot_inventory_at,&pres_foot_inventory_saved,8);
+    }
     memcpy(pres_foot_ctl+pres_foot_floor_at,pres_foot_floor_saved,PRES_FOOT_FLOOR_SIZE);
 }
 static int pres_pins(void) {
@@ -263,7 +275,7 @@ static void pres_use_image(void) {
     pres_fn.pick=(void(*)(void*))(image+PRES_PICK);pres_fn.click=(void(*)(void*))(image+PRES_CLICK);
     pres_plan_bind();
     peye_seat=(peye_seat_fn)(image+PEYE_SEAT);peye_fpc_pose=(peye_pose_fn)(image+PEYE_FPC_POSE);peye_fpc_stock=(void**)(image+PEYE_FPC_VTABLE);
-    pres_foot_list_at=PRES_FOOT_LIST;pres_foot_floor_at=PRES_FOOT_FLOOR;
+    pres_foot_list_at=PRES_FOOT_LIST;pres_foot_floor_at=PRES_FOOT_FLOOR;pres_foot_inventory_at=PRES_FOOT_INVENTORY;
 }
 /* ---- the presentation scope ---- */
 static int pres_enter(void);static void pres_leave(void);

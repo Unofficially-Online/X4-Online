@@ -76,10 +76,31 @@
  *             replaced for the length of the call and its own back right after (also after a fault); the image and
  *             the class's real vtable are not touched. Only with both functions pinned and the vtable's two slots
  *             being them; else X4's execute runs as it is (seat=..:plain).
+ *   hack      a station's control panel (in station interiors; md/gm_hackpanel.xml, rml_hack_object.xml). Aiming at one
+ *             offers U::HackPanelAction (vtable 0x2b45600), an instant action. [F 9.00] Its execute (362b40) tests the
+ *             player (possible 3637c0: the frame pick on the panel, within 4 m, not hacked by this player before (the
+ *             player's ControlPanelHackMemory at Player+0x883b0), the money, the panel type's wares in the player's
+ *             inventory Player+0x398) and then, for a type that is a hack (the definition's flag, GetControlPanelInfo's
+ *             ishack), only opens the question (UserQuestionMenu 'hackpanel', UI); its Yes calls the export
+ *             StartControlPanelHack(UIComponentSlot, paneltypeid) [F 1bbf40], which finds the panel's connection and runs
+ *             72a150 on X4's player at once: the same tests again, then the hack itself (the price and the wares off the
+ *             player, the station's module hacked through 443850, the player's memory of the panel, events
+ *             ControlPanelHacked on the station and U::PlayerHackedObjectEvent on the player: MD event_player_hacked_object).
+ *             Nothing waits or runs later: the hack is that one call, made on X4's player. The guard refused both, so
+ *             nobody hacked in a session. Here, for slot 1 and for a walking slot 2..N: the action of a hack type runs
+ *             X4's own execute on the capturing client (the question, UI only; a type that is no hack, the access panels,
+ *             would act at once and stays refused); the export's entry is claimed and its call is this module's event
+ *             (the class UICS_CLASS_HACK, the panel's reference and connection name, the type's id). The apply runs X4's
+ *             export itself, slot 1 canonical, slot k inside its scope, where X4's player is slot k's own: its memory,
+ *             its inventory, its event; the station is everyone's. A slot that no longer walks, or a slot k outside its
+ *             scope, does nothing (stale). The presentation's walking scope puts slot k's inventory on X4's player
+ *             (lockstep_pilot_present.h pres_foot_enter), so client k's possible test and target monitor see slot k's
+ *             wares. Not covered: the memory of panels slot k hacked is P_k's, which no save and no join package holds
+ *             (a joiner's P_k forgets them); client k's possible test reads slot 1's memory.
  * Status UI_REPLAY rows: compslot=on:claimed:captured:refused:applied:stale:passed last=<class RVA of the last peek>
  * seat=<clicks of slots 2..N on their own seat>:<slot 1's seat applies with the check answered>:<as X4 has it>
  * instant=<PerformAction calls decided here> terminal=<claimed>:<menus opened by X4's own>:<spacesuit asked through
- * the menu>. */
+ * the menu> hack=<claimed>:<question menus opened>:<refused>:<hacks captured>:<applied>:<stale>. */
 #define UICS_SINGLE_PERFORM 0x3508e0u
 #define UICS_MULTI_PERFORM 0x350d60u
 #define UICS_NAME_MAX 60u
@@ -111,12 +132,26 @@ typedef struct {uint32_t klass;unsigned slots;const char *name;} uics_verdict_ro
 #define UICS_CLASS_CONTROL 0x2b45548u
 #define UICS_CLASS_TRANSPORTER 0x2b45a38u /* U::ActivateTransporterRoomAction: its execute opens the transporter menu */
 #define UICS_CLASS_TRANSPORT 0x2c49cb8u   /* U::TransportPlayerToTargetAction: the menu's command (slot 1's event) */
+/* A station's control panel (header, hack): U::HackPanelAction, its execute (vtable +0x10, 362b40) and the export the
+ * question asks (StartControlPanelHack); GetControlPanelInfo answers whether a panel's type is a hack (its ishack: the
+ * same flag of the panel type's definition the execute tests before it opens the question). */
+#define UICS_CLASS_HACK 0x2b45600u
+#define UICS_HACK_EXECUTE 0x362b40u
+#define UICS_HACK_EXECUTE_SIZE 908u
+#define UICS_HACK_EXECUTE_SHA "0f684100f9070c874b9342329212bf8daf925461049e51de23ebf98ec354132e"
+#define UICS_PANEL_INFO 0x18ad60u
+#define UICS_PANEL_INFO_SIZE 1234u
+#define UICS_PANEL_INFO_SHA "2035fd6ce6020e139b433ebc2e4e9f03473f19fc7286da9c5d8cfff43510ab63"
+#define UICS_PANEL_ISHACK 0x2cu           /* ControlPanelInfo (the Lua FFI's): type, name, desc, hackeddesc, price, numrequiredwares, ishack, hacked, ... */
+#define UICS_PANEL_INFO_BYTES 0x40u
+#define UICS_TYPE_MAX 40u                 /* a control panel type's id ("hack_shieldgenerators") */
 #define UICS_ZONE_CLASS 0x6d              /* a zone: the transporter menu's spacesuit target (IsClass, vtable +0x11e8) */
 #define UICS_TRANSPORT_NAME "transporter" /* the event's connection name for a spacesuit asked through the menu */
 static const uics_verdict_row uics_verdicts[]={
     {UICS_CLASS_AIRLOCK,UICS_SLOT_ONE|UICS_SLOT_OTHERS,"CycleAirlockAction"},
     {UICS_CLASS_CONTROL,UICS_SLOT_ONE,"ControlPositionAction"},
-    {UICS_CLASS_TRANSPORT,UICS_SLOT_ONE|UICS_SLOT_OTHERS,"TransportPlayerToTargetAction"}};   /* a slot 2..N: a place only (uics_run) */
+    {UICS_CLASS_TRANSPORT,UICS_SLOT_ONE|UICS_SLOT_OTHERS,"TransportPlayerToTargetAction"},   /* a slot 2..N: a place only (uics_run) */
+    {UICS_CLASS_HACK,UICS_SLOT_ONE|UICS_SLOT_OTHERS,"HackPanelAction"}};   /* the question's Yes only (header, hack) */
 #define UICS_VERDICTS (sizeof(uics_verdicts)/sizeof(*uics_verdicts))
 typedef struct {uint64_t component;const char *connection;} uics_slot_arg;
 typedef unsigned char (*uics_export_fn)(const uics_slot_arg *,uint32_t);
@@ -138,6 +173,12 @@ static unsigned uics_action_index=UINT_MAX;   /* the guard's entry of the Lua Pe
 static unsigned char *(*uics_message_fn)(uint32_t);                                  /* ad6ec0, or a test's */
 static uics_message_details *(*uics_details_fn)(uics_message_details *,uint32_t);   /* b03b70, or a test's */
 static double (*uics_lua_number)(void *L,int index);                                /* lua_tonumber, set at the arming */
+static unsigned uics_hack_index=UINT_MAX;                /* the guard's entry of StartControlPanelHack, when claimed */
+static void (*uics_hack_test)(const void *,const char *);   /* tests: in place of the guard's trampoline of StartControlPanelHack */
+static int (*uics_ishack_test)(uint64_t,const char *);      /* tests: in place of X4's GetControlPanelInfo */
+static void *(*uics_panel_info_fn)(void *,const void *);    /* 18ad60 (out, slot), with the execute pinned */
+static int uics_hack_pinned;
+static volatile LONG64 uics_hack_menus,uics_hack_refused,uics_hack_captured,uics_hack_applied,uics_hack_stale;
 static uics_export_fn uics_export_test;        /* tests: in place of the guard's trampoline */
 static uics_perform_fn uics_perform_test[2];   /* tests: in place of the hooks' trampolines */
 static int uics_seat_pinned;                   /* possible and execute are the pinned ones (header, crosshair) */
@@ -297,6 +338,25 @@ static int uics_container_kind(unsigned char *container) {
     if(!container || !pnat_base || !read_local(container,&vtable,8) || !vtable || !read_local(vtable+UICS_CONTAINER_PERFORM,&perform,8)) return -1;
     return perform==pnat_base+UICS_SINGLE_PERFORM?0:perform==pnat_base+UICS_MULTI_PERFORM?1:-1;
 }
+/* May this client's slot use a station's control panel (header, hack): slot 1 (X4's own player), a slot 2..N while it walks. */
+static int uics_hack_may(unsigned k) {return k==1 || (k>=2 && k<=PILOT_SLOTS && pfslot_own_walking());}
+/* Is the panel's type a hack, whose execute only opens the question (header, hack)? 0 unpinned, unreadable or no hack. */
+static int uics_panel_ishack(uint64_t component,const char *connection) {
+    uint64_t info[UICS_PANEL_INFO_BYTES/8];const uics_slot_arg slot={component,connection};int fault=0;
+    if(uics_ishack_test) return uics_ishack_test(component,connection);
+    if(!uics_hack_pinned || !uics_panel_info_fn || !component || !connection) return 0;
+    memset(info,0,sizeof(info));
+    __try {(void)uics_panel_info_fn(info,&slot);}
+    __except(GetExceptionCode()==EXCEPTION_ACCESS_VIOLATION?EXCEPTION_EXECUTE_HANDLER:EXCEPTION_CONTINUE_SEARCH) {fault=1;}
+    if(fault) {InterlockedIncrement64(&uics_faults);return 0;}
+    return ((const unsigned char *)info)[UICS_PANEL_ISHACK]!=0;
+}
+/* A control panel's action asked of this client (header, hack): 1 the question, X4's own (UI); 0 refused. */
+static int uics_hack_question(uint64_t component,const char *connection) {
+    char name[UICS_NAME_MAX+1];
+    if(uics_hack_may(pstk_capture_slot) && uics_name(connection,name) && uics_panel_ishack(component,name)) return 1;
+    InterlockedIncrement64(&uics_hack_refused);return 0;
+}
 /* The Lua global PerformAction(messageID, n) of the target system (header, instant): frame argument 0 is the lua_State. */
 static int uics_action_decide(unsigned index,const uint64_t *frame,uint64_t *ret) {
     *ret=0;
@@ -316,14 +376,15 @@ static int uics_action_decide(unsigned index,const uint64_t *frame,uint64_t *ret
     if(kind<0) return uics_refuse(index,ret);
     InterlockedIncrement64(&uics_peeks);
     const uint32_t klass=uics_class(container,action,kind);
-    if(uics_slot_terminal(pstk_capture_slot,klass,uirep_component(details.component))) {   /* the menu: X4's own, this client's UI */
+    if(klass==UICS_CLASS_HACK && !uics_hack_question(details.component,details.connection)) {uics_last=klass;return uics_refuse(index,ret);}
+    if(klass==UICS_CLASS_HACK || uics_slot_terminal(pstk_capture_slot,klass,uirep_component(details.component))) {   /* the menu: X4's own, this client's UI */
         int (*original)(void *)=uics_lua_original?uics_lua_original:(index<UIGUARD_MAX?(int(*)(void *))uiguard_tramp[index]:NULL);int results=0;
         uics_last=klass;
         if(!original) return uics_refuse(index,ret);
         __try {results=original(L);}
         __except(GetExceptionCode()==EXCEPTION_ACCESS_VIOLATION?EXCEPTION_EXECUTE_HANDLER:EXCEPTION_CONTINUE_SEARCH) {fault=1;}
         if(fault) {InterlockedIncrement64(&uics_faults);return uics_refuse(index,ret);}
-        InterlockedIncrement64(&uics_menus);*ret=(uint64_t)(int64_t)results;return 1;
+        InterlockedIncrement64(klass==UICS_CLASS_HACK?&uics_hack_menus:&uics_menus);*ret=(uint64_t)(int64_t)results;return 1;
     }
     return uics_capture(index,ret,0,details.component,name,uics_name(details.connection,name),action,klass);
 }
@@ -377,19 +438,51 @@ static int uics_claim_decide(unsigned index,const uint64_t *frame,uint64_t *ret)
     /* The class, asked of X4 itself: the export as a peek (nothing is performed). */
     InterlockedIncrement64(&uics_peeks);
     if(!uics_call(UICS_PEEK,slot.component,name,(uint32_t)action,0)) return uics_refuse(index,ret);
-    if(uics_slot_terminal(pstk_capture_slot,uics_seen,uirep_component(slot.component))) {   /* the menu: X4's own, this client's UI */
-        uics_last=uics_seen;
+    if(uics_seen==UICS_CLASS_HACK && !uics_hack_question(slot.component,name)) {uics_last=uics_seen;return uics_refuse(index,ret);}
+    if(uics_seen==UICS_CLASS_HACK || uics_slot_terminal(pstk_capture_slot,uics_seen,uirep_component(slot.component))) {   /* the menu: X4's own, this client's UI */
+        const uint32_t klass=uics_seen;
+        uics_last=klass;
         if(!uics_call(UICS_PASS,slot.component,name,(uint32_t)action,0)) return uics_refuse(index,ret);
-        InterlockedIncrement64(&uics_menus);*ret=1;return 1;
+        InterlockedIncrement64(klass==UICS_CLASS_HACK?&uics_hack_menus:&uics_menus);*ret=1;return 1;
     }
     return uics_capture(index,ret,1,slot.component,name,length,(unsigned)action,uics_seen);
 }
+/* The question's Yes: StartControlPanelHack(UIComponentSlot *target, const char *paneltypeid) (header, hack). The event:
+ * the panel's reference, 0, the class, the connection's name, then the type's id (length, bytes). */
+static int uics_hack_decide(unsigned index,const uint64_t *frame,uint64_t *ret) {
+    *ret=0;
+    if(!uics_armed || index!=uics_hack_index) return 0;
+    uics_slot_arg target={0,NULL};char name[UICS_NAME_MAX+1],type[UICS_TYPE_MAX+1];size_t length=0,typed=0;
+    const unsigned char *arg=(const unsigned char *)(uintptr_t)uiguard_arg(frame,0);
+    const char *kind=(const char *)(uintptr_t)uiguard_arg(frame,1);
+    if(!uirep_capture_now() || !pstk_capturing || !arg || !read_local(arg,&target,sizeof(target)) || !target.component || !target.connection || !kind ||
+       !uics_hack_may(pstk_capture_slot)) {InterlockedIncrement64(&uics_hack_refused);return uics_refuse(index,ret);}
+    length=uics_name(target.connection,name);
+    for(;typed<=UICS_TYPE_MAX;typed++) {
+        char c=0;
+        if(!read_local(kind+typed,&c,1)) {typed=0;break;}
+        type[typed]=c;
+        if(!c) break;
+    }
+    if(!length || !typed || typed>UICS_TYPE_MAX) {InterlockedIncrement64(&uics_hack_refused);return uics_refuse(index,ret);}
+    unsigned char data[UIREP_REF+6+UICS_NAME_MAX+1+UICS_TYPE_MAX];unsigned n=0;
+    uirep_put_ref(data,target.component);n=UIREP_REF;
+    data[n++]=0;
+    for(unsigned i=0;i<4;i++) data[n++]=(unsigned char)(UICS_CLASS_HACK>>(8*i));
+    data[n++]=(unsigned char)length;memcpy(data+n,name,length);n+=(unsigned)length;
+    data[n++]=(unsigned char)typed;memcpy(data+n,type,typed);n+=(unsigned)typed;
+    uics_last=UICS_CLASS_HACK;
+    if(!uirep_push(UICS_OP,data,n)) {InterlockedIncrement64(&uics_hack_refused);return uics_refuse(index,ret);}
+    InterlockedIncrement64(&uics_captured);InterlockedIncrement64(&uics_hack_captured);return 1;
+}
 static int uics_event_ok(unsigned slot,unsigned op,const unsigned char *data,unsigned n,const char **why) {
     (void)op;
-    if(!uics_armed || n<UIREP_REF+1+4+1+1u || data[UIREP_REF+5]<1 || data[UIREP_REF+5]>UICS_NAME_MAX || n!=UIREP_REF+6u+data[UIREP_REF+5]) {
+    if(!uics_armed || n<UIREP_REF+1+4+1+1u || data[UIREP_REF+5]<1 || data[UIREP_REF+5]>UICS_NAME_MAX || n<UIREP_REF+6u+data[UIREP_REF+5]) {
         *why="ui_compslot";return 0;
     }
     uint32_t klass=0;for(unsigned i=0;i<4;i++) klass|=(uint32_t)data[UIREP_REF+1+i]<<(8*i);
+    const unsigned at=UIREP_REF+6u+data[UIREP_REF+5];   /* a hack: the type's id follows the name */
+    if(klass==UICS_CLASS_HACK?(n<at+2u || data[at]<1 || data[at]>UICS_TYPE_MAX || n!=at+1u+data[at]):n!=at) {*why="ui_compslot";return 0;}
     if(!uics_verdict(slot,klass)) {*why="ui_compslot_class";return 0;}   /* a class this build does not let the slot use */
     return 1;
 }
@@ -402,6 +495,21 @@ static int uics_run(unsigned slot,const unsigned char *data,const char **why) {
     for(unsigned i=0;i<4;i++) klass|=(uint32_t)data[UIREP_REF+1+i]<<(8*i);
     const unsigned length=data[UIREP_REF+5];
     memcpy(name,data+UIREP_REF+6,length);name[length]=0;
+    if(klass==UICS_CLASS_HACK) {
+        /* The question's Yes (header, hack): X4's export, which hacks as X4's player: slot 1's canonically, slot k's in
+         * its scope. A slot 2..N that no longer walks, or outside its scope, does nothing on any client. */
+        void (*hack)(const void *,const char *)=uics_hack_test?uics_hack_test:
+            (uics_hack_index<UIGUARD_MAX?(void(*)(const void *,const char *))uiguard_tramp[uics_hack_index]:NULL);
+        const unsigned typed=data[UIREP_REF+6+length];char type[UICS_TYPE_MAX+1];int fault=0;
+        const uics_slot_arg target={runtime,name};
+        memcpy(type,data+UIREP_REF+7+length,typed);type[typed]=0;
+        if(!hack || (slot>=2 && (pstk_scope_slot!=slot || !pfslot_walking_fpc(slot)))) {InterlockedIncrement64(&uics_stale);InterlockedIncrement64(&uics_hack_stale);return 1;}
+        __try {hack(&target,type);}
+        __except(GetExceptionCode()==EXCEPTION_ACCESS_VIOLATION?EXCEPTION_EXECUTE_HANDLER:EXCEPTION_CONTINUE_SEARCH) {fault=1;}
+        if(fault) {InterlockedIncrement64(&uics_faults);*why="ui_compslot_fault";return 0;}
+        InterlockedIncrement64(&uics_applied);InterlockedIncrement64(&uics_hack_applied);
+        return 1;
+    }
     if(slot>=2 && klass==UICS_CLASS_TRANSPORT) {
         /* A walking slot's travel to a place: X4's own export in the slot's scope (its player is X4's player there),
          * the event it posts is noted as the slot's (lockstep_pilot_foot_transport.h). Never a zone: a slot's
@@ -465,6 +573,16 @@ static int uics_arm(void) {
         if(uiguard_tab[i].kind==UIGUARD_FFI && uiguard_tab[i].name && !strcmp(uiguard_tab[i].name,"TransportPlayerToTarget")) {uics_transport_index=i;break;}
     if(uics_transport_index!=UINT_MAX && !uiguard_claim(uics_transport_index,uics_transport_decide)) uics_transport_index=UINT_MAX;
     uics_menus=uics_transports=0;
+    /* A station's control panel (header, hack): the question's Yes, with the execute and the panel query pinned. */
+    uics_hack_index=UINT_MAX;
+    uics_hack_pinned=pnat_base && hash_ok(pnat_base+UICS_HACK_EXECUTE,UICS_HACK_EXECUTE_SIZE,UICS_HACK_EXECUTE_SHA) &&
+        hash_ok(pnat_base+UICS_PANEL_INFO,UICS_PANEL_INFO_SIZE,UICS_PANEL_INFO_SHA);
+    uics_panel_info_fn=uics_hack_pinned?(void *(*)(void *,const void *))(void *)(pnat_base+UICS_PANEL_INFO):NULL;
+    if(uics_hack_pinned)
+        for(unsigned i=0;i<uiguard_count && i<UIGUARD_MAX;i++)
+            if(uiguard_tab[i].kind==UIGUARD_FFI && uiguard_tab[i].name && !strcmp(uiguard_tab[i].name,"StartControlPanelHack")) {uics_hack_index=i;break;}
+    if(uics_hack_index!=UINT_MAX && !uiguard_claim(uics_hack_index,uics_hack_decide)) uics_hack_index=UINT_MAX;
+    uics_hack_menus=uics_hack_refused=uics_hack_captured=uics_hack_applied=uics_hack_stale=0;
     /* Slot 1's seat at the apply (header, crosshair). */
     uics_seat_pinned=pnat_base && hash_ok(pnat_base+UICS_CONTROL_POSSIBLE,UICS_CONTROL_POSSIBLE_SIZE,UICS_CONTROL_POSSIBLE_SHA) &&
         hash_ok(pnat_base+UICS_CONTROL_EXECUTE,UICS_CONTROL_EXECUTE_SIZE,UICS_CONTROL_EXECUTE_SHA);
@@ -473,11 +591,13 @@ static int uics_arm(void) {
     InterlockedExchange(&uics_mode,UICS_PASS);uics_on=1;uics_armed=1;return 1;
 }
 static int uics_status(char *out,size_t capacity) {
-    int n=snprintf(out,capacity," compslot=%d:%d:%lld:%lld:%lld:%lld:%lld last=%x seat=%lld:%lld:%lld instant=%d:%lld terminal=%d:%lld:%lld",uics_on,
+    int n=snprintf(out,capacity," compslot=%d:%d:%lld:%lld:%lld:%lld:%lld last=%x seat=%lld:%lld:%lld instant=%d:%lld terminal=%d:%lld:%lld hack=%d:%lld:%lld:%lld:%lld:%lld",uics_on,
         uics_index<UIGUARD_MAX && uiguard_claimed[uics_index] && uiguard_claim_by[uics_index]==uics_claim_decide,(long long)uics_captured,
         (long long)uics_refused,(long long)uics_applied,(long long)uics_stale,(long long)uics_passed,uics_last,(long long)uics_seat_clicks,(long long)uics_seat_forced,(long long)uics_seat_plain,
         uics_action_index<UIGUARD_MAX && uiguard_claimed[uics_action_index] && uiguard_claim_by[uics_action_index]==uics_action_decide,(long long)uics_instant,
         uics_transport_index<UIGUARD_MAX && uiguard_claimed[uics_transport_index] && uiguard_claim_by[uics_transport_index]==uics_transport_decide,
-        (long long)uics_menus,(long long)uics_transports);
+        (long long)uics_menus,(long long)uics_transports,
+        uics_hack_index<UIGUARD_MAX && uiguard_claimed[uics_hack_index] && uiguard_claim_by[uics_hack_index]==uics_hack_decide,
+        (long long)uics_hack_menus,(long long)uics_hack_refused,(long long)uics_hack_captured,(long long)uics_hack_applied,(long long)uics_hack_stale);
     return n>0 && (size_t)n<capacity?n:0;
 }

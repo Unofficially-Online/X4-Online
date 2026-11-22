@@ -114,6 +114,12 @@ Two ways a replay family takes a guard entry over:
                            TransportPlayerToTarget (the transporter menu: a zone target, "Use Spacesuit", of a walking
                            slot 2..N is op 0x08 with the airlock's class on its own ship; slot 1's is op 0x08 with
                            the command's own class 0x2c49cb8, applied by X4's export; anything else refused).
+                           A station's control panel (U::HackPanelAction 0x2b45600): for slot 1 and a walking slot
+                           2..N at a panel whose type is a hack, X4's own execute runs on the capturing client (it
+                           only opens the question); StartControlPanelHack (the question's Yes) is op 0x08 with that
+                           class, the panel's reference and connection name followed by the type's id (length,
+                           bytes), applied by X4's export, slot 1 canonical, slot k inside its scope (its player,
+                           its inventory, its memory of hacked panels); the access panels stay refused.
                            Slot 1's seat (class 0x2b45548) at the apply: the action's own check 0x35b400 reads the
                            client's crosshair, so it is answered yes on every client through a copy of that one
                            action object's vtable for the length of the call (0x35b400 and 0x35b8a0 pinned; the

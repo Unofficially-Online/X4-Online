@@ -16,6 +16,8 @@ static unsigned char test_uics_export(const uics_slot_arg *slot,uint32_t index) 
 }
 /* X4's perform of a seat as far as the crosshair matters: the action's own check through its vtable, then its answer. */
 static unsigned test_uics_seat_asked;static unsigned char test_uics_seat_answer;
+/* a station's control panel (header, hack): "con_hack*" panels are hacks, "con_access*" are not */
+static int test_uics_ishack(uint64_t component,const char *connection) {return component==0x55 && !strncmp(connection,"con_hack",8);}
 static unsigned char test_uics_possible_no(void *action,void *component) {(void)action;(void)component;return 0;}
 static unsigned char test_uics_original_seat(void *container,unsigned index) {
     unsigned char *action=NULL;void **vtable=NULL;(void)index;
@@ -209,8 +211,37 @@ static void test_ui_compslot(void) {
         assert(!uics_is_zone(NULL));
         uics_armed=armed;uics_transport_index=was;
     }
-    {char out[320];assert(uics_status(out,sizeof(out)) && strstr(out," compslot=") && strstr(out," last=") && strstr(out," seat=") && strstr(out," instant=") && strstr(out," terminal="));}
+    /* a station's control panel (header, hack): the question for slot 1 and a walking slot 2..N at a hack type only;
+     * the Yes is one event (reference, 0, the class, the connection's name, the type's id); its shape is checked */
+    {   const int farmed=pfslot_armed,fwalking=pfslots[2].walking,fwalking3=pfslots[3].walking,capturing=pstk_capturing,armed=uics_armed;const unsigned slot=pstk_capture_slot,was=uics_hack_index;
+        const LONG64 refused=uics_hack_refused;uint64_t frame[12]={0},ret=7;
+        uics_ishack_test=test_uics_ishack;pfslot_armed=1;pstk_capturing=1;
+        assert(uics_verdict(1,UICS_CLASS_HACK) && uics_verdict(2,UICS_CLASS_HACK));
+        pstk_capture_slot=1;assert(uics_hack_question(0x55,"con_hack_01") && !uics_hack_question(0x55,"con_access_01") && !uics_hack_question(0x56,"con_hack_01"));
+        pstk_capture_slot=2;pfslots[2].walking=0;assert(!uics_hack_question(0x55,"con_hack_01"));   /* seated: no panel */
+        pfslots[2].walking=1;assert(uics_hack_question(0x55,"con_hack_01") && !uics_hack_question(0x55,"con_access_01"));
+        assert(!uics_hack_question(0x55,NULL) && uics_hack_refused==refused+5);
+        pstk_capture_slot=3;pfslots[3].walking=0;assert(!uics_hack_question(0x55,"con_hack_01"));
+        {   unsigned char data[UIREP_REF+6+9+1+12];const char *why="-";unsigned n=0;
+            uirep_put_ref(data,0x55);n=UIREP_REF;data[n++]=0;
+            for(unsigned i=0;i<4;i++) data[n++]=(unsigned char)(UICS_CLASS_HACK>>(8*i));
+            data[n++]=9;memcpy(data+n,"con_hack1",9);n+=9;data[n++]=12;memcpy(data+n,"hack_storage",12);n+=12;
+            assert(n==sizeof(data));
+            uics_armed=1;assert(uics_event_ok(2,UICS_OP,data,n,&why) && uics_event_ok(1,UICS_OP,data,n,&why));
+            why="-";assert(!uics_event_ok(2,UICS_OP,data,n-1,&why) && !strcmp(why,"ui_compslot"));                 /* the type cut short */
+            why="-";assert(!uics_event_ok(2,UICS_OP,data,UIREP_REF+6+9,&why) && !strcmp(why,"ui_compslot"));       /* no type: not a hack's shape */
+            data[UIREP_REF+6+9]=0;why="-";assert(!uics_event_ok(2,UICS_OP,data,UIREP_REF+6+9+1,&why) && !strcmp(why,"ui_compslot"));
+            data[UIREP_REF+6+9]=UICS_TYPE_MAX+1;why="-";assert(!uics_event_ok(2,UICS_OP,data,n,&why) && !strcmp(why,"ui_compslot"));
+        }
+        /* the export's claim: not armed or another entry is not this module's; outside a capture refused */
+        uics_armed=0;uics_hack_index=11;assert(!uics_hack_decide(11,frame,&ret) && !ret);
+        uics_armed=1;assert(!uics_hack_decide(10,frame,&ret));
+        pstk_capturing=0;ret=7;(void)uics_hack_decide(11,frame,&ret);assert(!ret && !uics_hack_captured);
+        InterlockedExchange64(&uics_hack_refused,refused);
+        uics_ishack_test=NULL;pfslot_armed=farmed;pfslots[2].walking=fwalking;pfslots[3].walking=fwalking3;pstk_capturing=capturing;pstk_capture_slot=slot;uics_armed=armed;uics_hack_index=was;
+    }
+    {char out[400];assert(uics_status(out,sizeof(out)) && strstr(out," compslot=") && strstr(out," last=") && strstr(out," seat=") && strstr(out," instant=") && strstr(out," terminal=") && strstr(out," hack="));}
     uics_perform_test[0]=uics_perform_test[1]=NULL;uics_export_test=NULL;uics_seen=uics_expected=0;uics_ran=0;
     InterlockedExchange64(&uics_passed,passed);pnat_base=saved_base;
-    puts("ui compslot: the action's class from a single and a multi container, peek and apply through the perform hooks, the event's shape, the click and the own seat of slots 2..N PASS");
+    puts("ui compslot: the action's class from a single and a multi container, peek and apply through the perform hooks, the event's shape, the click and the own seat of slots 2..N, a control panel's question and hack event PASS");
 }

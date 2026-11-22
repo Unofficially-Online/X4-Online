@@ -3716,6 +3716,52 @@ function pilot_view.arm_ui_replay(slot,window)
   end
   return out,used..' tried='..table.concat(tried,',')
  end
+ -- The control panels of the room "the player" is in (this client's own in the presentation scope, the slot's in its
+ -- scope): the room's ConnectionNN names that X4's GetControlPanelInfo knows (a missing one is an error line in X4's log).
+ tools.panels=function(room)
+  for _,line in ipairs{'typedef struct { const char* type; const char* name; const char* desc; const char* hackeddesc; int64_t price; int32_t numrequiredwares; bool ishack; bool hacked; double hackduration; double hackexpiretime; } ControlPanelInfo;',
+    'ControlPanelInfo GetControlPanelInfo(UIComponentSlot controlpanel);','void StartControlPanelHack(UIComponentSlot target, const char* paneltypeid);'} do
+   pcall(ffi.cdef,line)
+  end
+  local C=ffi.C
+  room=room or C.GetContextByClass(C.GetPlayerID(),'room',false)
+  if not room or tonumber(room)==0 then return nil,{} end
+  local found={}
+  for n=1,60 do
+   for _,form in ipairs({'Connection%02d','connection%02d'}) do
+    local name=string.format(form,n)
+    local slot=ffi.new('UIComponentSlot');slot.component=room;slot.connection=name
+    local info=C.GetControlPanelInfo(slot)
+    local kind=info.type~=nil and ffi.string(info.type) or ''
+    if kind~='' then found[#found+1]={connection=name,type=kind,ishack=info.ishack,hacked=info.hacked} end
+   end
+  end
+  return room,found
+ end
+ -- A room of the station by a part of its name, as the transporter names it from where this client's player stands
+ -- (tools.transport_targets): its component, or nil.
+ -- With MACRO: the room of that macro next to the target's (a dynamic interior's corridor holds the transporter, its
+ -- office the panels; their IDs are made one after the other): the nearest room ID within 60 whose macro holds MACRO.
+ tools.room_named=function(text,macro)
+  for _,t in ipairs((tools.transport_targets())) do
+   if t.name:find(text,1,true) and t.class=='room' then
+    if not macro then return t.component,t.name end
+    pcall(ffi.cdef,'bool IsComponentClass(UniverseID componentid, const char* classname);')
+    local C=ffi.C
+    local base=tonumber(t.component)
+    for d=0,60 do
+     for _,id in ipairs(d==0 and {base} or {base+d,base-d}) do
+      local cid=ffi.new('UniverseID',id)
+      if C.IsComponentClass(cid,'room') then
+       local m=GetComponentData(ConvertStringToLuaID(tostring(id)),'macro')
+       if type(m)=='string' and m:find(macro,1,true) then return cid,m end
+      end
+     end
+    end
+    return nil,'no '..macro..' room near '..tostring(base)
+   end
+  end
+ end
  tools.transport_list=function()
   local targets,from=tools.transport_targets()
   local parts={'from='..from..' targets='..#targets}

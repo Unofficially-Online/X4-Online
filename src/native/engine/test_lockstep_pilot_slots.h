@@ -971,7 +971,12 @@ static void test_pilot_slots(void) {
         p=ctl1;memcpy(p1+PEYE_MOVEMENT,&p,8);memcpy(floor1,ctl1+FLOOR,sizeof(floor1));
         pslots[2].walking=1;pfslot_armed=1;pfslots[2].walking=1;pfslots[2].fpc=ctl2;pres_foot_list_at=pres_foot_floor_at=0;
         assert(pres_enter());assert(p1[LIST]==0x33 && ctl1[FLOOR]==0x11);pres_leave();                                           /* off: no offsets */
-        pres_foot_list_at=LIST;pres_foot_floor_at=FLOOR;
+        pres_foot_list_at=LIST;pres_foot_floor_at=FLOOR;pres_foot_inventory_at=PRES_FOOT_INVENTORY;
+        {unsigned char *mine=(unsigned char *)0x1111,*theirs=(unsigned char *)0x2222,*seen=NULL,*kept=NULL,*back=NULL;   /* the inventory pointers */
+         memcpy(&kept,p1+PRES_FOOT_INVENTORY,8);memcpy(p1+PRES_FOOT_INVENTORY,&mine,8);memcpy(pslots[2].player+PRES_FOOT_INVENTORY,&theirs,8);
+         assert(pres_enter());memcpy(&seen,p1+PRES_FOOT_INVENTORY,8);pres_leave();memcpy(&back,p1+PRES_FOOT_INVENTORY,8);
+         assert(seen==theirs && back==mine && pres_foot_moved==moved);
+         memcpy(p1+PRES_FOOT_INVENTORY,&kept,8);memset(pslots[2].player+PRES_FOOT_INVENTORY,0,8);InterlockedExchange64(&pres_foot_scopes,scopes);}
         assert(pres_enter());memcpy(seen_list,p1+LIST,16);memcpy(seen_floor,ctl1+FLOOR,0x20);pres_leave();
         assert(seen_list[0]==0x44 && seen_list[15]==0x44 && seen_floor[0]==0x22 && seen_floor[0x1f]==0x22 && pres_foot_scopes==scopes+1 && pres_foot_moved==moved);
         assert(p1[LIST]==0x33 && p1[LIST+15]==0x33 && !memcmp(ctl1+FLOOR,floor1,0x20) && ctl2[FLOOR]==0x22 &&
@@ -981,7 +986,7 @@ static void test_pilot_slots(void) {
         pfslots[2].fpc=ctl2;memcpy(ctl1,&other,8);assert(pres_enter());assert(p1[LIST]==0x33 && ctl1[FLOOR]==0x11);pres_leave();   /* another class */
         assert(pres_foot_scopes==scopes+1);
         {char row[4096];assert(pres_status(row,sizeof(row)) && strstr(row," foot="));}
-        memcpy(p1+PEYE_MOVEMENT,&was,8);memcpy(p1+LIST,list1,16);memset(pslots[2].player+LIST,0,16);pres_foot_list_at=pres_foot_floor_at=0;
+        memcpy(p1+PEYE_MOVEMENT,&was,8);memcpy(p1+LIST,list1,16);memset(pslots[2].player+LIST,0,16);pres_foot_list_at=pres_foot_floor_at=pres_foot_inventory_at=0;
         pslots[2].walking=walking;pfslot_armed=farmed;pfslots[2].walking=fwalking;pfslots[2].fpc=ffpc;InterlockedExchange64(&pres_foot_scopes,scopes);}
     /* The UI's game plan follows this client's own slot: X4's own handler for "on foot" runs inside the presentation
      * scope when the slot walks and the byte says cockpit, the one for "sits" when it sits and the byte says on foot
@@ -1636,7 +1641,8 @@ static void test_pilot_slots_arming_order(const char *path) {
     pres_armed=0;pres_pins_checked=0;render_rng_installed=1;pres_fns saved_pres=pres_fn;
     assert(pres_arm(1) && pres_armed && pres_slot==2 && pres_fn.ui_move==(void(*)(void*))(image+PRES_UI_MOVE));
     /* The walking slot's interaction state comes on with the real image; its offsets lie beyond the tests' players. */
-    assert(pres_foot_list_at==PRES_FOOT_LIST && pres_foot_floor_at==PRES_FOOT_FLOOR);pres_foot_list_at=pres_foot_floor_at=0;
+    assert(pres_foot_list_at==PRES_FOOT_LIST && pres_foot_floor_at==PRES_FOOT_FLOOR && pres_foot_inventory_at==PRES_FOOT_INVENTORY);
+    pres_foot_list_at=pres_foot_floor_at=pres_foot_inventory_at=0;
     assert(*(void**)(image+PRES_UI_ENTRY)==(void*)(image+PRES_UI_MOVE));
     /* The eye's X4 functions: the seat transform, the player's controller vtable and its pose slot. */
     assert(peye_seat==(peye_seat_fn)(image+PEYE_SEAT) && peye_fpc_pose==(peye_pose_fn)(image+PEYE_FPC_POSE) &&

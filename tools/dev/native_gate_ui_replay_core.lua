@@ -1038,7 +1038,7 @@ end
 -- ship the player controls (ui/core/messageconfigurationgraph.xml: untargetableconditions is_playercontrolled), and in
 -- the probe's canonical frame that is slot 1's ship on every client, so slot k could not target it. The other ops keep
 -- the canonical frame their live runs (U5, U7) passed with. Guidance is set and ended where the map's click runs too.
-K.SCOPED={foot_where=true,transport_list=true,transport_to=true,transport_named=true,target_slot=true,target_none=true,target_home=true,dock_home=true,suit_home=true,guidance_slot=true,guidance_end=true,guidance_set=true,guidance_look=true,inv_read=true,inv_drop=true,inv_research_seen=true,inv_research_hqs=true}
+K.SCOPED={panel_find=true,hack_yes=true,inv_total=true,trader_pick=true,trader_look=true,itemtrader_buy=true,foot_where=true,transport_list=true,transport_to=true,transport_named=true,target_slot=true,target_none=true,target_home=true,dock_home=true,suit_home=true,guidance_slot=true,guidance_end=true,guidance_set=true,guidance_look=true,inv_read=true,inv_drop=true,inv_research_seen=true,inv_research_hqs=true}
 -- The stock calls of the station overview and the station menu's trade settings, by what their names hold.
 function K.station_call(what)
  local name=tostring(what):match('^[%w_]+') or ''
@@ -1049,7 +1049,7 @@ function K.station_call(what)
 end
 -- A canonical op is the probe's own call, not a person's click: a test fixture that every client's plan holds at the same
 -- tick (MD runs it on every client alike, nothing is captured).
-K.CANONICAL={refit_why=true,station_blueprints=true,mis_fixture=true,mt_offer=true,gm_limit=true,slot_kill=true,slot_airlock=true,launch_stock=true,hold_stock=true,hull_set=true,marines_stock=true,abandon=true,dock_kit=true,wallet=true,probe_far=true,groups_look=true,inv_seed=true,inv_look=true,inv_join_state=true,inv_join_give=true}
+K.CANONICAL={panel_look=true,refit_why=true,station_blueprints=true,mis_fixture=true,mt_offer=true,gm_limit=true,slot_kill=true,slot_airlock=true,launch_stock=true,hold_stock=true,hull_set=true,marines_stock=true,abandon=true,dock_kit=true,wallet=true,probe_far=true,groups_look=true,inv_seed=true,inv_look=true,inv_join_state=true,inv_join_give=true}
 -- Refused entries the stock HUD calls by itself, not on a person's action: logged, no info line. AddKnownItem: the
 -- encyclopedia entry the HUD adds for whatever comes into view (45 refusals and their info lines in a playtest of 9 Nov).
 K.GUARD_QUIET={AddKnownItem=true}
@@ -2611,6 +2611,157 @@ function K.script(plan,start,tools)
      end
     end
     error('ui replay script: no hire menu open') end
+  -- A faction representative and the shop it opens (md/npc_factionrepresentative.xml: the conversation's choices
+  -- 'Show me your licences' and 'I would like to buy a blueprint' open BlueprintOrLicenceTraderMenu by
+  -- open_conversation_menu; its Confirm adds the licences or learns the blueprints and pays the representative's station):
+  --   {tick,'rep_talk',FACTION}: comm the faction's representative (GetFactionRepresentative), as the interact menu's
+  --     Comm does (StartConversationFromMenu 'default'); answers the person and its station.
+  --   {tick,'trader_look'}: read only: the trader menu open on this client (blueprints/licences or an item trader's),
+  --     its mode, the trader's faction, what is selected and the money it read.
+  --   {tick,'trader_pick',WHICH}: in the open BlueprintOrLicenceTraderMenu, select a licence or blueprint the player can
+  --     buy (not held, affordable, the licence or relation it needs held; WHICH 1 the cheapest, 2 the next...) and press
+  --     Confirm, as a person's two clicks do; answers what was picked and its price.
+  --   {tick,'library_look',FACTION}: read only: the blueprints the player holds, the licences of FACTION the player
+  --     holds, and the money.
+  elseif op=='rep_talk' then call=function()
+    pcall(tools.ffi.cdef,'UniverseID GetFactionRepresentative(const char* factionid);')
+    local rep=tools.C.GetFactionRepresentative(e[3])
+    if rep==0 then error('ui replay script: '..tostring(e[3])..' has no representative') end
+    local actor=tools.env.ConvertStringToLuaID(tostring(rep))
+    local name,station=tools.env.GetComponentData(actor,'name'),tools.env.GetContextByClass(actor,'container',false)
+    tools.env.StartConversationFromMenu('default',actor)
+    return (tostring(rep):gsub('ULL$',''))..' name='..tostring(name)..' station='..tostring(station and tools.env.GetComponentData(station,'name')) end
+  --   {tick,'rep_look',FACTION}: read only: the room the representative is in (its macro) and that room's station: X4
+  --     moves the representative from the headquarters' control room into an office of its own (a dynamic interior)
+  --     when the headquarters comes near a player (attention nearby), and only then does its conversation offer the shop.
+  elseif op=='rep_look' then call=function()
+    pcall(tools.ffi.cdef,'UniverseID GetFactionRepresentative(const char* factionid);')
+    local rep=tools.C.GetFactionRepresentative(e[3])
+    if rep==0 then return 'rep=none' end
+    local env=tools.env
+    local actor=env.ConvertStringToLuaID(tostring(rep))
+    local room=env.GetContextByClass(actor,'room',false)
+    local station=env.GetContextByClass(actor,'station',false)
+    return 'room='..tostring(room and env.GetComponentData(room,'macro'))..' station='..tostring(station and env.GetComponentData(station,'idcode')) end
+  -- An item trader or a shady guy on a station (md/npc_itemtrader.xml: platform actors at the docks, their conversation's
+  -- 'Show me your wares' opens InventoryTraderMenu with the wares they hold):
+  --   {tick,'npc_talk',SAVED_STATION,TYPE}: comm the first person of that type ('trader', 'shadyguy') of the station;
+  --     answers the person or 'nobody' with the types the station has.
+  --   {tick,'itemtrader_buy',WHICH}: in the open InventoryTraderMenu one piece of the WHICH-th cheapest ware the trader
+  --     holds and sells, then Confirm, as the amount slider and the button do.
+  elseif op=='npc_talk' then call=function()
+    local env,seen=tools.env,{}
+    for _,npc in ipairs(env.GetNPCs(tools.saved_id(e[3])) or {}) do
+     local kind=env.GetComponentData(npc,'typestring')
+     seen[#seen+1]=tostring(kind)
+     if kind==e[4] then env.StartConversationFromMenu('default',npc);return tostring(npc)..' name='..tostring(env.GetComponentData(npc,'name')) end
+    end
+    return 'nobody types='..table.concat(seen,',') end
+  elseif op=='itemtrader_buy' then call=function()
+    local menu=tools.menu('InventoryTraderMenu')
+    if not (menu and menu.shown) then return 'no_menu' end
+    pcall(tools.ffi.cdef,'bool IsWillingToSellToPlayer(UniverseID componentid, const char* warename);')
+    local offers={}
+    for _,w in ipairs(menu.tradewares or {}) do
+     local have=(menu.traderinventory or {})[w.ware]
+     if have and (have.amount or 0)>0 and tools.C.IsWillingToSellToPlayer(menu.trader,w.ware) then offers[#offers+1]=w end
+    end
+    table.sort(offers,function(a,b) if a.price~=b.price then return a.price<b.price end return a.ware<b.ware end)
+    local w=offers[e[3] or 1]
+    if not w then return 'nothing_to_buy offers='..#offers end
+    menu.updateTradeData(w.ware,1)
+    local price=menu.totalprice
+    menu.buttonConfirm()
+    return 'bought ware='..w.ware..' price='..tostring(price)..' offers='..#offers end
+  -- A station's control panel (lockstep_ui_compslot.h hack; the panels of a room are connections of its macro, e.g. the
+  -- Security Office's 'connection35' hack_all_turrets, 'connection38' hack_shieldgenerators, 'connection43'
+  -- hack_watchdogs):
+  --   {tick,'panel_find'[,ROOM[,MACRO]]}: read only: the control panels of the room this client's player is in, or of
+  --     the station's room whose transporter name holds ROOM ('Security'), or of the room of macro MACRO next to that one
+  --     (the office beside the corridor that holds the transporter): each connection name ConnectionNN of the room that
+  --     GetControlPanelInfo knows, name:type:ishack:hacked.
+  --   {tick,'hack_yes',TYPE[,ROOM[,MACRO]]}: the question's Yes (UserQuestionMenu 'hackpanel': StartControlPanelHack) on the
+  --     panel of that type in that room, as a person's click on Yes does. X4's hack itself does not ask where the player
+  --     stands (the question's test before it does): on the station is enough.
+  --   {tick,'panel_look',SLOT}: canonical, read only: inside that slot's scope, the panels of its player's room and
+  --     whether that player has hacked them (X4's answer is the player's own memory of hacked panels).
+  elseif op=='panel_find' then call=function()
+    local room,found=tools.panels(e[3] and tools.room_named(e[3],e[4]) or nil)
+    if not room then return 'room=none' end
+    local parts={}
+    for _,p in ipairs(found) do parts[#parts+1]=p.connection..':'..p.type..':'..tostring(p.ishack)..':'..tostring(p.hacked) end
+    return 'room='..(tostring(room):gsub('ULL$',''))..' panels='..#found..' '..table.concat(parts,' ') end
+  elseif op=='hack_yes' then call=function()
+    local room,found=tools.panels(e[4] and tools.room_named(e[4],e[5]) or nil)
+    for _,p in ipairs(found) do
+     if p.type==e[3] then
+      local slot=tools.ffi.new('UIComponentSlot');slot.component=room;slot.connection=p.connection
+      tools.C.StartControlPanelHack(slot,e[3])
+      return 'asked '..p.connection..' '..e[3]..' hacked_before='..tostring(p.hacked)
+     end
+    end
+    return 'no_panel '..tostring(e[3])..' panels='..#found end
+  elseif op=='panel_look' then call=function()
+    local k=e[3]
+    if k~=1 and tools.gate.mpp_scope(k)~=1 then error('ui replay script: no scope for slot '..tostring(k)) end
+    local ok,result=pcall(function()
+      local room,found=tools.panels()
+      local parts={}
+      for _,p in ipairs(found) do parts[#parts+1]=p.type..'='..tostring(p.hacked) end
+      return 'slot='..k..' room='..(tostring(room or 'none'):gsub('ULL$',''))..' '..table.concat(parts,' ') end)
+    if k~=1 and tools.gate.mpp_unscope(k)~=1 then error('ui replay script: the scope of slot '..tostring(k)..' did not close') end
+    if not ok then error(result) end
+    return result end
+  elseif op=='trader_look' then call=function()
+    for _,name in ipairs({'BlueprintOrLicenceTraderMenu','InventoryTraderMenu'}) do
+     local menu=tools.menu(name)
+     if menu and menu.shown then
+      local picked=0
+      for _ in pairs(type(menu.blueprintstopurchase)=='table' and menu.blueprintstopurchase or {}) do picked=picked+1 end
+      for _ in pairs(type(menu.licencestopurchase)=='table' and menu.licencestopurchase or {}) do picked=picked+1 end
+      return 'shown='..name..' mode='..tostring(menu.mode)..' faction='..tostring(menu.traderfaction)..' picked='..picked..
+       ' total='..tostring(menu.totalprice)..' money='..tostring(menu.playermoney)
+     end
+    end
+    return 'shown=none' end
+  elseif op=='trader_pick' then call=function()
+    local menu=tools.menu('BlueprintOrLicenceTraderMenu')
+    if not (menu and menu.shown) then return 'no_menu' end
+    local env=tools.env
+    local which,money=e[3] or 1,env.GetPlayerMoney()
+    local offers={}
+    if menu.mode=='licence' then
+     for _,licence in ipairs(menu.licences or {}) do
+      if licence.issellable and not env.HasLicence('player',licence.type,menu.traderfaction) and licence.minrelation<=menu.uirelation
+         and (licence.precursor==nil or env.HasLicence('player',licence.precursor,menu.traderfaction)) and licence.price<=money then
+       offers[#offers+1]={price=licence.price,name=licence.type,pick=function() menu.buttonSelectLicence(licence,licence.price) end}
+      end
+     end
+    else
+     local function consider(ware,price)
+      local tradelicence=env.GetWareData(ware,'tradelicence')
+      if not menu.blueprintlist[ware] and price<money and env.HasLicence('player',tradelicence,menu.traderfaction) then
+       offers[#offers+1]={price=price,name=ware,pick=function() menu.buttonSelectBlueprint(ware,price) end}
+      end
+     end
+     for tag,wares in pairs(menu.table_wares or {}) do
+      for key,value in pairs(wares) do
+       if type(value)=='table' then for ware,price in pairs(value) do consider(ware,price) end else consider(key,value) end
+      end
+     end
+    end
+    table.sort(offers,function(a,b) if a.price~=b.price then return a.price<b.price end return a.name<b.name end)
+    local offer=offers[which]
+    if not offer then menu.buttonCancel();return 'nothing_to_buy offers='..#offers..' money='..tostring(money)..' cancelled' end
+    offer.pick()
+    menu.buttonConfirm()
+    return 'bought '..tostring(menu.mode)..'='..offer.name..' price='..offer.price..' offers='..#offers..' money='..tostring(money) end
+  elseif op=='library_look' then call=function()
+    local env,C=tools.env,tools.C
+    pcall(tools.ffi.cdef,'uint32_t GetNumBlueprints(const char* set, const char* category, const char* macroname);')
+    local held=0
+    for _,licence in ipairs(env.GetOwnLicences(e[3]) or {}) do if env.HasLicence('player',licence.type,e[3]) then held=held+1 end end
+    return 'blueprints='..tostring(tonumber(C.GetNumBlueprints('','',''))).. ' licences='..held..' money='..tostring(env.GetPlayerMoney()) end
   -- A player's own inventory (each slot's player entity holds one; slot k's is reached in slot k's scope).
   -- {tick,'inv_seed',slot,ware,amount}: test fixture, canonical: that slot's player gets the wares inside the slot's scope,
   -- the same on every client; answers the player entity it reached and the amount before->after.
@@ -2628,6 +2779,11 @@ function K.script(plan,start,tools)
     if k~=1 and tools.gate.mpp_unscope(k)~=1 then error('ui replay script: the scope of slot '..tostring(k)..' did not close') end
     if not ok then error(result) end
     return result end
+  -- {tick,'inv_total'}: this client's own inventory as its menus read it (the presentation scope): pieces and kinds.
+  elseif op=='inv_total' then call=function()
+    local pieces,kinds=0,0
+    for _,item in pairs(tools.env.GetPlayerInventory() or {}) do pieces=pieces+(item.amount or 0);kinds=kinds+1 end
+    return 'pieces='..pieces..' kinds='..kinds..' money='..tostring(tools.env.GetPlayerMoney()) end
   elseif op=='inv_read' then call=function()
     local _,who=pcall(function() return tostring(tools.C.GetPlayerID()) end)
     local item=(tools.env.GetPlayerInventory() or {})[e[3]]

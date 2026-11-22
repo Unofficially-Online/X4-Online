@@ -56,9 +56,21 @@ python tools/x4ls.py play --overlay .local/overlays/play-1 --snapshot <the same 
 - faction and player settings
 - walking on foot
 - your own inventory (11 Nov): every player has one; crafting and dropping items ran with two clients. Built the
-  same way but not run in the real game yet: an NPC trader's wares, the blueprint and licence trader, research,
-  terraforming, equipment mods for players 2 and up, the inventory your start brings (docs/PLAYERS.md has the
-  table and the runs)
+  same way but not run in the real game yet: research, terraforming, equipment mods for players 2 and up, the
+  inventory your start brings (docs/PLAYERS.md has the table and the runs)
+- faction representatives and item traders (21 Nov, `tools/dev/action_tests.py reps` / `itemtrader`): player 2 alone
+  docked at the Argon headquarters NLN-075, talked to the representative, its blueprint shop came up on player 2's
+  screen and the blueprint went into the shared library (run 20261121-185246, in sync); player 2 bought an item from an
+  item trader at MMJ-623 into its own inventory (run 20261121-192700, in sync). The representative has its office and
+  its shop only while a player's ship is near its headquarters, as in the stock game; any player's ship counts. The
+  face of the person a player talks to shows on that player's monitor only (21 Nov; before, on every player's monitor,
+  and it stayed after the conversation: run 20261121-185246 against 20261121-203407).
+- station control panels (hacking, 21 Nov): the panel's question and its Yes work for every player walking on a
+  station; the hack uses that player's own Security Decryption System. Run 20261121-211253 (`action_tests.py hack
+  --players 2 --ai-dock`): player 2 walked off its ship at CZF-533, hacked the watchdog terminal of the Security Office,
+  its own decryption systems went 3 -> 2 on both clients, in sync. The test presses the question's Yes; a person aims
+  at the terminal within 4 m first, as in the stock game. Open: right after a hack player k's own screen still offers
+  that panel (its test reads player 1's memory of hacked panels); a second Yes does nothing.
 
 **Refused:** any other menu action that would change the world on one client only.
 
