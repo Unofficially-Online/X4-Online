@@ -71,11 +71,15 @@ def recipe_of(overlay):
     return json.loads(path.read_text(encoding='utf-8'))
 
 
-def cmd_files(players, port, opened, snapshot_name, server=False):
-    """The command files' text. %~dp0 is the kit folder, so the kit runs from wherever it was copied to."""
-    # python\ is the kit's own Python when it bundles one (--python-embed); it writes no caches into the kit
-    head = ('@echo off\r\nsetlocal\r\ncd /d "%~dp0"\r\nset PYTHONDONTWRITEBYTECODE=1\r\nset PY=python\r\n'
+# The first lines of every command file. %~dp0 is the kit folder, so the kit runs from wherever it was copied to.
+# python\ is the kit's own Python when it bundles one (--python-embed); it writes no caches into the kit.
+CMD_HEAD = ('@echo off\r\nsetlocal\r\ncd /d "%~dp0"\r\nset PYTHONDONTWRITEBYTECODE=1\r\nset PY=python\r\n'
             'if exist "%~dp0python\\python.exe" set PY="%~dp0python\\python.exe"\r\n')
+
+
+def cmd_files(players, port, opened, snapshot_name, server=False):
+    """The command files' text (CMD_HEAD, then the kit's command lines)."""
+    head = CMD_HEAD
     play = (f'python repo\\tools\\x4ls.py play --clients {players} --overlay overlay '
             f'--snapshot snapshot\\{snapshot_name}')
     opens = f' --open {",".join(map(str, opened))}' if opened else ''
@@ -338,15 +342,21 @@ def build(overlay, snapshot, out, port=PORT, root=ROOT, server=None, python_embe
     return manifest
 
 
+def differences(want, have):
+    """What differs between two {path: sha256} trees: the manifest's (want) and the folder's (have)."""
+    missing = [f'missing {path}' for path in want if path not in have]
+    changed = [f'changed {path}' for path in want if path in have and have[path] != want[path]]
+    extra = [f'extra {path}' for path in have if path not in want]
+    return missing + changed + extra
+
+
 def verify(kit):
     kit = Path(kit)
     manifest = json.loads((kit / MANIFEST).read_text(encoding='utf-8'))
     want, have = manifest['files'], tree(kit)
     # run folders and caches a PC makes while playing are not part of the kit
     have = {k: v for k, v in have.items() if not k.startswith('repo/.local/') and '/__pycache__/' not in k}
-    problems = ([f'missing {k}' for k in want if k not in have] + [f'changed {k}' for k in want if k in have and have[k] != want[k]]
-                + [f'extra {k}' for k in have if k not in want])
-    return manifest, problems
+    return manifest, differences(want, have)
 
 
 def main(argv=None):

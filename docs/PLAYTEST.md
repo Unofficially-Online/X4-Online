@@ -170,7 +170,8 @@ python tools/make_playtest_msi.py --kit <kit> --out <file.msi>
 - **The installer** (`make_playtest_msi.py`, Windows with Python 3.12: it uses `msilib`) installs the kit for the
   current user into `%LOCALAPPDATA%\X4 Multiplayer Playtest` with Desktop and Start menu shortcuts to `PLAY.cmd`.
   No administrator rights, a progress bar and no pages; a newer installer replaces an older one. It is not signed,
-  so Windows may warn about an unknown publisher.
+  so Windows may warn about an unknown publisher. A release kit (`tools/make_release_kit.py`, no session) becomes
+  the product "X4 Online" instead (docs/NETPLAY.md, "Release notes").
 - The player count is the overlay's (`build_play_overlay.py --players N`): the game starts when N have joined.
 
 ### Play in Steam, then Multiplayer (built 9 Nov)
@@ -201,6 +202,25 @@ Installed from such an installer, a player starts nothing of ours: **Play in Ste
   3642 ticks, 0 mismatches, both players' logs stored on the server. The page's Join was chosen by a test switch
   (`lobby.auto`). Not run: a start from Steam itself in a player's own profile (AGENTS.md keeps our tests out of
   it), and a mouse click on the page's buttons.
+- **Two PCs, 23 Nov (kit16-2p: this branch's commit eb2a0393, 2 players, both at the start, served by the VPS).**
+  The desktop PC: X4 started from the game folder itself with every mod the player has there (kuertee's UI
+  extensions replace X4's options menu, the old October lab extension is there too), in a disposable profile
+  standing in for the player's own; the Start Menu has Multiplayer above Settings (with protected UI mode on or
+  off). Clicks by window messages (`tools/dev/ui_window_input.py`): Multiplayer, then the page's Join. X4 quit by
+  itself, the helper started it again in the multiplayer profile, joined. The Windows laptop joined through its
+  launcher's page (`x4ls lobby --auto join`). Both loaded at the server's second and played 18,361 ticks together
+  over the internet (about 24 ticks a second, the laptop's pace) with 0 mismatches and 0 clock splits, through the
+  periodic save at tick 18,000. Nobody flew: the players sat in their cockpits while the universe ran.
+- **Why the Multiplayer page did nothing on the desktop PC before (23 Nov):** the entry was there, but no helper
+  answered behind it. Windows' Startup apps had the helper's autostart switched off (15 Nov), so the page said
+  "The multiplayer helper is not running", and the installed kit (11 Nov) was older than the one the server ran,
+  which the server refuses. X4's UI cannot start the helper itself: its `OpenWebBrowser` opens only http(s)
+  addresses of a few hosts (egosoft.com and the like), so the helper must run before the player chooses Join.
+- **Fixed 23 Nov: Documents in OneDrive.** OneDrive marks the folders of a Documents it backs up read-only, and
+  Windows refuses to remove a read-only folder: the launcher stopped at the wipe of its disposable profile
+  (PermissionError, WinError 5). `profile.prepare` now makes such entries writable and removes them. A running
+  OneDrive also uploads the disposable profiles (a session's log is hundreds of MB): on a PC whose Documents is in
+  OneDrive, pause OneDrive while you test.
 
 ### A game you can join while it runs, with a start of your choice (built 10 Nov; run on one PC)
 

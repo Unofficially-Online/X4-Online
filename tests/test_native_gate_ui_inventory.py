@@ -947,7 +947,7 @@ class KitInventoryTests(unittest.TestCase):
         lua.execute('''
           pilot_view={};logs={};loud={};PLAYER='p1';INV={p1={},p2={},p3={}};scopes={}
           function log(text) logs[#logs+1]=text end
-          ticklog={loud=function(kind,text,notice) loud[#loud+1]=kind..' '..text..' / '..tostring(notice) end}
+          ticklog={loud=function(kind,text,notice) loud[#loud+1]=kind..' '..text..' / '..tostring(notice) end,write=function(text) logs[#logs+1]=text end}
           gate={mpp_scope=function(k) if NO_SCOPE then return 0 end;scopes[#scopes+1]='in'..k;PLAYER='p'..k;return 1 end,
                 mpp_unscope=function(k) scopes[#scopes+1]='out'..k;PLAYER='p1';return 1 end}
           AddInventory=function(entity,ware,amount) assert(entity==nil);INV[PLAYER][ware]=(INV[PLAYER][ware] or 0)+amount end

@@ -2,6 +2,7 @@
 back. Nothing is installed here; a real install was run by hand (docs/PLAYTEST.md)."""
 import importlib.util
 import json
+import shutil
 import sys
 import tempfile
 import unittest
@@ -20,6 +21,9 @@ def load(name):
 
 
 kit, msi = load('make_playtest_kit'), load('make_playtest_msi')
+release_tools = load('make_release_kit')
+BUILT = '2026-11-23T12:34:56Z'
+RUN_KEY = 'Software\\Microsoft\\Windows\\CurrentVersion\\Run'
 try:
     with warnings.catch_warnings():
         warnings.simplefilter('ignore', DeprecationWarning)
@@ -38,6 +42,38 @@ def fake_kit(folder):
     (folder / 'PLAY.cmd').write_text('@echo off\n')
     (folder / 'server.json').write_text('{}')
     (folder / 'kit-manifest.json').write_text(json.dumps({'commit': 'c0ffee' * 6 + 'abcd'}))
+
+
+def fake_release_kit(folder, python=True):
+    """A release kit by make_release_kit.build, with a small stand-in for the repository export and the menu."""
+    folder.parent.mkdir(parents=True, exist_ok=True)
+    gate = folder.parent / 'gate.dll'
+    gate.write_bytes(b'MZ fake gate')
+    embed = folder.parent / 'embed.zip'
+    with zipfile.ZipFile(embed, 'w') as archive:
+        for name in ('python.exe', 'pythonw.exe', 'python312.zip'):
+            archive.writestr(name, b'MZ')
+        archive.writestr('python312._pth', 'python312.zip\n.\n')
+
+    def export(out, root=None):
+        (out / 'tools').mkdir(parents=True)
+        (out / 'tools' / 'x4ls.py').write_text('print(1)\n')
+        return 'c0ffee' * 6 + 'abcd'
+
+    def menu(kit_folder):
+        (kit_folder / 'steam-menu').mkdir()
+        (kit_folder / 'steam-menu' / 'content.xml').write_text('<content id="x4mp_playtest_menu" />\n')
+
+    saved_export = release_tools.playtest_kit.export_repo
+    saved_menu = release_tools.write_steam_menu
+    release_tools.playtest_kit.export_repo = export
+    release_tools.write_steam_menu = menu
+    try:
+        return release_tools.build(gate, folder, master='https://master.example.org/x4mp', python_embed=embed if python else None,
+                                   built=BUILT)
+    finally:
+        release_tools.playtest_kit.export_repo = saved_export
+        release_tools.write_steam_menu = saved_menu
 
 
 class BundledPython(unittest.TestCase):
@@ -134,6 +170,80 @@ class Installer(unittest.TestCase):
             shortcuts = self.rows(db, 'SELECT `Directory_`, `Target`, `Arguments` FROM `Shortcut`')
             self.assertEqual(shortcuts, [('ProgramMenuFolder', '[INSTALLDIR]python\\pythonw.exe', '"[INSTALLDIR]helper.pyw"')])
             del db
+
+    def test_a_release_kit_becomes_x4_online(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            manifest = fake_release_kit(tmp / 'kit')
+            made = msi.build(tmp / 'kit', tmp / 'x4-online.msi')
+            self.assertEqual((made['name'], made['release'], made['helper']), ('X4 Online', manifest['release'], True))
+            self.assertEqual(made['version'], '26.11.%d' % (22 * 1440 + 12 * 60 + 34))   # release.json's build time
+            self.assertEqual(made['files'], len(manifest['files']) + 1)                     # every file of the kit and its manifest
+            db = msilib.OpenDatabase(made['msi'], msilib.MSIDBOPEN_READONLY)
+            properties = dict(self.rows(db, 'SELECT `Property`, `Value` FROM `Property`'))
+            self.assertEqual((properties['ProductName'], properties['UpgradeCode'], properties['ProductVersion']),
+                             ('X4 Online', msi.RELEASE_UPGRADE_CODE, made['version']))
+            self.assertNotEqual(msi.RELEASE_UPGRADE_CODE, msi.UPGRADE_CODE)   # a release never replaces a playtest kit
+            self.assertEqual((properties['ALLUSERS'], properties['MSIINSTALLPERUSER'], properties['LIMITUI']), ('2', '1', '1'))
+            self.assertEqual(properties['ARPCOMMENTS'], 'release ' + manifest['release'])
+            self.assertEqual(self.rows(db, 'SELECT `UpgradeCode`, `ActionProperty` FROM `Upgrade`'),
+                             [(msi.RELEASE_UPGRADE_CODE, 'OLDPRODUCTS')])
+            directories = {row[0]: row[1:] for row in self.rows(db, 'SELECT `Directory`, `Directory_Parent`, `DefaultDir` FROM `Directory`')}
+            self.assertEqual(directories['INSTALLDIR'], ('LocalAppDataFolder', 'X4ONLINE|X4 Online'))
+            run = '"[INSTALLDIR]python\\pythonw.exe" "[INSTALLDIR]helper.pyw"'
+            self.assertEqual(self.rows(db, 'SELECT `Root`, `Key`, `Name`, `Value` FROM `Registry`'),
+                             [('1', RUN_KEY, 'X4Online', run + ' --quiet')])
+            self.assertEqual(sorted(self.rows(db, 'SELECT `Name`, `Target`, `Arguments` FROM `Shortcut`')),
+                             [('X4ONLINE|X4 Online', '[INSTALLDIR]python\\pythonw.exe', '"[INSTALLDIR]helper.pyw"'),
+                              ('X4ONSEC|X4 Online (second window)', '[INSTALLDIR]python\\pythonw.exe', '"[INSTALLDIR]second.pyw"')])
+            self.assertEqual(sorted(self.rows(db, 'SELECT `Action`, `Target` FROM `CustomAction`')),
+                             [('StartHelper', '"[WindowsFolder]explorer.exe" "[ProgramMenuFolder]X4 Online.lnk"'),
+                              ('StopHelper', run + ' --remove')])
+            names = sorted(name.split('|')[-1] for (name,) in self.rows(db, 'SELECT `FileName` FROM `File`'))
+            self.assertIn('release.json', names)
+            self.assertIn('master.json', names)
+            self.assertIn('x4lan_gate_64.dll', names)
+            del db
+
+    def test_a_release_kit_is_refused_unless_whole_unchanged_and_private_free(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            fake_release_kit(tmp / 'no-python' / 'kit', python=False)
+            with self.assertRaises(SystemExit) as refused:
+                msi.build(tmp / 'no-python' / 'kit', tmp / 'a.msi')     # a release is always Play in Steam: it needs its Python
+            self.assertIn('--python-embed', str(refused.exception))
+            fake_release_kit(tmp / 'kit')
+            # what a PC makes while playing is neither checked nor installed
+            (tmp / 'kit' / 'sessions' / 's1').mkdir(parents=True)
+            (tmp / 'kit' / 'sessions' / 's1' / 'session-save.xml.gz').write_bytes(b'\x1f\x8b a save')
+            (tmp / 'kit' / 'repo' / '.local').mkdir()
+            (tmp / 'kit' / 'repo' / '.local' / 'helper.log').write_text('started')
+            made = msi.build(tmp / 'kit', tmp / 'b.msi')
+            db = msilib.OpenDatabase(made['msi'], msilib.MSIDBOPEN_READONLY)
+            names = [name.split('|')[-1] for (name,) in self.rows(db, 'SELECT `FileName` FROM `File`')]
+            self.assertNotIn('session-save.xml.gz', names)
+            self.assertNotIn('helper.log', names)
+            del db
+            (tmp / 'kit' / 'KIT.txt').write_text('changed')
+            with self.assertRaises(SystemExit) as refused:
+                msi.build(tmp / 'kit', tmp / 'c.msi')                   # not the kit its manifest describes
+            self.assertIn('changed KIT.txt', str(refused.exception))
+            # a private file the manifest was made to list is still refused
+            shutil.rmtree(tmp / 'kit' / 'sessions')
+            shutil.rmtree(tmp / 'kit' / 'repo' / '.local')
+            (tmp / 'kit' / 'server.json').write_text(json.dumps({'host': '203.0.113.7', 'port': 47000, 'key': 'ab' * 32}))
+            manifest = json.loads((tmp / 'kit' / 'kit-manifest.json').read_text())
+            manifest['files'] = kit.tree(tmp / 'kit')
+            (tmp / 'kit' / 'kit-manifest.json').write_text(json.dumps(manifest))
+            with self.assertRaises(SystemExit) as refused:
+                msi.build(tmp / 'kit', tmp / 'd.msi')
+            self.assertIn('server.json', str(refused.exception))
+            self.assertFalse((tmp / 'd.msi').exists())
+            release = json.loads((tmp / 'kit' / 'release.json').read_text())
+            (tmp / 'kit' / 'release.json').write_text(json.dumps({**release, 'built': 'yesterday'}))
+            with self.assertRaises(SystemExit) as refused:
+                msi.build(tmp / 'kit', tmp / 'e.msi')                   # the version comes from the build time
+            self.assertIn('build time', str(refused.exception))
 
     def test_versions_rise_with_time_and_a_folder_without_a_kit_is_refused(self):
         import time

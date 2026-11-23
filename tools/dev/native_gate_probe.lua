@@ -4207,7 +4207,9 @@ function pilot_view.kit_inventory(tick,slot,why)
   for _,item in ipairs(kit.inventory) do rows[#rows+1]=item.ware..'='..tostring(now[item.ware] and now[item.ware].amount or 0) end
  end)
  assert(gate.mpp_unscope(slot)==1,'kit inventory: the scope of slot '..slot..' did not close')
- log(head..' applied='..(ok and 1 or 0)..' now='..table.concat(rows,',')..(ok and '' or ' error='..tostring(err)))
+ -- An event row, written at once: log() rows are kept for the status ticks only in play mode (kit15's join check had no
+ -- row of the step at its handover).
+ ticklog.write(head..' applied='..(ok and 1 or 0)..' now='..table.concat(rows,',')..(ok and '' or ' error='..tostring(err)))
 end
 -- A start's blueprints and research for a player with a faction of its own (factions mode: the identity plan's
 -- kit.blueprints and kit.research; in coop the identity steps give them to the one shared library). Every client, the same
@@ -8227,108 +8229,375 @@ end
 -- In-session multiplayer menu (x4ls play; native_gate_mp_menu, default on in a session): a "Multiplayer session" entry
 -- in X4's options menu (Escape) opens a page with this client's slot, the tick, the session state, the relay and a Leave
 -- button (an orderly gate stop: the relay drops this client after its stall bound and the others play on; X4 keeps
--- running alone). X4's own options code draws it: the menu's row function (menu.displayOption) adds the entry before
--- Settings on the main page, and the page is drawn through the menu's page function on the stock "multiplayer" page
--- definition (Egosoft's network page, hidden without its network engine) with that page's rows replaced by these (X4's
--- UI has no debug library, so the menu's local option table is out of reach). No stock file is changed. Installed from
--- onUpdate once the options menu is registered; anything missing is one MP_MENU_REFUSED row and the menu stays as it was.
-local mp_menu={installed=false,tries=0,left=false}
+-- running alone). In a session a lobby made (cfg.lobby) the page also shows the lobby's state table (docs/NETPLAY.md,
+-- "The page and the launcher"): the connection (direct, UPnP or the server's relay, and the ping), the join code with
+-- Copy, and the players. It reads that state again every few seconds while the page is open (lobby/state.lua, which the
+-- launcher keeps writing, or in a Steam-started X4 the helper's <pipe>-state) and draws the page again when it changed.
+-- Copy and Leave are the requests COPY and LEAVE: a log row "[X4LAN] LOBBY REQUEST <text>", and with a pipe the request
+-- spelled through the helper's fixed pipe names (<pipe>-tbegin, -t0 .. -tf, -tend).
+-- X4's own options code draws it: the menu's row function (menu.displayOption) adds the entry before Settings on the main
+-- page, and the page is drawn through the menu's page function on the stock "multiplayer" page definition (Egosoft's
+-- network page, hidden without its network engine) with that page's rows replaced by these (X4's UI has no debug
+-- library, so the menu's local option table is out of reach). No stock file is changed, and only the menu table's
+-- functions are used, so replacements of the options menu that keep them (kuertee's UI Extensions) work too. Installed
+-- from onUpdate once the options menu is registered; anything missing is one MP_MENU_REFUSED row and the menu stays as it
+-- was; every row is drawn under pcall.
+-- The block is a function of its own: the probe's main function is at Lua's limit of 200 local variables, so the block
+-- adds one there (mp_menu: the page's state and its functions install, tick, line and leave).
+local mp_menu=(function()
+local mp_menu={installed=false,tries=0,left=false,frames=0}
+local MP_MENU_PAGE='x4lan_mp'
+local MP_MENU_INSTALL_TRIES=1800
+local MP_MENU_STATE_FRAMES=150   -- frames between two reads of the lobby state while the page is open (a few seconds)
+local MP_MENU_LINES=5
 local function mp_menu_state()
- local ok,s=pcall(gate.poll)
- if not ok or type(s)~='table' then s={} end
- return s
+ local ok,status=pcall(gate.poll)
+ if not ok or type(status)~='table' then
+  status={}
+ end
+ return status
 end
-local function mp_menu_line(k)
- local s=mp_menu_state()
- local slot=tonumber(tostring(cfg.slot or ''):match('%d+')) or 0
+local function mp_menu_active(status)
+ return status.active==1 or status.active==true
+end
+local function mp_menu_slot()
+ return tonumber(tostring(cfg.slot or ''):match('%d+')) or 0
+end
+local function mp_menu_line(index)
+ local status=mp_menu_state()
  local hz=tonumber(cfg.native_gate_tick_hz) or 60
- local tick=tonumber(s.issued) or 0
- if k==1 then return 'You are player '..slot..' of '..tostring(clients or '?') end
- if k==2 then
+ local tick=tonumber(status.issued) or 0
+ if index==1 then
+  return 'You are player '..mp_menu_slot()..' of '..tostring(clients or '?')
+ end
+ if index==2 then
   local seconds=math.floor(tick/hz)
   return string.format('Step %d (game time %d:%02d)',tick,math.floor(seconds/60),seconds%60)
  end
- if k==3 then
-  if mp_menu.left then return 'You left the session: this game now runs alone' end
-  if s.active==1 or s.active==true then return 'In the session: every step is shared with the other players' end
+ if index==3 then
+  if mp_menu.left then
+   return 'You left the session: this game now runs alone'
+  end
+  if mp_menu_active(status) then
+   return 'In the session: every step is shared with the other players'
+  end
   return 'Not in the session (it ended or stopped; see the log)'
  end
- if k==4 then return 'Relay '..tostring(cfg.native_gate_relay_host or cfg.host or '127.0.0.1')..':'..tostring(cfg.port or '?') end
+ if index==4 then
+  return 'Relay '..tostring(cfg.native_gate_relay_host or cfg.host or '127.0.0.1')..':'..tostring(cfg.port or '?')
+ end
  return 'Desyncs are not shown in game; the host logs them (desyncs.log)'
 end
-local function mp_menu_leave()
- if mp_menu.left then return end
- local s=mp_menu_state()
- if not (s.active==1 or s.active==true) then return end
- mp_menu.left=true
- local ok,stopped=pcall(gate.stop)
- log('MP_MENU_LEAVE stopped='..tostring(ok and stopped)..' tick='..tostring(s.issued))
- if X4LAN_NATIVE_GATE_DEFAULTS then pcall(X4LAN_NATIVE_GATE_DEFAULTS.notice,'you left the session; this game runs on alone') end
-end
-local function mp_menu_install()
- if mp_menu.installed or mp_menu.tries>=1800 or cfg.native_gate_mp_menu==false then return end
- mp_menu.tries=mp_menu.tries+1
- if type(Menus)~='table' then return end
- local options
- for _,m in ipairs(Menus) do if type(m)=='table' and m.name=='OptionsMenu' then options=m end end
- if not options then return end
- mp_menu.tries=1800   -- one attempt once the menu is there
- if type(options.displayOption)~='function' or type(options.displayOptions)~='function' or type(options.submenuHandler)~='function' then
-  log('MP_MENU_REFUSED why=no_menu_functions');return
+-- The lobby's pipe prefix (\\.\pipe\<name>-) in a Steam-started session; nil otherwise.
+local function mp_menu_pipe()
+ local lobby=cfg.lobby
+ if type(lobby)=='table' and type(lobby.pipe)=='string' then
+  return '\\\\.\\pipe\\'..lobby.pipe..'-'
  end
- local page={}
- for k=1,5 do page[#page+1]={id='header',name=function() return mp_menu_line(k) end} end
- page[#page+1]={id='line'}
- page[#page+1]={id='x4lan_mp_leave',name='Leave the session',value='Leave',valuetype='button',
-  mouseOverText='Stop taking part: the others play on without you, this game runs on alone',
-  callback=function() mp_menu_leave() end,
-  selectable=function() local s=mp_menu_state() return not mp_menu.left and (s.active==1 or s.active==true) end}
- local entry={id='x4lan_mp',name='Multiplayer session',submenu='x4lan_mp',mouseOverText='This lockstep session: players, state, leave'}
- local row,draw,handle=options.displayOption,options.displayOptions,options.submenuHandler
- options.displayOption=function(ftable,option,...)
-  if mp_menu.drawing then   -- the stock page's rows: ours instead, once
-   if not mp_menu.drawn then mp_menu.drawn=true;for _,r in ipairs(page) do row(ftable,r,...) end end
+ return nil
+end
+-- Where the lobby's state is read: the helper's <pipe>-state, or lobby/state.lua of the installed extension.
+local function mp_menu_lobby_source()
+ local pipe=mp_menu_pipe()
+ if pipe then
+  return pipe..'state'
+ end
+ return './extensions/x4_lan_lab/lobby/state.lua'
+end
+-- The lobby's state table, or nil (no lobby made this session, or the file is being replaced right now).
+local function mp_menu_read_lobby()
+ if type(cfg.lobby)~='table' then
+  return nil
+ end
+ local ok,chunk=pcall(loadfile,mp_menu_lobby_source())
+ if not ok or type(chunk)~='function' then
+  return nil
+ end
+ local ran,state=pcall(chunk)
+ if ran and type(state)=='table' then
+  return state
+ end
+ return nil
+end
+local function mp_menu_hex_byte(character)
+ return string.format('%02x',character:byte())
+end
+local MP_MENU_OPEN_TRIES=100   -- a busy pipe (all its instances serving) is opened again at once
+-- One open of a helper's pipe; true when the helper saw it. "cannot open" (no helper, or every instance busy) is tried
+-- again; any other failure is an open the helper saw.
+local function mp_menu_open(path)
+ for _=1,MP_MENU_OPEN_TRIES do
+  local ok,chunk,why=pcall(loadfile,path)
+  if ok and chunk then
+   return true
+  end
+  local message=tostring(ok and why or chunk)
+  if not message:find('cannot open',1,true) then
+   return true
+  end
+ end
+ return false
+end
+-- A request to the launcher: a log row, and with a pipe the request spelled through fixed names (docs/NETPLAY.md):
+-- <pipe>-tbegin, one <pipe>-t0 .. -tf per digit of its bytes in lowercase hex, <pipe>-tend (not -tb and -te: those are
+-- the digits b and e). The answers are not used: the page reads the state again by itself.
+local function mp_menu_request(text)
+ pcall(DebugError,'[X4LAN] LOBBY REQUEST '..text)
+ local pipe=mp_menu_pipe()
+ if not pipe or not mp_menu_open(pipe..'tbegin') then
+  return
+ end
+ local hex=text:gsub('.',mp_menu_hex_byte)
+ for digit in hex:gmatch('.') do
+  if not mp_menu_open(pipe..'t'..digit) then
    return
   end
-  if options.currentOption=='main' and not options.isStartmenu and type(option)=='table' and option.id=='settings' then row(ftable,entry,...) end
-  return row(ftable,option,...)
+ end
+ mp_menu_open(pipe..'tend')
+end
+local function mp_menu_leave()
+ if mp_menu.left then
+  return
+ end
+ local gate_status=mp_menu_state()
+ if not mp_menu_active(gate_status) then
+  return
+ end
+ mp_menu.left=true
+ local ok,stopped=pcall(gate.stop)
+ log('MP_MENU_LEAVE stopped='..tostring(ok and stopped)..' tick='..tostring(gate_status.issued))
+ if X4LAN_NATIVE_GATE_DEFAULTS then
+  pcall(X4LAN_NATIVE_GATE_DEFAULTS.notice,'you left the session; this game runs on alone')
+ end
+ mp_menu_request('LEAVE')   -- the launcher tells the others (and the server) that this player is gone
+end
+local MP_MENU_MAPPINGS={upnp='UPnP',natpmp='NAT-PMP',pcp='PCP',manual='forwarded port'}
+-- The lobby state's network as one line: 'Connection: direct (UPnP), ping 38 ms'.
+local function mp_menu_network_line(network)
+ if type(network)~='table' then
+  return nil
+ end
+ local how
+ if network.mode=='direct' then
+  local mapping=MP_MENU_MAPPINGS[network.mapping]
+  how=mapping and ('direct ('..mapping..')') or 'direct'
+ elseif network.mode=='relay' then
+  how="through the server's relay"
+ elseif network.mode=='lan' then
+  how='local network'
+ end
+ local ping=tonumber(network.ping_ms)
+ if not how and not ping then
+  return nil
+ end
+ local text='Connection: '..(how or 'being set up')
+ if ping then
+  text=text..', ping '..math.floor(ping+0.5)..' ms'
+ end
+ return text
+end
+-- The rows from the lobby's state: the connection, the code with Copy, the players.
+local function mp_menu_lobby_rows(rows)
+ local state=mp_menu.lobby
+ if type(state)~='table' then
+  return
+ end
+ local network=mp_menu_network_line(state.network)
+ if network then
+  rows[#rows+1]={id='x4lan_mp_network',name=network,interactive=false}
+ end
+ local code=type(state.code)=='string' and state.code~='' and state.code or nil
+ if code or state.invite then
+  local name=code and 'Join code: '..code or 'Copy the invite code'
+  rows[#rows+1]={id='x4lan_mp_copy',name=name,value='Copy',valuetype='button',
+   mouseOverText='Put the code on the clipboard to send it to another player',
+   callback=function()
+    mp_menu_request('COPY')
+   end}
+ end
+ if type(state.players)=='table' and #state.players>0 then
+  rows[#rows+1]={id='header',name='Players'}
+  for index,player in ipairs(state.players) do
+   if type(player)=='table' then
+    local slot=tonumber(player.slot) or index
+    local name='Player '..slot
+    if player.host then
+     name=name..' (host)'
+    end
+    if slot==mp_menu_slot() then
+     name=name..' (you)'
+    end
+    rows[#rows+1]={id='x4lan_mp_player'..slot,name=name,interactive=false}
+   end
+  end
+ end
+end
+-- The page's rows, made again for every draw.
+local function mp_menu_rows()
+ local rows={}
+ for index=1,MP_MENU_LINES do
+  local function text()
+   return mp_menu_line(index)
+  end
+  rows[#rows+1]={id='header',name=text}
+ end
+ mp_menu_lobby_rows(rows)
+ rows[#rows+1]={id='line'}
+ rows[#rows+1]={id='x4lan_mp_leave',name='Leave the session',value='Leave',valuetype='button',
+  mouseOverText='Stop taking part: the others play on without you, this game runs on alone',
+  callback=function()
+   mp_menu_leave()
+  end,
+  selectable=function()
+   return not mp_menu.left and mp_menu_active(mp_menu_state())
+  end}
+ return rows
+end
+-- The page's rows in place of the stock page's; a row that fails is left out (one row in the log).
+local function mp_menu_draw_rows(stock_row,ftable,...)
+ local ok,rows=pcall(mp_menu_rows)
+ if not ok then
+  log('MP_MENU_DRAW_ERROR rows '..tostring(rows))
+  return
+ end
+ for _,row in ipairs(rows) do
+  local drawn,why=pcall(stock_row,ftable,row,...)
+  if not drawn then
+   log('MP_MENU_DRAW_ERROR '..tostring(row.id)..' '..tostring(why))
+  end
+ end
+end
+local function mp_menu_find_options()
+ if type(Menus)~='table' then
+  return nil
+ end
+ local found
+ for _,menu in ipairs(Menus) do
+  if type(menu)=='table' and menu.name=='OptionsMenu' then
+   found=menu
+  end
+ end
+ return found
+end
+local function mp_menu_install()
+ if mp_menu.installed or mp_menu.tries>=MP_MENU_INSTALL_TRIES or cfg.native_gate_mp_menu==false then
+  return
+ end
+ mp_menu.tries=mp_menu.tries+1
+ local options=mp_menu_find_options()
+ if not options then
+  return
+ end
+ mp_menu.tries=MP_MENU_INSTALL_TRIES   -- one attempt once the menu is there
+ local functions=type(options.displayOption)=='function' and type(options.displayOptions)=='function'
+  and type(options.submenuHandler)=='function'
+ if not functions then
+  log('MP_MENU_REFUSED why=no_menu_functions')
+  return
+ end
+ local entry={id=MP_MENU_PAGE,name='Multiplayer session',submenu=MP_MENU_PAGE,
+  mouseOverText='This lockstep session: players, state, leave'}
+ local stock_row=options.displayOption
+ local stock_draw=options.displayOptions
+ local stock_handle=options.submenuHandler
+ options.displayOption=function(ftable,option,...)
+  if mp_menu.drawing then   -- the stock page's rows: ours instead, once
+   if not mp_menu.drawn then
+    mp_menu.drawn=true
+    mp_menu_draw_rows(stock_row,ftable,...)
+   end
+   return
+  end
+  local main=options.currentOption=='main' and not options.isStartmenu
+  if main and type(option)=='table' and option.id=='settings' then
+   pcall(stock_row,ftable,entry,...)
+  end
+  return stock_row(ftable,option,...)
  end
  options.displayOptions=function(parameter,...)
-  if parameter~='x4lan_mp' then return draw(parameter,...) end
-  mp_menu.drawing,mp_menu.drawn=true,false
-  local ok,why=pcall(draw,'multiplayer',...)
+  if parameter~=MP_MENU_PAGE then
+   return stock_draw(parameter,...)
+  end
+  if options.currentOption~=MP_MENU_PAGE then   -- the page opens: the lobby's state as it is now
+   mp_menu.lobby=mp_menu_read_lobby() or mp_menu.lobby
+   mp_menu.frames=0
+  end
+  mp_menu.drawing=true
+  mp_menu.drawn=false
+  local ok,why=pcall(stock_draw,'multiplayer',...)
   mp_menu.drawing=false
-  options.currentOption='x4lan_mp'   -- a refresh draws this page again
-  if not ok then log('MP_MENU_DRAW_ERROR '..tostring(why)) end
+  options.currentOption=MP_MENU_PAGE   -- a refresh draws this page again
+  if not ok then
+   log('MP_MENU_DRAW_ERROR '..tostring(why))
+  end
  end
  options.submenuHandler=function(parameter,...)
-  if parameter=='x4lan_mp' then return options.displayOptions('x4lan_mp') end
-  return handle(parameter,...)
+  if parameter==MP_MENU_PAGE then
+   return options.displayOptions(MP_MENU_PAGE)
+  end
+  return stock_handle(parameter,...)
  end
+ mp_menu.options=options
  mp_menu.installed=true
- log('MP_MENU_INSTALLED rows='..#page)
+ log('MP_MENU_INSTALLED rows='..#mp_menu_rows())
 end
 -- Menu test (diagnostic; native_gate_mp_menu_test = {slot='pK', tick=T}): client K opens the page at step T as the Escape
 -- key would (OpenMenu with the page as its parameter) and logs the page shown 30 steps later.
 local function mp_menu_test_step()
- local t=cfg.native_gate_mp_menu_test
- if not (type(t)=='table' and mp_menu.installed and cfg.slot==t.slot) or mp_menu.test_done then return end
+ local test=cfg.native_gate_mp_menu_test
+ if not (type(test)=='table' and mp_menu.installed and cfg.slot==test.slot) or mp_menu.test_done then
+  return
+ end
  local tick=tonumber(mp_menu_state().issued) or 0
- if not mp_menu.test_opened and tick>=(tonumber(t.tick) or math.huge) then
+ if not mp_menu.test_opened and tick>=(tonumber(test.tick) or math.huge) then
   mp_menu.test_opened=tick
-  local ok,why=pcall(OpenMenu,'OptionsMenu','x4lan_mp',nil,true)
+  local ok,why=pcall(OpenMenu,'OptionsMenu',MP_MENU_PAGE,nil,true)
   log('MP_MENU_TEST tick='..tick..' open ok='..tostring(ok)..(ok and '' or ' why='..tostring(why)))
  elseif mp_menu.test_opened and tick>=mp_menu.test_opened+30 then
   mp_menu.test_done=true
-  local current
-  for _,m in ipairs(Menus or {}) do if type(m)=='table' and m.name=='OptionsMenu' then current=m.currentOption end end
+  local options=mp_menu_find_options()
+  local current=options and options.currentOption
   log('MP_MENU_TEST tick='..tick..' page='..tostring(current)..' line1='..mp_menu_line(1)..' line3='..mp_menu_line(3))
  end
 end
+-- Every frame once installed: the menu test, and while the page is open the lobby's state every few seconds (the page
+-- is drawn again when its stamp changed; the lines are functions and follow the game by themselves).
+local function mp_menu_tick()
+ if cfg.native_gate_mp_menu_test then
+  mp_menu_test_step()
+ end
+ local options=mp_menu.options
+ if not (options and options.currentOption==MP_MENU_PAGE) or type(cfg.lobby)~='table' then
+  return
+ end
+ mp_menu.frames=mp_menu.frames+1
+ if mp_menu.frames<MP_MENU_STATE_FRAMES then
+  return
+ end
+ mp_menu.frames=0
+ local state=mp_menu_read_lobby()
+ if not state or (mp_menu.lobby and state.stamp==mp_menu.lobby.stamp) then
+  return
+ end
+ mp_menu.lobby=state
+ if type(options.refresh)=='function' then
+  pcall(options.refresh)
+ end
+end
+mp_menu.install=mp_menu_install
+mp_menu.tick=mp_menu_tick
+mp_menu.line=mp_menu_line
+mp_menu.leave=mp_menu_leave
+return mp_menu
+end)()
 SetScript('onUpdate',function()
  -- the menu block's local; absent where the handler runs on its own (tests lift it out with stubs)
- if not mp_menu then elseif not mp_menu.installed then pcall(mp_menu_install)
- elseif cfg.native_gate_mp_menu_test then pcall(mp_menu_test_step) end
+ if not mp_menu then
+ elseif not mp_menu.installed then
+  pcall(mp_menu.install)
+ else
+  pcall(mp_menu.tick)
+ end
  -- Info lines raised at the start menu (refusals before the snapshot load) again once a game is on screen.
  local defaults=X4LAN_NATIVE_GATE_DEFAULTS
  if defaults and #defaults.pending>0 then defaults.flush_notices(not ffi.C.IsStartmenu()) end

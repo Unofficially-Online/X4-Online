@@ -16,6 +16,10 @@ disposable profile.
 | `join --relay HOST:PORT --token T --slot K --clients N --arm-at UTC --overlay DIR --snapshot FILE` | One client on this PC for slot K of that session (the same overlay and snapshot as the host), logged as `play` does |
 | `lobby --overlay DIR --snapshot FILE [--port 47000] [--bind IP] [--lane 1]` | This PC's X4 opens in its main menu with a **Multiplayer** entry (Host a game, Join a game). The same command on every PC; see "Lobby" below |
 | `lobby ... --server-file server.json` | The same with a kit's server: the page has **Join** only, the relay runs on the server, and the run folder is sent there when the game is over |
+| `lobby [--kit DIR] [--master URL \| --no-master] [--request TEXT]` | Netplay (every kit without a server; docs/NETPLAY.md): Host a game, Join with a code or an address, the public and LAN lists; a release kit needs no `--overlay`/`--snapshot` |
+| `host --players N [--name NAME] [--public]` | `lobby` with Host already chosen: the game at the master server (else on the LAN), its code on the clipboard |
+| `join --code CODE \| --address HOST[:PORT] \| --game-id ID` | `lobby` with that join already chosen (a join code, a long invite code, an address of the LAN, a VLAN or a VPN, a game of the public list) |
+| `games [--lan] [--json]` | The master server's public games (and with `--lan` the games announced on the LAN); no X4 |
 | `serve --overlay DIR --server-file server.json [--bind 0.0.0.0] [--runs DIR]` | The server of such a kit (Linux or Windows, Python only): admits the launchers that prove the kit's key, starts the relay when the overlay's player count has joined, stores the players' logs, then takes the next players |
 | `join --server-file server.json --overlay DIR --slot K \| --start GAMESTART` | Join the game that runs on a kit's server in an open slot (a drop-in game: `serve` with an overlay that has open slots); the server admits this PC and hands out the saver's join files |
 | `session ... --checkpoint-at T` | Every client saves the world right after tick T (`clientK/save_001.xml.gz`); the session ends there (outcome `checkpointed`) |
@@ -49,6 +53,12 @@ is chosen in X4's main menu.
   launcher's answer from `extensions/x4_lan_lab/lobby/state.lua`. The launcher reads and writes the clipboard.
 - X4 has to be started by this command (`PLAY.cmd` in a playtest kit). A start from Steam has no overlay and no
   launcher, so no Multiplayer entry.
+- **Netplay** (`src/lockstep/launcher/netlobby.py`, docs/NETPLAY.md "Launcher notes"): a kit without a server gets the
+  netplay page. Hosting uses the kit's own session or one `x4ls new-session` makes once (X4 closes for its capture
+  client and comes back with the session); the game goes to the master server (its ports mapped, the relay on this PC
+  when the master reaches it, else the master's), or to the LAN lobby without one. Joining downloads the host's
+  session, checks it against this release and builds the overlay here with this kit's own gate DLL; X4 starts again
+  with it before the player counts as ready.
 
 ## How a client is isolated
 

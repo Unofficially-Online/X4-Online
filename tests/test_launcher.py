@@ -125,6 +125,27 @@ class Profiles(unittest.TestCase):
             for key in ('<fullscreen>false', '<borderless>true', '<res_width>2560', '<res_height>1440'):
                 self.assertIn(key, config)
 
+    def test_read_only_folders_are_wiped_too(self):
+        # A Documents that OneDrive backs up: its folders are read-only, and Windows refuses to remove a read-only folder
+        # (the laptop's profile 45857 of 23 Nov). The wipe makes them writable and goes on.
+        import stat
+        with tempfile.TemporaryDirectory() as tmp:
+            old = Path(tmp) / '45850'
+            (old / 'save').mkdir(parents=True)
+            (old / 'save' / 'autosave_01.xml.gz').write_text('old world')
+            (old / 'uidata.xml').write_text('old')
+            for folder in (old / 'save', old):
+                os.chmod(folder, stat.S_IREAD | stat.S_IEXEC)
+            try:
+                path = profile.prepare(45850, ['x4_lan_lab'], root=tmp)
+            finally:
+                for folder in (old / 'save', old):
+                    if folder.exists():
+                        os.chmod(folder, stat.S_IREAD | stat.S_IWRITE | stat.S_IEXEC)
+            self.assertFalse((path / 'save' / 'autosave_01.xml.gz').exists())
+            self.assertFalse((path / 'uidata.xml').exists())
+            self.assertTrue((path / 'config.xml').is_file())
+
 
 class Unstage(unittest.TestCase):
     def test_the_staged_snapshot_is_removed_after_a_session_and_saves_stay(self):

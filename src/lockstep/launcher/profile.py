@@ -7,7 +7,9 @@ started with is never wiped: it belongs to another session on this PC.
 """
 import os
 import re
+import stat
 import subprocess
+import sys
 from pathlib import Path
 import shutil
 
@@ -146,13 +148,34 @@ def refuse_in_use(profile):
                          'take other profiles (X4LS_FIRST_PROFILE) or end that session first')
 
 
+def _writable_again(remove, path, _error):
+    """shutil.rmtree's error handler: the entry is made writable and removed again. OneDrive marks the folders of a
+    Documents it backs up read-only, and Windows refuses to remove a read-only folder ("Access is denied", the laptop's
+    profiles of 23 Nov); a second refusal is raised as it is. The folder holding it too (where a folder without write
+    access is what refuses the removal, as on Linux)."""
+    for entry in (os.path.dirname(path), path):
+        try:
+            os.chmod(entry, os.stat(entry).st_mode | stat.S_IWRITE)
+        except OSError:
+            pass
+    remove(path)
+
+
+def remove_tree(path):
+    """A profile folder and everything in it, read-only entries too."""
+    if sys.version_info >= (3, 12):
+        shutil.rmtree(path, onexc=_writable_again)
+    else:
+        shutil.rmtree(path, onerror=_writable_again)
+
+
 def prepare(profile, extension_ids, width=1280, height=720, snapshot=None, root=None, fast=False, borderless=False, settings=()):
     """Fresh profile: windowed config, autosave and protected UI off, optional snapshot; settings: client_settings()."""
     path = profile_dir(profile, root)
     if root is None:
         refuse_in_use(profile)   # the real profiles only: a test's own folder has no X4 on it
     if path.exists():
-        shutil.rmtree(path)
+        remove_tree(path)
     (path / 'save').mkdir(parents=True)
     (path / 'config.xml').write_text(with_settings(config_xml(width, height, fast, borderless), settings))
     (path / 'content.xml').write_text(content_xml(extension_ids))

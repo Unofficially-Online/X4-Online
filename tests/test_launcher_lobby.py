@@ -158,13 +158,16 @@ class Server(unittest.TestCase):
     KEY = 'a1' * 32
 
     def free_port(self):
-        for _ in range(50):   # TCP port + 1 for the lobby and UDP port for the relay, both free
-            with socket.socket() as probe:
-                probe.bind(('127.0.0.1', 0))
-                port = probe.getsockname()[1] - 1
+        """UDP port (the relay) and TCP port + 1 (the lobby), both free. Random ports below Windows' dynamic range: the
+        ephemeral TCP port minus one, as this helper took before, walks through the UDP blocks Hyper-V and WSL exclude
+        (about 100 ports each), so a run whose ephemeral counter sat in one failed all its tries (23 Nov)."""
+        import random
+        for _ in range(200):
+            port = random.randint(20000, 44000)
             try:
-                with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as udp:
+                with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as udp, socket.socket() as tcp:
                     udp.bind(('127.0.0.1', port))
+                    tcp.bind(('127.0.0.1', port + 1))
                 return port
             except OSError:
                 continue

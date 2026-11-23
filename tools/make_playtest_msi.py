@@ -1,6 +1,6 @@
-"""A playtest kit as a Windows installer: python tools/make_playtest_msi.py --kit KIT --out FILE.msi
+"""A kit as a Windows installer: python tools/make_playtest_msi.py --kit KIT --out FILE.msi
 
-The .msi installs a kit folder (tools/make_playtest_kit.py) for the current user, without administrator rights:
+The .msi installs a kit folder for the current user, without administrator rights:
 
   %LOCALAPPDATA%\\<name>\\        the kit: repo, overlay, snapshot, PLAY.cmd, and python\\ when the kit bundles one
   Desktop and Start menu          a shortcut "<name>" that runs PLAY.cmd
@@ -10,15 +10,21 @@ installer starts the kit's helper, registers it to start with Windows (HKCU ...\
 there that starts it again. The helper puts the Multiplayer entry into X4. A removal stops the helper and takes the
 entry out of X4.
 
-Built for a kit with a server and a bundled Python (make_playtest_kit.py --server ADDRESS --python-embed ZIP): the
-player installs, starts the shortcut and chooses Multiplayer, Join in X4's main menu. Nothing else is needed but X4.
+Two kinds of kit, two products (a newer installer replaces an older one of the same product only):
 
-- Windows shows the installer's progress bar only (no pages to click through). A newer .msi replaces an older one.
+- A playtest kit (tools/make_playtest_kit.py), "X4 Multiplayer Playtest". Built for a kit with a server and a bundled
+  Python (make_playtest_kit.py --server ADDRESS --python-embed ZIP): the player installs, starts the shortcut and
+  chooses Multiplayer, Join in X4's main menu. Nothing else is needed but X4.
+- A release kit (tools/make_release_kit.py, it has release.json), "X4 Online": always for "Play in Steam", so it needs
+  its bundled Python (--python-embed). Its version comes from release.json's build time. The kit must match its
+  manifest and hold nothing private (make_release_kit.verify and private_files), or no installer is made.
+
+- Windows shows the installer's progress bar only (no pages to click through).
   Removing it (Settings, Apps) leaves the run folders the games made in repo\\.local.
 - The file is not signed, so Windows may warn about an unknown publisher when it was downloaded.
 - This tool runs on Windows with Python 3.12 or older: it uses msilib, which left the standard library in 3.13.
-- The kit's files are installed as they are: nothing of X4 is in a kit, and the kit's server.json (the server's
-  address and key) is part of the installer, so it goes to the players only."""
+- The kit's files are installed as they are: nothing of X4 is in a kit, and a playtest kit's server.json (the
+  server's address and key) is part of the installer, so it goes to the players only."""
 import argparse
 import json
 import os
@@ -26,10 +32,32 @@ import sys
 import time
 import uuid
 import warnings
+from datetime import datetime, timezone
 from pathlib import Path
+from typing import NamedTuple
 
-UPGRADE_CODE = '{5E0C2F1B-6A4D-4C8E-9B7F-3D2A1C0E9F84}'   # the same for every kit: a new installer replaces the old one
+UPGRADE_CODE = '{5E0C2F1B-6A4D-4C8E-9B7F-3D2A1C0E9F84}'   # the same for every playtest kit: a new installer replaces the old one
 NAME = 'X4 Multiplayer Playtest'
+RELEASE_UPGRADE_CODE = '{8D3B6E2A-41C7-4F95-A0E8-6B19C2D74F31}'   # the same for every release; never a playtest kit's
+RELEASE_NAME = 'X4 Online'
+BS = chr(92)
+RUN_KEY = 'Software' + BS + 'Microsoft' + BS + 'Windows' + BS + 'CurrentVersion' + BS + 'Run'
+NOT_INSTALLED = ('__pycache__', '.local')            # folders a PC makes while playing: caches, run folders
+NOT_INSTALLED_RELEASE = NOT_INSTALLED + ('sessions',)   # ... and a release kit's session cache
+MISSING_DIALOGS = ('ExitDialog', 'FatalError', 'UserExit')   # named by msilib's sequences but not defined
+
+
+class Product(NamedTuple):
+    """What an installer is called and where it puts things."""
+    name: str               # the install folder, the Start menu entry, Apps
+    upgrade_code: str
+    manufacturer: str
+    feature_title: str
+    short_name: str         # the 8.3 name of the install folder and of the Start menu entry
+    second_short_name: str  # ... of the "(second window)" entry
+    run_value: str          # the helper's value under HKCU ...\Run
+    comments: str           # Apps: which kit or release this is
+    not_installed: tuple    # folder names whose files are left out
 
 
 def version_now(now=None):
@@ -38,7 +66,16 @@ def version_now(now=None):
     return f'{now.tm_year % 100}.{now.tm_mon}.{(now.tm_mday - 1) * 1440 + now.tm_hour * 60 + now.tm_min}'
 
 
-def build(kit, out, name=NAME, version=None):
+def version_of_release(built):
+    """A release's installer version: version_now of release.json's build time (ISO 8601), so it is the same for every
+    installer made from one kit."""
+    moment = datetime.fromisoformat(built.replace('Z', '+00:00'))
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    return version_now(moment.astimezone(timezone.utc).timetuple())
+
+
+def load_msilib():
     try:
         with warnings.catch_warnings():
             warnings.simplefilter('ignore', DeprecationWarning)
@@ -46,52 +83,146 @@ def build(kit, out, name=NAME, version=None):
             from msilib import schema, sequence
     except ImportError:
         raise SystemExit('this tool needs Windows and Python 3.12 or older (msilib left the standard library in 3.13)')
-    kit, out = Path(kit).resolve(), Path(out).resolve()
+    return msilib, schema, sequence
+
+
+def release_tools():
+    """tools/make_release_kit.py (beside this file): the release kit's manifest check and private-file rules."""
+    tools = str(Path(__file__).resolve().parent)
+    if tools not in sys.path:
+        sys.path.insert(0, tools)
+    import make_release_kit
+    return make_release_kit
+
+
+def playtest_product(kit, name):
     if not (kit / 'kit-manifest.json').is_file() or not (kit / 'PLAY.cmd').is_file():
         raise SystemExit(f'{kit} is not a kit with PLAY.cmd (tools/make_playtest_kit.py, an overlay without open slots)')
     manifest = json.loads((kit / 'kit-manifest.json').read_text(encoding='utf-8'))
-    version = version or version_now()
-    product = '{' + str(uuid.uuid4()).upper() + '}'
+    product = Product(name=name or NAME, upgrade_code=UPGRADE_CODE, manufacturer='X4 lockstep playtest',
+                      feature_title='The playtest kit', short_name='X4MPPLAY', second_short_name='X4MPSEC',
+                      run_value='X4MultiplayerPlaytest', comments=f'kit {manifest["commit"][:12]}',
+                      not_installed=NOT_INSTALLED)
+    return product, None
+
+
+def release_product(kit, name):
+    """A release kit's product; refused unless the kit is whole, unchanged, private-free and has its own Python."""
+    tools = release_tools()
+    if not (kit / 'kit-manifest.json').is_file():
+        raise SystemExit(f'{kit} has release.json but no kit-manifest.json (tools/make_release_kit.py)')
+    release = json.loads((kit / 'release.json').read_text(encoding='utf-8'))
+    if not tools.RELEASE_PATTERN.fullmatch(str(release.get('release', ''))):
+        raise SystemExit(f'{kit}: release.json has no valid release ({release.get("release")!r})')
+    try:
+        version_of_release(str(release.get('built')))
+    except ValueError:
+        raise SystemExit(f'{kit}: release.json has no valid build time ({release.get("built")!r})')
+    if not (kit / 'helper.pyw').is_file() or not (kit / 'python' / 'pythonw.exe').is_file():
+        raise SystemExit(f'{kit}: an installer of a release needs its helper and its own Python '
+                         '(make_release_kit.py --python-embed)')
+    _, problems = tools.verify(kit)
+    if problems:
+        raise SystemExit(f'{kit} does not match its manifest ({len(problems)} differences): ' + '; '.join(problems[:10]))
+    found = tools.private_files(kit, skip=NOT_INSTALLED_RELEASE)
+    if found:
+        raise SystemExit(f'{kit} holds private files: ' + '; '.join(f'{path} ({why})' for path, why in found[:10]))
+    product = Product(name=name or RELEASE_NAME, upgrade_code=RELEASE_UPGRADE_CODE, manufacturer='X4 Online',
+                      feature_title='The X4 Online release', short_name='X4ONLINE', second_short_name='X4ONSEC',
+                      run_value='X4Online', comments=f'release {release["release"]}',
+                      not_installed=NOT_INSTALLED_RELEASE)
+    return product, release
+
+
+def add_sequences(msilib, sequence, db, helper):
+    """The standard actions, without the dialogs msilib names but does not define."""
+    for table in sequence.tables:
+        rows = [row for row in getattr(sequence, table) if row[0] not in MISSING_DIALOGS]
+        if table == 'InstallExecuteSequence':
+            # an older kit goes before the new one comes (its removal stops its helper and takes its menu extension out)
+            rows = [(action, condition, 1450 if action == 'RemoveExistingProducts' else number)
+                    for action, condition, number in rows]
+            if helper:
+                rows += [('StopHelper', 'REMOVE="ALL"', 1600), ('StartHelper', 'NOT REMOVE', 6650)]
+        msilib.add_data(db, table, rows)
+
+
+def add_helper_actions(msilib, db, product, run_helper):
+    msilib.add_data(db, 'CustomAction', [
+        ('StopHelper', 34 | 0x40, 'INSTALLDIR', run_helper + ' --remove'),    # waits for it; its result does not matter
+        # Started and left running, through Explorer and the Start menu entry: what the installer starts itself
+        # inherits its redirection guard and cannot follow the folder links of a game view (Win32 error 448 in X4).
+        ('StartHelper', 34 | 0xC0, 'INSTALLDIR',
+         '"[WindowsFolder]explorer.exe" "[ProgramMenuFolder]' + product.name + '.lnk"'),
+    ])
+
+
+def add_properties(msilib, db, product):
+    msilib.add_data(db, 'Property', [
+        ('UpgradeCode', product.upgrade_code), ('ALLUSERS', '2'), ('MSIINSTALLPERUSER', '1'),   # for this user, no elevation
+        ('LIMITUI', '1'),                                                                       # the progress bar, no pages
+        ('ARPNOMODIFY', '1'), ('ARPNOREPAIR', '1'), ('SecureCustomProperties', 'OLDPRODUCTS'),
+        ('ARPCOMMENTS', product.comments),
+    ])
+    # any other installer of this product goes
+    msilib.add_data(db, 'Upgrade', [(product.upgrade_code, '0.0.0', None, None, 256, None, 'OLDPRODUCTS')])
+    summary = db.GetSummaryInformation(20)
+    summary.SetProperty(msilib.PID_WORDCOUNT, 2 | 8)   # compressed; 8: no administrator rights needed
+    summary.SetProperty(msilib.PID_SUBJECT, product.name)
+    summary.Persist()
+
+
+def add_shortcuts(msilib, db, kit, product, install, helper, run_helper):
+    msilib.add_data(db, 'Directory', [('DesktopFolder', 'TARGETDIR', 'Desktop'), ('ProgramMenuFolder', 'TARGETDIR', 'Programs')])
+    short = product.short_name + '|' + product.name
+    pythonw = '[INSTALLDIR]python' + BS + 'pythonw.exe'
+    if helper:   # the player presses Play in Steam; the helper starts with Windows, and from the Start menu when it was ended
+        msilib.add_data(db, 'Registry', [('HelperRun', 1, RUN_KEY, product.run_value, run_helper + ' --quiet',
+                                          install.component)])
+        msilib.add_data(db, 'Shortcut', [
+            ('HelperMenu', 'ProgramMenuFolder', short, install.component, pythonw,
+             '"[INSTALLDIR]helper.pyw"', 'Start the multiplayer helper (then press Play in Steam)', None, None, None, 1, 'INSTALLDIR')])
+        if (kit / 'second.pyw').is_file():   # a second player on the same PC (Steam starts only one X4)
+            msilib.add_data(db, 'Shortcut', [
+                ('SecondMenu', 'ProgramMenuFolder', product.second_short_name + '|' + product.name + ' (second window)',
+                 install.component, pythonw, '"[INSTALLDIR]second.pyw"',
+                 'One more X4 on this PC for the multiplayer session', None, None, None, 1, 'INSTALLDIR')])
+    else:
+        msilib.add_data(db, 'Shortcut', [
+            (key, folder, short, install.component, '[INSTALLDIR]PLAY.cmd', None, "Start X4 with the Multiplayer entry in its main menu",
+             None, None, None, 1, 'INSTALLDIR')
+            for key, folder in (('PlayDesktop', 'DesktopFolder'), ('PlayMenu', 'ProgramMenuFolder'))])
+
+
+def build(kit, out, name=None, version=None):
+    msilib, schema, sequence = load_msilib()
+    kit = Path(kit).resolve()
+    out = Path(out).resolve()
+    if (kit / 'release.json').is_file():
+        product, release = release_product(kit, name)
+        version = version or version_of_release(release['built'])
+    else:
+        product, release = playtest_product(kit, name)
+        version = version or version_now()
+    product_code = '{' + str(uuid.uuid4()).upper() + '}'
     out.parent.mkdir(parents=True, exist_ok=True)
     if out.exists():
         out.unlink()
     msilib._directories.clear()   # msilib remembers directory names per process
-    db = msilib.init_database(str(out), schema, name, product, version, 'X4 lockstep playtest')
+    db = msilib.init_database(str(out), schema, product.name, product_code, version, product.manufacturer)
     helper = (kit / 'helper.pyw').is_file() and (kit / 'python' / 'pythonw.exe').is_file()   # Play in Steam (steamplay.py)
-    run_helper = '"[INSTALLDIR]python' + chr(92) + 'pythonw.exe" "[INSTALLDIR]helper.pyw"'
-    for table in sequence.tables:   # the standard actions, without the three dialogs msilib names but does not define
-        rows = [row for row in getattr(sequence, table) if row[0] not in ('ExitDialog', 'FatalError', 'UserExit')]
-        if table == 'InstallExecuteSequence':
-            # an older kit goes before the new one comes (its removal stops its helper and takes its menu extension out)
-            rows = [(action, condition, 1450 if action == 'RemoveExistingProducts' else number) for action, condition, number in rows]
-            if helper:
-                rows += [('StopHelper', 'REMOVE="ALL"', 1600), ('StartHelper', 'NOT REMOVE', 6650)]
-        msilib.add_data(db, table, rows)
+    run_helper = '"[INSTALLDIR]python' + BS + 'pythonw.exe" "[INSTALLDIR]helper.pyw"'
+    add_sequences(msilib, sequence, db, helper)
     if helper:
-        msilib.add_data(db, 'CustomAction', [
-            ('StopHelper', 34 | 0x40, 'INSTALLDIR', run_helper + ' --remove'),    # waits for it; its result does not matter
-            # Started and left running, through Explorer and the Start menu entry: what the installer starts itself
-            # inherits its redirection guard and cannot follow the folder links of a game view (Win32 error 448 in X4).
-            ('StartHelper', 34 | 0xC0, 'INSTALLDIR', '"[WindowsFolder]explorer.exe" "[ProgramMenuFolder]' + name + '.lnk"'),
-        ])
-    msilib.add_data(db, 'Property', [
-        ('UpgradeCode', UPGRADE_CODE), ('ALLUSERS', '2'), ('MSIINSTALLPERUSER', '1'),   # for this user, no elevation
-        ('LIMITUI', '1'),                                                               # the progress bar, no pages
-        ('ARPNOMODIFY', '1'), ('ARPNOREPAIR', '1'), ('SecureCustomProperties', 'OLDPRODUCTS'),
-        ('ARPCOMMENTS', f'kit {manifest["commit"][:12]}'),
-    ])
-    msilib.add_data(db, 'Upgrade', [(UPGRADE_CODE, '0.0.0', None, None, 256, None, 'OLDPRODUCTS')])   # any older kit goes
-    summary = db.GetSummaryInformation(20)
-    summary.SetProperty(msilib.PID_WORDCOUNT, 2 | 8)   # compressed; 8: no administrator rights needed
-    summary.SetProperty(msilib.PID_SUBJECT, name)
-    summary.Persist()
+        add_helper_actions(msilib, db, product, run_helper)
+    add_properties(msilib, db, product)
 
     cab = msilib.CAB('kit')
-    feature = msilib.Feature(db, 'Kit', name, 'The playtest kit', 1, directory='INSTALLDIR')
+    feature = msilib.Feature(db, 'Kit', product.name, product.feature_title, 1, directory='INSTALLDIR')
     feature.set_current()
     root = msilib.Directory(db, cab, None, str(kit), 'TARGETDIR', 'SourceDir')
     local = msilib.Directory(db, cab, root, '', 'LocalAppDataFolder', 'LocalAppDataFolder')
-    install = msilib.Directory(db, cab, local, '', 'INSTALLDIR', f'X4MPPLAY|{name}')
+    install = msilib.Directory(db, cab, local, '', 'INSTALLDIR', f'{product.short_name}|{product.name}')
     files = 0
 
     def add(directory, folder):
@@ -102,42 +233,25 @@ def build(kit, out, name=NAME, version=None):
                 directory.add_file(entry.name)
                 files += 1
         for entry in entries:
-            if entry.is_dir() and entry.name not in ('__pycache__', '.local'):
+            if entry.is_dir() and entry.name not in product.not_installed:
                 child = msilib.Directory(db, cab, directory, entry.name, entry.name, f'{directory.make_short(entry.name)}|{entry.name}')
                 add(child, entry.path)
 
     add(install, kit)
-    msilib.add_data(db, 'Directory', [('DesktopFolder', 'TARGETDIR', 'Desktop'), ('ProgramMenuFolder', 'TARGETDIR', 'Programs')])
-    short = 'X4MPPLAY|' + name
-    if helper:   # the player presses Play in Steam; the helper starts with Windows, and from the Start menu when it was ended
-        msilib.add_data(db, 'Registry', [('HelperRun', 1, 'Software' + chr(92) + 'Microsoft' + chr(92) + 'Windows' + chr(92)
-                                          + 'CurrentVersion' + chr(92) + 'Run', 'X4MultiplayerPlaytest', run_helper + ' --quiet',
-                                          install.component)])
-        msilib.add_data(db, 'Shortcut', [
-            ('HelperMenu', 'ProgramMenuFolder', short, install.component, '[INSTALLDIR]python' + chr(92) + 'pythonw.exe',
-             '"[INSTALLDIR]helper.pyw"', 'Start the multiplayer helper (then press Play in Steam)', None, None, None, 1, 'INSTALLDIR')])
-        if (kit / 'second.pyw').is_file():   # a second player on the same PC (Steam starts only one X4)
-            msilib.add_data(db, 'Shortcut', [
-                ('SecondMenu', 'ProgramMenuFolder', 'X4MPSEC|' + name + ' (second window)', install.component,
-                 '[INSTALLDIR]python' + chr(92) + 'pythonw.exe', '"[INSTALLDIR]second.pyw"',
-                 'One more X4 on this PC for the multiplayer session', None, None, None, 1, 'INSTALLDIR')])
-    else:
-        msilib.add_data(db, 'Shortcut', [
-            (key, folder, short, install.component, '[INSTALLDIR]PLAY.cmd', None, "Start X4 with the Multiplayer entry in its main menu",
-             None, None, None, 1, 'INSTALLDIR')
-            for key, folder in (('PlayDesktop', 'DesktopFolder'), ('PlayMenu', 'ProgramMenuFolder'))])
+    add_shortcuts(msilib, db, kit, product, install, helper, run_helper)
     cab.commit(db)
     db.Commit()
     del db
-    return {'msi': str(out), 'product': product, 'version': version, 'files': files, 'name': name, 'size': out.stat().st_size,
-            'helper': bool(helper)}
+    return {'msi': str(out), 'product': product_code, 'version': version, 'files': files, 'name': product.name,
+            'size': out.stat().st_size, 'helper': bool(helper), 'release': release['release'] if release else None}
 
 
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument('--kit', required=True, help='a kit folder (make_playtest_kit.py); best with --server and --python-embed')
+    p.add_argument('--kit', required=True,
+                   help='a kit folder: make_playtest_kit.py (best with --server and --python-embed) or make_release_kit.py')
     p.add_argument('--out', required=True, metavar='FILE.msi')
-    p.add_argument('--name', default=NAME, help=f'the folder and shortcut name (default "{NAME}")')
+    p.add_argument('--name', help=f'the folder and shortcut name (default "{NAME}", a release kit "{RELEASE_NAME}")')
     args = p.parse_args(argv)
     made = build(args.kit, args.out, args.name)
     print(f'{made["msi"]}: {made["files"]} files, {made["size"] // (1024 * 1024)} MiB, version {made["version"]}, product {made["product"]}')

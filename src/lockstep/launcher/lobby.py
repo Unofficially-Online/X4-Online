@@ -21,6 +21,7 @@ the overlay are the ones x4ls play --remote-slots and x4ls join use."""
 import hashlib
 import hmac
 import json
+import math
 import os
 import re
 import secrets
@@ -43,8 +44,8 @@ CODE = re.compile(r'X4MP-((?:\d{1,3}\.){3}\d{1,3})-(\d{1,5})-([0-9a-f]{32})')
 
 @dataclass
 class LobbyOptions:
-    overlay: Path
-    snapshot: Path
+    overlay: Path | None = None    # a kit with a server: its overlay and snapshot; netplay: the kit's own session, if any
+    snapshot: Path | None = None
     port: int = 47000          # the relay's UDP port on the host; the lobby listens on TCP port + 1
     bind: str = ''             # the host's address the other PCs reach (default: this PC's primary IPv4 address)
     lane: int = 1              # which local view and disposable profile this X4 uses (0: the first free one)
@@ -63,6 +64,15 @@ class LobbyOptions:
     auto: str = ''             # test: 'host' or an invite code, taken as the menu's first choice (no click)
     show: bool = False         # test: the Multiplayer page opens by itself
     server_file: Path | None = None   # a kit's server.json: the page has Join only, the server (x4ls serve) runs the relay
+    # netplay (netlobby.py; every kit without a server):
+    kit: Path | None = None    # the kit folder (default: the kit around this checkout, if any)
+    master: str = ''           # the master server's URL (default: X4MP_MASTER, else the kit's master.json)
+    no_master: bool = False    # LAN games only
+    master_url: str | None = None   # what the launcher found (set by netlobby.run)
+    request: str = ''          # the page's first request, as if it had sent it (the Steam helper's hand-over, x4ls host/join)
+    state_mirror: Path | None = None   # the state is written here too (the Steam helper answers its pipe with it)
+    base_start: str = ''       # a session a release kit makes for hosting: its start and mode (netkit's defaults)
+    mode: str = ''
 
 
 def invite(address, port, token):
@@ -100,10 +110,12 @@ def lua_list(names):
     return '{' + ','.join("'" + n.replace('\\', '/').replace("'", '') + "'" for n in names) + '}'
 
 
-def lobby_config(files, show=False, server=False):
-    """config.lua while the game waits in the menu: nothing of a session, the overlay's files only named."""
+def lobby_config(files, show=False, server=False, netplay=False):
+    """config.lua while the game waits in the menu: nothing of a session, the overlay's files only named. netplay: the
+    page draws netplay's rows (Host, Join with a code, the lists; docs/NETPLAY.md "Page notes")."""
     return (f'X4LAN_CONFIG = {{enabled = false}}\nX4LAN_CONFIG.lobby = {{files = {lua_list(files)}'
-            + (', show = true' if show else '') + (', server = true' if server else '') + '}\n')
+            + (', show = true' if show else '') + (', server = true' if server else '')
+            + (', netplay = true' if netplay else '') + '}\n')
 
 
 def session_config(overlay, files, slot, port, token, clients, profile_id, arm_at, relay_host):
@@ -123,6 +135,9 @@ def lua_value(value):
         return 'true' if value else 'false'
     if isinstance(value, int):
         return str(value)
+    if isinstance(value, float):
+        # a fraction such as progress.done = 0.4; Lua has no literal for inf or nan
+        return repr(value) if math.isfinite(value) else '0'
     if isinstance(value, dict):
         return '{' + ', '.join(f'{k} = {lua_value(v)}' for k, v in value.items() if re.fullmatch(r'[A-Za-z_]\w*', str(k))) + '}'
     if isinstance(value, (list, tuple)):
@@ -211,12 +226,12 @@ def write_atomic(path, text):
     os.replace(tmp, path)
 
 
-def install_lobby(overlay, extensions, clients, profile_id, show=False, server=False):
+def install_lobby(overlay, extensions, clients, profile_id, show=False, server=False, netplay=False):
     """The overlay as x4ls installs it, in lobby form: ui.xml runs config.lua, sha256.lua and the lobby file only."""
     target = extension.compose(overlay, extensions, 1, 0, '0' * 32, clients, extra={LOBBY_UI: LOBBY_LUA}, profile_id=profile_id)
     files = overlay_files(overlay)
     (target / 'ui.xml').write_text(extension.ui_xml([*extension.BASE_UI, LOBBY_UI]))
-    (target / 'ui/config.lua').write_text(lobby_config(files, show, server))
+    (target / 'ui/config.lua').write_text(lobby_config(files, show, server, netplay))
     (target / 'lobby').mkdir()
     return target, files
 
@@ -720,8 +735,15 @@ def free_lane(state, lanes, log=print):
 
 
 def run(o: LobbyOptions, log=print):
-    """x4ls lobby. With a server whose game runs, the page lists the open starts; a pick ends this X4 (it was in the
-    menu for a common load) and joins the running game in that slot, as x4ls join --server-file does."""
+    """x4ls lobby. A kit with a server (x4ls serve) has the lobby it always had: with a game running there, the page
+    lists the open starts; a pick ends this X4 (it was in the menu for a common load) and joins the running game in that
+    slot, as x4ls join --server-file does. Every other kit gets netplay (netlobby.py): Host, Join with a code, the
+    public and LAN lists."""
+    if not o.server_file:
+        from . import netlobby
+        return netlobby.run(o, log)
+    if not o.overlay or not o.snapshot:
+        raise SystemExit('x4ls lobby --server-file needs --overlay and --snapshot (the kit\'s)')
     result = lobby_run(o, log)
     if result.get('outcome') != 'late':
         return result

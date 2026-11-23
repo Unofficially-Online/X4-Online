@@ -274,6 +274,12 @@ clients; at tick 100 slot 2 held one laser and one scanner on both and client 2'
 0 digest mismatches to the end (tick 3640). Not run: the same for a player who joins (twelve ticks after the
 hand-over).
 
+The join hand-over's calls. Run inv5 (11 Nov, two X4, no join): the saver's state text listed slot 2's wares (the
+kit's laser and scanner, then two seeded bandages); a catch-up from a text asking for five bandages and a needle
+gave slot 2's own player entity the three bandages and the needle it lacked, on both clients, slot 1 untouched;
+0 digest mismatches to the end. So reading and filling a slot's player entity by its ID works on the gate's own
+entities. A real join with it (a player present with items, another one joining) needs three X4 and has not run.
+
 Not run in the real game yet: the trader, the blueprint and licence trader, research, terraforming, a cancelled
 trade deal, the mods of
 slots 2..N, a trade in parts, the shared encyclopedia entries (mocked tests and the C tests

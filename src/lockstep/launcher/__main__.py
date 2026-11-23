@@ -1,10 +1,10 @@
-"""x4ls command line: doctor, session, play, join, starts, new-session, resume, snapshot, triage, clean, steam-fix."""
+"""x4ls command line: doctor, session, play, join, starts, new-session, resume, snapshot, triage, clean, steam-fix, master."""
 import argparse
 import json
 from pathlib import Path
 import sys
 
-from . import extension, game, session, steam
+from . import extension, game, netcli, session, steam
 
 
 def doctor(args):
@@ -19,6 +19,22 @@ def doctor(args):
         print('overlay: manifest matches')
     print('relay:', session.RELAY, 'present' if session.RELAY.is_file() else 'MISSING')
     return 0 if ok else 1
+
+
+def run_master(args):
+    """x4ls master: the options as server.MasterOptions, then serve until stopped."""
+    from ..master import server
+    from ..master.limits import MasterLimits
+    first, dash, last = args.relay_ports.partition('-')
+    if not dash or not first.isdigit() or not last.isdigit():
+        raise SystemExit('--relay-ports must be FIRST-LAST, e.g. 47200-47263')
+    limits = MasterLimits(games_max=args.games_max, relays_max=args.relays_max, games_per_ip=args.games_per_ip,
+                          data_bytes_max=int(args.data_max_gib * (1 << 30)))
+    options = server.MasterOptions(bind=args.bind, http_bind=args.http_bind, http_port=args.http_port,
+                                   echo_port=args.echo_port, relay_ports=(int(first), int(last)), data=args.data,
+                                   limits=limits, public_host=args.public_host, public_prefix=args.public_prefix,
+                                   trust_proxy=args.trust_proxy, relay_releases=tuple(args.relay_release))
+    return server.run(options)
 
 
 def main(argv=None):
@@ -109,7 +125,8 @@ def main(argv=None):
     j.add_argument('--clients', type=int, help='with --arm-at: the session\'s slots (a hot join reads them from the overlay)')
     j.add_argument('--arm-at', type=int, metavar='UTC_SECOND',
                    help='the UTC second the session loads at (a --remote-slots slot); without it: a hot join of an --open slot')
-    j.add_argument('--overlay', type=Path, required=True, help='the same play overlay as the host (a copy of its folder)')
+    j.add_argument('--overlay', type=Path, help='the same play overlay as the host (a copy of its folder); not with netplay\'s '
+                                                '--code, --address, --game-id')
     j.add_argument('--snapshot', type=Path, help='with --arm-at: the same snapshot save as the host (a hot join gets the join save)')
     j.add_argument('--wait', type=int, default=600, metavar='SECONDS',
                    help='hot join: how long to wait for the session to save the join (default 600)')
@@ -128,6 +145,7 @@ def main(argv=None):
     j.add_argument('--never-focus', action='store_true',
                    help='--no-focus for the whole session (a scripted test client beside a person at work)')
     j.add_argument('--tile-skip', type=int, default=0, help="the window's cell on the tiling grid (as x4ls play --tile-skip)")
+    netcli.add_join_options(j)
 
     sv = sub.add_parser('serve', help='the server of a kit made with make_playtest_kit.py --server: admits the players who '
                                       'choose Join and runs the relay (no X4 needed; Linux or Windows)')
@@ -147,12 +165,38 @@ def main(argv=None):
     sv.add_argument('--keep-joins', action='store_true', help="keep each game's join files (default: deleted when the game is over)")
     sv.add_argument('--games', type=int, default=0, help='test: end after this many games')
 
+    ms = sub.add_parser('master', help='the central lobby server of netplay (docs/NETPLAY.md): join codes, public games, '
+                                       'the UDP echo and a relay pool (no X4 needed; Linux or Windows)')
+    ms.add_argument('--bind', default='0.0.0.0', help='the address the UDP echo and the relays listen on')
+    ms.add_argument('--http-bind', default='',
+                    help='the address the HTTP API listens on (default --bind; 127.0.0.1 behind a reverse proxy)')
+    ms.add_argument('--http-port', type=int, default=47100)
+    ms.add_argument('--echo-port', type=int, default=47101)
+    ms.add_argument('--relay-ports', default='47200-47263', metavar='FIRST-LAST',
+                    help='UDP (relay) and TCP (its join files) ports of the relay pool')
+    ms.add_argument('--data', type=Path, required=True,
+                    help="where the games' files and relay folders go (its games/ folder is emptied at the start)")
+    ms.add_argument('--public-host', default='',
+                    help='the IPv4 address players send UDP to (the echo and the relays); default: the address a request '
+                         'reached. Needed behind a proxy or NAT')
+    ms.add_argument('--public-prefix', default='', help="the HTML view's link prefix behind a proxy (e.g. /x4mp)")
+    ms.add_argument('--trust-proxy', action='store_true',
+                    help='the HTTP side is behind a reverse proxy on this machine: for connections from 127.0.0.1/::1 the '
+                         'client IP is the last address of X-Forwarded-For')
+    ms.add_argument('--relay-release', action='append', default=[], metavar='RELEASE',
+                    help='a release the relay pool serves (repeatable; default: any). Other releases can still play direct')
+    ms.add_argument('--games-max', type=int, default=200)
+    ms.add_argument('--relays-max', type=int, default=32)
+    ms.add_argument('--games-per-ip', type=int, default=4)
+    ms.add_argument('--data-max-gib', type=float, default=8, help='every uploaded file together')
+
     lb = sub.add_parser('lobby', help='open X4 in its main menu and choose there: Multiplayer, Host a game or Join a game '
-                                      '(every PC runs this with the same play overlay and snapshot)')
-    lb.add_argument('--overlay', type=Path, required=True, help='a play overlay without open slots (tools/build_play_overlay.py)')
-    lb.add_argument('--snapshot', type=Path, required=True, help='the save the overlay was built for')
-    lb.add_argument('--port', type=int, default=47000, help="the relay's UDP port on the host; the lobby listens on TCP port + 1")
-    lb.add_argument('--bind', default='', help="hosting: this PC's address the others reach (default: its primary IPv4 address)")
+                                      '(netplay: a code, the public list, the LAN; a kit with a server: Join)')
+    lb.add_argument('--overlay', type=Path, help='a play overlay without open slots (a playtest kit\'s; a release kit has none)')
+    lb.add_argument('--snapshot', type=Path, help='the save the overlay was built for')
+    netcli.add_netplay_options(lb)
+    lb.add_argument('--request', default='', metavar='TEXT',
+                    help="the page's first request, as if it had been chosen there (HOST|1|4|name, JOINCODE|K7QX-3FNA, ...)")
     lb.add_argument('--lane', type=int, default=0,
                     help='the local view and profile (default: the first free one, so a second start on one PC just works)')
     lb.add_argument('--load-wait', type=int, default=30, metavar='SECONDS',
@@ -171,6 +215,8 @@ def main(argv=None):
     lb.add_argument('--game', type=Path)
     lb.add_argument('--lanes', type=Path)
     lb.add_argument('--steam-fix', action='store_true')
+
+    netcli.add_parsers(sub)
 
     st = sub.add_parser('starts', help="the game's starts: which can be the session's (slot 1) and which a player's own")
     st.add_argument('--game', type=Path)
@@ -315,7 +361,17 @@ def main(argv=None):
                                      join_catchup=args.join_catchup, games=args.games,
                                      **({'runs': args.runs} if args.runs else {})))
         return 0
+    if args.command == 'master':
+        return run_master(args)
+    if args.command == 'games':
+        return netcli.run_games(args)
     width, height = (int(v) for v in args.size.lower().split('x'))
+    if args.command == 'host':
+        return netcli.run_lobby(netcli.lobby_options(args, width, height, netcli.host_request(args)))
+    if args.command == 'join' and netcli.is_netplay_join(args):
+        return netcli.run_lobby(netcli.lobby_options(args, width, height, netcli.join_request(args)))
+    if args.command == 'join' and not args.overlay:
+        raise SystemExit('x4ls join needs --overlay (or netplay\'s --code, --address or --game-id)')
     if args.command == 'lobby':
         from . import lobby
         result = lobby.run(lobby.LobbyOptions(overlay=args.overlay, snapshot=args.snapshot, port=args.port, bind=args.bind,
@@ -323,8 +379,10 @@ def main(argv=None):
                                               game=args.game, lanes=args.lanes, steam_fix=args.steam_fix, timeout=args.timeout,
                                               close_when_over=args.close_when_over, stall_drop=args.stall_drop,
                                               lobby_timeout=args.lobby_timeout, auto=args.auto, show=args.show,
-                                              server_file=args.server_file))
-        print(json.dumps(result, indent=2))
+                                              server_file=args.server_file, kit=args.kit, master=args.master,
+                                              no_master=args.no_master, request=args.request, state_mirror=args.state_mirror,
+                                              base_start=args.base_start, mode=args.mode))
+        print(json.dumps(result, indent=2, default=str))
         return 0 if result['outcome'] in ('played', 'closed') else 1
     if args.command == 'join' and args.starts:
         from . import hotjoin

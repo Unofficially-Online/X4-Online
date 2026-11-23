@@ -1,0 +1,122 @@
+name: Release
+
+# The release kit and its installer (docs/NETPLAY.md, "Release kit and installer"). A run by hand
+# (workflow_dispatch) leaves both as an artifact; a tag v* also attaches them to a GitHub release.
+# No secrets: the build needs none, and the release is made with the run's own token. The lobby
+# server's URL comes from the repository variable X4MP_MASTER (not set: the kit has no master.json).
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  kit:
+    name: Release kit and installer (Windows, Zig 0.15.2, Python 3.12)
+    runs-on: windows-2022
+    timeout-minutes: 30
+    env:
+      # The same Zig as ci.yml (tests/test_release_workflow.py checks that the pins agree).
+      ZIG_VERSION: 0.15.2
+      ZIG_SHA256: 3a0ed1e8799a2f8ce2a6e6290a9ff22e6906f8227865911fb7ddedc3cc14cb0c
+      # python.org's Windows embeddable package (64-bit). 3.12.10 is the last 3.12 release with
+      # Windows binaries; later 3.12 releases are source only. The hash is the one python.org's
+      # SBOM for the file gives (python-3.12.10-embed-amd64.zip.spdx.json).
+      PYTHON_EMBED_VERSION: 3.12.10
+      PYTHON_EMBED_SHA256: 4acbed6dd1c744b0376e3b1cf57ce906f9dc9e95e68824584c8099a63025a3c3
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - uses: actions/checkout@v4
+      # msilib (the installer) is in the standard library up to 3.12.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install pinned Zig
+        shell: pwsh
+        run: |
+          $zip = "$env:RUNNER_TEMP\zig.zip"
+          Invoke-WebRequest "https://ziglang.org/download/$env:ZIG_VERSION/zig-x86_64-windows-$env:ZIG_VERSION.zip" -OutFile $zip
+          $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
+          if ($hash -ne $env:ZIG_SHA256) { throw "Zig checksum mismatch: $hash" }
+          Expand-Archive $zip -DestinationPath $env:RUNNER_TEMP
+          "X4LAN_ZIG=$env:RUNNER_TEMP\zig-x86_64-windows-$env:ZIG_VERSION\zig.exe" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+      - name: Download the pinned embeddable Python
+        shell: pwsh
+        run: |
+          $zip = "$env:RUNNER_TEMP\python-$env:PYTHON_EMBED_VERSION-embed-amd64.zip"
+          Invoke-WebRequest "https://www.python.org/ftp/python/$env:PYTHON_EMBED_VERSION/python-$env:PYTHON_EMBED_VERSION-embed-amd64.zip" -OutFile $zip
+          $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
+          if ($hash -ne $env:PYTHON_EMBED_SHA256) { throw "embeddable Python checksum mismatch: $hash" }
+          "X4MP_PYTHON_EMBED=$zip" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+      # The kit's, the installer's and the helper's own tests, on the Python that builds them.
+      - name: Kit and installer tests
+        shell: pwsh
+        run: |
+          foreach ($pattern in 'test_release*.py', 'test_playtest*.py', 'test_launcher_steamplay.py') {
+            python -B -m unittest discover -s tests -p $pattern -v
+            if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          }
+      # Compile only, as ci.yml: the C tests need the pinned X4.exe image, which is never on a runner.
+      - name: Build x4lan_gate_64.dll (-Werror)
+        shell: pwsh
+        run: python -B tools/dev/build_native_gate.py --zig "$env:X4LAN_ZIG"
+      - name: Make the release kit
+        shell: pwsh
+        env:
+          X4MP_MASTER: ${{ vars.X4MP_MASTER }}
+        run: |
+          $kit = "$env:RUNNER_TEMP\release\X4-Online"
+          $kitArguments = @('--gate-dll', '.local\native-lockstep\build\x4lan_gate_64.dll', '--out', $kit,
+                            '--python-embed', $env:X4MP_PYTHON_EMBED)
+          if ($env:X4MP_MASTER) { $kitArguments += @('--master', $env:X4MP_MASTER) }
+          python -B tools/make_release_kit.py @kitArguments
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          python -B tools/make_release_kit.py --verify $kit
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          $release = (Get-Content "$kit\release.json" -Raw | ConvertFrom-Json).release
+          "X4MP_KIT=$kit" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+          "X4MP_RELEASE=$release" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+      - name: Make the installer and the kit zip
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          python -B tools/make_playtest_msi.py --kit $env:X4MP_KIT --out "dist\X4-Online-$env:X4MP_RELEASE.msi"
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          # the zip holds one folder, X4-Online, with the kit in it
+          python -B -c "import shutil, sys; shutil.make_archive(sys.argv[1], 'zip', sys.argv[2], 'X4-Online')" "dist\X4-Online-$env:X4MP_RELEASE-kit" "$env:RUNNER_TEMP\release"
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          Get-ChildItem dist | Format-Table Name, Length
+      - uses: actions/upload-artifact@v4
+        with:
+          name: x4-online-${{ env.X4MP_RELEASE }}
+          path: dist/
+          if-no-files-found: error
+
+  publish:
+    name: GitHub release (tags v*)
+    needs: kit
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Create the release with the installer and the kit zip
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          ls -l dist
+          gh release create "$TAG" dist/* --repo "$GITHUB_REPOSITORY" --verify-tag --title "X4 Online $TAG" \
+            --notes "The installer (.msi: for the current user, no administrator rights) and the same files as a zip. Players of one release can play together: KIT.txt names the release."
