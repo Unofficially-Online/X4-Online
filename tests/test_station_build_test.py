@@ -11,6 +11,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT/'tools/dev'))
+if sys.platform != 'win32':   # its input module (ui_window_input) calls Win32 when it is imported
+    raise unittest.SkipTest('Win32 window input: Windows only')
 import station_build_test as sbt  # noqa: E402
 
 ROW = 'ABC-123/built=%d/standing=1/planned=1/tasks=0/0/builders=0/manager=false/budget=0/stored=claytronics:%d,energycells:3000,hullparts:3000'

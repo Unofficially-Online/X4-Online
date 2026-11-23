@@ -53,6 +53,10 @@ jobs:
           --allow-skip 'resolved stock data'
           --allow-skip 'no released lane tool on this machine'
           --allow-skip 'cross-check from Windows with Zig'
+          --allow-skip 'named pipes: Windows'
+          --allow-skip 'needs msilib'
+          --allow-skip 'the known folder is asked on Windows only'
+          --allow-skip 'Win32 window input: Windows only'
 
   gate:
     name: Lockstep gate build (Windows, Zig 0.15.2)

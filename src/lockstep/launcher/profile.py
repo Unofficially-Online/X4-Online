@@ -25,8 +25,8 @@ SNAPSHOT_SLOT = 'save_009.xml.gz'
 def documents_folder():
     """The Windows Documents folder as X4 sees it: the known folder FOLDERID_Documents, which may be redirected (OneDrive's
     folder backup moves it to %USERPROFILE%\\OneDrive\\Documents, and X4's profiles move with it); %USERPROFILE%\\Documents
-    when the shell cannot be asked."""
-    return known_documents() or Path(os.environ['USERPROFILE']) / 'Documents'
+    when the shell cannot be asked; off Windows (tests, the Linux tools) the home folder's Documents."""
+    return known_documents() or Path(os.environ.get('USERPROFILE') or Path.home()) / 'Documents'
 
 
 def known_documents():
