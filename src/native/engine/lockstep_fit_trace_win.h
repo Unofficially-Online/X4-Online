@@ -46,6 +46,7 @@ static int fitw_arm(uint64_t first,uint64_t last) {
     if(!first || last<first || last-first>600 || !stats.active || (boot_mode && boot_phase) || stats.issued ||
        GetCurrentThreadId()!=ui_thread) {fitw_stage="guard";return 0;}
     if(fitw_state()!=0) {fitw_stage="site";return 0;}
+    if(((FITW_SITE+1)&15u)>12u) {fitw_stage="line";return 0;}   /* the rel32 in one 16-byte line: view_cas_bytes swaps it at once */
     /* the wrapper's head as this build has it: push rbx; sub rsp,0x60; movups xmm2,[rdx] */
     {static const unsigned char head[10]={0x40,0x53,0x48,0x83,0xec,0x60,0x0f,0x10,0x12,0x0f};unsigned char now[10];
      if(!read_local(image+FITW_TARGET,now,10) || memcmp(now,head,10)) {fitw_stage="pins";return 0;}}
