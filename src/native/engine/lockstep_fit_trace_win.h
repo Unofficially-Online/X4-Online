@@ -23,6 +23,7 @@ static uint64_t fitw_hook(void *a1,void *a2,void *a3,void *a4,void *a5) {
 static void fitw_step_observer(void *model,void *bank,unsigned after,unsigned char cheap) {
     void *args[FIT_ARGS]={bank,bank?(unsigned char *)bank+0x40:NULL,bank?(unsigned char *)bank+0x80:NULL,model?(unsigned char *)model+0x1d0:NULL,model};
     if(!after) {
+        fit_open_take(GetCurrentThreadId());   /* a stale row of an update that raised before its after call */
         fit_row *r=fit_claim(stats.issued);
         if(r) {r->thread=GetCurrentThreadId()|FIT_STEP_TAG|((uint64_t)(cheap&0x7f)<<56);fit_note(r,0,args,fitw_read);}
         if(r) fit_open_put(GetCurrentThreadId(),r);

@@ -22,6 +22,7 @@ static uint64_t lxfit_hook(void *a1,void *a2,void *a3,void *a4,void *a5) {
 static void lxfit_step_observer(void *model,void *bank,unsigned after,unsigned char cheap) {
     void *args[FIT_ARGS]={bank,bank?(unsigned char *)bank+0x40:NULL,bank?(unsigned char *)bank+0x80:NULL,model?(unsigned char *)model+0x1c0:NULL,model};
     if(!after) {
+        fit_open_take((uint64_t)GetCurrentThreadId());   /* a stale row, if any */
         fit_row *r=fit_claim(stats.issued);
         if(r) {r->thread=(uint64_t)GetCurrentThreadId()|FIT_STEP_TAG|((uint64_t)(cheap&0x7f)<<56);fit_note(r,0,args,lxfit_read);}
         if(r) fit_open_put((uint64_t)GetCurrentThreadId(),r);
