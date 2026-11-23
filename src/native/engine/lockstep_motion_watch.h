@@ -139,6 +139,7 @@
 typedef struct {uint64_t key;unsigned klass,depth;uint32_t type;} motion_ref_t;
 #define MOTION_AGENT_EXT 47u
 #define MOTION_MODEL_RAW 0x340u
+#define MOTION_BEHAVIOUR_RAW 0x100u
 typedef struct {uint64_t tick,saved;int attention;uint32_t ctrl_vt,model_vt,index,flags,path_count,path_conn,formation;
     unsigned char slot[2][0x60],cache[0x40],target[0x50],path0[0x50],model_ext[0x70],agent_ext[MOTION_AGENT_EXT],leader_ext[MOTION_AGENT_EXT],ship_ext[5];
     uint32_t wingmen;unsigned char fp[48];motion_ref_t target_ref,path_ref,leader,wingman0,parent;char dock[512];
@@ -147,7 +148,8 @@ typedef struct {uint64_t tick,saved;int attention;uint32_t ctrl_vt,model_vt,inde
     uint32_t flight_obstacles;uint64_t flight_avoid_time;unsigned char flight_angles[8];
     uint32_t flight_contacts_n;unsigned char flight_contacts[4][0x80];uint32_t flight_contact_fnv_n,flight_contact_fnv[64];
     uint32_t slotx[2];uint32_t pt_depth;uint64_t pt_owner;
-    unsigned char model_raw[MOTION_MODEL_RAW];} motion_watch_row_t;   /* model_raw: the Steering model's first bytes, raw (pointers too) */   /* slotx: each pathing slot's +0x60..+0x19f (the digest's slotx=, of the current one) */
+    unsigned char model_raw[MOTION_MODEL_RAW];
+    uint32_t beh_vt[2];unsigned char beh_raw[2][MOTION_BEHAVIOUR_RAW];} motion_watch_row_t;   /* the Steering model's two behaviours (+0x70/+0x78): class and first bytes */   /* model_raw: the Steering model's first bytes, raw (pointers too) */   /* slotx: each pathing slot's +0x60..+0x19f (the digest's slotx=, of the current one) */
 #define MOTION_PATHING_INDEX2 0x2f4b6f4u /* g_PathingStateBufferIndex2 */
 /* Flight parameter fields of one 0x1a0 slot: +0x24, +0x190..+0x193, +0x194, +0x198. */
 static int motion_fp_fields(const unsigned char *slot,unsigned char out[16]) {
@@ -561,6 +563,10 @@ static int motion_watch_read(const unsigned char *object,uint64_t saved,uint64_t
             memset(r->model_ext+0x44,0,4);   /* +0xb4..+0xb7: padding the constructor 0xec40c0 never writes (j1-233/234: stale heap per process) */
             motion_flight_fields(model,r);
             read_local(model,r->model_raw,MOTION_MODEL_RAW);
+            for(unsigned b=0;b<2;b++) {
+                unsigned char *beh=NULL;void *bvt=NULL;r->beh_vt[b]=0;
+                if(read_local(model+0x70+8*b,&beh,8) && beh && read_local(beh,&bvt,8)) {r->beh_vt[b]=motion_watch_rva(bvt);read_local(beh,r->beh_raw[b],MOTION_BEHAVIOUR_RAW);}
+            }
         }
         if(r->model_vt==MOTION_SPLINE_VTABLE) { /* Spline: the deques' proxy and map pointers (+0x70/+0x78, +0x98/+0xa0) */
             memset(r->model_ext,0,16);memset(r->model_ext+0x28,0,16);
@@ -629,8 +635,17 @@ static int motion_watch_row(uint64_t index,char *out,size_t cap) {
     for(uint32_t k=0;k<r->wingmen && k<8u;k++) wn+=(size_t)snprintf(wings+wn,sizeof(wings)-wn,"%s%016llx",k?",":"",(unsigned long long)r->wings[k]);
     if(!wn) wings[wn++]='-';
     wings[wn]=0;
-    char pt_map[40];static char model_raw[2*MOTION_MODEL_RAW+16];model_raw[0]=0;   /* Steering ships only */
-    if(r->model_vt==MOTION_FLIGHT_VTABLE) {memcpy(model_raw," model_raw=",11);motion_watch_hex(model_raw+11,r->model_raw,MOTION_MODEL_RAW);}
+    char pt_map[40];static char model_raw[2*MOTION_MODEL_RAW+4*MOTION_BEHAVIOUR_RAW+64];model_raw[0]=0;   /* Steering ships only */
+    if(r->model_vt==MOTION_FLIGHT_VTABLE) {
+        memcpy(model_raw," model_raw=",11);motion_watch_hex(model_raw+11,r->model_raw,MOTION_MODEL_RAW);
+        size_t at=11+2*MOTION_MODEL_RAW;memcpy(model_raw+at," beh=",5);at+=5;
+        for(unsigned b=0;b<2;b++) {
+            if(b) model_raw[at++]=',';
+            if(!r->beh_vt[b]) {model_raw[at++]='-';continue;}
+            at+=(size_t)snprintf(model_raw+at,16,"%x:",r->beh_vt[b]);motion_watch_hex(model_raw+at,r->beh_raw[b],MOTION_BEHAVIOUR_RAW);at+=2*MOTION_BEHAVIOUR_RAW;
+        }
+        model_raw[at]=0;
+    }
     if(r->pt_depth==0xffu) snprintf(pt_map,sizeof(pt_map),"none/0");
     else snprintf(pt_map,sizeof(pt_map),"%u/%016llx",r->pt_depth,(unsigned long long)r->pt_owner);
     n=snprintf(out,cap,"index=%llu tick=%llu saved=%016llx attention=%d ctrl=%08x model=%08x flags=%u cur=%s prev=%s cache=%s target=%s "

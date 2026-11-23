@@ -161,7 +161,7 @@ static void test_motion_watch(void) {
     assert(motion_watch_read(test_mw_object,0xa214c,12,&ring[0],NULL));
     assert(strstr(out,"fcfdfeff000000000000000008090a"));
     assert(strstr(out," target_ref=0000000000123456/0/2/2b6e910 path=2 path0=0000000000000000000000000000000040414243"));
-    assert(strstr(out," path0_ref=00000000000a214c/0/0/ffffffff/1") && strstr(out," ship_ext=0000c04201 wingmen=0 wingman0=0000000000000000/2/0/0") && strstr(out," wings=-") && strstr(out," model_raw=") && strlen(out)<2400+11+2*MOTION_MODEL_RAW);
+    assert(strstr(out," path0_ref=00000000000a214c/0/0/ffffffff/1") && strstr(out," ship_ext=0000c04201 wingmen=0 wingman0=0000000000000000/2/0/0") && strstr(out," wings=-") && strstr(out," model_raw=") && strlen(out)<2400+11+2*MOTION_MODEL_RAW+64+4*MOTION_BEHAVIOUR_RAW);
     assert(!motion_watch_row(1,out,sizeof(out)));
     { /* The Steering group: a constructor draw alone parts flight=. */
         char a[512],b[512];ring[1]=ring[0];ring[1].flight_angles[0]^=1;motion_watch_rows=2;

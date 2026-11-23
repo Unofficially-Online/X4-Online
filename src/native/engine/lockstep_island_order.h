@@ -132,6 +132,11 @@ static unsigned iorder_trace_actor(const unsigned char *body) {
     if(!body || !read_local(body+0x50,&record,8) || !record || !read_local(record,&component,8) || !component ||
        !read_local((unsigned char *)component+8,&id,8)) return 0;
     for(unsigned i=0;i<ACTOR_CAPACITY;i++) if(component==actor_components[i] && id==actor_ids[i]) return i+1;
+    /* a ship of the motion watch (native_gate_motion_watch): actor 100 + its index, so a world ship's contacts are traced too */
+    if(motion_watch_count) {
+        unsigned klass;const uint64_t key=world_identity_key(id,&klass);
+        for(unsigned k=0;key && k<motion_watch_count && k<MOTION_WATCH_MAX;k++) if(motion_watch_saved[k]==key) return 100u+k;
+    }
     return 0;
 }
 static int32_t iorder_rel_to(const void *target) {return (int32_t)((intptr_t)target-(intptr_t)(image+IORDER_SITE+5));}

@@ -19,7 +19,8 @@
  * the cache point when the probe drains (after the frame, the step done: the cache it points into lives until the
  * step after next). Pointers and padding never reach the text.
  *
- * The including gate sets ctrace_actor (a fixture actor 1..12 for a body, else 0); rows are claimed atomically (a
+ * The including gate sets ctrace_actor (a fixture actor 1..12 for a body, 100 + k for the motion watch's ship k, else
+ * 0); rows are claimed atomically (a
  * job thread may solve). A failure (an unreadable constraint, the rows full) counts in ctrace_failures; the gate
  * stops with its island-order reason (215) at the next tick check. */
 #define CTRACE_STRIDE 0x360u

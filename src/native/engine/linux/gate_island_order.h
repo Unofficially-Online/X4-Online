@@ -163,7 +163,17 @@ static void lxio_sort(uint32_t *begin,uint32_t *end,void *manager) {
         else InterlockedIncrement64(&ctrace_failures);
     }
 }
-static unsigned lxio_trace_actor(const unsigned char *body) {unsigned kind;return lxct_actor(body,&kind);}
+static unsigned lxio_trace_actor(const unsigned char *body) {
+    unsigned kind;const unsigned actor=lxct_actor(body,&kind);
+    if(actor || !world_motion_count) return actor;
+    /* a ship of the world motion watch: actor 100 + its index (Windows' motion watch likewise) */
+    void *record=NULL;unsigned char *owner=NULL;uint64_t runtime=0;unsigned klass;
+    if(!body || !gate_read_local(body+0x50,&record,8) || !record || !gate_read_local(record,&owner,8) || !owner ||
+       !gate_read_local(owner+8,&runtime,8) || !runtime) return 0;
+    const uint64_t key=world_identity_key(runtime,&klass);
+    for(unsigned k=0;key && k<world_motion_count;k++) if(world_motion_targets[k].saved==key) return 100u+k;
+    return 0;
+}
 static void lxio_jump(unsigned char out[14]) {
     const void *to=(const void*)lxio_sort;out[0]=0xff;out[1]=0x25;memset(out+2,0,4);memcpy(out+6,&to,8);
 }
