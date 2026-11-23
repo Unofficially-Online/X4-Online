@@ -643,6 +643,123 @@ static void rdisp_follow_leave(int entered) {
     if(rfol_eye_open) {memcpy(rfol_camera+RDISP_EYE,rfol_eye,RDISP_EYE_BYTES);++opred_follow_eye;}
     rfol_open=0;rfol_eye_open=0;rfol_count=0;
 }
+/* ---- the other cameras follow what they hang from (every slot 10 call that draws a component displaced) ----
+ * Found live 23 Nov (mission sweep, two clients, client 2's story call "Incoming call: Haile Shinamon" while the caller's
+ * ship flies to its first satellite, 37 FPS: PrintWindow bursts, 45 single-frame flashes in 20 s over the whole monitor:
+ * the caller's face lit from two directions and the view through her canopy jumping between two pictures, frame after
+ * frame; the same call with her ship parked at the satellite: none). Every camera of the universe's list (+0x2c0, count
+ * +0x3c0: the player camera +0x3d0 and the cutscene cameras of the comm monitor, the briefings and full-screen
+ * cutscenes) has a view bank refilled in the step's slot 3 (Galaxy::PopulateCache 0x9fe573 -> 0x979ce0 -> 0x9799f0 for
+ * each camera; a cutscene shot's own update 0x10d8bc6 runs from the cutscene manager's frame update 0x10f1930, called
+ * from the same PopulateCache 0x9fe413), never inside slot 10. Stage 3 (and an override, and the own-ship predictor)
+ * draws a moving object of the zone at another pose than the simulated one in a slot 10 call, but only the player
+ * camera's bank followed it (rdisp_cam_apply, rdisp_follow_enter). A cutscene camera mounted in that object (the
+ * comm monitor's camera in the caller's cockpit) kept the simulated chain above it, so what X4 draws through the view
+ * caches (the characters, the world outside, the lighting) and what it draws through the camera's entries inside the
+ * object (the cockpit) disagreed by the object's display offset, which changes between step frames (s -1 in interpolate
+ * mode) and render-only frames (s about -0.5).
+ * So here, for every other camera, as for the player camera: when a member k of its chain (its cached parent the key
+ * k+1) is drawn displaced in this call, every entry from k+1 up and the root becomes G M_X, G = (M_k S'_k) M_(k+1)^-1
+ * with S'_k the drawn pose: the camera hangs under the drawn object. After stage 3 and the predictor (all swaps are
+ * in place), before the original; put back after it when each entry still holds what was written. Unlike the player
+ * camera's, an entry that holds something else then is left as it is and only counted (others= foreign): these
+ * cameras are no part of stage 2's model, and their banks belong to X4 alone. In a render-only frame the eye
+ * camera+0x890 that slot 10 recomputed goes back too. Counted in RENDER_DISPLAY others=cameras/written/restored/eye/
+ * foreign/table/parent. */
+#define RDISP_CAMERA_LIST 0x2c0u         /* the universe's cameras (pointers) */
+#define RDISP_CAMERA_LIST_COUNT 0x3c0u
+#define RDISP_CAMERA_LIST_MAX 32u
+#define RDISP_OTHERS 8u
+typedef struct {
+    unsigned char *camera,*entries;unsigned first,count;int eye;
+    unsigned char saved[RDISP_CHAIN_MAX][64],written[RDISP_CHAIN_MAX][64],eye_bytes[RDISP_EYE_BYTES];
+} rdisp_other;
+static rdisp_other rdisp_others[RDISP_OTHERS];
+static unsigned rdisp_other_open;
+static uint64_t rdisp_oth_cameras,rdisp_oth_written,rdisp_oth_restored,rdisp_oth_eye,rdisp_oth_foreign,rdisp_oth_table,rdisp_oth_parent,rdisp_oth_full;
+/* A camera's view bank for the bank (rdisp_table's reading for any camera). */
+static int rdisp_table_of(unsigned char *camera,unsigned bank,unsigned char **entries,uint64_t *count,unsigned char **anchor) {
+    unsigned char *table=camera+RDISP_TABLE+bank*RDISP_TABLE_STRIDE;uint64_t capacity=0;
+    if(!sample_read(table+RDISP_TABLE_CAPACITY,&capacity,8) || !sample_read(table+RDISP_TABLE_COUNT,count,8) || !sample_read(table,anchor,8)) return 0;
+    if(capacity==RDISP_TABLE_INLINE) *entries=table+RDISP_TABLE_ENTRIES;
+    else if(!sample_read(table+RDISP_TABLE_ENTRIES,entries,8)) return 0;
+    return *entries && *anchor && *count>=2 && *count<=RDISP_CHAIN_MAX && *count<=capacity;
+}
+/* The pose this slot 10 call draws for a component that is displaced in it (stage 3 or an override: one of the swaps;
+ * the own-ship predictor's): 1 and its first 64 bytes; 0 when it is drawn as simulated. */
+static int rdisp_drawn_pose(unsigned char *object,unsigned bank,float out[16]) {
+    if(rdisp_open && bank==rdisp_bank) {
+        unsigned char *const slot=rdisp_vc(object,bank)+RDISP_VC_BLOCK;
+        for(unsigned i=0;i<rdisp_swap_count;i++) if(rdisp_swaps[i].slot==slot) {
+            unsigned char *block=NULL;
+            if(!sample_read(slot,&block,8) || block!=rdisp_swaps[i].mine) return 0;
+            memcpy(out,rdisp_swaps[i].mine,64);return rdisp_finite(out);
+        }
+    }
+    for(unsigned j=0;opred_open && j<PILOT_SLOTS;j++) if(opred_open_at[j] && opred_open_object[j]==object) {
+        memcpy(out,opred_blocks[j],64);return rdisp_finite(out);
+    }
+    return 0;
+}
+static int rdisp_others_enter(void) {
+    rdisp_other_open=0;
+    if(!image || (!(rdisp_open && rdisp_swap_count) && !opred_open)) return 0;   /* nothing is drawn displaced in this call */
+    unsigned bank=2;unsigned char *universe=NULL,*player=NULL;uint64_t cameras=0;
+    if(!sample_read(image+RDISP_VIEW_INDEX,&bank,4) || bank>1 || !sample_read(image+RDISP_UNIVERSE,&universe,8) || !universe ||
+       !sample_read(universe+RDISP_CAMERA,&player,8) || !sample_read(universe+RDISP_CAMERA_LIST_COUNT,&cameras,8) || cameras>RDISP_CAMERA_LIST_MAX) {
+        ++rdisp_oth_table;return 0;
+    }
+    const int render=InterlockedCompareExchange(&rf_frame_open,0,0)!=0;
+    for(uint64_t c=0;c<cameras;c++) {
+        unsigned char *camera=NULL,*entries=NULL,*anchor=NULL;uint64_t count=0;unsigned char bytes[RDISP_CHAIN_MAX*RDISP_ENTRY];
+        if(!sample_read(universe+RDISP_CAMERA_LIST+8*c,&camera,8) || !camera || camera==player) continue;
+        ++rdisp_oth_cameras;
+        if(!rdisp_table_of(camera,bank,&entries,&count,&anchor) || !sample_read(entries,bytes,(size_t)count*RDISP_ENTRY) ||
+           rdisp_entry_key(bytes,0) || rdisp_entry_key(bytes,1)!=anchor) {++rdisp_oth_table;continue;}
+        unsigned k=0;float shown_f[16];
+        for(unsigned i=1;i+1<count && !k;i++) {
+            unsigned char *key=rdisp_entry_key(bytes,i),*parent=NULL;
+            if(!key || !rdisp_drawn_pose(key,bank,shown_f)) continue;
+            if(!sample_read(rdisp_vc(key,bank),&parent,8) || parent!=rdisp_entry_key(bytes,i+1)) {++rdisp_oth_parent;break;}
+            k=i;
+        }
+        if(!k) continue;
+        if(rdisp_other_open>=RDISP_OTHERS) {++rdisp_oth_full;break;}
+        float f[16];int finite=1;
+        for(unsigned i=0;i<count && finite;i++) {rdisp_entry_pose(bytes,i,f);finite=rdisp_finite(f);}
+        rdisp_xf mk,mp,shown,mp_new,mp_inv,g;
+        rdisp_xf_from(shown_f,&shown);rdisp_entry_pose(bytes,k,f);rdisp_xf_from(f,&mk);rdisp_entry_pose(bytes,k+1,f);rdisp_xf_from(f,&mp);
+        if(!finite || !rdisp_inverse(&mp,&mp_inv)) {++rdisp_oth_table;continue;}
+        rdisp_compose(&mk,&shown,&mp_new);rdisp_compose(&mp_new,&mp_inv,&g);
+        rdisp_other *o=&rdisp_others[rdisp_other_open];
+        o->camera=camera;o->entries=entries;o->first=k;o->count=(unsigned)count;
+        for(unsigned i=0;i<o->count;i++) {
+            if(i && i<=k) continue;
+            rdisp_xf m,out;rdisp_entry_pose(bytes,i,f);rdisp_xf_from(f,&m);rdisp_compose(&g,&m,&out);
+            memcpy(o->saved[i],f,64);rdisp_xf_to(&out,f);memcpy(o->written[i],f,64);
+        }
+        o->eye=render && sample_read(camera+RDISP_EYE,o->eye_bytes,RDISP_EYE_BYTES);
+        for(unsigned i=0;i<o->count;i++) if(!i || i>k) memcpy(entries+i*RDISP_ENTRY+RDISP_ENTRY_POSE,o->written[i],64);
+        ++rdisp_other_open;++rdisp_oth_written;
+    }
+    return rdisp_other_open!=0;
+}
+/* After the original (also on unwind; first of the leaves): the banks back, in a render-only frame the eyes too. */
+static void rdisp_others_leave(int entered) {
+    if(!entered) return;
+    for(unsigned n=rdisp_other_open;n-->0;) {
+        rdisp_other *o=&rdisp_others[n];int foreign=0;
+        for(unsigned i=0;i<o->count;i++) {
+            if(i && i<=o->first) continue;
+            unsigned char *pose=o->entries+i*RDISP_ENTRY+RDISP_ENTRY_POSE;
+            if(memcmp(pose,o->written[i],64)) {foreign=1;continue;}
+            memcpy(pose,o->saved[i],64);
+        }
+        if(foreign) ++rdisp_oth_foreign;else ++rdisp_oth_restored;
+        if(o->eye) {memcpy(o->camera+RDISP_EYE,o->eye_bytes,RDISP_EYE_BYTES);++rdisp_oth_eye;}
+    }
+    rdisp_other_open=0;
+}
 /* ---- arming, the gate's checks, status ---- */
 static int rdisp_mode_of(const char *text,size_t length) {
     if(!text) return RDISP_OFF;
@@ -692,7 +809,7 @@ static int rdisp_status(char *out,size_t capacity) {
         "disp_m=%.4g disp_rad=%.4g err_m=%.4g/%.4g err_rad=%.4g/%.4g err_n=%llu err_hist=%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu "
         "cam_written=%llu cam_restored=%llu eye_restored=%llu cam_identity=%llu cam_stale=%llu cam_snaps=%llu cam_resets=%llu cam_cached=%llu "
         "chain=%llu chain_parent=%llu cam_rad=%.4g cam_m=%.4g cam_err_m=%.4g/%.4g cam_err_rad=%.4g/%.4g cam_err_n=%llu "
-        "foreign=%llu nested=%llu failures=%lld restored=%d",
+        "foreign=%llu nested=%llu failures=%lld restored=%d others=%llu/%llu/%llu/%llu/%llu/%llu/%llu/%llu",
         rdisp_mode_name(rdisp_camera_mode),rdisp_mode_name(rdisp_motion_mode),rdisp_armed,rdisp_active,rdisp_stage,rdisp_why,
         (unsigned long long)rdisp_last_tick,rdisp_s_last,rdisp_s_max,(unsigned long long)rdisp_samples,(unsigned long long)rdisp_sample_fail,
         (unsigned long long)rdisp_sample_us,(unsigned long long)(rdisp_samples?rdisp_sample_us_sum/rdisp_samples:0),(unsigned long long)rdisp_sample_us_max,
@@ -710,7 +827,10 @@ static int rdisp_status(char *out,size_t capacity) {
         (unsigned long long)rdisp_cam_identity,(unsigned long long)rdisp_cam_stale,(unsigned long long)rdisp_cam_snaps,(unsigned long long)rdisp_cam_resets,
         (unsigned long long)rdisp_cam_cached,(unsigned long long)rdisp_chain,(unsigned long long)rdisp_chain_parent,rdisp_cam_rad_max,rdisp_cam_m_max,
         rdisp_mean(&rdisp_cam_err_m),rdisp_cam_err_m.max,rdisp_mean(&rdisp_cam_err_rad),rdisp_cam_err_rad.max,(unsigned long long)rdisp_cam_err_m.n,
-        (unsigned long long)rdisp_foreign,(unsigned long long)rdisp_nested,(long long)rdisp_failures,rdisp_restored);
+        (unsigned long long)rdisp_foreign,(unsigned long long)rdisp_nested,(long long)rdisp_failures,rdisp_restored,
+        (unsigned long long)rdisp_oth_cameras,(unsigned long long)rdisp_oth_written,(unsigned long long)rdisp_oth_restored,
+        (unsigned long long)rdisp_oth_eye,(unsigned long long)rdisp_oth_foreign,(unsigned long long)rdisp_oth_table,
+        (unsigned long long)rdisp_oth_parent,(unsigned long long)rdisp_oth_full);
     return n>0 && (size_t)n<capacity?n:0;
 }
 /* Row seq (or the oldest still kept); *next = the cursor after it; 0 when there is none yet. */

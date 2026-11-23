@@ -63,8 +63,21 @@ static void test_rd_engine(void) {
     unsigned char **children=(unsigned char**)(test_rd_vc(TRD_ZONE)+RDISP_VC_CHILDREN);children[0]=(unsigned char*)test_rd_children;children[1]=(unsigned char*)(test_rd_children+4);
     memset(test_rd_camera+RDISP_EYE,0x33,RDISP_EYE_BYTES);
 }
+/* A second camera of the universe's list (a cutscene's: the comm monitor's camera in a caller's cockpit), anchored in
+ * test_rd_cut_anchor: its bank as the refill writes it, what the fake slot 10 saw of it, a foreign write into it. */
+static __declspec(align(16)) unsigned char test_rd_cut[0x900];
+static unsigned char *test_rd_cut_anchor;
+static rdisp_xf test_rd_cut_k;
+static float test_rd_cut_seen[4][16];
+static int test_rd_cut_on,test_rd_cut_foreign;
+static float *test_rd_cut_entry(unsigned i) {return (float*)(test_rd_cut+RDISP_TABLE+TRD_BANK*RDISP_TABLE_STRIDE+RDISP_TABLE_ENTRIES+i*RDISP_ENTRY+RDISP_ENTRY_POSE);}
 static void test_rd_original(void *self) {
     (void)self;++test_rd_calls;
+    if(test_rd_cut_on) {
+        for(unsigned i=0;i<4;i++) memcpy(test_rd_cut_seen[i],test_rd_cut_entry(i),64);
+        memset(test_rd_cut+RDISP_EYE,0xcd,RDISP_EYE_BYTES);
+        if(test_rd_cut_foreign) test_rd_cut_entry(2)[0]+=1.0f;
+    }
     for(unsigned i=0;i<TRD_COUNT;i++) {
         test_rd_seen_block[i]=*(unsigned char**)(test_rd_vc(i)+RDISP_VC_BLOCK);
         assert(!((uintptr_t)test_rd_seen_block[i]&15));memcpy(test_rd_seen_pose[i],test_rd_seen_block[i],64);
@@ -406,8 +419,84 @@ static void test_rd_follow(void) {
     gate_tick_hz=saved_hz;rf_fps=saved_fps;render_rng_mode=saved_mode;stats.issued=saved_issued;stats.active=0;
     render_rng_calls=render_rng_steps=render_rng_unknown=render_rng_ids=0;render_rng_frame=UINT64_MAX;rf_slot10_r_us=rf_slot10_step_us=rf_slot10_r_calls=0;
 }
+/* The other cameras follow what they hang from (rdisp_others_enter): the universe's list holds the player camera and a
+ * cutscene camera mounted in a moving ship (the caller's cockpit). */
+static void test_rd_cut_bank(const rdisp_xf *anchor_pose) {
+    unsigned char *table=test_rd_cut+RDISP_TABLE+TRD_BANK*RDISP_TABLE_STRIDE;float f[16];
+    rdisp_xf m[4];m[1]=test_rd_cut_k;rdisp_compose(&m[1],anchor_pose,&m[2]);rdisp_compose(&m[2],&test_rd_z,&m[3]);rdisp_compose(&m[3],&test_rd_q,&m[0]);
+    unsigned char *keys[4]={NULL,test_rd_cut_anchor,test_rd_objects[TRD_ZONE],test_rd_objects[TRD_SECTOR]};
+    *(unsigned char**)table=test_rd_cut_anchor;*(uint64_t*)(table+RDISP_TABLE_CAPACITY)=RDISP_TABLE_INLINE;*(uint64_t*)(table+RDISP_TABLE_COUNT)=4;
+    for(unsigned i=0;i<4;i++) {memcpy(table+RDISP_TABLE_ENTRIES+i*RDISP_ENTRY,&keys[i],8);test_rd_floats(&m[i],f);memcpy(test_rd_cut_entry(i),f,64);}
+}
+static void test_rd_cut_counters(void) {rdisp_oth_cameras=rdisp_oth_written=rdisp_oth_restored=rdisp_oth_eye=rdisp_oth_foreign=rdisp_oth_table=rdisp_oth_parent=rdisp_oth_full=0;}
+static void test_rd_others(void) {
+    unsigned saved_hz=gate_tick_hz,saved_fps=rf_fps;int saved_mode=render_rng_mode;uint64_t saved_issued=stats.issued;
+    gate_tick_hz=30;rf_fps=60;stats.active=1;render_rng_mode=RENDER_RNG_SPLIT;rf_ready_flag=1;rdisp_is_a_override=test_rd_is_a;
+    test_rd_engine();test_rd_reset(RDISP_EXTRAPOLATE,RDISP_EXTRAPOLATE);test_rd_cut_counters();
+    memset(test_rd_cut,0,sizeof(test_rd_cut));memset(test_rd_cut+RDISP_EYE,0x44,RDISP_EYE_BYTES);
+    *(unsigned char**)(test_rd_universe+RDISP_CAMERA_LIST)=test_rd_camera;*(unsigned char**)(test_rd_universe+RDISP_CAMERA_LIST+8)=test_rd_cut;
+    *(uint64_t*)(test_rd_universe+RDISP_CAMERA_LIST_COUNT)=2;
+    test_rd_xf(&test_rd_cut_k,0,0.1,0.4,1.2,2.0);test_rd_cut_anchor=test_rd_objects[TRD_OTHER];test_rd_cut_on=1;
+    /* Two steps (extrapolate: step frames drawn as simulated, nothing displaced, nothing written). */
+    stats.issued=10;test_rd_world(1);test_rd_cut_bank(&test_rd_o);test_rd_slot10(0);
+    stats.issued=11;test_rd_world(2);test_rd_cut_bank(&test_rd_o);test_rd_slot10(0);
+    assert(!rdisp_oth_written && !rdisp_oth_cameras);
+    unsigned char before[4][64],eye[RDISP_EYE_BYTES];for(unsigned i=0;i<4;i++) memcpy(before[i],test_rd_cut_entry(i),64);
+    memcpy(eye,test_rd_cut+RDISP_EYE,sizeof(eye));
+    /* A render-only frame half a step on: the caller's ship drawn advanced by stage 3; the cutscene camera's entry inside it
+     * stays, its zone, sector and root follow the drawn ship (the player camera is not one of the others). */
+    test_rd_render(0.5);
+    rdisp_xf o,s,c,m2,m3,m0;test_rd_poses(2.5,&c,&s,&o);
+    assert(test_rd_near(test_rd_seen_pose[TRD_OTHER],&o,1e-5) && rdisp_oth_cameras==1 && rdisp_oth_written==1);
+    rdisp_compose(&test_rd_cut_k,&o,&m2);rdisp_compose(&m2,&test_rd_z,&m3);rdisp_compose(&m3,&test_rd_q,&m0);
+    assert(!memcmp(test_rd_cut_seen[1],before[1],64) && test_rd_near(test_rd_cut_seen[2],&m2,1e-5));
+    assert(test_rd_near(test_rd_cut_seen[3],&m3,1e-5) && test_rd_near(test_rd_cut_seen[0],&m0,1e-5));
+    /* Everything back bit for bit, the eye slot 10 recomputed too (a render-only frame). */
+    for(unsigned i=0;i<4;i++) assert(!memcmp(test_rd_cut_entry(i),before[i],64));
+    assert(!memcmp(test_rd_cut+RDISP_EYE,eye,sizeof(eye)) && rdisp_oth_restored==1 && rdisp_oth_eye==1 && !rdisp_other_open);
+    assert(rdisp_check() && !rdisp_failures && test_rd_engine_blocks());
+    /* Status: the others' counters at the end. */
+    char text[2048];assert(rdisp_status(text,sizeof(text)) && strstr(text," failures=0 restored=1 others=1/1/1/1/0/0/0/0") && strlen(text)<1900);
+    /* A camera in a ship drawn as simulated (the station: it does not move): nothing written. */
+    test_rd_cut_anchor=test_rd_objects[TRD_STATION];test_rd_cut_bank(&test_rd_o);for(unsigned i=0;i<4;i++) memcpy(before[i],test_rd_cut_entry(i),64);
+    test_rd_render(0.5);assert(rdisp_oth_written==1 && !memcmp(test_rd_cut_seen[2],before[2],64));
+    /* A displaced member whose cached parent is not the next key: counted, nothing written. */
+    test_rd_cut_anchor=test_rd_objects[TRD_OTHER];test_rd_cut_bank(&test_rd_o);
+    *(unsigned char**)test_rd_vc(TRD_OTHER)=test_rd_objects[TRD_SECTOR];
+    test_rd_render(0.5);assert(rdisp_oth_parent==1 && rdisp_oth_written==1);
+    *(unsigned char**)test_rd_vc(TRD_OTHER)=test_rd_objects[TRD_ZONE];
+    /* A foreign write into a followed entry: it stays, counted, the gate goes on (X4's own bank). */
+    for(unsigned i=0;i<4;i++) memcpy(before[i],test_rd_cut_entry(i),64);
+    test_rd_cut_foreign=1;test_rd_render(0.5);test_rd_cut_foreign=0;
+    assert(rdisp_oth_foreign==1 && rdisp_oth_written==2 && memcmp(test_rd_cut_entry(2),before[2],64) && !memcmp(test_rd_cut_entry(3),before[3],64));
+    assert(!rdisp_failures && rdisp_check());
+    test_rd_cut_bank(&test_rd_o);
+    /* An exception in slot 10: the wrapper's __finally puts the bank back. */
+    for(unsigned i=0;i<4;i++) memcpy(before[i],test_rd_cut_entry(i),64);
+    test_rd_throw=1;assert(test_rd_slot10_throwing());test_rd_throw=0;
+    for(unsigned i=0;i<4;i++) assert(!memcmp(test_rd_cut_entry(i),before[i],64));
+    assert(rdisp_oth_restored==2 && !rdisp_other_open);render_rng_failures=0;render_rng_stage="idle";
+    /* The own-ship predictor's swap, render-only frames and stage 3 off (the session defaults' other mode): a camera in the
+     * own ship follows the presented pose. */
+    test_rd_reset(RDISP_OFF,RDISP_OFF);rdisp_armed=0;rdisp_active=0;rf_fps=0;test_rd_follow_counters();test_rd_cut_counters();
+    test_rd_cut_anchor=test_rd_objects[TRD_SHIP];test_rd_cut_bank(&test_rd_s);for(unsigned i=0;i<4;i++) memcpy(before[i],test_rd_cut_entry(i),64);
+    rdisp_xf predicted;test_rd_xf(&predicted,2,0.05,250,4,50);test_rd_follow_swap(&predicted);
+    test_rd_slot10(0);
+    rdisp_compose(&test_rd_cut_k,&predicted,&m2);
+    assert(rdisp_oth_written==1 && rdisp_oth_restored==1 && !rdisp_oth_eye && test_rd_near(test_rd_cut_seen[2],&m2,1e-6));
+    for(unsigned i=0;i<4;i++) assert(!memcmp(test_rd_cut_entry(i),before[i],64));
+    /* No list (count above the list's room): nothing read. */
+    *(uint64_t*)(test_rd_universe+RDISP_CAMERA_LIST_COUNT)=RDISP_CAMERA_LIST_MAX+1;test_rd_slot10(0);
+    assert(rdisp_oth_table==1 && rdisp_oth_written==1);
+    test_rd_follow_unswap();test_rd_follow_counters();opred_stage="off";test_rd_cut_counters();test_rd_cut_on=0;
+    memset(test_rd_universe,0,sizeof(test_rd_universe));
+    rdisp_is_a_override=NULL;rf_ready_flag=0;rf_gap_first=rf_interval=rf_estimate=rf_frame_start=0;
+    *(unsigned char**)(image+RDISP_UNIVERSE)=NULL;*(uint32_t*)(image+RDISP_VIEW_INDEX)=0;
+    gate_tick_hz=saved_hz;rf_fps=saved_fps;render_rng_mode=saved_mode;stats.issued=saved_issued;stats.active=0;
+    render_rng_calls=render_rng_steps=render_rng_unknown=render_rng_ids=0;render_rng_frame=UINT64_MAX;rf_slot10_r_us=rf_slot10_step_us=rf_slot10_r_calls=0;
+}
 static void test_render_display(void) {
-    test_rd_math();test_rd_offset();test_rd_arm();test_rd_boot_point();test_rd_flow();test_rd_follow();
+    test_rd_math();test_rd_offset();test_rd_arm();test_rd_boot_point();test_rd_flow();test_rd_follow();test_rd_others();
     puts("render display: pose arithmetic, display offset, arming (through the Lua binding before the start, image NULL: no engine "
          "read; pins on the first tick), the boot point (no camera, empty bank), extrapolate and interpolate on fake engine memory "
          "through the render wrapper (objects swapped and restored, the camera bank following camera and own ship, predictor swap and "
