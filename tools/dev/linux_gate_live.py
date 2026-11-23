@@ -168,6 +168,8 @@ def apply_mixed_platform(args):
             continue   # the command line's mode: on is the set's true, observe and reverse are diagnostics
         if name == 'ui_lazy' and current in ('block', 'observe'):
             continue   # diagnostics on the command line
+        if name == 'bullet_cadence' and current == 'observe':
+            continue
         if current not in (None, False, value) and not default_ticks:
             raise SystemExit(f'--mixed-platform sets native_gate_{name}={value!r}, the command line {current!r}')
         setattr(args, name, value)
@@ -485,6 +487,8 @@ def bundle(args):
         command += ['--contact-orient', 'on' if args.contact_orient is True else args.contact_orient]
     if args.ui_lazy:
         command += ['--ui-lazy', args.ui_lazy]
+    if args.bullet_cadence:
+        command += ['--bullet-cadence', args.bullet_cadence]
     if args.contact_mass:
         command.append('--contact-mass')
     if args.constraint_diag:
@@ -632,6 +636,7 @@ def bundle(args):
         'path_transforms',
         'contact_orient',
         'ui_lazy',
+        'bullet_cadence',
         'impulse_diag',
         'ik_diag',
         'ik_step',
@@ -1465,6 +1470,7 @@ def main(argv=None):
     b.add_argument('--probes-diag', action='store_true', help='PROBES rows: the fixture ships obstacle probe vectors (native_gate_probes_diag)')
     b.add_argument('--weave-phase', action='store_true', help="the weaving behaviours' phase as Windows computes it (native_gate_weave_phase)")
     b.add_argument('--sound-rng', choices=('split',), help="sound starts draw from private words, as Windows' default (native_gate_sound_rng)")
+    b.add_argument('--bullet-cadence', choices=('every', 'observe'), help="bullet hit tests every frame, as Windows' default native_gate_bullet_cadence (observe: diagnostics)")
     b.add_argument('--ui-lazy', choices=('key', 'block', 'observe'), help="the UI's lazy container updates, as Windows' default native_gate_ui_lazy (block, observe: diagnostics)")
     b.add_argument('--contact-orient', choices=('on', 'observe', 'reverse'), help="contact pairs in the portable order, as Windows' default native_gate_contact_orient (observe, reverse: diagnostics)")
     b.add_argument('--path-transforms', choices=('sim',), help="pathing reads simulation transforms where a wreck is in the chain, as Windows' default (native_gate_path_transforms)")

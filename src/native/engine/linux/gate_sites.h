@@ -665,6 +665,11 @@ static const lx_site lx_sites[]={
     {"ui_lazy_display_cargo",0x153d423,0x5,"564bae76bbc46b97478817dad9f17abf70ec819d299b33c464cd6d4ac9c2af84"},
     {"ui_lazy_display_station",0x153f182,0x5,"b0db2e31b69b63f22ed1ea568917eb29aa4b77f521dfd1cc4c331e435e80395c"},
     {"ui_lazy_display_amount",0x153d6e1,0x5,"856bca14a5cbad3b6d674d677f13e91a982fb54735b2b3db0e5d3dd8d623fe0c"},
+    /* bullet hit tests every frame (gate_bullet_cadence.h): Bullet::UpdateFlight's head, its scheduling block with the
+     * original je at 0x1948944, the camera-distance block it jumps to */
+    {"bullet_cadence_head",0x1948840,0x20,"24751d20f2d20d94a8be11c6902ab56b2b69042dcc3660afed4381ceae80da33"},
+    {"bullet_cadence_block",0x1948919,0x48,"abd62c8a051eb5e06e3cd0c4936f347b633c53997315182b68a33584d870b06d"},
+    {"bullet_cadence_distance",0x19493a0,0x48,"29443120c82fcf6f5b69e69463dc339f9a28f2163315b87cb00a89f08ff68c0c"},
     /* the island order (gate_island_order.h): the deterministic block, the calls up to the sort call, the sort and its
      * comparator, StoreAppliedImpulses' point layout, FinishConstraintBuffer's array */
     {"iorder_block",0x1b212c8,0x1d,"ec2419c256a7f9488b3c0ce1c42e56c5ce28922bbf3b713bb6464d4ba500a74c"},

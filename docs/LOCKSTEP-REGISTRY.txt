@@ -262,7 +262,7 @@ Core (lockstep_gate.c; the Linux gate uses the same numbers where ported):
   86 MD timed / boot hold 87 MD resume
   88 AI wait RNG          89 time snapshot
   90 render RNG           92 find order
-  93 region RNG           94 bullet cadence
+  93 region RNG           94 bullet cadence (the Linux gate's: LXBC_STOP_REASON 94)
   95 nav cadence / nav player                       96 world created (CREATED_STOP_REASON)
   97 view                 98 camera offset         99 test harness close only
 

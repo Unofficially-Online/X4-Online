@@ -193,6 +193,9 @@ static int lxsnd_check(void);
 static int lxsnd_installed;
 static void lxco_restore(void); /* contact pairs in the portable order (gate_contact_orient.h) */
 static void lxul_restore(void); /* the UI's lazy container updates (gate_ui_lazy.h) */
+static void lxbc_restore(void); /* bullet hit tests every frame (gate_bullet_cadence.h) */
+static int lxbc_check(void);
+static int lxbc_installed;
 static int lxul_check(void);
 static int lxul_installed;
 static int lxco_check(void);
@@ -643,6 +646,8 @@ static void finish(unsigned reason) {
     if(lxco_installed) stats.restored=0;
     lxul_restore();
     if(lxul_installed) stats.restored=0;
+    lxbc_restore();
+    if(lxbc_installed) stats.restored=0;
     if(lxsnd_installed) stats.restored=0;
     lxd_restore();
     if(lxd_installed) stats.restored=0;
@@ -795,6 +800,7 @@ static void gate_tick(void *frame,unsigned char loading) {
     if(lxsnd_installed && !lxsnd_check()) {finish(217);gate_original_once(frame,loading);return;} /* LXSND_STOP_REASON */
     if(lxco_installed && !lxco_check()) {finish(219);gate_original_once(frame,loading);return;} /* LXCO_STOP_REASON */
     if(lxul_installed && !lxul_check()) {finish(170);gate_original_once(frame,loading);return;} /* LXUL_STOP_REASON */
+    if(lxbc_installed && !lxbc_check()) {finish(94);gate_original_once(frame,loading);return;} /* LXBC_STOP_REASON */
     if(lxd_installed && !lxd_check()) {finish(218);gate_original_once(frame,loading);return;} /* LXD_STOP_REASON */
     if(lxmc_installed && !lxmc_check()) {finish(166);gate_original_once(frame,loading);return;} /* LXMC_STOP_REASON */
     if((lxf_installed || lxf_ctor_installed) && (!lxf_owned() || lxf_failures)) {finish(55);gate_original_once(frame,loading);return;} /* flight, as Windows */
@@ -1044,6 +1050,7 @@ static int lua_start(lua_State *L) {
 #include "gate_island_order.h"
 #include "gate_contact_orient.h"
 #include "gate_ui_lazy.h"
+#include "gate_bullet_cadence.h"
 #include "gate_worker_layout.h"
 #include "gate_ik_diag.h"
 #include "gate_ik_step.h"
@@ -1303,7 +1310,7 @@ GATE_EXPORT int luaopen_x4lan_gate(lua_State *L) {
     METHOD(build_rng);METHOD(build_rng_status);METHOD(build_rng_row);
     METHOD(contact);METHOD(contact_clear);METHOD(contact_status);
     METHOD(worker_layout);METHOD(worker_layout_status);
-    METHOD(island_order);METHOD(island_order_status);METHOD(contact_orient);METHOD(contact_orient_status);METHOD(ui_lazy);METHOD(ui_lazy_status);METHOD(ui_lazy_row);METHOD(ui_lazy_callers);METHOD(constraint_diag);METHOD(constraint);METHOD(constraint_clear);METHOD(constraint_status);METHOD(contact_mass);METHOD(contact_mass_status);
+    METHOD(island_order);METHOD(island_order_status);METHOD(contact_orient);METHOD(contact_orient_status);METHOD(ui_lazy);METHOD(ui_lazy_status);METHOD(ui_lazy_row);METHOD(ui_lazy_callers);METHOD(bullet_cadence);METHOD(bullet_cadence_status);METHOD(constraint_diag);METHOD(constraint);METHOD(constraint_clear);METHOD(constraint_status);METHOD(contact_mass);METHOD(contact_mass_status);
     METHOD(ai_wait_rng);METHOD(ai_wait_rng_status);METHOD(ai_wait_rng_row);
     METHOD(md_resume_rng);METHOD(md_resume_rng_status);METHOD(md_resume_rng_row);
     METHOD(boot_hold);METHOD(boot_hold_status);

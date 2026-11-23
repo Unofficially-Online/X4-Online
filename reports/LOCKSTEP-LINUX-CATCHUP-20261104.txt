@@ -815,6 +815,23 @@ THE UI'S LAZY CONTAINER UPDATES ON LINUX (linux/gate_ui_lazy.h; W82, W85 against
   300 and 600, 4 at 900, 22 at 1200, 45 at 2400 (W74 against lx106a before contact orientation and ui_lazy: 0, 9, 421,
   4,026). The next split lies between 600 and 900.
 
+BULLET HIT TESTS EVERY FRAME ON LINUX (linux/gate_bullet_cadence.h; W88..W96 against lx117a, lx118a)
+  Every 15 ticks (W87 against lx116a) the split lies between 600 and 615: an Argon fighter 0x176b36 (and two of its
+  plasma guns' heat) and a Xenon fighter 0x176cb3 in a dogfight with it. Their model targets (motion rows)
+  part at 609: the Xenon's aim point 4 cm, the Argon's orientation 1e-5. Windows defaults that the Linux bundle does
+  not set, off in groups (W89-W96): weapons/bullets/bodies off makes Windows equal Linux; float environment off parts
+  earlier; the view group changes nothing; then only native_gate_bullet_cadence off (W96) equals Linux through 616.
+  Bullet::UpdateFlight (Linux 0x1948840, Windows 0xd4f240) schedules a bullet's next hit test: interval 0 when the view
+  cache's dirty bit 0x40000 is set or the camera is within 5 km, else 0.1 s plus a FloatState(0.1) draw, so where the
+  camera is decides in which frame each hit lands. Windows' 'every' turns the jne at 0xd50414 into a jmp (interval 0
+  always); Linux's branch is the other way round, a je rel32 at 0x1948944 to the distance block 0x19493a0, which the
+  twin turns into a 6-byte nop. Same status text (the Windows Move-wrapper counters print 0: the Linux gate has no
+  bullet module), Lua API and core stop 94. lx118a equals W88 in both fighters' targets through 616.
+  native_gate_bullet_cadence = 'every' joins MIXED_PLATFORM_SETS (the bundle's --bullet-cadence); the probe accepts it
+  on Linux without native_gate_bullet_rng (whose keyed draws are the interval draw 'every' removes).
+  The long run again (W86 against lx119a): 0 apart at 600, 900 and 1200, 2 at 1500, 18 at 1800, 23 at 2400 (lx115a:
+  4 at 900, 45 at 2400). The next split lies between 1200 and 1500.
+
 FUNCTION COVERAGE WITH PLAYER INPUT ON LINUX (191754a1, b1688473; lx32a, lx32b)
   native_gate_coverage_from = T (Linux gate only; linux_gate_live.py --coverage-from) puts the coverage marks in at
   tick T instead of tick 1, so a window that starts after an idle stretch counts only first runs from then on; rows

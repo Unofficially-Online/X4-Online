@@ -401,6 +401,7 @@ static void test_frame_gate_failures(void) {
 #include "test_gate_death_rng.h"
 #include "test_gate_contact_orient.h"
 #include "test_gate_ui_lazy.h"
+#include "test_gate_bullet_cadence.h"
 /* The real entry bytes: the hook patch and its exact restoration, without running them. */
 static void test_world_install_elf(void) {
     reset_session();wt_reset_identities();
@@ -532,6 +533,7 @@ int main(int argc,char **argv) {
         test_death_rng_elf();
         test_contact_orient_elf();
         test_ui_lazy_elf();
+        test_bullet_cadence_elf();
         test_mining_camera_elf();
         test_runtime_ids_local_elf();
         test_shield_canonical_elf();

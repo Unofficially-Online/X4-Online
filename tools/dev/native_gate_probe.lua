@@ -5205,7 +5205,7 @@ local function frame()
   -- module (native_gate_bullet_rng or native_gate_bullet_diag) is required. Default off.
   if cfg.native_gate_bullet_cadence then
    local mode=cfg.native_gate_bullet_cadence==true and 'every' or cfg.native_gate_bullet_cadence
-   assert((mode=='every' or mode=='observe') and snapshot and (cfg.native_gate_bullet_rng or cfg.native_gate_bullet_diag) and
+   assert((mode=='every' or mode=='observe') and snapshot and (cfg.native_gate_bullet_rng or cfg.native_gate_bullet_diag or (gate.platform and gate.platform()=='linux')) and
     gate.bullet_cadence and gate.bullet_cadence_status and gate.bullet_cadence(mode)==1,'bullet cadence refused')
    log('BULLET_CADENCE_ARMED mode='..mode)
   end

@@ -20,6 +20,7 @@ ALIASES = {'LMT_STOP_REASON': 'MT_STOP_REASON', 'LXMC_STOP_REASON': 'RC_MINING_S
            'LXUL_STOP_REASON': 'UL_STOP_REASON'}  # the Linux UI lazy updates (Windows' 170)
 # Module defines that carry a core code: 96 world created, 58 spline, the Linux gate's nav (41/42) and shape (45/46) ports.
 CORE_PORTS = {'CREATED_STOP_REASON': 96, 'LSJ_STOP_REASON': 58, 'LXN_INSTALL_STOP': 41, 'LXN_STOP_REASON': 42,
+              'LXBC_STOP_REASON': 94,   # the Linux bullet cadence (Windows' core 94)
               'LXSH_STOP_INSTALL': 45, 'LXSH_STOP_FAILURE': 46}
 
 
