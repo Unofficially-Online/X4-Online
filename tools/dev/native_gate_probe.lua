@@ -1679,8 +1679,15 @@ local function drain_constraints()
  assert(gate.constraint_clear()==1,'constraint trace clear refused')
 end
 -- The Steering flight integration's calls (native_gate_fit_rows = {first,last}, both gates): FIT_ROW lines as they come.
-local fit_cursor=0
+local fit_cursor,bank_watch_cursor=0,0
 local function drain_fit_rows()
+ if cfg.native_gate_bank_watch then -- hardware write watches on a ship's pathing banks (Windows gate)
+  for _=1,4096 do
+   local row=gate.bank_watch_row(bank_watch_cursor)
+   if not row then break end
+   log('BANK_WATCH_ROW '..row);bank_watch_cursor=bank_watch_cursor+1
+  end
+ end
  if not cfg.native_gate_fit_rows then return end
  for _=1,8192 do
   local row=gate.fit_row(fit_cursor)
@@ -5382,6 +5389,12 @@ local function frame()
   -- fixture ship as the velocity solve's sort leaves it (normal, masses, each point's three axis parts, the warm-start
   -- lambdas) with the lambdas the solve stored in the contact cache. Through the island order's stub (installed here
   -- when the island order is off: Jolt's own keys then). Diagnostic, default off.
+  if cfg.native_gate_bank_watch then
+   local w=cfg.native_gate_bank_watch
+   assert(type(w)=='table' and #w==3 and gate.bank_watch and gate.bank_watch_row and gate.bank_watch(w[1],w[2],w[3])==1,
+    'bank watch refused '..tostring(gate.bank_watch_status and gate.bank_watch_status()))
+   log('BANK_WATCH_CONFIGURED '..tostring(gate.bank_watch_status()))
+  end
   if cfg.native_gate_fit_rows then
    local w=cfg.native_gate_fit_rows
    assert(type(w)=='table' and #w==2 and gate.fit_rows and gate.fit_row and gate.fit_status and gate.fit_rows(w[1],w[2])==1,
