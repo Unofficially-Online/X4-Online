@@ -1678,6 +1678,16 @@ local function drain_constraints()
  for i=1,assert(gate.constraint(0)) do log('CONSTRAINT '..assert(gate.constraint(i))) end
  assert(gate.constraint_clear()==1,'constraint trace clear refused')
 end
+-- The Steering flight integration's calls (native_gate_fit_rows = {first,last}, both gates): FIT_ROW lines as they come.
+local fit_cursor=0
+local function drain_fit_rows()
+ if not cfg.native_gate_fit_rows then return end
+ for _=1,8192 do
+  local row=gate.fit_row(fit_cursor)
+  if not row then break end
+  log('FIT_ROW '..row);fit_cursor=fit_cursor+1
+ end
+end
 local function drain_shape_lifetimes()
  if not cfg.native_gate_shape_lifetimes then return end
  for i=1,assert(gate.shape_lifetime(0)) do log('SHAPE_LIFETIME '..assert(gate.shape_lifetime(i))) end
@@ -1706,7 +1716,7 @@ end
 -- Every frame, held ticks too: the clears empty the native event buffers, whose overflow stops the
 -- gate (bullets: reason 48). One function, one upvalue of frame().
 local function drain_traces()
- drain_bullets();drain_deaths();drain_mass();drain_radar();drain_damage();drain_interrupts();drain_contacts();drain_constraints();drain_shape_lifetimes();drain_flight_faults();drain_build_rows()
+ drain_bullets();drain_deaths();drain_mass();drain_radar();drain_damage();drain_interrupts();drain_contacts();drain_constraints();drain_fit_rows();drain_shape_lifetimes();drain_flight_faults();drain_build_rows()
 end
 local radar_objects={}
 local world_actors={} -- WORLD_ACTOR logged (log only): a joiner logs its own at T+1, with the saved-identity check
@@ -5372,6 +5382,12 @@ local function frame()
   -- fixture ship as the velocity solve's sort leaves it (normal, masses, each point's three axis parts, the warm-start
   -- lambdas) with the lambdas the solve stored in the contact cache. Through the island order's stub (installed here
   -- when the island order is off: Jolt's own keys then). Diagnostic, default off.
+  if cfg.native_gate_fit_rows then
+   local w=cfg.native_gate_fit_rows
+   assert(type(w)=='table' and #w==2 and gate.fit_rows and gate.fit_row and gate.fit_status and gate.fit_rows(w[1],w[2])==1,
+    'fit rows refused '..tostring(gate.fit_status and gate.fit_status()))
+   log('FIT_ARMED '..tostring(gate.fit_status()))
+  end
   if cfg.native_gate_constraint_diag then
    assert(cfg.native_gate_constraint_diag==true and snapshot and gate.constraint_diag and gate.constraint and gate.constraint_clear and
     gate.constraint_status and gate.constraint_diag()==1,'constraint diag refused '..tostring(gate.island_order_status and gate.island_order_status()))

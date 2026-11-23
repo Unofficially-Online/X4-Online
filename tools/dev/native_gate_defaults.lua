@@ -312,6 +312,7 @@ D.DIAGNOSTIC={
  {'native_gate_damage_diag','damage trace'},
  {'native_gate_contact_diag','CONTACT rows'},
  {'native_gate_constraint_diag','CONSTRAINT rows: the fixture contact constraints at the velocity solve and their stored lambdas'},
+ {'native_gate_fit_rows','FIT_ROW rows: the Steering flight integration calls in a tick window, arguments before and after'},
  {'native_gate_contact_order','CONTACT_ORDER rows'},
  {'native_gate_contact_properties','CONTACT_PROPERTIES rows'},
  {'native_gate_body_diag','BODY rows'},

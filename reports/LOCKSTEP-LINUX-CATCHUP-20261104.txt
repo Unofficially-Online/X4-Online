@@ -842,7 +842,16 @@ BULLET HIT TESTS EVERY FRAME ON LINUX (linux/gate_bullet_cadence.h; W88..W96 aga
   orders, cameras, speech, spline phase, nav player), leaves the two objects apart; nested_actions cannot be off
   alone (MD timed RNG refuses). So, like steer_roll, avoid_angle, pursuit_speed and weave_phase, an MSVC-against-GCC
   float order in a Steering behaviour (the Linux executable has no systematic FMA contraction: 23 candidate encodings
-  in all). Next: the Steering step's behaviour outputs on both builds for the watched ship at 1202.
+  in all). The two ships run GainDistance and CrazyIvan behaviours (each with a GenericSteering one; their leading
+  bytes never change) and touch no other body (the constraint trace now keeps the motion watch's ships too). The
+  Steering step is vtable slot 14 on Windows (0xec7200; 0xec54b0 is the behaviour factory it calls) and slot 15 on
+  Linux (0x13e9d50). Its flight integration (Windows 0xec92c0 -> 0x1197fe0 -> 0x1197970 -> 0x1195570, found by its
+  constants, tools constmatch; Linux 0x13eacf8 -> 0x19fc190, GCC's inlined chain) gives bit-identical results on both
+  for every call at 1202 and 1203 (native_gate_fit_rows, W110 against lx125a: 16 calls, all equal), but the two
+  ships are not among its callers: they take the step's other path, where an agent flag (+0x4d1) has the model's
+  steering output (+0x1c0 linear, +0x1d0 angular on Linux) written to the bank and turned into the world frame
+  ((x row0 + y row1) + z row2, Linux 0x13eae95..0x13eaf97) without the integration. Next: that path's Windows twin
+  and its order of operations.
 
 FUNCTION COVERAGE WITH PLAYER INPUT ON LINUX (191754a1, b1688473; lx32a, lx32b)
   native_gate_coverage_from = T (Linux gate only; linux_gate_live.py --coverage-from) puts the coverage marks in at

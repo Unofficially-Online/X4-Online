@@ -194,6 +194,7 @@ static int lxsnd_installed;
 static void lxco_restore(void); /* contact pairs in the portable order (gate_contact_orient.h) */
 static void lxul_restore(void); /* the UI's lazy container updates (gate_ui_lazy.h) */
 static void lxbc_restore(void); /* bullet hit tests every frame (gate_bullet_cadence.h) */
+static void lxfit_restore(void); /* the Steering flight integration's calls (gate_fit_trace.h, diagnostic) */
 static int lxbc_check(void);
 static int lxbc_installed;
 static int lxul_check(void);
@@ -648,6 +649,7 @@ static void finish(unsigned reason) {
     if(lxul_installed) stats.restored=0;
     lxbc_restore();
     if(lxbc_installed) stats.restored=0;
+    lxfit_restore();
     if(lxsnd_installed) stats.restored=0;
     lxd_restore();
     if(lxd_installed) stats.restored=0;
@@ -1051,6 +1053,8 @@ static int lua_start(lua_State *L) {
 #include "gate_contact_orient.h"
 #include "gate_ui_lazy.h"
 #include "gate_bullet_cadence.h"
+#include "../lockstep_fit_rows.h"
+#include "gate_fit_trace.h"
 #include "gate_worker_layout.h"
 #include "gate_ik_diag.h"
 #include "gate_ik_step.h"
@@ -1310,7 +1314,7 @@ GATE_EXPORT int luaopen_x4lan_gate(lua_State *L) {
     METHOD(build_rng);METHOD(build_rng_status);METHOD(build_rng_row);
     METHOD(contact);METHOD(contact_clear);METHOD(contact_status);
     METHOD(worker_layout);METHOD(worker_layout_status);
-    METHOD(island_order);METHOD(island_order_status);METHOD(contact_orient);METHOD(contact_orient_status);METHOD(ui_lazy);METHOD(ui_lazy_status);METHOD(ui_lazy_row);METHOD(ui_lazy_callers);METHOD(bullet_cadence);METHOD(bullet_cadence_status);METHOD(constraint_diag);METHOD(constraint);METHOD(constraint_clear);METHOD(constraint_status);METHOD(contact_mass);METHOD(contact_mass_status);
+    METHOD(island_order);METHOD(island_order_status);METHOD(contact_orient);METHOD(contact_orient_status);METHOD(ui_lazy);METHOD(ui_lazy_status);METHOD(ui_lazy_row);METHOD(ui_lazy_callers);METHOD(bullet_cadence);METHOD(bullet_cadence_status);METHOD(fit_rows);METHOD(fit_row);METHOD(fit_status);METHOD(constraint_diag);METHOD(constraint);METHOD(constraint_clear);METHOD(constraint_status);METHOD(contact_mass);METHOD(contact_mass_status);
     METHOD(ai_wait_rng);METHOD(ai_wait_rng_status);METHOD(ai_wait_rng_row);
     METHOD(md_resume_rng);METHOD(md_resume_rng_status);METHOD(md_resume_rng_row);
     METHOD(boot_hold);METHOD(boot_hold_status);
