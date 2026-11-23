@@ -115,9 +115,52 @@ static void test_contact_mass_linux(void) {
     lxio_mass_constraints=lxio_mass_changed=lxio_mass_other=0;
     puts("contact mass (Linux): lx74a's tick-133 constraint in MSVC's order equals W36s's words, other motion types left, inv 0 deactivates PASS");
 }
+/* GetContactsFromCache's copy: W119's and lx132a's tick-1198 constraint 0 (the Argon and actor 9, taken from the body
+ * pair cache), Linux's words through AddContactConstraint's order (lx132a, the fix before) and Windows' words. */
+static const uint32_t tlio_cache_head[9]={0xbe12393eu,0x3f7c11deu,0xbdcd9938u,0x3dcccccdu,0x3e2aaaabu,0x3f800000u,0x3e1d5845u,0x3f800000u,0x00000004u};
+static const uint32_t tlio_cache_linux[4][48]={{0x3fc8fa24u,0x3e8d9b4au,0x3ef56a90u,0x4088ce92u,0xbd891488u,0xc0d79ad3u,0x3a06bcd8u,0x3982de8au,0x38a697c0u,0xb87017c0u,0xb9e58c10u,0xbab1a035u,0x4041d975u,0x00000000u,0x00000000u,0x00000000u,0xc181d4f2u,0xbfe93285u,0x3e3e3494u,0x40dbbd02u,0xc0b84672u,0x3f164d6du,0xbbaf1391u,0xbb4d1b8du,0x3a8168c1u,0x3afc2511u,0x3896948eu,0x3a85f9e5u,0x40161fa6u,0x00000000u,0x00000000u,0x00000000u,0xbe67f7c1u,0x404df033u,0x4180a551u,0xbf1de70eu,0x4069730au,0xc0cbed5eu,0xb931c026u,0xbae71684u,0x3bb9ce6cu,0xbaa8ff91u,0xb9e478d8u,0xbaf44a53u,0x40197e5cu,0x00000000u,0x00000000u,0x80000000u},{0x3fe503e1u,0x3e9f34a4u,0x3f014084u,0x408fd101u,0xbd055e40u,0xc0d6c96au,0x3a19a298u,0x399a6b88u,0x389c0784u,0x387ced80u,0xb9c095a8u,0xbaa6bb1eu,0x4041c001u,0x00000000u,0x00000000u,0x00000000u,0xc1819a9eu,0xbfe4f427u,0x3e3abe7du,0x40dca652u,0xc0b736dbu,0x3f156fe7u,0xbbaebc1au,0xbb49f720u,0x3a7eff6eu,0x3afed168u,0x38b91edeu,0x3a87e03bu,0x40164479u,0x00000000u,0x00000000u,0x00000000u,0xbe842a26u,0x405babcfu,0x418034b0u,0xbf25fe30u,0x40772ea6u,0xc0cdafe3u,0xb934342eu,0xbabdb278u,0x3bb656d9u,0xbaa617d7u,0xb9cc7f5cu,0xbaf229f5u,0x4019eea8u,0x00000000u,0x00000000u,0x80000000u},{0x3f63e274u,0x3e6cc795u,0x3f80399eu,0x406618b0u,0xbde5f284u,0xc0c6e314u,0x39953a72u,0xb81ac990u,0x39acf60fu,0xb96d9708u,0xba049a43u,0xbab2fdd9u,0x4042bfa9u,0x00000000u,0x00000000u,0x00000000u,0xc182b768u,0xbfa8f3c8u,0x3e09cdf0u,0x40d8332du,0xc0a836c3u,0x3f0933c4u,0xbbafadc0u,0xbb1ebbf0u,0x3a4ac857u,0x3b01e13eu,0x3943bbddu,0x3a8d7612u,0x4016de24u,0x00000000u,0x00000000u,0x00000000u,0xbe03831fu,0x4022e359u,0x41817ec3u,0xbf04c9e5u,0x403e6630u,0xc0c88796u,0xb9298207u,0xbb32c08fu,0x3bc3be5au,0xbab4c3e4u,0xba1bafe8u,0xbafe5f2du,0x4017f1bfu,0x00000000u,0x00000000u,0x80000000u},{0x3fa42e1cu,0x3e792985u,0x3f0fe4fau,0x407f3720u,0xbdcd2ea8u,0xc0d4f4dcu,0x39db4edfu,0x392a1da3u,0x3909d13eu,0xb93627a0u,0xba0362e8u,0xbab9a6dcu,0x4042150du,0x00000000u,0x00000000u,0x00000000u,0xc182290cu,0xbfdfcb00u,0x3e3688e7u,0x40da6c9eu,0xc0b5ec91u,0x3f146282u,0xbbaf6e05u,0xbb465fd5u,0x3a7ab2d9u,0x3afbc031u,0x38ace42eu,0x3a861848u,0x401630beu,0x00000000u,0x00000000u,0x00000000u,0xbe3d7f26u,0x403bd47eu,0x41811e5bu,0xbf1348e7u,0x40575755u,0xc0ca0937u,0xb92e6764u,0xbb0e7ebcu,0x3bbe307au,0xbaad5e2eu,0xba02d3c0u,0xbaf7c942u,0x4018dd9fu,0x00000000u,0x00000000u,0x80000000u}};
+static const uint32_t tlio_cache_windows[4][48]={{0x3fc8fa24u,0x3e8d9b4au,0x3ef56a90u,0x4088ce92u,0xbd891488u,0xc0d79ad3u,0x3a06bcd8u,0x3982de8au,0x38a697c0u,0xb87017c0u,0xb9e58c10u,0xbab1a035u,0x4041d976u,0x00000000u,0x00000000u,0x00000000u,0xc181d4f2u,0xbfe93285u,0x3e3e3494u,0x40dbbd02u,0xc0b84672u,0x3f164d6du,0xbbaf1391u,0xbb4d1b8du,0x3a8168c1u,0x3afc2511u,0x3896948eu,0x3a85f9e5u,0x40161fa6u,0x00000000u,0x00000000u,0x00000000u,0xbe67f7c1u,0x404df033u,0x4180a551u,0xbf1de70eu,0x4069730au,0xc0cbed5eu,0xb931c026u,0xbae71684u,0x3bb9ce6cu,0xbaa8ff91u,0xb9e478d8u,0xbaf44a53u,0x40197e5cu,0x00000000u,0x00000000u,0x80000000u},{0x3fe503e1u,0x3e9f34a4u,0x3f014084u,0x408fd101u,0xbd055e40u,0xc0d6c96au,0x3a19a298u,0x399a6b88u,0x389c0784u,0x387ced80u,0xb9c095a8u,0xbaa6bb1eu,0x4041c001u,0x00000000u,0x00000000u,0x00000000u,0xc1819a9eu,0xbfe4f427u,0x3e3abe7du,0x40dca652u,0xc0b736dbu,0x3f156fe7u,0xbbaebc1au,0xbb49f720u,0x3a7eff6eu,0x3afed168u,0x38b91edeu,0x3a87e03bu,0x40164479u,0x00000000u,0x00000000u,0x00000000u,0xbe842a26u,0x405babcfu,0x418034b0u,0xbf25fe30u,0x40772ea6u,0xc0cdafe3u,0xb934342eu,0xbabdb278u,0x3bb656d9u,0xbaa617d7u,0xb9cc7f5cu,0xbaf229f5u,0x4019eea8u,0x00000000u,0x00000000u,0x80000000u},{0x3f63e274u,0x3e6cc795u,0x3f80399eu,0x406618b0u,0xbde5f284u,0xc0c6e314u,0x39953a72u,0xb81ac990u,0x39acf60fu,0xb96d9708u,0xba049a43u,0xbab2fdd9u,0x4042bfa9u,0x00000000u,0x00000000u,0x00000000u,0xc182b768u,0xbfa8f3c8u,0x3e09cdf0u,0x40d8332du,0xc0a836c3u,0x3f0933c4u,0xbbafadc0u,0xbb1ebbf0u,0x3a4ac857u,0x3b01e13eu,0x3943bbddu,0x3a8d7612u,0x4016de24u,0x00000000u,0x00000000u,0x00000000u,0xbe03831fu,0x4022e359u,0x41817ec3u,0xbf04c9e5u,0x403e6630u,0xc0c88796u,0xb9298207u,0xbb32c08fu,0x3bc3be5au,0xbab4c3e4u,0xba1bafe8u,0xbafe5f2du,0x4017f1c0u,0x00000000u,0x00000000u,0x80000000u},{0x3fa42e1cu,0x3e792985u,0x3f0fe4fau,0x407f3720u,0xbdcd2ea8u,0xc0d4f4dcu,0x39db4edfu,0x392a1da3u,0x3909d13eu,0xb93627a0u,0xba0362e8u,0xbab9a6dcu,0x4042150du,0x00000000u,0x00000000u,0x00000000u,0xc182290cu,0xbfdfcb00u,0x3e3688e7u,0x40da6c9eu,0xc0b5ec91u,0x3f146282u,0xbbaf6e05u,0xbb465fd5u,0x3a7ab2d9u,0x3afbc031u,0x38ace42eu,0x3a861848u,0x401630beu,0x00000000u,0x00000000u,0x00000000u,0xbe3d7f26u,0x403bd47eu,0x41811e5bu,0xbf1348e7u,0x40575755u,0xc0ca0937u,0xb92e6764u,0xbb0e7ebcu,0x3bbe307au,0xbaad5e2eu,0xba02d3c0u,0xbaf7c942u,0x4018dd9fu,0x00000000u,0x00000000u,0x80000000u}};
+static unsigned char tlio_cache_creates;
+static void tlio_cache_fake(void *m,void *a,void *b1,void *b2,unsigned char *handled,unsigned char *created) {
+    (void)m;(void)a;(void)b1;(void)b2;*handled=1;*created=tlio_cache_creates;
+}
+static void test_contact_mass_cache(void) {
+    static _Alignas(16) unsigned char c[LXIO_STRIDE],b[2][0x80],manager[0x100];
+    unsigned char *pc=c,*p0=b[0],*p1=b[1];const uint32_t count=4;
+    memset(c,0,sizeof(c));memset(b,0,sizeof(b));memset(manager,0,sizeof(manager));
+    memcpy(c,&p0,8);memcpy(c+8,&p1,8);memcpy(c+0x18,tlio_cache_head,36);memcpy(c+0x38,&count,4);
+    b[0][0x78]=2;b[1][0x78]=2;memcpy(manager+LXIO_ARRAY,&pc,8);
+    uint32_t order[1]={0};const uint64_t tick=stats.issued;
+    lxio_mass_constraints=lxio_mass_changed=lxio_mass_other=lxio_mass_cached=lxio_cache_pairs=0;
+    lxio_cache_head=0;memset(lxio_cache_ring,0,sizeof(lxio_cache_ring));
+    /* not from the cache: AddContactConstraint's order keeps Linux's words (two of them 1 ulp from Windows') */
+    for(unsigned k=0;k<4;k++) memcpy(c+0x40+LXIO_POINT*k,tlio_cache_linux[k],0xc0);
+    assert(lxio_mass_range(order,order+1,manager) && !lxio_mass_cached);
+    for(unsigned k=0;k<4;k++) assert(!memcmp(c+0x40+LXIO_POINT*k,tlio_cache_linux[k],0xc0));
+    assert(memcmp(tlio_cache_linux[0],tlio_cache_windows[0],0xc0) && memcmp(tlio_cache_linux[2],tlio_cache_windows[2],0xc0));
+    /* a pair noted at an older tick does not count; noted now (either order), the cache copy gives Windows' words */
+    lxio_cache_note(p0,p1,tick+5u);
+    assert(lxio_cache_made(p0,p1,tick)==0 && lxio_mass_range(order,order+1,manager) && !lxio_mass_cached);
+    lxio_cache_note(p1,p0,tick);
+    assert(lxio_cache_made(p0,p1,tick)==1 && lxio_mass_range(order,order+1,manager) && lxio_mass_cached==1);
+    for(unsigned k=0;k<4;k++) assert(!memcmp(c+0x40+LXIO_POINT*k,tlio_cache_windows[k],0xc0));
+    /* the wrapper runs the call and notes the pair only when it made a constraint */
+    {unsigned char handled=0,created=0;const uint64_t before=lxio_cache_pairs;lxio_cache_override=tlio_cache_fake;
+     tlio_cache_creates=0;lxio_cache_call(NULL,NULL,p0,p1,&handled,&created);assert(handled==1 && !created && lxio_cache_pairs==before);
+     tlio_cache_creates=1;lxio_cache_call(NULL,NULL,p0,p1,&handled,&created);assert(created==1 && lxio_cache_pairs==before+1);
+     lxio_cache_override=NULL;}
+    /* a ring full of this tick's other pairs: unknown, the range fails */
+    {static unsigned char other[2];lxio_cache_head=0;memset(lxio_cache_ring,0,sizeof(lxio_cache_ring));
+     for(unsigned i=0;i<LXIO_CACHE_RING;i++) lxio_cache_note(&other[0],&other[1],tick);
+     assert(lxio_cache_made(p0,p1,tick)==-1 && !lxio_mass_range(order,order+1,manager));}
+    lxio_cache_head=0;memset(lxio_cache_ring,0,sizeof(lxio_cache_ring));
+    lxio_mass_constraints=lxio_mass_changed=lxio_mass_other=lxio_mass_cached=lxio_cache_pairs=0;
+    puts("contact mass (Linux): a constraint from the body pair cache takes GetContactsFromCache's order (W119's tick-1198 words), others AddContactConstraint's PASS");
+}
 static void test_island_order_elf(void) {
     for(unsigned i=0;i<sizeof(lxio_pin_names)/sizeof(*lxio_pin_names);i++) assert(site_ok(site_named(lxio_pin_names[i])));
     assert(lxio_call_state()==0 && LX(LXIO_SITE_VA)[0]==0xe8);
+    assert(site_ok(site_named("cmass_cache_call")) && lxio_cache_state()==0);
     reset_session();stats.active=1;boot_mode=1;boot_phase=0;stats.issued=0;ui_thread=GetCurrentThreadId();
     lxio_installed=lxio_restored=lxio_rekey=0;lxio_stage="idle";
     {const int identities=world_identity_installed;world_identity_installed=0;assert(!lxio_arm() && !strcmp(lxio_stage,"needs"));world_identity_installed=identities;}

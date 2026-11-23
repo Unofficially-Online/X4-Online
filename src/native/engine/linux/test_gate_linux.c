@@ -477,6 +477,7 @@ int main(int argc,char **argv) {
     test_worker_layout_linux();
     test_island_order_linux();
     test_contact_mass_linux();
+    test_contact_mass_cache();
     test_sound_rng_linux();
     test_death_rng_linux();
     test_contact_orient_linux();

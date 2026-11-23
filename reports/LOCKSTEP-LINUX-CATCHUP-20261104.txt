@@ -874,6 +874,34 @@ BULLET HIT TESTS EVERY FRAME ON LINUX (linux/gate_bullet_cadence.h; W88..W96 aga
   temp zone), asks 0x3df3f0 for the frame's transform and velocity, and stores (v - frame velocity) turned into the
   frame ((x c0 + y c1) + z c2, as everywhere else). Next: its Linux twin and the frame's transform and velocity
   (0x3df3f0) on both builds for the temp zone 0x13e75f at 1203.
+  Followed down (23 Nov), and FIXED. The FIT trace gained two entry hooks for one window, both builds: the frame
+  function (Windows 0x3df3f0, Linux 0x18a3980) and NavigationController::SetVelocity (Windows 0xea5790, Linux
+  0x141fe50), rows with the caller. W115/W116 against lx130a/lx131a at 1203: every frame call into the Argon's zone
+  equal (only the engines' velocities relative to the player, a presentation call, differ); SetVelocity's
+  conversion is the same arithmetic on both (Linux's twin read: zone velocity subtracted, the transposed rotation,
+  (x + y) + z); its input already differs (1.9753722 against 1.9753718). That input comes straight from the Jolt
+  body: the post-step sync (Windows 0xbfb00, Linux 0xeeb7e0) reads MotionProperties' velocities (Windows 0xbf100,
+  Linux 0x1a7ee70, no arithmetic) and passes them on through the controller's SetTransform slot, which tail-calls
+  SetVelocity. native_gate_body_step_diag (lx132a) shows Jolt's step itself changing body0 from the steering output
+  (-1.02837, equal on both) to 1.9753718: the Argon (actor 3) is in contact with actor 9 from 1195, and the CONSTRAINT
+  rows (W119 against lx132a) put the difference in one word, the tick-1203 contact's first non-penetration
+  effective mass (401770f2 against 401770f3), every input of it equal.
+  That constraint came from Jolt's body pair cache. Windows builds such constraints in GetContactsFromCache
+  (0x13e10b0) through CalculateFrictionAndNonPenetrationConstraintProperties 0x13de520, a copy MSVC associated its own
+  way (two dynamic bodies: non-penetration and first friction part ((p2x + p2y) + (p2z + m2)) + ((p1z + m1) +
+  (p1x + p1y)), second friction part (((p2x + p2y) + p2z) + m2) + ((p1z + (p1x + p1y)) + m1)); native_gate_contact_mass
+  had given every constraint AddContactConstraint's order (0x13e43b0). (The addresses the open item named as
+  GetContactsFromCache's copies, 0x13e82e0, 0x13e8e00, 0x13ea720, are AddContactConstraint's forms for other motion
+  types, from its dispatcher 0x13e1df0.) Scoring all 135,135 association trees of the eight terms against W119's
+  rows (tools-mixed masstrees.py) left exactly these two copies: AddContactConstraint's fits nine constraints at
+  1195..1203, GetContactsFromCache's the three at 1198 and 1203; the Windows code read confirms the second.
+  Fix, Linux only (linux/gate_island_order.h, under native_gate_contact_mass): ProcessBodyPair's one call of
+  GetContactsFromCache (0x1b20028 -> 0x1af6210, pinned cmass_cache_call, checked by its state every tick) goes to a
+  wrapper that notes the body pair with the tick when the call made a constraint; at the island sort a noted pair
+  takes the cache copy's formulas, the others AddContactConstraint's. A full ring of this tick's pairs without the
+  one looked up fails closed (stop 215). Test: W119's tick-1198 constraint (two parts 1 ulp apart) from Linux's words
+  to Windows' exactly. lx133a against W119: every CONSTRAINT row of the Argon's contact (lambdas included) and every
+  BODY row equal 1195..1205 (status cached=4 cache_pairs=3 failures=0; the run passed).
 
 FUNCTION COVERAGE WITH PLAYER INPUT ON LINUX (191754a1, b1688473; lx32a, lx32b)
   native_gate_coverage_from = T (Linux gate only; linux_gate_live.py --coverage-from) puts the coverage marks in at

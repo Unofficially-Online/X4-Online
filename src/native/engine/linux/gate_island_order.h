@@ -110,8 +110,20 @@ static uint64_t lxio_ties_in(const uint32_t *begin,const uint32_t *end,const uns
  * the effective masses 1 ulp apart in 9 (ticks 132, 133); the formulas give Windows' word for all 54, Jolt's order
  * Linux's. Here, after X4's setup and before the warm start, every constraint of two dynamic bodies gets them from its
  * own stored vectors and masses (+0x28, +0x30: the scaled inverse masses the setup used). Other motion types are left
- * (counted: other): their Windows copies are not decoded yet, nor GetContactsFromCache's (0x13e82e0, 0x13e8e00, 0x13ea720). */
-static volatile uint64_t lxio_mass_constraints,lxio_mass_changed,lxio_mass_other;
+ * (counted: other): their Windows copies are not decoded yet (AddContactConstraint's other forms 0x13e5530, 0x13e64b0,
+ * 0x13e7370, 0x13e82e0, 0x13e8e00, 0x13e9870, 0x13ea720, from its dispatcher 0x13e1df0).
+ *
+ * A pair Jolt takes from the body pair cache gets its constraints from GetContactsFromCache (Windows 0x13e10b0), whose
+ * properties MSVC built in another copy (0x13de520; two dynamic bodies 0x13deb07..0x13deff4): the non-penetration part
+ * ((p2x + p2y) + (p2z + m2)) + ((m1 + p1z) + (p1x + p1y)), the first friction part ((p2x + p2y) + (p2z + m2)) +
+ * ((p1z + m1) + (p1x + p1y)), the second (((p2x + p2y) + p2z) + m2) + ((p1z + (p1x + p1y)) + m1). W119 against lx132a
+ * (the Argon and actor 9 at ticks 1195..1203 of the world census): these give Windows' words for the three cached
+ * constraints, AddContactConstraint's order for the others; the tick-1203 non-penetration mass 1 ulp apart was the
+ * world census's 1203 split. Linux's GetContactsFromCache (0x1af6210, one call, from ProcessBodyPair at 0x1b20028) has
+ * its call retargeted (one compare-exchange of the call's 16-byte line) to lxio_cache_call, which runs it and, when it
+ * made a constraint, notes the body pair with the tick in a ring; at the sort a pair noted this tick takes the cache
+ * formulas. A lookup that finds the ring full of this tick's pairs without its own fails (stop 215): its copy is unknown. */
+static volatile uint64_t lxio_mass_constraints,lxio_mass_changed,lxio_mass_other,lxio_mass_cached;
 static float lxio_inv_nonpen(const float *a,const float *b,float m1,float m2) {
     float p1x=a[6]*a[0],p1y=a[7]*a[1],p1z=a[8]*a[2],p2x=b[9]*b[3],p2y=b[10]*b[4],p2z=b[11]*b[5];
     float d1=p1x+p1y;d1=d1+p1z;d1=d1+m1;
@@ -124,14 +136,60 @@ static float lxio_inv_friction(const float *a,float m1,float m2) {
     float s=p1x+p1y,t=p1z+m1;s=s+t;
     return q+s;
 }
-static void lxio_mass_part(unsigned char *part,int friction,float m1,float m2) {
+/* GetContactsFromCache's copy: the non-penetration and first friction parts alike, the second friction part its own. */
+static float lxio_inv_cache_ab(const float *a,float m1,float m2) {
+    float p1x=a[6]*a[0],p1y=a[7]*a[1],p1z=a[8]*a[2],p2x=a[9]*a[3],p2y=a[10]*a[4],p2z=a[11]*a[5];
+    float s=p1x+p1y,t=m1+p1z;t=t+s;
+    float q=p2x+p2y,r=p2z+m2;q=q+r;
+    return q+t;
+}
+static float lxio_inv_cache_second(const float *a,float m1,float m2) {
+    float p1x=a[6]*a[0],p1y=a[7]*a[1],p1z=a[8]*a[2],p2x=a[9]*a[3],p2y=a[10]*a[4],p2z=a[11]*a[5];
+    float s=p1x+p1y;s=p1z+s;s=s+m1;
+    float q=p2x+p2y;q=q+p2z;q=q+m2;
+    return q+s;
+}
+enum {LXIO_FORM_NONPEN,LXIO_FORM_FRICTION,LXIO_FORM_CACHE_AB,LXIO_FORM_CACHE_SECOND};
+static void lxio_mass_part(unsigned char *part,int form,float m1,float m2) {
     float f[16];memcpy(f,part,sizeof(f));
-    const float inv=friction?lxio_inv_friction(f,m1,m2):lxio_inv_nonpen(f,f,m1,m2);
+    const float inv=form==LXIO_FORM_FRICTION?lxio_inv_friction(f,m1,m2):form==LXIO_FORM_CACHE_AB?lxio_inv_cache_ab(f,m1,m2):
+        form==LXIO_FORM_CACHE_SECOND?lxio_inv_cache_second(f,m1,m2):lxio_inv_nonpen(f,f,m1,m2);
     float mass=0.0f,lambda=f[15];
     if(inv==0.0f) lambda=0.0f;else mass=1.0f/inv;
     if(memcmp(&mass,part+0x30,4) || memcmp(&lambda,part+0x3c,4)) {
         memcpy(part+0x30,&mass,4);memcpy(part+0x3c,&lambda,4);__atomic_add_fetch(&lxio_mass_changed,1,__ATOMIC_SEQ_CST);
     }
+}
+/* The pairs GetContactsFromCache made constraints for, by tick (stamp: the tick + 1; 0 empty). */
+#define LXIO_CACHE_CALL_VA 0x1b20028u
+#define LXIO_CACHE_VA 0x1af6210u
+#define LXIO_CACHE_RING 8192u
+typedef void (*lxio_cache_fn)(void *manager,void *allocator,void *body1,void *body2,unsigned char *handled,unsigned char *created);
+typedef struct {const void *a,*b;uint64_t stamp;} lxio_cache_pair;
+static lxio_cache_pair lxio_cache_ring[LXIO_CACHE_RING];
+static volatile uint64_t lxio_cache_head,lxio_cache_pairs;
+static unsigned char *lxio_cache_page;
+static int lxio_cache_installed;
+static lxio_cache_fn lxio_cache_override;   /* tests */
+static void lxio_cache_note(const void *a,const void *b,uint64_t tick) {
+    const uint64_t i=__atomic_fetch_add(&lxio_cache_head,1,__ATOMIC_SEQ_CST);lxio_cache_pair *p=&lxio_cache_ring[i%LXIO_CACHE_RING];
+    __atomic_store_n(&p->stamp,0,__ATOMIC_RELAXED);p->a=a;p->b=b;__atomic_store_n(&p->stamp,tick+1u,__ATOMIC_RELEASE);
+    __atomic_add_fetch(&lxio_cache_pairs,1,__ATOMIC_SEQ_CST);
+}
+static void lxio_cache_call(void *manager,void *allocator,void *body1,void *body2,unsigned char *handled,unsigned char *created) {
+    const lxio_cache_fn original=lxio_cache_override?lxio_cache_override:(lxio_cache_fn)(void*)LX(LXIO_CACHE_VA);
+    original(manager,allocator,body1,body2,handled,created);
+    if(created && *created) lxio_cache_note(body1,body2,stats.issued);
+}
+/* 1 noted at this tick, 0 not, -1 unknown (the ring holds only this tick's pairs, none of them this one). */
+static int lxio_cache_made(const void *a,const void *b,uint64_t tick) {
+    const uint64_t head=__atomic_load_n(&lxio_cache_head,__ATOMIC_ACQUIRE);
+    for(uint64_t n=0;n<head && n<LXIO_CACHE_RING;n++) {
+        const lxio_cache_pair *p=&lxio_cache_ring[(head-1u-n)%LXIO_CACHE_RING];
+        if(__atomic_load_n(&p->stamp,__ATOMIC_ACQUIRE)!=tick+1u) return 0;
+        if((p->a==a && p->b==b) || (p->a==b && p->b==a)) return 1;
+    }
+    return head>=LXIO_CACHE_RING?-1:0;
 }
 static int lxio_mass_range(const uint32_t *begin,const uint32_t *end,const unsigned char *manager) {
     unsigned char *array=NULL;
@@ -142,7 +200,13 @@ static int lxio_mass_range(const uint32_t *begin,const uint32_t *end,const unsig
            !gate_read_local(body[1]+0x78,&type[1],1) || !gate_read_local(c+0x38,&count,4) || count>LXIO_POINTS ||
            !gate_read_local(c+0x28,&m[0],4) || !gate_read_local(c+0x30,&m[1],4)) return 0;
         if(type[0]!=2 || type[1]!=2) {__atomic_add_fetch(&lxio_mass_other,1,__ATOMIC_SEQ_CST);continue;}
-        for(uint32_t k=0;k<count;k++) for(unsigned part=0;part<3;part++) lxio_mass_part(c+0x40+LXIO_POINT*k+0x40*part,part!=0,m[0],m[1]);
+        const int cached=lxio_cache_made(body[0],body[1],stats.issued);
+        if(cached<0) return 0;
+        if(cached) __atomic_add_fetch(&lxio_mass_cached,1,__ATOMIC_SEQ_CST);
+        for(uint32_t k=0;k<count;k++) for(unsigned part=0;part<3;part++) {
+            const int form=cached?(part==2?LXIO_FORM_CACHE_SECOND:LXIO_FORM_CACHE_AB):(part?LXIO_FORM_FRICTION:LXIO_FORM_NONPEN);
+            lxio_mass_part(c+0x40+LXIO_POINT*k+0x40*part,form,m[0],m[1]);
+        }
         __atomic_add_fetch(&lxio_mass_constraints,1,__ATOMIC_SEQ_CST);
     }
     return 1;
@@ -228,24 +292,74 @@ static int lxio_arm(void) {
     }
     return lxio_install(1);
 }
+/* The cache call: 0 the image's GetContactsFromCache, 1 our page, -1 anything else. */
+static int lxio_cache_rel(const unsigned char *target,int32_t *out) {
+    const intptr_t d=(intptr_t)target-(intptr_t)(LX(LXIO_CACHE_CALL_VA)+5);
+    if(d!=(intptr_t)(int32_t)d) return 0;
+    *out=(int32_t)d;return 1;
+}
+static int lxio_cache_state(void) {
+    unsigned char now[5];int32_t d,want;
+    if(!gate_read_local(LX(LXIO_CACHE_CALL_VA),now,5) || now[0]!=0xe8) return -1;
+    memcpy(&d,now+1,4);
+    if(lxio_cache_rel(LX(LXIO_CACHE_VA),&want) && d==want) return 0;
+    return lxio_cache_page && lxio_cache_rel(lxio_cache_page,&want) && d==want?1:-1;
+}
+static void lxio_cache_jump(unsigned char out[14]) {
+    const void *to=(const void*)lxio_cache_call;out[0]=0xff;out[1]=0x25;memset(out+2,0,4);memcpy(out+6,&to,8);
+}
+static int lxio_cache_page_ok(void) {
+    unsigned char want[14];if(!lxio_cache_page) return 0;
+    lxio_cache_jump(want);return !memcmp(lxio_cache_page,want,14);
+}
+static int lxio_cache_swap(const unsigned char *from_target,const unsigned char *to_target) {
+    unsigned char *line=(unsigned char*)((uintptr_t)LX(LXIO_CACHE_CALL_VA)&~(uintptr_t)15);
+    const unsigned at=(unsigned)(LX(LXIO_CACHE_CALL_VA)-line);
+    unsigned __int128 current,desired;int32_t from,to;
+    if(at+5>16 || !lxio_cache_rel(from_target,&from) || !lxio_cache_rel(to_target,&to)) return 0;
+    memcpy(&current,line,16);
+    if(((unsigned char*)&current)[at]!=0xe8 || memcmp((unsigned char*)&current+at+1,&from,4)) return 0;
+    desired=current;memcpy((unsigned char*)&desired+at+1,&to,4);
+    return gate_code_swap128(line,current,desired);
+}
+static int lxio_cache_install(void) {
+    if(lxio_cache_installed) return 1;
+    if(lxio_cache_state()!=0 || !site_ok(site_named("cmass_cache_call"))) {lxio_stage="cache_site";return 0;}
+    if(!lxio_cache_page) lxio_cache_page=gate_near_page(LX(LXIO_CACHE_CALL_VA));
+    if(!lxio_cache_page || mprotect(lxio_cache_page,GATE_PAGE,PROT_READ|PROT_WRITE)) {lxio_stage="memory";return 0;}
+    memset(lxio_cache_page,0xcc,GATE_PAGE);lxio_cache_jump(lxio_cache_page);
+    if(mprotect(lxio_cache_page,GATE_PAGE,PROT_READ|PROT_EXEC)) {lxio_stage="memory";return 0;}
+    if(!lxio_cache_swap(LX(LXIO_CACHE_VA),lxio_cache_page)) {lxio_stage="cache_cas";return 0;}
+    lxio_cache_installed=1;return 1;
+}
+static void lxio_cache_restore(void) {
+    if(lxio_cache_installed && lxio_cache_state()==1 && lxio_cache_swap(lxio_cache_page,LX(LXIO_CACHE_VA))) lxio_cache_installed=0;
+}
 /* gate.constraint_diag(): the CONSTRAINT trace, through the island order's stub (installed here when it is off). */
 /* gate.contact_mass(): the effective masses in MSVC's order, through the island order's stub (installed here when it is off). */
 static int lxio_mass_arm(void) {
+    if(lxio_mass) return lxio_cache_installed;   /* identical rerun */
     if(!lxio_installed && !lxio_install(0)) return 0;
-    if(!lxio_mass) {lxio_mass_constraints=lxio_mass_changed=lxio_mass_other=0;}
+    if(!lxio_cache_install()) return 0;
+    lxio_mass_constraints=lxio_mass_changed=lxio_mass_other=lxio_mass_cached=lxio_cache_pairs=0;
     lxio_mass=1;return 1;
 }
 static int lxio_mass_status(char *out,size_t cap) {
-    const int n=snprintf(out,cap,"tick=%llu armed=%d installed=%d constraints=%llu changed=%llu other=%llu stage=%s failures=%lld",
+    const int n=snprintf(out,cap,"tick=%llu armed=%d installed=%d constraints=%llu changed=%llu other=%llu cached=%llu "
+        "cache_pairs=%llu cache_call=%d stage=%s failures=%lld",
         (unsigned long long)stats.issued,lxio_mass,lxio_installed,(unsigned long long)lxio_mass_constraints,
-        (unsigned long long)lxio_mass_changed,(unsigned long long)lxio_mass_other,lxio_stage,(long long)lxio_failures);
+        (unsigned long long)lxio_mass_changed,(unsigned long long)lxio_mass_other,(unsigned long long)lxio_mass_cached,
+        (unsigned long long)lxio_cache_pairs,lxio_cache_installed,lxio_stage,(long long)lxio_failures);
     return n>0 && (size_t)n<cap?n:0;
 }
 static int lxio_trace_arm(void) {
     if(!lxio_installed && !lxio_install(0)) return 0;
     ctrace_actor=lxio_trace_actor;ctrace_on=1;return 1;
 }
-static int lxio_owned(void) {return !lxio_installed || (lxio_call_state()==1 && lxio_page_ok());}
+static int lxio_owned(void) {
+    return (!lxio_installed || (lxio_call_state()==1 && lxio_page_ok())) &&
+           (!lxio_cache_installed || (lxio_cache_state()==1 && lxio_cache_page_ok() && site_ok(site_named("cmass_cache_call"))));
+}
 /* Main-thread tick check; any failure stops the gate with reason 215. */
 static int lxio_check(void) {
     if(__atomic_load_n(&lxio_failures,__ATOMIC_SEQ_CST)) {lxio_stage="unreadable";return 0;}
@@ -256,7 +370,7 @@ static int lxio_check(void) {
 }
 static void lxio_restore(void) {
     if(!lxio_installed) return;
-    ctrace_on=0;lxio_mass=0;
+    ctrace_on=0;lxio_mass=0;lxio_cache_restore();
     if(lxio_call_state()==1 && lxio_swap(lxio_page,LX(LXIO_SORT_VA))) {lxio_installed=0;lxio_restored=1;} /* the page stays */
 }
 static int lxio_status(char *out,size_t cap) {

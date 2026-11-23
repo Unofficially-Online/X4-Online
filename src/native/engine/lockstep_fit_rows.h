@@ -11,6 +11,11 @@
 #define FIT_ARGS 5u
 #define FIT_BYTES 0x40u
 #define FIT_ROWS 8192u
+#define FIT_FRAME_TAG 0x4000000000000000ull /* thread | this: a frame-function row (a0 the matrix out, a1 the velocity out, a2 the
+                                            * component; Windows 0x3df3f0, Linux 0x18a3980) */
+#define FIT_NAV_TAG 0x2000000000000000ull   /* thread | caller RVA << 32 | this: a NavigationController::SetVelocity row (a0 the
+                                            * input velocities, a1 the ship, a2 the controller's stored velocity +0xa0, a3 the
+                                            * controller; Windows 0xea5790, Linux 0x141fe50) */
 #define FIT_STEP_TAG 0x8000000000000000ull /* thread | this: a Steering step row (a0..a2 the bank +0x00/+0x40/+0x80, a3 the model's
                                            * steering output), not an integration call */
 typedef struct {uint64_t tick,thread;uint8_t readable[2][FIT_ARGS];unsigned char before[FIT_ARGS][FIT_BYTES],after[FIT_ARGS][FIT_BYTES];} fit_row;

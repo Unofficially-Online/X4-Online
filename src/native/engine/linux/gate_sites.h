@@ -655,6 +655,9 @@ static const lx_site lx_sites[]={
     {"corient_constraint",0x1afa480,0x54,"1c66a71098e9287a76e31bd7b9d729a515a99f93473b3cf1ff665cf160f074c2"},
     {"corient_ccd",0x1afeae0,0xa5,"b34bc920c62a42ab7a153f97b7d3681e30df5b59e88a595fc5187ca5eb0487f3"},
     {"corient_body_pair",0x1afa180,0x29,"a81fd3de9462f0cf2a0892b03764a07ace44649daca3c0a40486f6049eef7ed0"},
+    /* the contact mass (gate_island_order.h): ProcessBodyPair's argument setup for GetContactsFromCache up to the call,
+     * whose rel32 is the module's (checked by its state) */
+    {"cmass_cache_call",0x1b2000e,0x1a,"384fbaa21bdca0184f43d419730e8ee438f9040cc79468b409842132b95b6363"},
     /* the UI's lazy container updates (gate_ui_lazy.h): each function's head through the fields it decides on, and
      * the map draw routine's three calls that bring shown stations' cargo up to now */
     {"ui_lazy_cargo",0x184dfa0,0x50,"9d034d2f87b84697502def5339db04ca5117b16015612730a332a7950ed50caf"},
