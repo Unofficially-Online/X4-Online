@@ -110,6 +110,9 @@ MIXED_PLATFORM_SETS = ("native_gate_fp_redirect='redirect'", 'native_gate_fp_red
                        "native_gate_ui_lazy='key'",       # a Windows default already: the UI's lazy container updates skipped
                                                           # and the simulation's keyed (linux/gate_ui_lazy.h; W82 against lx113a,
                                                           # 22 Nov: a ShipMedium re-planned ten ticks later on Linux, apart at 525)
+                       'native_gate_area_jobs=true',      # a Windows default already: the area, construction and probe jobs at the
+                                                          # tick of their request (linux/gate_area_jobs.h; W98 against lx-1545s, 23 Nov:
+                                                          # a salvage ship's resource area found on Windows only, debris 100 ticks apart)
                        "native_gate_bullet_cadence='every'")  # a Windows default already: every bullet hit-tested every frame
                                                           # (linux/gate_bullet_cadence.h; W88 against lx117a, 22 Nov: two fighters'
                                                           # targets 4 cm apart at 609, the camera-paced tests on Linux)

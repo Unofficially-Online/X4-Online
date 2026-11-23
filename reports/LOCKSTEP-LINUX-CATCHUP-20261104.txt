@@ -902,6 +902,29 @@ BULLET HIT TESTS EVERY FRAME ON LINUX (linux/gate_bullet_cadence.h; W88..W96 aga
   one looked up fails closed (stop 215). Test: W119's tick-1198 constraint (two parts 1 ulp apart) from Linux's words
   to Windows' exactly. lx133a against W119: every CONSTRAINT row of the Argon's contact (lambdas included) and every
   BODY row equal 1195..1205 (status cached=4 cache_pairs=3 failures=0; the run passed).
+  Long census W86 against lx134a (2400 ticks, stride 300): 0 objects apart at 300..1500 (was 2 at 1500), 3 at 1800,
+  5 at 2100, 8 at 2400 (was 23).
+  The next split (23 Nov; tools-mixed stride_window.sh: a paired W + L run with one stride and watch list): stride 75
+  puts it between 1500 and 1575; CREATED_IDENTITIES' assigned count first differs at 1546. CREATED_ROW (both gates):
+  a U::Recyclable, env_debris_xenon_m_01_macro, under the temp zone 800376e91b2066b0 (made by a warp exit at 891) at
+  frame 1545 on Windows and at 1645 on Linux, another key; the salvage ship 8000978028ee83b8 parts after it. Script
+  RNG rows 1500..1546: the same order.salvage.routine run of 80009754f4c8da3c at 1545 draws 12 words on Windows and 5
+  on Linux from one seed. Its find_wrecks loop finds no existing wreck, asks find_closest_resource for the region's
+  resource nodes and only with a hit calls find_recyclable_with_yield_in_sector, whose region search (Windows 0x7884a0
+  from the action 0xbf5f80, directly and through 0x7880c0; Linux 0x1f47b20 from the action 0xe10a60, two calls) makes
+  the debris when the sector's attention (+0x1ec) is at most 4. Linux under gdb (sudo gdb -p on the Linux test machine, logging
+  breakpoints at the action's two attention compares 0xe11040/0xe11548): the action ran at 1422 (sector 5ee5b,
+  attention 2, both made the same debris) and not at all at 1545, so Linux's find_closest_resource found nothing there.
+  Ruled out on Windows: native_gate_area_jobs off (and it is skipped in this census anyway: it needs the pilot stock
+  slots) and native_gate_field_fill off still make the debris at 1545. The resource nodes' ware and yield are set by the
+  dirty-field refresh (Windows 0xee6a80), whose only caller is the render pass 0xeeb650 from Zone::vfunc693; on
+  Windows the region camera's field_fill group runs it at a fixed point of the frame instead. The Linux gate has the
+  region camera's mining group only, without view points, so each Linux client's own render pass decides when a
+  field's nodes are fresh. Next: the field_fill group (and the view points it needs) on the Linux gate.
+  Done on the way: the area jobs' Linux twin (linux/gate_area_jobs.h, a Windows session default: the area,
+  construction and probe jobs at the tick of their request, Windows' keyed word and status; mixed set). Armed in
+  lx-1545k (installed=3/3, no failures); this census asks for none of those jobs (inlined=0/0/0), so it is proven by
+  its tests (the dispatch with a job thread's TLS, the ELF pins and calls) and not yet by a live job.
 
 FUNCTION COVERAGE WITH PLAYER INPUT ON LINUX (191754a1, b1688473; lx32a, lx32b)
   native_gate_coverage_from = T (Linux gate only; linux_gate_live.py --coverage-from) puts the coverage marks in at

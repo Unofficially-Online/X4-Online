@@ -16,6 +16,9 @@
 #define FIT_NAV_TAG 0x2000000000000000ull   /* thread | caller RVA << 32 | this: a NavigationController::SetVelocity row (a0 the
                                             * input velocities, a1 the ship, a2 the controller's stored velocity +0xa0, a3 the
                                             * controller; Windows 0xea5790, Linux 0x141fe50) */
+#define FIT_SEARCH_TAG 0x1000000000000000ull /* thread | site << 36 | flags << 32 | this: a region object search row (Linux
+                                            * 0x1f47b20 from the script action's two calls; a0 the sector, a1 the position,
+                                            * a2 the frame, a3 the player object, a4 the object found, after) */
 #define FIT_STEP_TAG 0x8000000000000000ull /* thread | this: a Steering step row (a0..a2 the bank +0x00/+0x40/+0x80, a3 the model's
                                            * steering output), not an integration call */
 typedef struct {uint64_t tick,thread;uint8_t readable[2][FIT_ARGS];unsigned char before[FIT_ARGS][FIT_BYTES],after[FIT_ARGS][FIT_BYTES];} fit_row;

@@ -428,11 +428,14 @@ Modules (define, owner):
                                 compares' jumps or stubs no longer ours, the pins, or a body the stub could not read;
                                 whys site_changed, block_changed, unreadable); on the Linux gate 219 LXCO_STOP_REASON
                                 (linux/gate_contact_orient.h, the same five decisions, order, status text and whys)
+  220 LXAJ_STOP_REASON          linux/gate_area_jobs.h (native_gate_area_jobs on the Linux gate: one of the three QueueJob
+                                calls no longer ours, the page, or a pin; whys page_changed, site_changed. Windows'
+                                lockstep_area_jobs.h has no tick check)
   224 WLAY_STOP_REASON          lockstep_worker_layout.h (native_gate_worker_layout, a default: the pathing batches
                                 were not laid out before the first admitted step, or Jolt's concurrency slot is no
                                 longer ours; stages occupied, unreadable, layout, not_laid_out, slot_changed); on the
                                 Linux gate 224 LXWL_STOP_REASON (linux/gate_worker_layout.h, the same stages)
-  free: 109, 114-119, 122-129, 147-149, 220-223, 225-255.
+  free: 109, 114-119, 122-129, 147-149, 221-223, 225-255.
 Not stop reasons although named *_STOP*: PSLOT_STOP_WAIT (a wait count),
 PFIRE_STOP, PNAT_STOP_IN_MENU, PNAT_FULL_STOP (flags, 0).
 Renumbered on 1 November 2026 (integration): region camera 130 -> 165, speak

@@ -164,6 +164,8 @@ def main():
                    "its Lua (a mixed session's Linux bundle: every client runs the same scripts)")
     p.add_argument('--path-budget', type=int, metavar='N', help="the pathing round robin by count: N full agent updates per batch "
                    "and pass (native_gate_path_budget, a Windows default: 100; both gates; needs --serial-pathing)")
+    p.add_argument('--area-jobs', action='store_true', help="the Linux gate: the area, construction and probe jobs at the tick of "
+                   "their request (native_gate_area_jobs, Windows' session default)")
     p.add_argument('--contact-mass', action='store_true', help="the Linux gate: contact constraints' effective masses summed in the "
                    "Windows build's order (native_gate_contact_mass)")
     p.add_argument('--island-order', action='store_true', help="island contacts solved in an order keyed alike on every client "
@@ -630,6 +632,7 @@ def main():
                    'fork_save', 'fork_save_budget_ms', 'fork_save_watchdog', 'fork_save_every', 'fork_save_slot', 'world_identities', 'world_hash_stride', 'world_hash_schema', 'world_hash_watch', 'world_hash_shields',
                    'fp_redirect_drones', 'world_health_ticks', 'fp_attack_capture', 'fp_attack_watch'}
         allowed.add('travel_determinism')
+        allowed.add('area_jobs')
         # The battle fixture on Linux (linux/gate_battle.h, gate_flight.h): the snapshot's twelve, their state row, steering.
         allowed.update(('snapshot_prebind', 'actor_diag', 'strict_state', 'shield_refresh', 'order_state', 'fleet_state',
                         'flight_diag', 'flight_rng', 'flight_full', 'avoidance_refresh', 'steering_init', 'agent_full', 'spline_diag', 'spline_refresh', 'spline_state', 'params_init', 'strict_physics', 'body_diag', 'params_diag'))
@@ -1006,6 +1009,11 @@ X4LAN_CONFIG.slot = "@X4LANE_SLOT@"
             p.error('--path-budget N needs N >= 1, the snapshot boot and --serial-pathing')
         with (args.out/'ui/config.lua.append').open('a') as config:
             config.write(f'X4LAN_CONFIG.native_gate_path_budget = {args.path_budget}'+chr(10))
+    if args.area_jobs:
+        if not args.gate_so or not args.snapshot:
+            p.error('--area-jobs needs --gate-so and the snapshot boot')
+        with (args.out/'ui/config.lua.append').open('a') as config:
+            config.write('X4LAN_CONFIG.native_gate_area_jobs = true'+chr(10))
     if args.contact_mass:
         if not args.gate_so or not args.snapshot:
             p.error('--contact-mass needs --gate-so and the snapshot boot')

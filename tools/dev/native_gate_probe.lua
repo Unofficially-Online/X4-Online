@@ -5494,6 +5494,12 @@ local function frame()
   end
   -- Contact constraints' effective masses in MSVC's order (linux/gate_island_order.h, through the island sort's stub):
   -- Jolt's m1 + d1 + m2 + d2 as Windows' build reassociated it. Linux only.
+  -- The area, construction and probe jobs at the tick of their request on the Linux gate (linux/gate_area_jobs.h, the
+  -- twin of Windows' session default, which rides the pilot modules there): armed before the first frame.
+  if cfg.native_gate_area_jobs and gate.platform and gate.platform()=='linux' then
+   assert(snapshot and gate.area_jobs and gate.area_jobs_status and gate.area_jobs(1)==1,'area jobs refused '..tostring(gate.area_jobs_status and gate.area_jobs_status()))
+   log('AREA_JOBS_ARMED '..tostring(gate.area_jobs_status()))
+  end
   if cfg.native_gate_contact_mass and gate.platform and gate.platform()=='linux' then
    assert(snapshot and gate.contact_mass and gate.contact_mass_status and gate.contact_mass()==1,'contact mass refused '..tostring(gate.contact_mass_status and gate.contact_mass_status()))
    log('CONTACT_MASS_ARMED '..tostring(gate.contact_mass_status()))

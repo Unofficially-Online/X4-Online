@@ -489,6 +489,8 @@ def bundle(args):
         command += ['--ui-lazy', args.ui_lazy]
     if args.bullet_cadence:
         command += ['--bullet-cadence', args.bullet_cadence]
+    if args.area_jobs:
+        command.append('--area-jobs')
     if args.contact_mass:
         command.append('--contact-mass')
     if args.constraint_diag:
@@ -628,6 +630,7 @@ def bundle(args):
         'island_order',
         'constraint_diag',
         'contact_mass',
+        'area_jobs',
         'path_budget',
         'sound_rng',
         'death_rng',
@@ -1479,6 +1482,7 @@ def main(argv=None):
     b.add_argument('--death-rng', choices=('all',), help="every ship's death draws keyed by tick and portable key, as Windows' default (native_gate_death_rng)")
     b.add_argument('--path-budget', type=int, metavar='N', help="the pathing round robin by count, N full updates per batch and pass, "
                    "as Windows' default (100) (native_gate_path_budget)")
+    b.add_argument('--area-jobs', action='store_true', help="the area, construction and probe jobs at the tick of their request, as Windows' default native_gate_area_jobs")
     b.add_argument('--contact-mass', action='store_true', help="contact constraints' effective masses summed in the Windows build's order (native_gate_contact_mass)")
     b.add_argument('--island-order', action='store_true', help="island contacts solved in an order keyed alike on every client, as Windows' default (native_gate_island_order)")
     b.add_argument('--constraint-diag', action='store_true', help="CONSTRAINT rows: the fixture ships' contact constraints and stored lambdas, as Windows (native_gate_constraint_diag)")

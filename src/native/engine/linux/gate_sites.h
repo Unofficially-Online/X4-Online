@@ -658,6 +658,17 @@ static const lx_site lx_sites[]={
     /* the contact mass (gate_island_order.h): ProcessBodyPair's argument setup for GetContactsFromCache up to the call,
      * whose rel32 is the module's (checked by its state) */
     {"cmass_cache_call",0x1b2000e,0x1a,"384fbaa21bdca0184f43d419730e8ee438f9040cc79468b409842132b95b6363"},
+    /* the area jobs (gate_area_jobs.h): each asking block up to its QueueJob call (whose rel32 is the module's, checked
+     * by its state), the job's callback and its body */
+    {"areaj_area_ask",0x1d1fb60,0x43,"6c4a17aacba5c93392c72d4e037fbe614192e7d37926ca041d454576225c007a"},
+    {"areaj_area_thunk",0x1297850,0x9b,"4d68383e6ca67f086cc68fcaec2434bc5c19b17a6128c8e68a2fbf6c9df12419"},
+    {"areaj_area_body",0x12815c0,0x77e,"c73fb0ef71f5d01ca88565cb8c8de3ebdfa9bd94e1ce8561faee2dad53ed1d18"},
+    {"areaj_construction_ask",0xe57df5,0x4f,"594d28b1ede705a124d7718742f6c551a79fded6147c51ed3f1f7311cecd03f6"},
+    {"areaj_construction_thunk",0x189b230,0x161,"71ec3946f5adcdd67bf4d3dc1012e14779ea258f9c742132b147d13e04cef540"},
+    {"areaj_construction_body",0x1828fa0,0x3000,"dd4239b18321825a68fbe1f2544102a1b4d32fa33213cf0352881be69919f011"}, /* the head: an exact reciprocal window at +0x42a1 */
+    {"areaj_probe_ask",0x12e94ae,0x38,"140e6e4ebe9a2b97d40889cd7889f9a038a8aec45c37eb078ff672143eddcc8a"},
+    {"areaj_probe_thunk",0x12f69b0,0x94,"a6fa433c6bfebc0c89ca76b5f75a5283c6fc3966cbd512f9e74dee2596715595"},
+    {"areaj_probe_body",0x12cda50,0xee,"74f3fc8bbca625a01f92112536d0d439a1d1bfe93304a9c65e21c13ca038219c"},
     /* the UI's lazy container updates (gate_ui_lazy.h): each function's head through the fields it decides on, and
      * the map draw routine's three calls that bring shown stations' cargo up to now */
     {"ui_lazy_cargo",0x184dfa0,0x50,"9d034d2f87b84697502def5339db04ca5117b16015612730a332a7950ed50caf"},

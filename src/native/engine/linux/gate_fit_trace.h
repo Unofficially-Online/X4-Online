@@ -101,6 +101,48 @@ static int lxfit_nav_arm(void) {
 static void lxfit_nav_restore(void) {
     if(lxfit_nav_installed && gate_code_swap128(LX(LXFIT_NAV_VA),lxfit_nav_patched,lxfit_nav_original)) lxfit_nav_installed=0;
 }
+/* The region object search 0x1f47b20 (Windows 0x7884a0; find_recyclable_with_yield_in_sector's search, whose camera
+ * block gate_mining_camera.h answers): its two calls in the script action (0xe120b2, 0xe12128; rdi the sector, rsi the
+ * position, rdx the frame, ecx/r8d/r9d flags, a stack argument; rax the object) go to a wrapper that writes a row with
+ * the player object and the object found. Diagnostic: the search's whole body is mining_search's pin, its calls are not. */
+#define LXFIT_SEARCH_VA 0x1f47b20u
+#define LXFIT_UNIVERSE_VA 0x3db6948u
+typedef void *(*lxfit_search_fn)(void *,void *,void *,unsigned,unsigned,unsigned,void *);
+static const uint32_t lxfit_search_calls[2]={0xe120b2u,0xe12128u};
+static unsigned char *lxfit_search_page;
+static int lxfit_search_installed[2];
+static void *lxfit_search_hook(unsigned site,void *sector,void *pos,void *frame,unsigned a,unsigned b,unsigned c,void *extra) {
+    void *universe=NULL,*player=NULL,*found=NULL;
+    if(gate_read_local(LX(LXFIT_UNIVERSE_VA),&universe,8) && universe) gate_read_local((unsigned char *)universe+0x238,&player,8);
+    fit_row *r=fit_claim(stats.issued);void *args[FIT_ARGS]={sector,pos,frame,player,NULL};
+    if(r) {r->thread=((uint64_t)GetCurrentThreadId()&0xffffffffu)|FIT_SEARCH_TAG|((uint64_t)((a&1u)|(b&1u)<<1|(c&1u)<<2)<<32)|((uint64_t)site<<36);
+           fit_note(r,0,args,lxfit_read);}
+    found=((lxfit_search_fn)(void *)LX(LXFIT_SEARCH_VA))(sector,pos,frame,a,b,c,extra);
+    args[4]=found;fit_note(r,1,args,lxfit_read);
+    return found;
+}
+static void *lxfit_search_0(void *s,void *p,void *f,unsigned a,unsigned b,unsigned c,void *e) {return lxfit_search_hook(0,s,p,f,a,b,c,e);}
+static void *lxfit_search_1(void *s,void *p,void *f,unsigned a,unsigned b,unsigned c,void *e) {return lxfit_search_hook(1,s,p,f,a,b,c,e);}
+static int lxfit_search_swap(unsigned i,const unsigned char *from,const unsigned char *to) {
+    unsigned char *at=LX(lxfit_search_calls[i]),*line=(unsigned char *)((uintptr_t)at&~(uintptr_t)15);const unsigned off=(unsigned)(at-line);
+    const intptr_t df=(intptr_t)from-(intptr_t)(at+5),dt=(intptr_t)to-(intptr_t)(at+5);
+    if(off+5>16 || df!=(intptr_t)(int32_t)df || dt!=(intptr_t)(int32_t)dt) return 0;
+    unsigned __int128 current,desired;int32_t f=(int32_t)df,t=(int32_t)dt;memcpy(&current,line,16);
+    if(((unsigned char *)&current)[off]!=0xe8 || memcmp((unsigned char *)&current+off+1,&f,4)) return 0;
+    desired=current;memcpy((unsigned char *)&desired+off+1,&t,4);
+    return gate_code_swap128(line,current,desired);
+}
+static void lxfit_search_arm(void) {
+    if(!lxfit_search_page) lxfit_search_page=gate_near_page(LX(lxfit_search_calls[0]));
+    if(!lxfit_search_page || mprotect(lxfit_search_page,GATE_PAGE,PROT_READ|PROT_WRITE)) return;
+    memset(lxfit_search_page,0xcc,GATE_PAGE);
+    lxw_jump_write(lxfit_search_page,(void *)lxfit_search_0);lxw_jump_write(lxfit_search_page+0x20,(void *)lxfit_search_1);
+    if(mprotect(lxfit_search_page,GATE_PAGE,PROT_READ|PROT_EXEC)) return;
+    for(unsigned i=0;i<2;i++) lxfit_search_installed[i]=lxfit_search_swap(i,LX(LXFIT_SEARCH_VA),lxfit_search_page+0x20*i);
+}
+static void lxfit_search_restore(void) {
+    for(unsigned i=0;i<2;i++) if(lxfit_search_installed[i] && lxfit_search_swap(i,lxfit_search_page+0x20*i,LX(LXFIT_SEARCH_VA))) lxfit_search_installed[i]=0;
+}
 static int lxfit_rel(const void *target,int32_t *out) {
     const intptr_t d=(intptr_t)target-(intptr_t)(LX(LXFIT_SITE_VA)+5);
     if(d<INT32_MIN || d>INT32_MAX) return 0;
@@ -141,6 +183,7 @@ static int lxfit_arm(uint64_t first,uint64_t last) {
     lxf_step_observer=lxfit_step_observer;
     lxfit_frame_arm();
     lxfit_nav_arm();
+    lxfit_search_arm();
     lxfit_installed=1;lxfit_stage="armed";return 1;
 }
 static void lxfit_restore(void) {
@@ -149,10 +192,11 @@ static void lxfit_restore(void) {
     lxf_step_observer=NULL;
     lxfit_frame_restore();
     lxfit_nav_restore();
+    lxfit_search_restore();
     if(lxfit_state()==1 && lxfit_swap(lxfit_page,LX(LXFIT_TARGET_VA))) {lxfit_installed=0;lxfit_stage="restored";}
 }
 static int lxfit_status(char *out,size_t cap) {
-    const int n=snprintf(out,cap,"installed=%d step=%d frame=%d nav=%d window=%llu-%llu calls=%lld rows=%lld dropped=%lld stage=%s",lxfit_installed,lxf_step_observer!=NULL,lxfit_frame_installed,lxfit_nav_installed,
+    const int n=snprintf(out,cap,"installed=%d step=%d frame=%d nav=%d search=%d window=%llu-%llu calls=%lld rows=%lld dropped=%lld stage=%s",lxfit_installed,lxf_step_observer!=NULL,lxfit_frame_installed,lxfit_nav_installed,lxfit_search_installed[0]+lxfit_search_installed[1],
         (unsigned long long)fit_first,(unsigned long long)fit_last,(long long)fit_calls,(long long)fit_claimed,(long long)fit_dropped,lxfit_stage);
     return n>0 && (size_t)n<cap?n:0;
 }

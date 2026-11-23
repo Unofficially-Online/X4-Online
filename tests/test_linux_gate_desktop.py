@@ -231,6 +231,7 @@ class MixedPlatformBundle(unittest.TestCase):
         self.assertIs(options['contact_orient'], True)
         self.assertEqual(options['ui_lazy'], 'key')
         self.assertEqual(options['bullet_cadence'], 'every')
+        self.assertIs(options['area_jobs'], True)
         self.assertEqual(options['worker_layout'], 30)
         self.assertEqual(options['body1_mass'], 'fallback')
         self.assertEqual(options['fp_redirect'], 'redirect')
