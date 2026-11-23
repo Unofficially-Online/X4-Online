@@ -153,7 +153,7 @@ static void test_motion_watch(void) {
     motion_watch_row_t *saved_ring=motion_watch_ring;LONG64 saved_rows=motion_watch_rows;
     static motion_watch_row_t ring[4];motion_watch_ring=ring;motion_watch_rows=1;
     assert(motion_watch_read(test_mw_object,0xa214c,12,&ring[0],NULL));
-    char out[3072];assert(motion_watch_row(0,out,sizeof(out))>0);
+    static char out[8192];assert(motion_watch_row(0,out,sizeof(out))>0);
     assert(strstr(out,"index=0 tick=12 saved=00000000000a214c attention=5 ctrl=02c51158 model=02c4e9c8 flags=2047 cur=404142"));
     assert(strstr(out," prev=000102") && strstr(out," cache=808182") && strstr(out," target=c0c1c2") && !strstr(out,"buffer="));
     assert(strstr(out," model_ext=00000000000000000000000000000000202122") && strstr(out," flight=4294967295/0000000000000000/0000000000000000") && strstr(out," agent_ext=0000f74201020000") && strstr(out,"070000000000000000000000000000f0bf0003 formation=1 leader=0000000000123456/0/2/2b6e910 leader_ext=00004843"));
@@ -161,7 +161,7 @@ static void test_motion_watch(void) {
     assert(motion_watch_read(test_mw_object,0xa214c,12,&ring[0],NULL));
     assert(strstr(out,"fcfdfeff000000000000000008090a"));
     assert(strstr(out," target_ref=0000000000123456/0/2/2b6e910 path=2 path0=0000000000000000000000000000000040414243"));
-    assert(strstr(out," path0_ref=00000000000a214c/0/0/ffffffff/1") && strstr(out," ship_ext=0000c04201 wingmen=0 wingman0=0000000000000000/2/0/0") && strstr(out," wings=-") && strlen(out)<2400);
+    assert(strstr(out," path0_ref=00000000000a214c/0/0/ffffffff/1") && strstr(out," ship_ext=0000c04201 wingmen=0 wingman0=0000000000000000/2/0/0") && strstr(out," wings=-") && strstr(out," model_raw=") && strlen(out)<2400+11+2*MOTION_MODEL_RAW);
     assert(!motion_watch_row(1,out,sizeof(out)));
     { /* The Steering group: a constructor draw alone parts flight=. */
         char a[512],b[512];ring[1]=ring[0];ring[1].flight_angles[0]^=1;motion_watch_rows=2;
@@ -321,7 +321,7 @@ static void test_motion_zone(void) {
     double start=17493.5;memcpy(ctrl+0x60,&start,8);uint32_t anim=3;memcpy(ctrl+0x120,&anim,4);
     assert(motion_watch_read(ship,0xa1885,17494,&ring[0],NULL) && (ring[0].flags&2048) && ring[0].ctrl_vt==DOCK_CONTROLLER_VTABLE);
     assert(ring[0].parent.key==0x59a26 && !ring[0].parent.depth && !strncmp(ring[0].dock,"DOCKCTL_1:",10));
-    motion_watch_rows=1;char out[3072];assert(motion_watch_row(0,out,sizeof(out))>0);
+    motion_watch_rows=1;static char out[8192];assert(motion_watch_row(0,out,sizeof(out))>0);
     assert(strstr(out," parent=0000000000059a26/0/0/ffffffff dock=DOCKCTL_1:40d1156000000000") && strstr(out,":00000003:0000:"));
     /* Digests: one line per row; equal rows give equal digests, a pose byte moves cur only. */
     char d1[512],d2[512];assert(motion_watch_digest(0,d1,sizeof(d1))>0);

@@ -5,7 +5,8 @@
  * do not create a lifetime lock or exclude an unobserved ABA. */
 #define WORLD_MOTION_WATCH_MAX 4u
 #define WORLD_MOTION_WINDOW_MAX 18000u
-#define WORLD_MOTION_ROW_BYTES 2048u
+#define WORLD_MOTION_ROW_BYTES 4096u
+#define WORLD_MOTION_MODEL_RAW 0x340u
 /* The agent fields the Linear step reads, in Windows' agent_ext= order and sizes (lockstep_motion_watch.h
  * motion_agent_fields); Linux offsets, +0x20 from +0x6e0 on (gate_world.h's pathing agent note). */
 static const struct {unsigned short at,size;} world_motion_agent_fields[]={
@@ -204,15 +205,19 @@ static int world_motion_capture(uint64_t tick) {
         memcpy(&model_ref, model_target + 0x40, 8);
         world_motion_hex(model_target, sizeof(model_target), model_text);
         uint64_t point_ref = 0;
+        unsigned char model_raw[WORLD_MOTION_MODEL_RAW] = {0};
+        static char model_raw_text[2 * WORLD_MOTION_MODEL_RAW + 1];
+        if (model) WREAD(model, model_raw, sizeof(model_raw));
+        world_motion_hex(model_raw, sizeof(model_raw), model_raw_text);
         char point_agent[40];
         world_motion_point_agent(snapshot.links.agent, map, find, &point_ref, point_agent, sizeof(point_agent));
         int length = snprintf(world_motion_rows[index], WORLD_MOTION_ROW_BYTES,
             "version=1 tick=%llu id=%016llx type=%08x flags=%08x parent=%016llx read=%u write=%u cursor=%u motion=%s timing=%s"
-            " model=%x target_ref=%016llx target=%s plan=%s agent_ext=%s pt_ref=%016llx pt_map=%s",
+            " model=%x target_ref=%016llx target=%s plan=%s agent_ext=%s pt_ref=%016llx pt_map=%s model_raw=%s",
             (unsigned long long)tick, (unsigned long long)target->saved, before.type, before.flags,
             (unsigned long long)before.parent_saved, snapshot.links.read, snapshot.links.write, cursor, motion_text, timing_text,
             model ? (unsigned)(model_vt - LX_IMAGE_BASE) : 0u, (unsigned long long)world_identity_portable(model_ref), model_text, plan_text, agent_text,
-            (unsigned long long)point_ref, point_agent);
+            (unsigned long long)point_ref, point_agent, model_raw_text);
         world_motion_problem = "row_truncated";
         if (length < 0 || (size_t)length >= WORLD_MOTION_ROW_BYTES) return 0;
     }

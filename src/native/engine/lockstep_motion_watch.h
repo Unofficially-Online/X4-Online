@@ -138,6 +138,7 @@
 #define MOTION_REF_UNRESOLVED 0xffu
 typedef struct {uint64_t key;unsigned klass,depth;uint32_t type;} motion_ref_t;
 #define MOTION_AGENT_EXT 47u
+#define MOTION_MODEL_RAW 0x340u
 typedef struct {uint64_t tick,saved;int attention;uint32_t ctrl_vt,model_vt,index,flags,path_count,path_conn,formation;
     unsigned char slot[2][0x60],cache[0x40],target[0x50],path0[0x50],model_ext[0x70],agent_ext[MOTION_AGENT_EXT],leader_ext[MOTION_AGENT_EXT],ship_ext[5];
     uint32_t wingmen;unsigned char fp[48];motion_ref_t target_ref,path_ref,leader,wingman0,parent;char dock[512];
@@ -145,7 +146,8 @@ typedef struct {uint64_t tick,saved;int attention;uint32_t ctrl_vt,model_vt,inde
     uint32_t spline_count[2],spline_segments,spline_core,spline_requests,spline_obstacles;uint64_t spline_obstacle_time;unsigned char spline_progress[16];
     uint32_t flight_obstacles;uint64_t flight_avoid_time;unsigned char flight_angles[8];
     uint32_t flight_contacts_n;unsigned char flight_contacts[4][0x80];uint32_t flight_contact_fnv_n,flight_contact_fnv[64];
-    uint32_t slotx[2];uint32_t pt_depth;uint64_t pt_owner;} motion_watch_row_t;   /* slotx: each pathing slot's +0x60..+0x19f (the digest's slotx=, of the current one) */
+    uint32_t slotx[2];uint32_t pt_depth;uint64_t pt_owner;
+    unsigned char model_raw[MOTION_MODEL_RAW];} motion_watch_row_t;   /* model_raw: the Steering model's first bytes, raw (pointers too) */   /* slotx: each pathing slot's +0x60..+0x19f (the digest's slotx=, of the current one) */
 #define MOTION_PATHING_INDEX2 0x2f4b6f4u /* g_PathingStateBufferIndex2 */
 /* Flight parameter fields of one 0x1a0 slot: +0x24, +0x190..+0x193, +0x194, +0x198. */
 static int motion_fp_fields(const unsigned char *slot,unsigned char out[16]) {
@@ -558,6 +560,7 @@ static int motion_watch_read(const unsigned char *object,uint64_t saved,uint64_t
             memset(r->model_ext,0,0x10);memset(r->model_ext+0x20,0,0x18);
             memset(r->model_ext+0x44,0,4);   /* +0xb4..+0xb7: padding the constructor 0xec40c0 never writes (j1-233/234: stale heap per process) */
             motion_flight_fields(model,r);
+            read_local(model,r->model_raw,MOTION_MODEL_RAW);
         }
         if(r->model_vt==MOTION_SPLINE_VTABLE) { /* Spline: the deques' proxy and map pointers (+0x70/+0x78, +0x98/+0xa0) */
             memset(r->model_ext,0,16);memset(r->model_ext+0x28,0,16);
@@ -626,16 +629,17 @@ static int motion_watch_row(uint64_t index,char *out,size_t cap) {
     for(uint32_t k=0;k<r->wingmen && k<8u;k++) wn+=(size_t)snprintf(wings+wn,sizeof(wings)-wn,"%s%016llx",k?",":"",(unsigned long long)r->wings[k]);
     if(!wn) wings[wn++]='-';
     wings[wn]=0;
-    char pt_map[40];
+    char pt_map[40];static char model_raw[2*MOTION_MODEL_RAW+16];model_raw[0]=0;   /* Steering ships only */
+    if(r->model_vt==MOTION_FLIGHT_VTABLE) {memcpy(model_raw," model_raw=",11);motion_watch_hex(model_raw+11,r->model_raw,MOTION_MODEL_RAW);}
     if(r->pt_depth==0xffu) snprintf(pt_map,sizeof(pt_map),"none/0");
     else snprintf(pt_map,sizeof(pt_map),"%u/%016llx",r->pt_depth,(unsigned long long)r->pt_owner);
     n=snprintf(out,cap,"index=%llu tick=%llu saved=%016llx attention=%d ctrl=%08x model=%08x flags=%u cur=%s prev=%s cache=%s target=%s "
         "target_ref=%s path=%u path0=%s path0_ref=%s/%u model_ext=%s agent_ext=%s formation=%u leader=%s leader_ext=%s ship_ext=%s wingmen=%u wingman0=%s fp=%s "
-        "parent=%s dock=%s spline=%u/%u/%08x/%08x/%s requests=%u obstacles=%u/%016llx flight=%u/%016llx/%s contacts=%s contact_fnv=%s wings=%s pt_map=%s",
+        "parent=%s dock=%s spline=%u/%u/%08x/%08x/%s requests=%u obstacles=%u/%016llx flight=%u/%016llx/%s contacts=%s contact_fnv=%s wings=%s pt_map=%s%s",
         (unsigned long long)index,(unsigned long long)r->tick,(unsigned long long)r->saved,r->attention,r->ctrl_vt,r->model_vt,r->flags,
         cur,prev,cache,target,target_ref,r->path_count,path0,path_ref,r->path_conn,model_ext,agent_ext,r->formation,leader,leader_ext,ship_ext,r->wingmen,wingman0,fp,
         parent,r->dock[0]?r->dock:"-",r->spline_count[0],r->spline_count[1],r->spline_segments,r->spline_core,progress,r->spline_requests,r->spline_obstacles,
-        (unsigned long long)r->spline_obstacle_time,r->flight_obstacles,(unsigned long long)r->flight_avoid_time,angles,contacts,fnvs,wings,pt_map);
+        (unsigned long long)r->spline_obstacle_time,r->flight_obstacles,(unsigned long long)r->flight_avoid_time,angles,contacts,fnvs,wings,pt_map,model_raw);
     return n>0 && (size_t)n<cap?n:0;
 }
 /* FNV-1a 32 of field groups (motion_fnv, above); references by their fields (no struct padding). */

@@ -831,6 +831,18 @@ BULLET HIT TESTS EVERY FRAME ON LINUX (linux/gate_bullet_cadence.h; W88..W96 aga
   on Linux without native_gate_bullet_rng (whose keyed draws are the interval draw 'every' removes).
   The long run again (W86 against lx119a): 0 apart at 600, 900 and 1200, 2 at 1500, 18 at 1800, 23 at 2400 (lx115a:
   4 at 900, 45 at 2400). The next split lies between 1200 and 1500.
+  That split (W97 against lx120a, every 15 ticks; then single-capture runs with the census stride at the tick, which
+  capture exactly there): equal at 1202, apart at 1203. Two more dogfighters in the same temp zone, Argon 0x176ad5
+  (pursuing) and Xenon 0x176c95 (flying to a point), both Steering models with 12 avoidance contacts: at 1203 the
+  linear and angular velocities of the first pathing bank differ by 1-3 ulps (Argon), the linear velocity's z by 1 ulp
+  (Xenon); positions and rotations are equal. Their model targets, agent fields and the Steering models' own bytes
+  (motion rows' new model_raw=, both gates; Linux's fields lie 0x10 below Windows' throughout) are equal through 1203,
+  so the difference arises in what the step writes, not in its inputs. No Windows default explains it: every group of
+  the defaults the Linux bundle does not set, off on Windows (W99-W107: bodies and RNG words, views, scripts and
+  orders, cameras, speech, spline phase, nav player), leaves the two objects apart; nested_actions cannot be off
+  alone (MD timed RNG refuses). So, like steer_roll, avoid_angle, pursuit_speed and weave_phase, an MSVC-against-GCC
+  float order in a Steering behaviour (the Linux executable has no systematic FMA contraction: 23 candidate encodings
+  in all). Next: the Steering step's behaviour outputs on both builds for the watched ship at 1202.
 
 FUNCTION COVERAGE WITH PLAYER INPUT ON LINUX (191754a1, b1688473; lx32a, lx32b)
   native_gate_coverage_from = T (Linux gate only; linux_gate_live.py --coverage-from) puts the coverage marks in at
