@@ -49,6 +49,7 @@ except ImportError:
 RE = Path(os.environ.get('X4_RE', ROOT.parent / 'x4-re'))
 MD_XSD = RE / 'gamescripts/resolved/base/libraries/md.xsd'
 X4RE_SHIPTRADER = RE / 'gamescripts/resolved/base/aiscripts/build.shiptrader.xml'   # read only, when present
+X4RE_NOTIFICATIONS = RE / 'gamescripts/resolved/base/md/notifications.xml'   # read only, when present
 L = identity.lua_literal
 
 S1, S2, S3, S4 = identity.DEFAULT_SHIPS[:4]
@@ -607,8 +608,24 @@ class MdScriptTests(unittest.TestCase):
                 continue
             diff = ET.fromstring((DEV / source).read_text(encoding='utf-8'))
             self.assertEqual(diff.tag, 'diff')
-            self.assertEqual([(e.tag, e.get('sel')) for e in diff], [('add', cues[name])])
+            self.assertEqual([(e.tag, e.get('sel')) for e in diff][:1], [('add', cues[name])])
             self.assertEqual([(e.tag, e.attrib) for e in diff[0]], [('check_value', {'value': 'not @md.$X4LAN_QuietRelations'})])
+        # md/notifications.xml also names the bridge's two speakers of its three docking notices (the player who pilots
+        # its ship, else none; the player's computer): the stock parameter with one entry more, nothing else.
+        notes = ET.fromstring((DEV / defaults.MD_PATCHES['md/notifications.xml']).read_text(encoding='utf-8'))
+        notice = "/mdscript/cues/cue[@name='Init']/cues/cue[@name='%s']/actions/signal_cue_instantly/@param"
+        self.assertEqual([(e.tag, e.get('sel')) for e in notes[1:]],
+                         [('replace', notice % cue) for cue in ('OnDockingGranted', 'OnDockingAborted', 'OnDocked')])
+        actors = (' $actors = table[ $Captain = (if @player.occupiedship and (player.entity == @player.occupiedship.pilot or '
+                  'player.controlled == player.occupiedship) then player.entity else null), $Betty = player.computer ],')
+        stock = X4RE_NOTIFICATIONS.read_text(encoding='utf-8') if X4RE_NOTIFICATIONS.is_file() else None
+        for e, cue in zip(notes[1:], ('OnDockingGranted', 'OnDockingAborted', 'OnDocked')):
+            self.assertEqual(e.text.count(actors), 1)
+            if stock is not None:   # the read-only x4-re copy: the rest of the parameter is X4's, unchanged
+                node = [c for c in ET.fromstring(stock).iter('cue') if c.get('name') == cue]
+                self.assertEqual(len(node), 1)
+                param = node[0].find('actions/signal_cue_instantly').get('param')
+                self.assertEqual(' '.join(e.text.replace(actors, '', 1).split()), ' '.join(param.split()))
 
     # Every patch of a stock script selects exactly one node of that script (the read-only x4-re copies, when present):
     # a selector that misses or hits twice would leave X4's script as it was or patch the wrong place.

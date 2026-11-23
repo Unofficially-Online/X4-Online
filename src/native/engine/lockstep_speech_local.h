@@ -136,6 +136,123 @@ static spl_queue_fn spl_queue_original;   /* tests: in place of the trampoline *
 static unsigned char spl_option_patched[5],spl_next_patched[4][5];
 static volatile LONG64 spl_lines_noted,spl_lines_played,spl_lines_muted,spl_cues_noted,spl_cues_cleared;
 static unsigned mpp_show_slot(void);      /* lockstep_mission_owners.h: the player whose own cue's frame runs now */
+/* Subtitles for the lines this client hears. A line whose voice X4 does not start (a text line, or a line this module
+ * muted) goes into X4's set of text lines (SpeakNextLine 0x561330: its voice handle +0x14 stays 0, 0x5b65f0 inserts the
+ * speak data into the set at 0x2f57660), and every frame the universe's update (0x9fdf29 -> 0x563a10) shows the line
+ * 0x563bb0 picks from that set as the HUD's subtitle (U::VoiceOutputEvent). So a line muted here was still read out on
+ * this screen: player 1's "Successfully docked." on player 2's (dockpair, 22 Nov: SPEECH_START owner=1 muted=1 on client
+ * 2 and the subtitle there), and a mission call's subtitles on every screen (docs/PLAYTEST.md, 11 Nov).
+ * The picker 0x563bb0 is ours (its entry jumps to spl_pick on the slots' near page; X4's own code is never called): the
+ * same walk over the set in the same order with the same choices (states 0, 2, 6, 7 left out; +0x61 left out unless
+ * state 4; the first with +0x5e clear at once; else the highest +0x58 among those with +0x60 clear), and a speak data
+ * whose last line started here under this module's mute (spl_next notes each start) is left out. The set itself, the
+ * lines and their timers are X4's, untouched. Pinned (the whole picker); restored on stop. Status subtitles=installed/hidden. */
+#define SPL_PICK 0x563bb0u
+#define SPL_PICK_SIZE 0xb0u
+#define SPL_PICK_SHA "3062f192868831cb6f66ff4da524710bf51c66cb8e5c1321b0c700c9771e0add"
+#define SPL_PICK_BEGIN 0x2f57680u         /* the set's first node */
+#define SPL_PICK_END 0x2f57660u           /* the set's end (its header) */
+#define SPL_PICK_STUB 0xa80u              /* on the slots' near page, after the undock events' (0xa40, 0xa60) */
+#define SPL_STARTED 256u
+static const unsigned char spl_pick_head[5]={0x48,0x8b,0x05,0xc9,0x3a};   /* mov rax,[rip+0x29f3ac9] (its first five bytes) */
+static unsigned char spl_pick_patched[5];
+static int spl_pick_installed;
+static volatile LONG64 spl_pick_hidden;
+static struct {const void *data;int muted;} spl_started[SPL_STARTED];   /* a speak data's last start here: muted by us? */
+static unsigned spl_started_at(const void *data) {const uintptr_t p=(uintptr_t)data;return (unsigned)(((p>>4)^(p>>12))%SPL_STARTED);}
+static void spl_started_note(const void *data,int muted) {
+    if(!data) return;
+    const unsigned at=spl_started_at(data);spl_started[at].data=data;spl_started[at].muted=muted!=0;
+}
+static int spl_started_muted(const void *data) {const unsigned at=spl_started_at(data);return spl_started[at].data==data && spl_started[at].muted;}
+/* X4's picker with the one rule more (the set's nodes: +0 parent, +8 left, +0x10 right, +0x20 the speak data). */
+static void *spl_pick_in(unsigned char *begin,unsigned char *end,int filter) {
+    unsigned char *node=begin,*best=NULL;
+    for(unsigned guard=0;node && node!=end && guard<4096u;guard++) {
+        unsigned char *const sd=*(unsigned char **)(node+0x20);
+        const uint32_t state=*(const uint32_t *)(sd+0x10);
+        if(!(state<=7u && ((0xc5u>>state)&1u)) && (state==4u || !sd[0x61])) {
+            if(filter && spl_started_muted(sd)) InterlockedIncrement64(&spl_pick_hidden);
+            else {
+                if(!sd[0x5e]) return sd;
+                if(!sd[0x60] && (!best || *(const int32_t *)(sd+0x58)>*(const int32_t *)(best+0x58))) best=sd;
+            }
+        }
+        unsigned char *next=*(unsigned char **)(node+0x10);
+        if(next) {while(*(unsigned char **)(next+8)) next=*(unsigned char **)(next+8);}
+        else {
+            unsigned char *child=node;next=*(unsigned char **)node;
+            for(unsigned up=0;next && *(unsigned char **)(next+8)!=child && up<64u;up++) {child=next;next=*(unsigned char **)next;}
+        }
+        node=next;
+    }
+    return best;
+}
+static __attribute__((noinline)) void *spl_pick(void) {
+    return spl_pick_in(*(unsigned char **)(image+SPL_PICK_BEGIN),image+SPL_PICK_END,spl_armed && stats.active && GetCurrentThreadId()==ui_thread);
+}
+static int spl_pick_pins(const unsigned char *base) {return hash_ok(base+SPL_PICK,SPL_PICK_SIZE,SPL_PICK_SHA) && !memcmp(base+SPL_PICK,spl_pick_head,5);}
+static void spl_pick_install(void) {
+    DWORD old,ignored;
+    if(spl_pick_installed || !pslot_page || !spl_pick_pins(image)) return;
+    if(!VirtualProtect(pslot_page,PVIEW_PAGE,PAGE_READWRITE,&old)) return;
+    pview_abs_jump(pslot_page+SPL_PICK_STUB,(void*)spl_pick);
+    if(!VirtualProtect(pslot_page,PVIEW_PAGE,PAGE_EXECUTE_READ,&ignored)) return;
+    FlushInstructionCache(GetCurrentProcess(),pslot_page,PVIEW_PAGE);
+    const int32_t rel=(int32_t)((intptr_t)(pslot_page+SPL_PICK_STUB)-(intptr_t)(pnat_base+SPL_PICK+5));
+    spl_pick_patched[0]=0xe9;memcpy(spl_pick_patched+1,&rel,4);
+    memset(spl_started,0,sizeof(spl_started));
+    if(pview_cas(SPL_PICK,spl_pick_head,spl_pick_patched,5)) spl_pick_installed=1;
+}
+static void spl_pick_restore(void) {
+    if(spl_pick_installed && pview_cas(SPL_PICK,spl_pick_patched,spl_pick_head,5)) spl_pick_installed=0;
+}
+/* Rows (cheap, requests and starts are a few a minute): each request to speak (the request's entry: the tick, the speaker's
+ * ID, the first line as page:id, how many lines, whose the frame is, the open scope, the MD cue of the frame that asked)
+ * and each start of a line (SpeakNextLine: the speaker, its noted owner, whether this client's voice is muted for it).
+ * gate.speech_local_rows() hands the new ones to the probe's log: SPEECH_REQUEST / SPEECH_START. */
+#define SPL_ROWS 64u
+static struct {uint64_t tick,speaker;uint32_t line[2];unsigned kind,count,owner,scope,muted;int state[2],result;char cue[56];} spl_rows[SPL_ROWS];
+static unsigned spl_rows_written,spl_rows_read;
+static int spl_data_state(void *data) {int state=-1;if(!data || !read_local((unsigned char*)data+0x10,&state,4)) state=-1;return state;}
+/* A request's row after X4's own request: the speak data's state then and the request's answer. */
+static void spl_row_answer(unsigned at,void *data,unsigned char result) {
+    at%=SPL_ROWS;spl_rows[at].state[1]=spl_data_state(data);spl_rows[at].result=result;
+}
+static unsigned spl_row(unsigned kind,void *data,void *lines,unsigned owner,int muted) {
+    uint64_t id=0;uintptr_t span[2]={0,0};
+    if(!data || !read_local((unsigned char*)data+8,&id,8)) id=0;
+    unsigned at=spl_rows_written++%SPL_ROWS;
+    memset(&spl_rows[at],0,sizeof(spl_rows[at]));
+    spl_rows[at].tick=stats.issued;spl_rows[at].speaker=id;spl_rows[at].kind=kind;spl_rows[at].owner=owner;
+    spl_rows[at].scope=pstk_scope_slot;spl_rows[at].muted=muted<0?2u:(unsigned)muted;
+    spl_rows[at].state[0]=spl_rows[at].state[1]=spl_data_state(data);spl_rows[at].result=-1;
+    if(lines && read_local(lines,span,sizeof(span)) && span[1]>span[0]) {
+        spl_rows[at].count=(unsigned)((span[1]-span[0])/0x30);
+        if(!read_local((void*)span[0],spl_rows[at].line,8)) spl_rows[at].line[0]=spl_rows[at].line[1]=0;
+    }
+    if(kind==0 && script_rng_current) snprintf(spl_rows[at].cue,sizeof(spl_rows[at].cue),"%s",script_rng_current->id.name);
+    return at;
+}
+/* The rows not handed out yet, one per line (a ring: the oldest are lost when more than SPL_ROWS came between two reads). */
+static int spl_rows_text(char *out,size_t capacity) {
+    size_t n=0;out[0]=0;
+    if(spl_rows_written-spl_rows_read>SPL_ROWS) spl_rows_read=spl_rows_written-SPL_ROWS;
+    while(spl_rows_read!=spl_rows_written && n+420<capacity) {
+        const unsigned at=spl_rows_read++%SPL_ROWS;
+        const int w=spl_rows[at].kind==0?
+            snprintf(out+n,capacity-n,"SPEECH_REQUEST tick=%llu speaker=%llx line=%u:%u count=%u owner=%u scope=%u state=%d/%d result=%d cue=%s\n",
+                (unsigned long long)spl_rows[at].tick,(unsigned long long)spl_rows[at].speaker,spl_rows[at].line[0],spl_rows[at].line[1],
+                spl_rows[at].count,spl_rows[at].owner,spl_rows[at].scope,spl_rows[at].state[0],spl_rows[at].state[1],spl_rows[at].result,
+                spl_rows[at].cue[0]?spl_rows[at].cue:"-"):
+            snprintf(out+n,capacity-n,"SPEECH_START tick=%llu speaker=%llx owner=%u scope=%u muted=%u state=%d\n",
+                (unsigned long long)spl_rows[at].tick,(unsigned long long)spl_rows[at].speaker,spl_rows[at].owner,spl_rows[at].scope,spl_rows[at].muted,
+                spl_rows[at].state[0]);
+        if(w<=0 || (size_t)w>=capacity-n) break;
+        n+=(size_t)w;
+    }
+    return (int)n;
+}
 static void spl_speaker_note(uint64_t id,unsigned owner,unsigned kind) {
     unsigned at=SPL_SPEAKERS;
     if(!id || !owner) return;
@@ -167,8 +284,12 @@ static unsigned spl_speaker_owner(void *data) {
 __attribute__((noinline)) static unsigned char spl_queue(void *data,void *lines,int priority,unsigned char interrupt,void *recipient,void *source,
         unsigned flags,void *text) {
     const spl_queue_fn original=spl_queue_original?spl_queue_original:(spl_queue_fn)(void*)(pslot_page+SPL_QUEUE_TRAMPOLINE);
+    const int here=spl_armed && stats.active && GetCurrentThreadId()==ui_thread;
+    const unsigned row=here?spl_row(0,data,lines,mpp_show_slot(),-1):0u;
     spl_queue_note(data);
-    return original(data,lines,priority,interrupt,recipient,source,flags,text);
+    const unsigned char result=original(data,lines,priority,interrupt,recipient,source,flags,text);
+    if(here) spl_row_answer(row,data,result);
+    return result;
 }
 static void spl_queue_install(void) {
     DWORD old,ignored;
@@ -198,9 +319,11 @@ static unsigned char spl_option(void *config,const char *key,unsigned char fallb
 }
 static void spl_next(void *data) {
     const spl_next_fn next=spl_next_original?spl_next_original:(spl_next_fn)(image+SPL_NEXT);
-    const unsigned owner=spl_armed && stats.active && GetCurrentThreadId()==ui_thread?spl_speaker_owner(data):0;
-    if(!owner) {next(data);return;}
+    const int here=spl_armed && stats.active && GetCurrentThreadId()==ui_thread;
+    const unsigned owner=here?spl_speaker_owner(data):0;
+    if(!owner) {if(here) {spl_row(1,data,NULL,0,spl_muted);spl_started_note(data,spl_muted);}next(data);return;}
     const int before=spl_muted,mute=spl_catching_up() || stats.slot!=owner;
+    spl_row(1,data,NULL,owner,mute);spl_started_note(data,mute);
     InterlockedIncrement64(mute?&spl_lines_muted:&spl_lines_played);
     (void)spl_set(mute);
     next(data);
@@ -210,6 +333,7 @@ static void spl_lines_install(void) {
     if(spl_lines_installed || spl_lines_tried || !pslot_page) return;
     spl_lines_tried=1;
     spl_queue_install();   /* on its own: the notes it takes are read by the four calls below when they are there */
+    spl_pick_install();    /* on its own too: without the four calls below nothing is noted and it picks as X4 does */
     if(!hash_ok(image+SPL_OPTION,SPL_OPTION_HEAD,SPL_OPTION_SHA) || !hash_ok(image+SPL_SPEAKER,SPL_SPEAKER_SIZE,SPL_SPEAKER_SHA) ||
        !hash_ok(image+SPL_NEXT,SPL_NEXT_HEAD,SPL_NEXT_SHA)) return;
     unsigned done=0;
@@ -225,6 +349,7 @@ static void spl_lines_install(void) {
 }
 static void spl_lines_restore(void) {
     spl_queue_restore();
+    spl_pick_restore();
     if(!spl_lines_installed) return;
     int ok=pres_site_uninstall(SPL_OPTION_SITE,SPL_OPTION,spl_option_patched);
     for(unsigned i=0;i<4;i++) {
@@ -264,11 +389,11 @@ static void spl_restore(void) {
 }
 static int spl_status(char *out,size_t capacity) {
     int n=snprintf(out,capacity,"armed=%d muted=%d site=%04x frames=%llu toggles=%llu catchup=%llu far=%llu near=%llu unknown=%llu stage=%s "
-        "owned=%llu/%llu/%llu lines=%d/%lld/%lld/%lld cues=%d/%lld/%lld",
+        "owned=%llu/%llu/%llu lines=%d/%lld/%lld/%lld cues=%d/%lld/%lld subtitles=%d/%lld",
         spl_armed,spl_muted,speak_mute_site(),(unsigned long long)spl_frames,(unsigned long long)spl_toggles,(unsigned long long)spl_catchup,
         (unsigned long long)spl_far,(unsigned long long)spl_near,(unsigned long long)spl_unknown,spl_stage,
         (unsigned long long)spl_owner_frames,(unsigned long long)spl_owner_played,(unsigned long long)spl_owner_muted,
         spl_lines_installed,(long long)spl_lines_noted,(long long)spl_lines_played,(long long)spl_lines_muted,
-        spl_queue_installed,(long long)spl_cues_noted,(long long)spl_cues_cleared);
+        spl_queue_installed,(long long)spl_cues_noted,(long long)spl_cues_cleared,spl_pick_installed,(long long)spl_pick_hidden);
     return n>0 && (size_t)n<capacity?n:0;
 }

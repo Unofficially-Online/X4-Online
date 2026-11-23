@@ -275,11 +275,87 @@ static void test_mission_owners(void) {
         assert(!mpp_first_add("One_Too_Many") && mpp_first_count==MPP_FIRST);
         mpp_first_count=0;mpp_first_kept=0;
         memset(mpp_first_scripts,0,sizeof(mpp_first_scripts));memset(mpp_first_not,0,sizeof(mpp_first_not));}
+    /* A player's own notices: an event frame (SR_CUE) of a cue nobody owns in a notice script, whose event.object is a
+     * player's ship or that player, is that player's frame; another script, another kind of frame, another object, an
+     * owned cue and the rule switched off are as before. The root instances such a frame makes are its slot's, slot 1's
+     * too; player 1's object inside the forward of slot k's event stands for slot k. */
+    {   static _Alignas(16) unsigned char notes[0x80],others[0x80],cue[0x200],foreign[0x200],made[0x200],made1[0x200],
+                                          ship1[0x40],ship2[0x40],p1[0x40],p2[0x40];
+        static pilot_slot slots_was[PILOT_SLOTS];memcpy(slots_was,pilot_slots,sizeof(pilot_slots));
+        unsigned char *const ship_was=pslots[2].ship,*const p1_was=pslot_p1;const DWORD thread_was=ui_thread;
+        script_rng_frame frame,*const current_was=script_rng_current;memset(&frame,0,sizeof(frame));
+        const uintptr_t cue_vt=(uintptr_t)image+SCRIPT_RNG_CUE_VT;uint64_t size,capacity=15,v;uintptr_t at;uint32_t kind;
+        size=strlen("Notifications");memcpy(notes+CUE_PATH_SCRIPT_NAME,"Notifications",size);
+        memcpy(notes+CUE_PATH_SCRIPT_NAME+0x10,&size,8);memcpy(notes+CUE_PATH_SCRIPT_NAME+0x18,&capacity,8);
+        size=strlen("Notifications2");memcpy(others+CUE_PATH_SCRIPT_NAME,"Notifications2",size);
+        memcpy(others+CUE_PATH_SCRIPT_NAME+0x10,&size,8);memcpy(others+CUE_PATH_SCRIPT_NAME+0x18,&capacity,8);
+        tmo_cue(cue,cue_vt,0x5550001,NULL);at=(uintptr_t)cue;memcpy(cue+CUE_PATH_DEF,&at,8);at=(uintptr_t)notes;memcpy(cue+CUE_PATH_SCRIPT,&at,8);
+        tmo_cue(foreign,cue_vt,0x5550002,NULL);at=(uintptr_t)foreign;memcpy(foreign+CUE_PATH_DEF,&at,8);at=(uintptr_t)others;memcpy(foreign+CUE_PATH_SCRIPT,&at,8);
+        tmo_cue(made,cue_vt,0x5550003,NULL);tmo_cue(made1,cue_vt,0x5550004,NULL);
+        v=0x7001;memcpy(ship1+8,&v,8);v=0x7002;memcpy(ship2+8,&v,8);v=0x7011;memcpy(p1+8,&v,8);v=0x7012;memcpy(p2+8,&v,8);
+        memset(pilot_slots,0,sizeof(pilot_slots));pilot_slots[0].resolved=1;pilot_slots[0].runtime=0x7001;
+        pslots[2].ship=ship2;pslots[2].player=p2;pslot_p1=p1;
+        /* the event: docked, its object player 1's ship */
+#define TMO_EVENT(c,id) (kind=MPP_VALUE_COMPONENT,memcpy((c)+MPP_EVENT_OBJECT_KIND,&kind,4),v=(id),memcpy((c)+MPP_EVENT_OBJECT,&v,8))
+        TMO_EVENT(cue,0x7001);TMO_EVENT(foreign,0x7001);
+        assert(mpp_slot_by_id(0x7001)==1 && mpp_slot_by_id(0x7011)==1 && mpp_slot_by_id(0x7002)==2 && mpp_slot_by_id(0x7012)==2 &&
+               !mpp_slot_by_id(0x7003) && !mpp_slot_by_id(0));
+        ui_thread=GetCurrentThreadId();script_rng_current=&frame;frame.source=SR_CUE;
+        mpp_armed=1;mpp_count=0;mpp_depth=mpp_depth1=0;pstk_scope_slot=0;
+        mpp_notices_on=0;mpp_notice_open=mpp_notice_depth=0;mpp_notice_frames=mpp_notice_claims=mpp_notice_forwarded=0;
+        memset(mpp_notice_scripts,0,sizeof(mpp_notice_scripts));memset(mpp_notice_not,0,sizeof(mpp_notice_not));
+        assert(!mpp_frame_enter(cue) && !mpp_notice_frames);                               /* switched off: nobody's */
+        mpp_notices_on=1;
+        assert(mpp_notice_script(cue) && !mpp_notice_script(foreign) && mpp_notice_scripts[0]==(uintptr_t)notes);
+        assert(!mpp_frame_enter(foreign) && !mpp_notice_frames);                           /* another script */
+        frame.source=SR_TIMED;assert(!mpp_frame_enter(cue));frame.source=SR_CUE;           /* not an event frame */
+        script_rng_current=NULL;assert(!mpp_frame_enter(cue));script_rng_current=&frame;
+        TMO_EVENT(cue,0x7003);assert(!mpp_frame_enter(cue));                              /* nobody's ship */
+        kind=2;memcpy(cue+MPP_EVENT_OBJECT_KIND,&kind,4);v=0x7001;memcpy(cue+MPP_EVENT_OBJECT,&v,8);
+        assert(!mpp_frame_enter(cue) && !mpp_notice_frames);                               /* not a component */
+        /* player 1's ship: slot 1's frame, no scope; the instance it makes is slot 1's, and what that instance's frames
+         * make is slot 1's as well (the use case the notice signals) */
+        TMO_EVENT(cue,0x7001);
+        {const unsigned c=mpp_frame_enter(cue);
+         assert(c==(MPP_FRAME_OWNED1|MPP_FRAME_NOTICE) && mpp_depth1==1 && mpp_show_slot()==1 && mpp_notice_open==1 && mpp_notice_frames==1 && !pstk_scope_slot);
+         mpp_created_root(made);assert(mpp_owner_of(0x5550003)==1 && mpp_notice_claims==1);
+         mpp_frame_leave(c);assert(!mpp_depth1 && !mpp_notice_depth && !mpp_notice_open && !mpp_show_slot());}
+        {const unsigned c=mpp_frame_enter(made);assert(c==MPP_FRAME_OWNED1 && mpp_depth1==1);   /* the claimed instance: slot 1's */
+         mpp_created_root(made1);assert(mpp_owner_of(0x5550004)==1 && mpp_notice_claims==1);mpp_frame_leave(c);}
+        mpp_notices_on=0;{const unsigned c=mpp_frame_enter(made);mpp_created_root(foreign);assert(!mpp_owner_of(0x5550002));mpp_frame_leave(c);}
+        mpp_notices_on=1;mpp_created_root(foreign);assert(!mpp_owner_of(0x5550002));      /* outside slot 1's frames */
+        /* an owned cue keeps its owner, whatever it hears */
+        mpp_claim_id(2,0x5550001);pstk_scope_slot=2;
+        {const unsigned c=mpp_frame_enter(cue);assert(c==MPP_FRAME_OWNED && !mpp_notice_depth);mpp_frame_leave(c);}
+        pstk_scope_slot=0;
+        mpp_count=0;mpp_refused=0;mpp_frames=mpp_inside=mpp_conflicts=0;
+        /* player 2's ship, or player 2: slot 2's frame, inside its scope; outside it the scope is entered (here none can
+         * be: refused and as before); another slot's scope: as it is */
+        TMO_EVENT(cue,0x7002);pstk_scope_slot=2;
+        {const unsigned c=mpp_frame_enter(cue);assert(c==(MPP_FRAME_OWNED|MPP_FRAME_NOTICE) && mpp_depth==1 && mpp_show_slot()==2 && mpp_notice_open==2);
+         mpp_created_root(made1);assert(mpp_owner_of(0x5550004)==2 && mpp_notice_claims==2);mpp_frame_leave(c);assert(!mpp_depth && !mpp_notice_open);}
+        TMO_EVENT(cue,0x7012);{const unsigned c=mpp_frame_enter(cue);assert(c==(MPP_FRAME_OWNED|MPP_FRAME_NOTICE));mpp_frame_leave(c);}
+        pstk_scope_slot=3;assert(!mpp_frame_enter(cue) && mpp_conflicts==1);
+        pstk_scope_slot=0;{unsigned char *const kept=pslots[2].player;pslots[2].player=NULL;
+         TMO_EVENT(cue,0x7002);assert(!mpp_frame_enter(cue) && mpp_refused==1 && !mpp_notice_depth);pslots[2].player=kept;}
+        /* the forward of slot 2's own event: player 1's object as the source stands for slot 2 */
+        TMO_EVENT(cue,0x7011);pstk_scope_slot=2;pvehk_forward_slot=2;
+        {const unsigned c=mpp_frame_enter(cue);assert(c==(MPP_FRAME_OWNED|MPP_FRAME_NOTICE) && mpp_notice_forwarded==1);mpp_frame_leave(c);}
+        pvehk_forward_slot=0;assert(!mpp_frame_enter(cue));                                /* player 1's in slot 2's scope: as it is */
+        {char text[1024];assert(mpp_status(text,sizeof(text))>0 && strstr(text," notices=1/4/2/1"));}
+        {static char rows[MPP_NOTICE_ROWS*160+16];mpp_notice_rows_read=mpp_notice_rows_written>MPP_NOTICE_ROWS?mpp_notice_rows_written-MPP_NOTICE_ROWS:0u;
+         assert(mpp_notice_rows_text(rows,sizeof(rows))>0 && strstr(rows,"MPP_NOTICE tick=") && strstr(rows," slot=1 scope=0 ") &&
+                strstr(rows," slot=2 scope=2 ") && strstr(rows," slot=2 scope=3 ") && !mpp_notice_rows_text(rows,sizeof(rows)));}
+#undef TMO_EVENT
+        memcpy(pilot_slots,slots_was,sizeof(pilot_slots));pslots[2].ship=ship_was;pslot_p1=p1_was;ui_thread=thread_was;
+        script_rng_current=current_was;mpp_notices_on=0;mpp_count=0;mpp_depth=mpp_depth1=0;pstk_scope_slot=scope;
+        mpp_notice_frames=mpp_notice_claims=mpp_notice_forwarded=0;
+        memset(mpp_notice_scripts,0,sizeof(mpp_notice_scripts));memset(mpp_notice_not,0,sizeof(mpp_notice_not));}
     pstk_scope_slot=scope;pslots[2].player=player;mpp_armed=0;mpp_count=0;
     mpp_claims=mpp_claim_gone=mpp_full=mpp_frames=mpp_entered=mpp_inside=mpp_conflicts=mpp_refused=mpp_leave_failed=mpp_calls=mpp_call_refused=0;
     mpp_active_swaps=mpp_active_gone=mpp_active_shown=mpp_active_shown_changed=0;memset(mpp_active,0,sizeof(mpp_active));mpp_active_open=0;
     printf("missions per player: a cue's owner (descendants, nearest, not ancestors, a parent loop), the ownership table "
-           "(takeover, full), the frame rule (unowned, inside, conflict, refused), the calls' refusals, slot 1's claims, the active mission per slot, offers per slot and helpers (root instances at their construction, depth, pruning), the join state PASS\n");
+           "(takeover, full), the frame rule (unowned, inside, conflict, refused), the calls' refusals, slot 1's claims, the active mission per slot, offers per slot and helpers (root instances at their construction, depth, pruning), the join state, a player's own notices PASS\n");
 }
 /* The pinned image: the instance constructor's head and its two calls without a parent (the root instances). */
 static void test_mission_owners_native_image(const char *path) {

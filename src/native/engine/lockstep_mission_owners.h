@@ -143,6 +143,90 @@ static int mpp_script_is_first(const unsigned char *cue) {
     mpp_first_not[seen]=script;
     return 0;
 }
+/* ---- a player's own notices (native_gate_notices_per_player, a session default) ----
+ * X4's notices about "the player's ship" (md/notifications.xml: docking granted, queued, too far, aborted, denied, not
+ * possible; docked, with the bridge's "Successfully docked." and the station's welcome; undocked; cover; area damage;
+ * md/npc_usecases.xml Triggers: the bridge's lines when the player's ship is hit) listen on the stock groups that hold
+ * every player's ship (native_gate_player_groups) and on player 1's object. Their scripts belong to no player, so a
+ * frame for player 2's ship ran outside every scope (the bridge was player 1's: player.room) and the lines followed the
+ * same-sector rule of lockstep_speech_local.h: player 1's dock was said on both screens, player 2's on none (action
+ * parity, scenario dockpair and repair, 21 Nov).
+ * The rule: an event frame (SR_CUE: the cue's own record at +0x18 is the event it hears now) of a cue nobody owns in one
+ * of these two scripts, whose event.object (+0x20 kind 10 = a component, +0x28 its ID) is a player's ship or that player,
+ * is that player's frame, as a frame of a mission it accepted: slot k's scope and owner for k >= 2, the owner without a
+ * scope for slot 1. Inside the forward of slot k's own event to player 1's listeners (lockstep_pilot_death.h: the object
+ * form hears it from player 1's object) player 1's object stands for slot k. The root instance the frame makes (an
+ * instantiating notice: OnDocked's instance, whose delayed actions start the bridge's use case, and its DockGreeting)
+ * is claimed for that slot, so its later frames are the slot's too; with the rule on, a frame slot 1 owns claims the root
+ * instances it makes for slot 1 as a frame of slot k's does for slot k (the use case the notice signals). Everything
+ * else as before; the claims ride the join state with the table. Status notices=on/frames/claims/forwarded. */
+#define MPP_EVENT_OBJECT_KIND 0x20u   /* the cue's event record (script RNG: SR_CUE reads it at +0x18): event.object's kind */
+#define MPP_EVENT_OBJECT 0x28u        /* ...and its value: a component's ID */
+#define MPP_VALUE_COMPONENT 10u
+#define MPP_NOTICE_SCRIPTS 2u
+static const char *const mpp_notice_names[MPP_NOTICE_SCRIPTS]={"Notifications","NPC_UseCases"};
+static int mpp_notices_on;
+static unsigned mpp_notice_open,mpp_notice_depth;   /* the slot of the notice frames on the MD stack now, and how many */
+static uintptr_t mpp_notice_scripts[MPP_NOTICE_SCRIPTS],mpp_notice_not[64];
+static volatile LONG64 mpp_notice_frames,mpp_notice_claims,mpp_notice_forwarded;
+/* 1: this cue is of one of the notice scripts (the script object is remembered either way). */
+static int mpp_notice_script(const unsigned char *cue) {
+    uintptr_t def=0,script=0;char name[CUE_PATH_NAME_MAX];uint64_t size=0;
+    if(!sample_read(cue+CUE_PATH_DEF,&def,8) || !def) def=(uintptr_t)cue;
+    if(!sample_read((const void *)(def+CUE_PATH_SCRIPT),&script,8) || !script) return 0;
+    for(unsigned i=0;i<MPP_NOTICE_SCRIPTS;i++) if(mpp_notice_scripts[i]==script) return 1;
+    const unsigned seen=(unsigned)((script>>4)%64u);
+    if(mpp_notice_not[seen]==script) return 0;
+    const int n=cue_string_with(read_local,script+CUE_PATH_SCRIPT_NAME,name,sizeof(name),&size);
+    for(unsigned i=0;n>0 && i<MPP_NOTICE_SCRIPTS;i++)
+        if((size_t)n==strlen(mpp_notice_names[i]) && !memcmp(name,mpp_notice_names[i],(size_t)n)) {mpp_notice_scripts[i]=script;return 1;}
+    mpp_notice_not[seen]=script;return 0;
+}
+/* The slot whose ship (its pilot slot's ship, or the ship it sits in) or player has this component ID; 0 none. */
+static uint64_t mpp_id_at(const unsigned char *object) {uint64_t id=0;return object && sample_read(object+8,&id,8)?id:0;}
+static unsigned mpp_slot_by_id(uint64_t id) {
+    if(!id) return 0;
+    for(unsigned k=1;k<=PILOT_SLOTS;k++) {
+        if(pilot_slots[k-1].resolved && pilot_slots[k-1].runtime==id) return k;
+        if(k>=2 && ((pslots[k].ship && mpp_id_at(pslots[k].ship)==id) || (pslots[k].player && mpp_id_at(pslots[k].player)==id))) return k;
+    }
+    return pslot_p1 && mpp_id_at(pslot_p1)==id?1u:0u;
+}
+/* The slot whose notice this frame is, 0 none (not an event frame, another script, an event about nobody's ship). */
+static unsigned mpp_notice_slot(const unsigned char *cue) {
+    const script_rng_frame *const f=script_rng_current;uint32_t kind=0;uint64_t id=0;uintptr_t vt=0;
+    if(!f || f->source!=SR_CUE || !cue || !sample_read(cue,&vt,8) || vt!=(uintptr_t)(image+SCRIPT_RNG_CUE_VT)) return 0;
+    if(!sample_read(cue+MPP_EVENT_OBJECT_KIND,&kind,4) || kind!=MPP_VALUE_COMPONENT || !sample_read(cue+MPP_EVENT_OBJECT,&id,8) || !id) return 0;
+    if(!mpp_notice_script(cue)) return 0;
+    unsigned k=mpp_slot_by_id(id);
+    if(k==1 && pvehk_forward_slot>=2 && pstk_scope_slot==pvehk_forward_slot) {k=pvehk_forward_slot;InterlockedIncrement64(&mpp_notice_forwarded);}
+    return k;
+}
+/* Rows: each notice frame (the tick, its slot, the open scope, the event's keyword, the cue's path), handed to the probe's
+ * log by gate.mpp_notice_rows() (MPP_NOTICE rows; a ring, the oldest are lost past MPP_NOTICE_ROWS between two reads). */
+#define MPP_NOTICE_ROWS 64u
+static struct {uint64_t tick;unsigned slot,scope,keyword;char cue[56];} mpp_notice_rows[MPP_NOTICE_ROWS];
+static unsigned mpp_notice_rows_written,mpp_notice_rows_read;
+static void mpp_notice_row(const unsigned char *cue,unsigned k) {
+    const unsigned at=mpp_notice_rows_written++%MPP_NOTICE_ROWS;uint32_t keyword=0;
+    if(!cue || !sample_read(cue+0x18,&keyword,4)) keyword=0;
+    mpp_notice_rows[at].tick=stats.issued;mpp_notice_rows[at].slot=k;mpp_notice_rows[at].scope=pstk_scope_slot;mpp_notice_rows[at].keyword=keyword;
+    snprintf(mpp_notice_rows[at].cue,sizeof(mpp_notice_rows[at].cue),"%s",script_rng_current?script_rng_current->id.name:"-");
+}
+static int mpp_notice_rows_text(char *out,size_t capacity) {
+    size_t n=0;out[0]=0;
+    if(mpp_notice_rows_written-mpp_notice_rows_read>MPP_NOTICE_ROWS) mpp_notice_rows_read=mpp_notice_rows_written-MPP_NOTICE_ROWS;
+    while(mpp_notice_rows_read!=mpp_notice_rows_written && n+160<capacity) {
+        const unsigned at=mpp_notice_rows_read++%MPP_NOTICE_ROWS;
+        const int w=snprintf(out+n,capacity-n,"MPP_NOTICE tick=%llu slot=%u scope=%u keyword=%x cue=%s\n",(unsigned long long)mpp_notice_rows[at].tick,
+            mpp_notice_rows[at].slot,mpp_notice_rows[at].scope,mpp_notice_rows[at].keyword,mpp_notice_rows[at].cue[0]?mpp_notice_rows[at].cue:"-");
+        if(w<=0 || (size_t)w>=capacity-n) break;
+        n+=(size_t)w;
+    }
+    return (int)n;
+}
+static void mpp_notice_enter(unsigned k) {if(!mpp_notice_depth++) mpp_notice_open=k;InterlockedIncrement64(&mpp_notice_frames);}
+static void mpp_notice_leave(void) {if(mpp_notice_depth && !--mpp_notice_depth) mpp_notice_open=0;}
 /* A full table: the claims of cues that are gone leave it, the others keep their order (the same on every client: the cues
  * are the simulation's). Only with the engine's map at hand. Returns how many left. */
 static unsigned mpp_prune(void) {
@@ -183,11 +267,17 @@ static const char *mpp_hook_why="-";
  * it owns further up the MD stack), the new instance is slot k's. That is how a generation's selection cue, the generic
  * mission it instantiates in a later frame and an accepted mission's helper cues follow their slot. */
 static void mpp_created_root(const unsigned char *made) {
-    const unsigned k=pstk_scope_slot;uint64_t id=0;
-    if(!mpp_armed || !made || GetCurrentThreadId()!=ui_thread || k<2 || k>PILOT_SLOTS || !(mpp_generating==k || mpp_depth)) return;
+    const unsigned scope=pstk_scope_slot;uint64_t id=0;
+    if(!mpp_armed || !made || GetCurrentThreadId()!=ui_thread) return;
+    /* slot 1's own work: a frame of a cue slot 1 owns (a notice of its ship among them), outside every scope */
+    const unsigned k=scope?scope:mpp_notices_on && mpp_depth1?1u:0u;
+    if(k<1 || k>PILOT_SLOTS || (k>=2 && !(mpp_generating==k || mpp_depth))) return;
     InterlockedIncrement64(&mpp_created);
     if(mpp_slot_of(made)==k) return;   /* already slot k's through its parents (an instantiating sub-cue of an owned tree) */
-    if(read_local(made+MPP_CUE_ID,&id,8) && id && !mpp_owner_of(id) && mpp_claim_id(k,id)) InterlockedIncrement64(&mpp_generated);
+    if(read_local(made+MPP_CUE_ID,&id,8) && id && !mpp_owner_of(id) && mpp_claim_id(k,id)) {
+        InterlockedIncrement64(&mpp_generated);
+        if(mpp_notice_depth && mpp_notice_open==k) InterlockedIncrement64(&mpp_notice_claims);
+    }
 }
 static __attribute__((noinline)) void *mpp_create_hook(void *self,void *model,void *parent) {
     void *made=((mpp_create_fn)(image+MPP_CREATE))(self,model,parent);
@@ -391,6 +481,7 @@ static void mpp_faction_leave(unsigned k) {
 #define MPP_FRAME_OWNED 0x100u
 #define MPP_FRAME_FACTION 0x200u   /* this frame opened its slot's faction (a mission frame inside a piloting scope does too) */
 #define MPP_FRAME_OWNED1 0x400u    /* a frame of a cue slot 1 owns (no scope: the canonical player is slot 1's) */
+#define MPP_FRAME_NOTICE 0x800u    /* ...that is a notice about this slot's ship (the notices above) */
 /* The player whose own cue's frame runs now, 0 none: what that frame shows and says is that player's alone
  * (lockstep_md_presentation.h, lockstep_md_media.h, lockstep_speech_local.h). Slot 1's missions too: its frames need no
  * scope, but its hints, music and calls are not the other players'. */
@@ -425,21 +516,30 @@ static unsigned mpp_frame_enter(void *cue) {
     if(!mpp_armed) return 0;
     const unsigned scope=pstk_scope_slot;
     if(mpp_story_slot) mpp_story_frame(cue,scope);
-    if(!mpp_count) return 0;
-    const unsigned k=mpp_slot_of(cue);
+    unsigned k=mpp_count?mpp_slot_of(cue):0u,notice=0;
+    if(!k && mpp_notices_on && (k=mpp_notice_slot(cue))!=0) {notice=MPP_FRAME_NOTICE;mpp_notice_row(cue,k);}   /* a notice about a player's ship */
     if(!k) return 0;   /* nobody's */
     if(k==1) {         /* slot 1's: the canonical player as it is; what the frame shows and says is slot 1's */
         if(scope) return 0;
-        ++mpp_depth1;spl_owner_enter(1);return MPP_FRAME_OWNED1;
+        ++mpp_depth1;spl_owner_enter(1);
+        if(notice) mpp_notice_enter(1);
+        return MPP_FRAME_OWNED1|notice;
     }
     InterlockedIncrement64(&mpp_frames);
     /* The lines an owned frame starts are its owner's (lockstep_speech_local.h): client k hears them, the others do not. */
-    if(scope==k) {InterlockedIncrement64(&mpp_inside);++mpp_depth;spl_owner_enter(k);return MPP_FRAME_OWNED|(mpp_faction_enter(k)?MPP_FRAME_FACTION:0u);}
+    if(scope==k) {
+        InterlockedIncrement64(&mpp_inside);++mpp_depth;spl_owner_enter(k);
+        if(notice) mpp_notice_enter(k);
+        return MPP_FRAME_OWNED|notice|(mpp_faction_enter(k)?MPP_FRAME_FACTION:0u);
+    }
     if(scope) {InterlockedIncrement64(&mpp_conflicts);return 0;}
     if(!pslots[k].player || !pslot_scope_begin(k,&pslots[k],"mission")) {InterlockedIncrement64(&mpp_refused);return 0;}
-    InterlockedIncrement64(&mpp_entered);++mpp_depth;spl_owner_enter(k);return k|MPP_FRAME_OWNED|(mpp_faction_enter(k)?MPP_FRAME_FACTION:0u);
+    InterlockedIncrement64(&mpp_entered);++mpp_depth;spl_owner_enter(k);
+    if(notice) mpp_notice_enter(k);
+    return k|MPP_FRAME_OWNED|notice|(mpp_faction_enter(k)?MPP_FRAME_FACTION:0u);
 }
 static void mpp_frame_leave(unsigned code) {
+    if(code&MPP_FRAME_NOTICE) mpp_notice_leave();
     if(code&MPP_FRAME_OWNED1) {spl_owner_leave();if(mpp_depth1) --mpp_depth1;return;}
     if(code&MPP_FRAME_OWNED) spl_owner_leave();
     if((code&MPP_FRAME_OWNED) && mpp_depth) --mpp_depth;
@@ -607,13 +707,15 @@ static int mpp_arm(void) {
     mpp_count=0;memset(mpp_active,0,sizeof(mpp_active));mpp_active_open=0;mpp_depth=0;mpp_depth1=0;mpp_generating=0;
     mpp_story_slot=0;mpp_story_key=0;mpp_story_missed=0;mpp_first_count=0;
     memset(mpp_first_scripts,0,sizeof(mpp_first_scripts));memset(mpp_first_not,0,sizeof(mpp_first_not));
+    mpp_notice_open=mpp_notice_depth=0;mpp_notice_frames=mpp_notice_claims=mpp_notice_forwarded=0;
+    memset(mpp_notice_scripts,0,sizeof(mpp_notice_scripts));memset(mpp_notice_not,0,sizeof(mpp_notice_not));
     mpp_ai_frames=mpp_ai_entered=mpp_ai_inside=mpp_ai_conflicts=mpp_ai_refused=0;mpp_armed=1;return 1;
 }
 static int mpp_status(char *out,size_t cap) {
     return snprintf(out,cap,"armed=%d owners=%u hash=%016llx claims=%lld gone=%lld full=%lld frames=%lld entered=%lld inside=%lld "
         "conflicts=%lld refused=%lld calls=%lld call_refused=%lld leave_failed=%lld active=%llx/%llx/%llx swaps=%lld active_gone=%lld "
         "shown=%lld/%lld/%llx generations=%lld generated=%lld/%lld pruned=%lld depth=%u hook=%d/%s faction=%lld/%lld/%lld story=%lld/%lld "
-        "ai=%d/%lld/%lld/%lld/%lld/%lld sched=%d/%lld/%lld/%lld guidance=%lld",mpp_armed,mpp_count,(unsigned long long)mpp_owners_hash(),
+        "ai=%d/%lld/%lld/%lld/%lld/%lld sched=%d/%lld/%lld/%lld guidance=%lld notices=%d/%lld/%lld/%lld",mpp_armed,mpp_count,(unsigned long long)mpp_owners_hash(),
         (long long)mpp_claims,(long long)mpp_claim_gone,(long long)mpp_full,(long long)mpp_frames,(long long)mpp_entered,(long long)mpp_inside,
         (long long)mpp_conflicts,(long long)mpp_refused,(long long)mpp_calls,(long long)mpp_call_refused,(long long)mpp_leave_failed,
         (unsigned long long)mpp_active[2],(unsigned long long)mpp_active[3],(unsigned long long)mpp_active[4],(long long)mpp_active_swaps,
@@ -622,5 +724,5 @@ static int mpp_status(char *out,size_t cap) {
         (long long)mpp_faction_swaps,(long long)mpp_faction_same,(long long)mpp_faction_changed,(long long)mpp_story_asked,(long long)mpp_story_claimed,
         mpp_ai_on,(long long)mpp_ai_frames,(long long)mpp_ai_entered,(long long)mpp_ai_inside,(long long)mpp_ai_conflicts,(long long)mpp_ai_refused,
         mpp_sched_installed[0]+mpp_sched_installed[1]+mpp_sched_installed[2],(long long)mpp_sched_calls[0],(long long)mpp_sched_calls[1],(long long)mpp_sched_calls[2],
-        (long long)mpp_active_guidance);
+        (long long)mpp_active_guidance,mpp_notices_on,(long long)mpp_notice_frames,(long long)mpp_notice_claims,(long long)mpp_notice_forwarded);
 }

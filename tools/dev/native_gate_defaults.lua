@@ -219,6 +219,7 @@ D.ON={
  {'native_gate_pilot_present_walk_hud',true,'native_gate_pilot_present native_gate_pilot_foot_slots','no cockpit HUD and no radar on a player 2+ own screen while that player walks'},
  {'native_gate_pilot_slots_post',true,'native_gate_pilot_stock_slots','a player 2+ own ship answers that player as its pilot while the game runs as that player (the autopilot check)'},
  {'native_gate_missions_per_player_ai_frames',true,'native_gate_missions_per_player','the autopilot and other scripts of a player 2+ own ship computer run as that player'},
+ {'native_gate_notices_per_player',true,'native_gate_missions_per_player','the game notices about a player ship (docking, Successfully docked, the station welcome, the bridge lines) are said and shown for that player on its own screen (player 1 docking was heard on both screens, player 2 docking on none)'},
  {'native_gate_md_media',true,'native_gate_pilot_stock_slots','a mission call on the target monitor starts in the simulation at one tick on every client and shows on its owner client only'},
  {'native_gate_conversation_slots',true,'native_gate_missions_per_player native_gate_ui_replay~conversation','a conversation belongs to the player who started it: players 2..N talk, answer and hire as player 1 does (one conversation in the world at a time)'},
  {'native_gate_player_groups',true,'native_gate_pilot_stock_slots','the stock scripts lists of the player ship, container and controlled object hold every player (scans, docking and damage notices, cover count for all)'},

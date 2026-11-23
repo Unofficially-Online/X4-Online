@@ -106,6 +106,10 @@ static void test_speech_local(void) {
         spl_queue_original=test_spl_queue;test_spl_queue_calls=0;
         assert(spl_queue(data,(void*)(uintptr_t)2,-7,1,(void*)(uintptr_t)5,(void*)(uintptr_t)6,0x8u,(void*)(uintptr_t)9)==1 && test_spl_queue_calls==1 &&
             spl_speaker_owner(data)==2);
+        /* the rows: the starts above and this request (slot 2's frame in its scope), each once */
+        {static char rows[SPL_ROWS*420+16];spl_rows_read=spl_rows_written>SPL_ROWS?spl_rows_written-SPL_ROWS:0u;
+         assert(spl_rows_text(rows,sizeof(rows))>0 && strstr(rows,"SPEECH_START tick=") && strstr(rows," owner=2 scope=2 state=") && strstr(rows," result=1 cue=") &&
+                strstr(rows,"SPEECH_REQUEST tick=") && !spl_rows_text(rows,sizeof(rows)));}
         spl_queue_original=NULL;
         pstk_scope_slot=scope;mpp_depth=depth;mpp_depth1=depth1;spl_next_original=NULL;memset(spl_speakers,0,sizeof(spl_speakers));
     }
@@ -119,5 +123,52 @@ static void test_speech_local(void) {
     memset(image+SPEAK_MUTE_SITE,0,2);
     spl_catching_up=join_catching_up;speak_timer_installed=speak_timer_patched=0;speak_timer_failures=0;speak_timer_stage="idle";spl_stage="idle";
     pslots[2]=saved;pslot_p1=saved_p1;stats.issued=saved_issued;ui_thread=saved_ui;stats.active=saved_active;stats.slot=saved_slot;
-    printf("speech local decision, owned frames, site CAS, arm, failure and restore tests PASS\n");
+    /* Subtitles: the picker walks X4's set of text lines in order (left, root, right: nodes +0 parent, +8 left, +0x10 right,
+     * +0x20 the speak data) and chooses as X4 does; a speak data whose last start here was muted by this module is left out. */
+    {   static _Alignas(16) unsigned char header[0x40],nodes[3][0x40],sds[3][0x80];
+        unsigned char *const A=nodes[0],*const B=nodes[1],*const C=nodes[2];void *p;
+        memset(header,0,sizeof(header));memset(nodes,0,sizeof(nodes));memset(sds,0,sizeof(sds));
+        p=header;memcpy(B,&p,8);p=A;memcpy(B+8,&p,8);p=C;memcpy(B+0x10,&p,8);p=B;memcpy(A,&p,8);memcpy(C,&p,8);memcpy(header+8,&p,8);
+        for(unsigned i=0;i<3;i++) {p=sds[i];memcpy(nodes[i]+0x20,&p,8);const uint32_t state=1;memcpy(sds[i]+0x10,&state,4);sds[i][0x5e]=1;}
+        int32_t prio[3]={5,9,7};for(unsigned i=0;i<3;i++) memcpy(sds[i]+0x58,&prio[i],4);
+        memset(spl_started,0,sizeof(spl_started));spl_pick_hidden=0;
+        assert(spl_pick_in(A,header,1)==sds[1] && spl_pick_in(A,header,0)==sds[1]);               /* the highest priority */
+        assert(!spl_pick_in(header,header,1));                                                       /* an empty set */
+        spl_started_note(sds[1],1);assert(spl_pick_in(A,header,1)==sds[2] && spl_pick_hidden==1);   /* muted here: left out */
+        assert(spl_pick_in(A,header,0)==sds[1]);                                                     /* ...not without the filter */
+        spl_started_note(sds[1],0);assert(spl_pick_in(A,header,1)==sds[1]);                         /* its next line was heard */
+        sds[0][0x5e]=0;assert(spl_pick_in(A,header,1)==sds[0]);                                     /* +0x5e clear: the first at once */
+        spl_started_note(sds[0],1);assert(spl_pick_in(A,header,1)==sds[1]);sds[0][0x5e]=1;spl_started_note(sds[0],0);
+        sds[2][0x60]=1;spl_started_note(sds[1],1);assert(spl_pick_in(A,header,1)==sds[0]);sds[2][0x60]=0;   /* +0x60: no candidate */
+        {const uint32_t two=2;memcpy(sds[0]+0x10,&two,4);}assert(spl_pick_in(A,header,1)==sds[2]);        /* state 2 left out */
+        {const uint32_t four=4;memcpy(sds[0]+0x10,&four,4);sds[0][0x61]=1;prio[0]=20;memcpy(sds[0]+0x58,&prio[0],4);}
+        assert(spl_pick_in(A,header,1)==sds[0]);                                                     /* +0x61 counts only outside state 4 */
+        {const uint32_t one=1;memcpy(sds[0]+0x10,&one,4);}assert(spl_pick_in(A,header,1)==sds[2]);
+        memset(spl_started,0,sizeof(spl_started));spl_pick_hidden=0;}
+    printf("speech local decision, owned frames, site CAS, arm, failure and restore tests, subtitles PASS\n");
+}
+/* The subtitle picker against X4's image: as shipped it is pinned; one byte changed in it is refused. */
+static void test_speech_pick_native_image(const char *path) {
+    FILE *file=fopen(path,"rb");assert(file);IMAGE_DOS_HEADER dos;IMAGE_NT_HEADERS64 nt;
+    assert(fread(&dos,1,sizeof(dos),file)==sizeof(dos) && dos.e_magic==IMAGE_DOS_SIGNATURE && dos.e_lfanew>0 && dos.e_lfanew<4096);
+    assert(!fseek(file,dos.e_lfanew,SEEK_SET) && fread(&nt,1,sizeof(nt),file)==sizeof(nt) && nt.OptionalHeader.SizeOfImage==0x6fa9000);
+    unsigned char *at=VirtualAlloc(NULL,nt.OptionalHeader.SizeOfImage,MEM_COMMIT|MEM_RESERVE,PAGE_READWRITE);assert(at);
+    for(unsigned i=0;i<nt.FileHeader.NumberOfSections;i++) {
+        IMAGE_SECTION_HEADER section;assert(fread(&section,1,sizeof(section),file)==sizeof(section));long next=ftell(file);
+        if(section.SizeOfRawData) {
+            assert(!fseek(file,section.PointerToRawData,SEEK_SET));
+            assert(fread(at+section.VirtualAddress,1,section.SizeOfRawData,file)==section.SizeOfRawData);
+        }
+        assert(!fseek(file,next,SEEK_SET));
+    }
+    fclose(file);
+    assert(spl_pick_pins(at));
+    /* the set's first node and its end are the picker's own two operands */
+    int32_t rel=0;memcpy(&rel,at+SPL_PICK+3,4);assert((uint32_t)(SPL_PICK+7u+(uint32_t)rel)==SPL_PICK_BEGIN);
+    memcpy(&rel,at+SPL_PICK+10,4);assert((uint32_t)(SPL_PICK+14u+(uint32_t)rel)==SPL_PICK_END);
+    at[SPL_PICK+0x30]^=0x10;assert(!spl_pick_pins(at));at[SPL_PICK+0x30]^=0x10;
+    at[SPL_PICK+1]^=0x01;assert(!spl_pick_pins(at));at[SPL_PICK+1]^=0x01;assert(spl_pick_pins(at));
+    assert(((SPL_PICK+4u)&~15u)==(SPL_PICK&~15u));   /* the patched five bytes lie in one 16-byte block */
+    VirtualFree(at,0,MEM_RELEASE);
+    printf("speech pick native image: the subtitle picker and its two set operands pinned; tests PASS\n");
 }

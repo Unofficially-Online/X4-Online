@@ -1139,7 +1139,7 @@ int main(int argc,char **argv) {
     if(argc==2) test_runtime_ids_native_image(argv[1]);
     if(argc==2) test_guidance_local_native_image(argv[1]);
     if(argc==2) test_swarm_seed_native_image(argv[1]);
-    if(argc==2) test_undock_screen_native_image(argv[1]);
+    if(argc==2) {test_undock_screen_native_image(argv[1]);test_speech_pick_native_image(argv[1]);}
     if(argc==2) test_ui_replay_native_image(argv[1]);
     if(argc==2) test_ui_guard_native_image(argv[1]);
     if(argc==2) test_ui_build_native_image(argv[1]);

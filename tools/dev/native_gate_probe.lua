@@ -3995,6 +3995,13 @@ function pilot_view.arm_ui_replay(slot,window)
    assert(cfg.native_gate_missions_per_player_ai_frames==true and gate.mpp_ai_frames and gate.mpp_ai_frames(1)==1,
     'native_gate_missions_per_player_ai_frames must be true and needs a gate that has it')
   end
+  -- X4's notices about a player's ship (docking, undocking, the bridge's lines: md Notifications, NPC_UseCases) are that
+  -- player's: shown and said on its own client, its bridge and computer (lockstep_mission_owners.h mpp_notice_slot;
+  -- native_gate_notices_per_player, a session default).
+  if cfg.native_gate_notices_per_player~=nil and cfg.native_gate_notices_per_player~=false then
+   assert(cfg.native_gate_notices_per_player==true and gate.mpp_notices and gate.mpp_notices(1)==1,
+    'native_gate_notices_per_player must be true and needs a gate that has it')
+  end
   log('MISSIONS_PER_PLAYER_ARMED slot='..slot..' '..tostring(gate.mpp_status()))
   -- Research per faction (lockstep_research_owner.h; native_gate_research_per_faction, a session default): what a player
   -- faction researched is that faction's (coop: the one shared list also inside a slot's own scope; factions mode: each
@@ -4452,6 +4459,11 @@ local function pilot_frame(s,tick)
   pilot_view.conversation_owner_last=owner
  end
  if cfg.native_gate_missions_per_player and tick%150==0 and gate.mpp_status then log('MISSIONS_PER_PLAYER tick='..tick..' '..gate.mpp_status()) end
+ -- the notices about a player's ship since the last step (lockstep_mission_owners.h; MPP_NOTICE rows)
+ if cfg.native_gate_notices_per_player and gate.mpp_notice_rows then
+  local rows=gate.mpp_notice_rows()
+  if rows then for row in rows:gmatch('[^\n]+') do ticklog.write(row) end end   -- rare: written at once, not with the tick's rows
+ end
  if cfg.native_gate_missions_per_player and tick%600==0 and gate.md_presentation_status then log('OWNER_PRESENTATION tick='..tick..' '..gate.md_presentation_status()) end
  if pilot_view.stock and gate.pilot_present_diff then
   local diff=gate.pilot_present_diff()
@@ -7889,6 +7901,9 @@ local function frame()
  if cfg.native_gate_speech_local and gate.speech_local then
   gate.speech_local_frame()   -- every step: mute or not for the lines of the coming steps (canonical state, the probe's frame)
   ticklog.status('SPEECH_LOCAL',tick,gate.speech_local_status,'speech local status unavailable')
+  -- each request to speak and each line's start since the last step (SPEECH_REQUEST / SPEECH_START rows)
+  local rows=gate.speech_local_rows and gate.speech_local_rows()
+  if rows then for row in rows:gmatch('[^\n]+') do ticklog.write(row) end end   -- rare: written at once, not with the tick's rows
  end
  if cfg.native_gate_md_media and gate.md_media_frame then
   gate.md_media_frame()   -- every step, on every client: a timeout that is over, notifications that are gone

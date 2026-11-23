@@ -6,9 +6,21 @@
      (a playtest report of 11 Nov: too many faction relation notices at the start).
      While md.$X4LAN_QuietRelations is set (only inside that script's relation steps) a discount or commission
      that the new standing unlocks is added without its notice and logbook line.
-     Our own lines only; the stock script is patched in memory by X4's own diff loading, never on disk. -->
+     Our own lines only; the stock script is patched in memory by X4's own diff loading, never on disk.
+
+     The bridge's docking lines for every player ("Docking granted.", "Docking aborted.", "Successfully docked."; action
+     parity, 22 Nov). The three notices start a bridge use case (md/npc_usecases.xml) that looks for its speakers in the
+     ship: the captain (the player who pilots) and the ship's computer. With native_gate_notices_per_player a notice
+     about player 2's ship runs as player 2, but the search does not find player 2 there (a player 2..N sits in its seat
+     by its own upward link only; the use case logged "required actor $Captain is not present at location $Bridge"), so
+     player 2 never heard them. The use case takes speakers its trigger names; here the notice names the same two the
+     search finds in a stock game: the player when it pilots its ship (else none, and the search runs as before) and the
+     player's computer. -->
 <diff>
  <add sel="/mdscript/cues/cue[@name='Init']/cues/cue[@name='PlayerDiscountCommission']/conditions">
   <check_value value="not @md.$X4LAN_QuietRelations"/>
  </add>
+ <replace sel="/mdscript/cues/cue[@name='Init']/cues/cue[@name='OnDockingGranted']/actions/signal_cue_instantly/@param">table[ $name = '$BridgeStartDocking_PlayerCaptain', $actors = table[ $Captain = (if @player.occupiedship and (player.entity == @player.occupiedship.pilot or player.controlled == player.occupiedship) then player.entity else null), $Betty = player.computer ], $locations = table[ $Bridge = player.room.slotcontext ] ]</replace>
+ <replace sel="/mdscript/cues/cue[@name='Init']/cues/cue[@name='OnDockingAborted']/actions/signal_cue_instantly/@param">table[ $name = '$BridgeDockingAborted', $actors = table[ $Captain = (if @player.occupiedship and (player.entity == @player.occupiedship.pilot or player.controlled == player.occupiedship) then player.entity else null), $Betty = player.computer ], $locations = table[ $Bridge = player.room.slotcontext ] ]</replace>
+ <replace sel="/mdscript/cues/cue[@name='Init']/cues/cue[@name='OnDocked']/actions/signal_cue_instantly/@param">table[ $name = '$BridgeDockingComplete', $actors = table[ $Captain = (if @player.occupiedship and (player.entity == @player.occupiedship.pilot or player.controlled == player.occupiedship) then player.entity else null), $Betty = player.computer ], $locations = table[ $Bridge = player.room.slotcontext ], $callbackcue = DockGreeting, $abortcallbackcue = DockGreeting ]</replace>
 </diff>

@@ -513,6 +513,7 @@ static void pvehk_deliver_leave(int scope) {if(scope>=2 && scope<=(int)PILOT_SLO
 #define PVEHK_FWD_UI_EVENT 0x2ba6e90u   /* U::UITriggeredEvent::vftable: MD's event_ui_triggered takes it from any source */
 static int pvehk_forward_on;
 static volatile LONG64 pvehk_forward_events,pvehk_forward_calls,pvehk_forward_owned,pvehk_forward_over;
+static unsigned pvehk_forward_slot;   /* the slot whose event is being handed to player 1's listeners now, else 0 (lockstep_mission_owners.h's notices) */
 static unsigned mpp_slot_of(const unsigned char *cue);   /* lockstep_mission_owners.h */
 static int mpp_script_is_first(const unsigned char *cue);   /* ...a plot the others have copies of: player 1's own */
 static int rsch_event_private(unsigned k,unsigned type);    /* lockstep_research_owner.h: a notice about slot k's faction's own library */
@@ -563,13 +564,16 @@ static void pvehk_forward(unsigned k,unsigned char *event,double now) {
             /* Twice, for the two forms a script's condition has. An object condition (event_object_... object=
              * "player.entity") holds player 1's object and takes the event from that source; a player condition
              * (event_player_...) takes it from the universe's player, which in this scope is slot k's (the audit:
-             * with player 1 as the source only the object form ran). Each call can match one form only. */
+             * with player 1 as the source only the object form ran). Each call can match one form only.
+             * Either way the event is slot k's (a notice it starts is slot k's: pvehk_forward_slot). */
+            const unsigned outer=pvehk_forward_slot;pvehk_forward_slot=k;
             if(!once) ((void(*)(void*,void*,double,unsigned,void*))cv[4])(cue,first,now,type,event);
             if(once || pvehk_forward_lookup_test || ((unsigned char(*)(void*,void*,unsigned))(void*)(pnat_base+PVEHK_FWD_LISTENS))(first,cue,type))
                 ((void(*)(void*,void*,double,unsigned,void*))cv[4])(cue,pslots[k].player,now,type,event);
+            pvehk_forward_slot=outer;
         }
     }
-    __except(GetExceptionCode()==EXCEPTION_ACCESS_VIOLATION?EXCEPTION_EXECUTE_HANDLER:EXCEPTION_CONTINUE_SEARCH) {pvehk_forward_on=0;}
+    __except(GetExceptionCode()==EXCEPTION_ACCESS_VIOLATION?EXCEPTION_EXECUTE_HANDLER:EXCEPTION_CONTINUE_SEARCH) {pvehk_forward_on=0;pvehk_forward_slot=0;}
 }
 static void pvehk_deliver_forward(int scope,void *event,double time) {
     const int k=scope<0?-scope:scope;   /* minus: the scope was open already */
