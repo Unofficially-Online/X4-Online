@@ -5,3 +5,4 @@ cryptography==44.0.0
 # The Linux/Windows image pairing tools (tools/dev/linux_pair_*.py) and their tests disassemble and read PE files.
 capstone==5.0.9
 pefile==2024.8.26
+pyelftools==0.33
