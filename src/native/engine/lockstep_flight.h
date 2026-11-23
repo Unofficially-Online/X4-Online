@@ -228,12 +228,17 @@ static flight_sample *flight_sample_for(void *self,unsigned *actor) {
 static _Thread_local void *flight_current_model,*flight_current_slot;
 static void flight_update_body(void *self,void *slot,float dt,double time,unsigned char cheap,unsigned char player);
 static void ptf_gate_note(const unsigned char *model,double time,unsigned char cheap);   /* lockstep_path_transforms.h: dock gate rows */
+/* A diagnostic's view of every Steering update (native_gate_fit_rows, lockstep_fit_trace_win.h): before and after. */
+static void (*flight_step_observer)(void *self,void *slot,unsigned after,unsigned char cheap);
 static void flight_update(void *self,void *slot,float dt,double time,unsigned char cheap,unsigned char player) {
     void *const outer_model=flight_current_model,*const outer_slot=flight_current_slot;
+    void (*const observer)(void *,void *,unsigned,unsigned char)=flight_step_observer;
+    if(observer) observer(self,slot,0,cheap);
     if(stats.active && boot_phase==3) ptf_gate_note((const unsigned char*)self,time,cheap);
     flight_current_model=self;flight_current_slot=slot;
     __try {flight_update_body(self,slot,dt,time,cheap,player);}
     __finally {flight_current_model=outer_model;flight_current_slot=outer_slot;}
+    if(observer) observer(self,slot,1,cheap);
 }
 static void flight_update_body(void *self,void *slot,float dt,double time,unsigned char cheap,unsigned char player) {
     void *registry_agent;

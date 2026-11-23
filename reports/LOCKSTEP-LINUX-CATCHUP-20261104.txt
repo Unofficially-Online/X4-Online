@@ -855,8 +855,15 @@ BULLET HIT TESTS EVERY FRAME ON LINUX (linux/gate_bullet_cadence.h; W88..W96 aga
   same operations in the same order on both (Windows 0xd1f10 a - b, 0x4b5f00 v s, the rotation z r2 + (x r0 + y r1)),
   and the rcp(rsqrt) length chain is exact on both (Windows xrcp 0xec8503, the Linux preload's 0x13ea84e/0x13ea858).
   Yet the census reads other velocities in that bank at 1203: something after the Steering step rewrites them.
-  Next: the bank at the step's exit for the watched ships, then whatever writes it after (the physics bodies' sync
-  is the first suspect).
+  The step itself, seen through the flight modules' wrappers (fit rows' step rows: the bank's first 0xc0 bytes and
+  the model's output before and after every Steering update; W112 against lx128a): all 16 updates at 1202 and 1203,
+  the two ships' included, leave bit-identical banks on both builds. Their result is not what the census reads at
+  1203 either: the census's second bank holds the state before the step, its first a third state (the Argon at
+  -1142.03, 37060.902, 899.867 with velocity 1.975, -3.951, -30.451 where the step wrote -1142.108, 37060.891, 899.779
+  and -1.028, -4.054, -32.741), and only that third state differs between the builds. So something after the step
+  makes the bank's velocity and position from the step's result; the physics bodies' state written back is the
+  suspect (Windows body_pose and lockstep_body.h read that chain: record +0x10 the body, its motion +0x48; the
+  write-back into the record's +0x40 / +0x60 transforms).
 
 FUNCTION COVERAGE WITH PLAYER INPUT ON LINUX (191754a1, b1688473; lx32a, lx32b)
   native_gate_coverage_from = T (Linux gate only; linux_gate_live.py --coverage-from) puts the coverage marks in at

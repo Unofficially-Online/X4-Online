@@ -17,6 +17,19 @@ static uint64_t lxfit_hook(void *a1,void *a2,void *a3,void *a4,void *a5) {
     fit_note(r,1,args,lxfit_read);
     return result;
 }
+/* The Steering step itself (0x13e9d50, reached through the flight module's lxf_update, which owns the vtable slot and
+ * pins the step's head): rows as Windows' (the model's output +0x1c0), the cheap flag in bits 56..62 of the thread word. */
+static void lxfit_step_observer(void *model,void *bank,unsigned after,unsigned char cheap) {
+    void *args[FIT_ARGS]={bank,bank?(unsigned char *)bank+0x40:NULL,bank?(unsigned char *)bank+0x80:NULL,model?(unsigned char *)model+0x1c0:NULL,model};
+    if(!after) {
+        fit_row *r=fit_claim(stats.issued);
+        if(r) {r->thread=(uint64_t)GetCurrentThreadId()|FIT_STEP_TAG|((uint64_t)(cheap&0x7f)<<56);fit_note(r,0,args,lxfit_read);}
+        if(r) fit_open_put((uint64_t)GetCurrentThreadId(),r);
+        return;
+    }
+    fit_row *r=fit_open_take((uint64_t)GetCurrentThreadId());
+    if(r) fit_note(r,1,args,lxfit_read);
+}
 static int lxfit_rel(const void *target,int32_t *out) {
     const intptr_t d=(intptr_t)target-(intptr_t)(LX(LXFIT_SITE_VA)+5);
     if(d<INT32_MIN || d>INT32_MAX) return 0;
@@ -54,15 +67,17 @@ static int lxfit_arm(uint64_t first,uint64_t last) {
     if(mprotect(lxfit_page,GATE_PAGE,PROT_READ|PROT_EXEC)) {lxfit_stage="memory";return 0;}
     fit_first=first;fit_last=last;fit_claimed=fit_dropped=fit_calls=0;fit_drained=0;fit_on=1;
     if(!lxfit_swap(LX(LXFIT_TARGET_VA),lxfit_page)) {fit_on=0;lxfit_stage="cas";return 0;}
+    lxf_step_observer=lxfit_step_observer;
     lxfit_installed=1;lxfit_stage="armed";return 1;
 }
 static void lxfit_restore(void) {
     if(!lxfit_installed) return;
     fit_on=0;
+    lxf_step_observer=NULL;
     if(lxfit_state()==1 && lxfit_swap(lxfit_page,LX(LXFIT_TARGET_VA))) {lxfit_installed=0;lxfit_stage="restored";}
 }
 static int lxfit_status(char *out,size_t cap) {
-    const int n=snprintf(out,cap,"installed=%d window=%llu-%llu calls=%lld rows=%lld dropped=%lld stage=%s",lxfit_installed,
+    const int n=snprintf(out,cap,"installed=%d step=%d window=%llu-%llu calls=%lld rows=%lld dropped=%lld stage=%s",lxfit_installed,lxf_step_observer!=NULL,
         (unsigned long long)fit_first,(unsigned long long)fit_last,(long long)fit_calls,(long long)fit_claimed,(long long)fit_dropped,lxfit_stage);
     return n>0 && (size_t)n<cap?n:0;
 }

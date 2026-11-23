@@ -11,8 +11,27 @@
 #define FIT_ARGS 5u
 #define FIT_BYTES 0x40u
 #define FIT_ROWS 8192u
+#define FIT_STEP_TAG 0x8000000000000000ull /* thread | this: a Steering step row (a0..a2 the bank +0x00/+0x40/+0x80, a3 the model's
+                                           * steering output), not an integration call */
 typedef struct {uint64_t tick,thread;uint8_t readable[2][FIT_ARGS];unsigned char before[FIT_ARGS][FIT_BYTES],after[FIT_ARGS][FIT_BYTES];} fit_row;
 static fit_row *fit_rows;
+/* A thread's open step row, between the step observer's before and after calls (no TLS: the Linux gate may need nothing
+ * but libc): 64 slots by thread id, claimed by CAS, freed at the after call. */
+#define FIT_OPEN 64u
+static struct {volatile int64_t thread;fit_row *row;} fit_open[FIT_OPEN];
+static void fit_open_put(uint64_t thread,fit_row *row) {
+    for(unsigned k=0,i=(unsigned)(thread*0x9e3779b1u)&(FIT_OPEN-1);k<FIT_OPEN;k++,i=(i+1)&(FIT_OPEN-1)) {
+        int64_t empty=0;
+        if(__atomic_compare_exchange_n(&fit_open[i].thread,&empty,(int64_t)thread,0,__ATOMIC_SEQ_CST,__ATOMIC_SEQ_CST)) {fit_open[i].row=row;return;}
+    }
+}
+static fit_row *fit_open_take(uint64_t thread) {
+    for(unsigned k=0,i=(unsigned)(thread*0x9e3779b1u)&(FIT_OPEN-1);k<FIT_OPEN;k++,i=(i+1)&(FIT_OPEN-1))
+        if(__atomic_load_n(&fit_open[i].thread,__ATOMIC_SEQ_CST)==(int64_t)thread) {
+            fit_row *r=fit_open[i].row;fit_open[i].row=NULL;__atomic_store_n(&fit_open[i].thread,0,__ATOMIC_SEQ_CST);return r;
+        }
+    return NULL;
+}
 static volatile int64_t fit_claimed,fit_dropped,fit_calls;
 static uint64_t fit_first,fit_last,fit_drained;
 static int fit_on;

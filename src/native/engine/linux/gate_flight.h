@@ -99,8 +99,17 @@ static lxf_sample *lxf_sample_for(void *self,unsigned *actor) {
     }
     return NULL;
 }
-/* The vtable slot's function: a fixture's update on its keyed word (restored after), every other model natively. */
+/* A diagnostic's view of every Steering update (native_gate_fit_rows, gate_fit_trace.h): before and after. */
+static void (*lxf_step_observer)(void *self,void *slot,unsigned after,unsigned char cheap);
+static void lxf_update_body(void *self,void *slot,float dt,double time,unsigned char cheap,unsigned char player);
 static void lxf_update(void *self,void *slot,float dt,double time,unsigned char cheap,unsigned char player) {
+    void (*const observer)(void *,void *,unsigned,unsigned char)=lxf_step_observer;
+    if(observer) observer(self,slot,0,cheap);
+    lxf_update_body(self,slot,dt,time,cheap,player);
+    if(observer) observer(self,slot,1,cheap);
+}
+/* The vtable slot's function: a fixture's update on its keyed word (restored after), every other model natively. */
+static void lxf_update_body(void *self,void *slot,float dt,double time,unsigned char cheap,unsigned char player) {
     lxf_update_fn original=lxf_original_override?lxf_original_override:(lxf_update_fn)(void*)LX(LXF_UPDATE_VA);
     unsigned actor=0;lxf_sample *s=stats.active && boot_phase==3?lxf_sample_for(self,&actor):NULL;
     if(!s) {original(self,slot,dt,time,cheap,player);return;}
