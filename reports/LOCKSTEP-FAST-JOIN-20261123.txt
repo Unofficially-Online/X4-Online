@@ -40,21 +40,28 @@ CHANGES
    beside the raw package; joinfiles.offered() probes a name at offset 2^62 (NO|offset = offered); the joiner takes the
    .gz when offered and checks the unpacked bytes against the raw SHA-256 the relay announced, else the raw file.
 
-FINDING: JOINS AT SOME TICKS PART: A LOW-ATTENTION SHIP'S LINEAR MOVEMENT CONTROLLER IS NOT CARRIED (PRE-EXISTING)
---------------------------------------------------------------------------------------------------------------
-Every parting join in these tests parted by its join tick T, in any order and with any of the variants tried: at T=6140
-and 6147 (with and without a menu wait, with the package built in the frame or on the worker: fjd1, fjw2, fjx3, fjx5),
-at T >= 6183 (the old late-boot order too: fjl3, fjl5, fjx1, fje7, fje9) and at T ~6890 (fje1, fje2, fje4). Joins at
-6095..6135, 6154 and 6173..6178 stayed equal. Each time exactly one object's census motion differs from T+1 on, a
-ShipMedium (vtable 0x2b82440) that flies in low attention: GCC-006 (Xenon M solid miner, ID 0xa08a2, T=6186),
-WIR-567 (Boron M gunboat, 0x8ee88, T=6147), TZG-441 (Xenon M solid miner, 0xa07e8, T=6894); every other differing row
-is nav_raw only (per-process words). JOIN_WATCH on GCC-006 (fjx4, T+1..T+200): its position stays equal for 200 ticks,
-but its movement controller, a linear one (vtable 0x2c3f7c0, the controller bullets use; 0xb0 bytes), differs at
-every tick: the session's has words at +0x18 (0x20e0faa2), +0x68 (0x20c9dcbe), +0x78 (0x410d) and +0xa0 (11) and a
-list, where the joiner's loaded one has zeros (+0x50/+0x58 a few ulps apart). The package carries that controller's
-pose (POSE) but nothing of its plan, so a ship whose linear move is under way at T moves differently once the move
-ends. Open: what those fields are (the controller's plan and timing), carrying them in a package section, a sweep.
-The first readings (a wait in X4's start menu, the package build on a worker) were wrong: those runs had such a T.
+FINDINGS: JOINS AT SOME TICKS PART (PRE-EXISTING), NOT THE NEW ORDER OR THE WORKER
+---------------------------------------------------------------------------------
+Every parting join in these tests parted by its join tick T, in any order and with any of the variants tried (with and
+without a menu wait, with the package built in the frame or on the worker): at T=6140 and 6147 (fjd1, fjw2, fjx3,
+fjx5, fjf2, fjf3), at T >= 6183 (the old late-boot order too: fjl3, fjl5, fjx1, fje7, fje9) and at T ~6890 (fje1,
+fje2, fje4). Joins at 6095..6135, 6154 and 6173..6178 stayed equal. Each time exactly one ShipMedium's census motion
+differs (every other differing row is nav_raw only, per-process words). The first readings (a wait in X4's start menu,
+the package build on a worker) were wrong: those runs had such a T.
+
+1. T >= 6183, GCC-006 (Xenon M solid miner, ID 0xa08a2): FIXED. At T it drifts on a U::LinearVelocityController (vtable
+   0x2c3f7c0). JOIN_WATCH T+1..T+450 (fjx6): both sides give it a NavigationController at the same tick (6280) with the
+   position equal, but the start rotation the linear controller had from the load is the save's rounded one (near-zero
+   elements -4.01e-7 against the session's -4.94e-7), and the navigation controller starts from that pose. POSE form 3
+   carried the start transform only for the subclass U::LinearAccelerationController (getter 0xe247a0, 18 Nov); now
+   also for the base U::LinearVelocityController (0xe237c0) and U::LinearDecelerationController (0xe27580) and
+   U::TargetSpeedController (0xe25cd0), which keep the same start transform at +0x20 (each getter pinned). Not
+   U::StopAndAlignController or U::TowingMovementController (their pose follows another object). fjf1 (old order,
+   T=6186): 0 mismatches after the handover, no object apart at the 6600 census.
+2. T=6140..6147, WIR-567 (Boron M gunboat, 0x8ee88): OPEN. It has a NavigationController at T on both sides (fjf3
+   watch), so the linear fix does not touch it; a navigation state the load rebuilds differently, to find with the
+   watch's pblk/agent rows as for GCC-006.
+3. T ~6890, TZG-441 (Xenon M solid miner, 0xa07e8): not rerun since the fix.
 
 RESULTS (one PC, the host's and the joiner's X4 with up to three other sessions' clients beside them)
 -----------------------------------------------------------------------------------------------
@@ -81,6 +88,6 @@ NOT DONE / OPEN
   cap_world (the world side table's slowest parts, ms): objects 807, srcs 314, lstn 289, sorts 247, attk 225, livef 156,
   viewf 153, kids 145; the other ~48 sections share the remaining ~2.7 s. No single hot spot: the next cut is running the
   independent sections in parallel inside the frame (the world is still then).
-- The linear movement controller of low-attention ships (the finding), then a join sweep over T.
+- Finding 2 (a navigation-controller ship at T=6140..6147), finding 3 rerun, then a join sweep over T.
 - Kit/server flow: the master server (netplay) stores and serves j<T>.x4join.gz; serve.py and the saver's upload in
   lobby.py still carry the raw package only.

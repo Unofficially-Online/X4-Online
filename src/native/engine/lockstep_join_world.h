@@ -28,6 +28,11 @@
  *          one object of 11,676 whose motion differed at the next census. Its four vectors are records as well; the
  *          admission writes them only onto a start transform within 1e-4 (and 1e-6 of the value) of the session's, so a
  *          controller the load started from another moment keeps its own (counted with pose_shape).
+ *          Its base U::LinearVelocityController (vtable 0x2c3f7c0, getter 0xe237c0: no acceleration) the same [fast join,
+ *          23 Nov]: a low-attention ship drifting on one at T (Xenon M miner GCC-006 at T=6186, Boron M gunboat WIR-567 at
+ *          T=6147, Xenon miner TZG-441 at T=6894) took its navigation controller at the same tick on both sides (6280)
+ *          with the position equal and the rotation's near-zero elements apart (-4.94e-7 against the load's -4.01e-7), so
+ *          the census motion parted from that capture on and every digest after the handover.
  * Navigation controllers (a ship's flight state: two banks, references, deadlines), dock controllers and unknown
  * controllers are not in POSE; objects of an unknown class are in neither (the census claims nothing for them either).
  * Records are sorted by portable ID and hold no pointer and no runtime ID. Each section enters the portable digest as one
@@ -82,6 +87,9 @@
 #define JOIN_POSE_GETTER_10 0x10ba20u     /* four vectors at controller+0x10 */
 #define JOIN_POSE_GETTER_20 0x46ff70u     /* four vectors at controller+0x20 */
 #define JOIN_POSE_GETTER_LINEAR 0xe247a0u /* U::LinearAccelerationController: its start transform, four vectors at controller+0x20 */
+#define JOIN_POSE_GETTER_LINEARV 0xe237c0u /* U::LinearVelocityController::PoseAt, its base: the same start transform at +0x20 */
+#define JOIN_POSE_GETTER_LINEARD 0xe27580u /* U::LinearDecelerationController (a LinearVelocityController): the same */
+#define JOIN_POSE_GETTER_TSPEED 0xe25cd0u  /* U::TargetSpeedController (a LinearAccelerationController): the same */
 #define JOIN_NAV_VTABLE 0x2c51158u
 #define JOIN_WORLD_ROWS 2u                /* sampled rows per kind (health, pose, ...) at the admission */
 #define JOIN_ATTENTION 0x1ecu              /* the attention level (SetAttention 0x3d5660) */
@@ -136,9 +144,10 @@ static int join_shield_read(const unsigned char *object,unsigned char **group,ui
     }
     return 1;
 }
-/* A controller's pose form as the census reads it: 1 (getter 0x10ba20, vectors at +0x10), 2 (0x46ff70, +0x20), 3 (0xe247a0, a
- * linear acceleration's start transform at +0x20; no census motion), 0 none (a navigation, dock or unknown controller); *kind
- * its vtable RVA. -1: unreadable. */
+/* A controller's pose form as the census reads it: 1 (getter 0x10ba20, vectors at +0x10), 2 (0x46ff70, +0x20), 3 (the start
+ * transform at +0x20 of the linear controllers: velocity 0xe237c0, acceleration 0xe247a0, deceleration 0xe27580, target speed
+ * 0xe25cd0; no census motion; not stop-and-align or towing, whose pose follows another object), 0 none (a navigation, dock or
+ * unknown controller); *kind its vtable RVA. -1: unreadable. */
 static int join_pose_form(const unsigned char *controller,uint32_t *kind) {
     uintptr_t vtable=0,getter=0;*kind=0;
     if(!join_read(controller,&vtable,8)) return -1;
@@ -148,7 +157,8 @@ static int join_pose_form(const unsigned char *controller,uint32_t *kind) {
     if(*kind==JOIN_NAV_VTABLE || *kind==DOCK_CONTROLLER_VTABLE || *kind==UNDOCK_CONTROLLER_VTABLE) return 0;
     if(!join_read((void *)(vtable+0x30),&getter,8)) return -1;
     return getter==(uintptr_t)(image+JOIN_POSE_GETTER_10)?1:getter==(uintptr_t)(image+JOIN_POSE_GETTER_20)?2:
-           getter==(uintptr_t)(image+JOIN_POSE_GETTER_LINEAR)?3:0;
+           getter==(uintptr_t)(image+JOIN_POSE_GETTER_LINEAR) || getter==(uintptr_t)(image+JOIN_POSE_GETTER_LINEARV) ||
+           getter==(uintptr_t)(image+JOIN_POSE_GETTER_LINEARD) || getter==(uintptr_t)(image+JOIN_POSE_GETTER_TSPEED)?3:0;
 }
 /* Form 3: is the joiner's start transform the session's but for the save's rounding? */
 static int join_pose_near(const uint32_t mine[12],const uint32_t theirs[12]) {

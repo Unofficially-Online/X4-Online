@@ -2185,6 +2185,9 @@ static const join_pin join_pin_table[]={
     {JOIN_POSE_GETTER_10,0x25,"59916bde73b664f995fc0abd6ec35bd3a27996e03eed8b116f8575cde9c1df04"},
     {JOIN_POSE_GETTER_20,0x2d,"d8d240c4c09c717cd26f198a3dc9917b96cb64649408cf4a0a93259604cbb193"},
     {JOIN_POSE_GETTER_LINEAR,0x7f,"ae2fd9b00826875e9111523b94aa2226d5806eb97b4ae6bef5caa4d47c4777d6"},   /* form 3: its start transform +0x20..+0x5f */
+    {JOIN_POSE_GETTER_LINEARV,0x6a,"87749b1e0063ad5112d5f8fd4d2cbb2a9320908dd3cbe6f92493a7cf53f5b31c"},  /* form 3 (a linear velocity): +0x20..+0x5f too */
+    {JOIN_POSE_GETTER_LINEARD,0xe4,"f2bcfb54396a41b9e33766dc074482cdcf9cc99244d223b7aebf3ed87d553758"},  /* form 3 (a linear deceleration) */
+    {JOIN_POSE_GETTER_TSPEED,0xe3,"f0923ec3d09539484d32d3a0d65f9e69997eb7db104de80ff74ce818f6d52bf5"},   /* form 3 (a target speed) */
     {0x576b70,0x8c,"420b5eabb71a39e1d2e95c95017d910a3a8bdffd9dce16298cfe5f3bfdf22159"},   /* PMOD: a processing module's update: due +0x390, then now + the interval */
     {JOIN_NEED_FILL,0xa6,"d9adda9b0ad0720f4a9c52d65d4241f0125234b695247f151a84af4ba288c3b6"},   /* NEED: the container's resource needs (container, horizon, 1, 0) */
     {0x41ac7c,0x27,"a91d58f056668d7465e097f6cd4e238e0a66b128007be0b9aff810d2c200f0f2"},   /* NEED: its caller's test of +0x931, the horizon, the map +0x940 */

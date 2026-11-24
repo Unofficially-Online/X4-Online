@@ -1245,6 +1245,9 @@ static void test_join_native_image(const char *path) {
         {JOIN_POSE_GETTER_10+5,"\x0f\x10\x41\x10",4,UINT32_MAX},{JOIN_POSE_GETTER_10+0x1c,"\x0f\x10\x41\x40",4,UINT32_MAX},
         {JOIN_POSE_GETTER_20+0x11,"\x0f\x10\x41\x20",4,UINT32_MAX},{JOIN_POSE_GETTER_20+0x15,"\x0f\x10\x59\x50",4,UINT32_MAX},
         {JOIN_POSE_GETTER_LINEAR+0x59,"\x0f\x10\x41\x20",4,UINT32_MAX},{JOIN_POSE_GETTER_LINEAR+0x77,"\x0f\x10\x49\x50",4,UINT32_MAX},
+        {JOIN_POSE_GETTER_LINEARV+0x4f,"\x0f\x10\x41\x20",4,UINT32_MAX},{JOIN_POSE_GETTER_LINEARV+0x66,"\x0f\x10\x49\x50",4,UINT32_MAX},
+        {JOIN_POSE_GETTER_LINEARD+0xc9,"\x0f\x10\x43\x20",4,UINT32_MAX},{JOIN_POSE_GETTER_LINEARD+0xe0,"\x0f\x10\x4b\x50",4,UINT32_MAX},
+        {JOIN_POSE_GETTER_TSPEED+0xc8,"\x0f\x10\x43\x20",4,UINT32_MAX},{JOIN_POSE_GETTER_TSPEED+0xdf,"\x0f\x10\x4b\x50",4,UINT32_MAX},
         /* Version 3 (j1-12): RefreshFromPathingState compares the cursor (+0xc8) with the read selector, adds the pending entries
          * (+0x50), writes the refresh time (+0xc0) and the cursor, indexes the banks (+0x30) by 0x1a0 and reads the eta +0x150;
          * SetAttention writes the level +0x1ec; the attention timer compares and writes the due +0x2e0. */
@@ -1755,6 +1758,8 @@ static void test_join_world(void) {
     *(void **)(image+0x2a35200+0x30)=image+0x123450;
     {   /* form 3: a linear acceleration's start transform; the admission takes it only within the save's rounding */
         unsigned char ctrl[0x60];void *vt=image+0x2a35300;uint32_t kind=0,a[12],b[12];memset(ctrl,0,sizeof(ctrl));memcpy(ctrl,&vt,8);
+        *(void **)(image+0x2a35300+0x30)=image+JOIN_POSE_GETTER_LINEARV;   /* its base, a linear velocity (no acceleration) */
+        assert(join_pose_form(ctrl,&kind)==3 && kind==0x2a35300u);
         *(void **)(image+0x2a35300+0x30)=image+JOIN_POSE_GETTER_LINEAR;
         assert(join_pose_form(ctrl,&kind)==3 && kind==0x2a35300u);
         for(unsigned i=0;i<12u;i++) {float x=i<9u?0.5f:30000.0f+(float)i,y=i<9u?x+3e-7f:x;memcpy(&a[i],&x,4);memcpy(&b[i],&y,4);}

@@ -401,10 +401,11 @@ other sessions' clients beside them; late joins at T about 6,000, 200 s into a s
   `--join-converge-limit` (600 s). One that does not gain is handed over as soon as its rate is known (10 s into the
   catch-up), because every further second of catch-up only lengthens the stop. The handover row says why (`why=gap`
   caught up, `not_gaining`, or `limit`).
-- **Joins at some ticks part** (relay digest from the handover on; the census motion domain from T+1), in the old order
-  as in the new: in these tests at T=6140, 6147, from 6183 on and near 6890, each time by one medium ship flying in low
-  attention whose linear movement controller (its plan beyond its pose) the package does not carry. Pre-existing, open
-  (reports/LOCKSTEP-FAST-JOIN-20261123.txt).
+- **Joins at some ticks parted** (relay digest from the handover on; the census motion domain from T+1), in the old order
+  as in the new, each time by one medium ship in low attention. Joins from tick 6,183 of the test session: fixed
+  (24 Nov: a ship drifting on a linear controller at T took the save's rounded start rotation; the package now carries it,
+  fjf1 equal). Joins at T=6140..6147: still part (a ship with a navigation controller; open,
+  reports/LOCKSTEP-FAST-JOIN-20261123.txt).
 - **Why one PC still stops at the handover.** Both X4 are bound by the simulation step (about 31-35 ms on this PC with
   other clients beside them; drawing is about 1 ms of it, waiting for permits 0.1 ms), so a joiner on the same PC steps no
   faster than the session and the handover stop is its gap over its rate. A joiner on its own PC that steps faster than
