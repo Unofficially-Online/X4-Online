@@ -424,6 +424,12 @@ class DatagramSizes(unittest.TestCase):
             else:
                 self.assertFalse(changed)
 
+    def test_a_stand_in_socket_without_options_is_left_alone(self):
+        # the relay tests' fake sockets (test_native_gate_sandbox, _nslot, _lookahead) have no setsockopt: on Linux
+        # CI they failed with AttributeError when the relay started (online CI, 24 Nov)
+        with mock.patch.object(native_gate_relay.sys, 'platform', 'linux'):
+            self.assertFalse(native_gate_relay.never_dont_fragment(object()))
+
     def report(self, protocol, slot, tick, clients, lookahead, blob):
         clock = struct.pack('>d', tick / 60).hex()
         fields = ['NGSTATE', str(protocol), self.TOKEN, str(slot), str(tick), clock, clock, 'd' * 64, str(clients)]

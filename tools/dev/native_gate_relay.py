@@ -604,10 +604,11 @@ def never_dont_fragment(sock):
     sizes"). With Linux's default the first such permit on a smaller path (a VPN, a tunnel, VLAN tags) is lost until an
     ICMP message teaches the path MTU, and a path that filters those ICMP messages loses every one; without DF the kernel
     fragments it at once, as Windows always does. No effect elsewhere. True when set."""
-    if not sys.platform.startswith('linux'):
+    setter = getattr(sock, 'setsockopt', None)   # the tests' stand-in sockets have none
+    if not sys.platform.startswith('linux') or setter is None:
         return False
     try:
-        sock.setsockopt(socket.IPPROTO_IP, getattr(socket, 'IP_MTU_DISCOVER', 10), getattr(socket, 'IP_PMTUDISC_DONT', 0))
+        setter(socket.IPPROTO_IP, getattr(socket, 'IP_MTU_DISCOVER', 10), getattr(socket, 'IP_PMTUDISC_DONT', 0))
     except OSError:
         return False
     return True
