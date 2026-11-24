@@ -32,8 +32,13 @@ jobs:
         run: |
           cargo build --release --locked --manifest-path src/rust/Cargo.toml
           cargo test --locked --manifest-path src/rust/Cargo.toml
+      # LuaJIT: tests/test_lockstep_gate_linux.py NativeLinux runs tools/dev/check_lockstep_gate_linux.py
+      # (the Linux gate's unit tests, the module through LuaJIT, the emulated-peer relay scenarios).
       - name: Bootstrap
-        run: python3 tools/dev/bootstrap.py
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y luajit
+          python3 tools/dev/bootstrap.py
       # The Linux gate and the relay's wire crypto library (libx4mp_wire_crypto.so): the crypto
       # tests load the library instead of skipping.
       - name: Linux gate and wire crypto build
@@ -46,7 +51,6 @@ jobs:
           .venv/bin/python tools/dev/check.py
           --allow-skip 'Linux X4 executable not available'
           --allow-skip 'read-only x4-re md.xsd'
-          --allow-skip 'need a Linux host with gcc and luajit'
           --allow-skip 'x4-re'
           --allow-skip 'the pinned X4.exe is not at hand'
           --allow-skip 'the stock md.xsd'
@@ -85,3 +89,21 @@ jobs:
       - name: Build x4lan_gate_64.dll (-Werror)
         run: python -B tools/dev/build_native_gate.py --zig "$env:X4LAN_ZIG"
         shell: pwsh
+
+  # Views and profiles are removed through real NTFS junctions here. Python 3.10 and 3.11 have no
+  # Path.is_junction, and there a view's cleanup once deleted the game's files through a junction.
+  links:
+    name: Launcher link safety (Windows, Python ${{ matrix.python-version }})
+    runs-on: windows-2022
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.10', '3.11', '3.12']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Junction cleanup and DLC sets
+        run: python -B -m unittest discover -s tests -p test_launcher_link_safety.py -v

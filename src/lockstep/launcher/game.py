@@ -7,10 +7,13 @@ and the client's own x4_lan_lab. X4 runs from the view, so the probe's relative
 `./extensions/x4_lan_lab/...` paths resolve per client. Third-party extensions in
 the installation are not linked. Removal unlinks; it never follows a junction.
 """
+import gzip
 import hashlib
 import os
 from pathlib import Path
 import re
+import stat
+import zlib
 
 # X4 9.00 Windows (Steam build 23660954): the build the lockstep gate is pinned to.
 EXE_SIZE = 55412768
@@ -85,13 +88,114 @@ def dlc_ids(view):
     return sorted(p.name for p in (Path(view) / 'extensions').glob('ego_dlc_*'))
 
 
+# The official DLCs a session's world was made with, and the ones this PC would run. A client's view links every
+# ego_dlc_* folder of its installation and its profile enables all of them (profile.prepare), so the DLCs installed on a
+# PC are the ones its X4 runs. A joiner whose set differs from the host's runs another world from the first tick: X4
+# adds a DLC's content to a save that lacks it and drops what a missing one brought.
+DLC_PREFIX = 'ego_dlc_'
+_ATTRIBUTE = re.compile(r'\b([a-z]+)="([^"]*)"')
+_CONTENT_HEAD_BYTES = 8192
+_SAVE_HEAD_CHARS = 1 << 20
+
+
+def _attributes(tag):
+    return dict(_ATTRIBUTE.findall(tag))
+
+
+def installed_dlcs(game):
+    """{DLC id: version} of the official DLCs in the installation (the version attribute of each one's content.xml, ''
+    when it has none). A folder without a content.xml (a DLC Steam took out) is no extension to X4 and not counted.
+    {} without an extensions folder."""
+    extensions = Path(game) / 'extensions'
+    found = {}
+    for folder in sorted(extensions.glob(DLC_PREFIX + '*')) if extensions.is_dir() else []:
+        try:
+            with open(folder / 'content.xml', 'rb') as content:
+                head = content.read(_CONTENT_HEAD_BYTES).decode('utf-8', 'replace')
+        except OSError:
+            continue
+        tag = re.search(r'<content\b[^>]*>', head)
+        found[folder.name] = _attributes(tag.group(0)).get('version', '') if tag else ''
+    return found
+
+
+def save_dlcs(save):
+    """{DLC id: version} of the official DLCs a save was made with: the <patch> rows of its <patches> header before the
+    <history> X4 keeps there (a DLC once used and later disabled is only in the history). None when the file is not an
+    X4 save (gzip or plain XML) or has no <patches> header in its first MB."""
+    save = Path(save)
+    try:
+        with open(save, 'rb') as raw:
+            magic = raw.read(2)
+        opener = gzip.open if magic == b'\x1f\x8b' else open
+        with opener(save, 'rb') as source:
+            head = source.read(_SAVE_HEAD_CHARS).decode('utf-8', 'replace')
+    except (OSError, EOFError, zlib.error):
+        return None
+    start = head.find('<patches')
+    if '<savegame' not in head[:4096] or start < 0:
+        return None
+    end = min(i for i in (head.find('<history', start), head.find('</patches>', start), len(head)) if i >= 0)
+    rows = {}
+    for tag in re.findall(r'<patch\b[^>]*>', head[start:end]):
+        values = _attributes(tag)
+        name = values.get('extension', '')
+        if name.startswith(DLC_PREFIX):
+            rows[name] = values.get('version', '')
+    return rows
+
+
+DLC_NAMES = {'ego_dlc_split': 'Split Vendetta', 'ego_dlc_terran': 'Cradle of Humanity', 'ego_dlc_pirate': 'Tides of Avarice',
+             'ego_dlc_boron': 'Kingdom End', 'ego_dlc_timelines': 'Timelines', 'ego_dlc_mini_01': 'Hyperion Pack',
+             'ego_dlc_mini_02': 'Envoy Pack', 'ego_dlc_ventures': 'Ventures'}
+
+
+def dlc_names(ids):
+    """The DLCs' shop names for a player's message ('Kingdom End, Timelines'); an unknown id as it is."""
+    return ', '.join(DLC_NAMES.get(name, name) for name in ids)
+
+
+def dlc_mismatch(save_rows, installed):
+    """(missing, extra, other_version): the DLC ids a save uses that are not installed, the ones installed that the save
+    does not use, and the ones whose versions differ (only when both name a version). All empty when they agree."""
+    missing = sorted(set(save_rows) - set(installed))
+    extra = sorted(set(installed) - set(save_rows))
+    other = sorted(name for name in set(save_rows) & set(installed)
+                   if save_rows[name] and installed[name] and save_rows[name] != installed[name])
+    return missing, extra, other
+
+
+def is_link_or_reparse(path):
+    """True for a symbolic link and, on Windows, for any reparse point (a junction is one). Path.is_junction is new in
+    Python 3.12 and is_symlink is False for a junction: on 3.10 and 3.11 a view's junction would look like a plain folder,
+    and removing the view would delete the game's files through it. The file attributes say it on every version."""
+    try:
+        info = os.lstat(path)
+    except FileNotFoundError:
+        return False
+    if stat.S_ISLNK(info.st_mode):
+        return True
+    if os.name == 'nt':
+        attributes = getattr(info, 'st_file_attributes', None)
+        if not isinstance(attributes, int):
+            raise OSError(f'cannot read the reparse attributes of {path}')
+        return bool(attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT)
+    return False
+
+
+def _unlink_link(entry):
+    """Remove the link itself: a directory link or junction with rmdir on Windows, anything else with unlink."""
+    if os.name == 'nt' and os.path.isdir(entry):
+        os.rmdir(entry)
+    else:
+        os.unlink(entry)
+
+
 def _remove_owned(path):
     """Delete a folder the launcher created; links inside are unlinked, never entered."""
     for entry in path.iterdir():
-        if hasattr(entry, 'is_junction') and entry.is_junction():
-            os.rmdir(entry)
-        elif entry.is_symlink():
-            os.rmdir(entry) if os.name == 'nt' and entry.is_dir() else os.unlink(entry)
+        if is_link_or_reparse(entry):
+            _unlink_link(entry)
         elif entry.is_dir():
             _remove_owned(entry)
         else:
@@ -101,6 +205,8 @@ def _remove_owned(path):
 
 def remove_view(view):
     view = Path(view)
+    if is_link_or_reparse(view):
+        raise SystemExit(f'{view} is a link; refusing to delete')
     if not (view / MARKER).is_file():
         raise SystemExit(f'{view} is not an x4ls view; refusing to delete')
     _remove_owned(view)

@@ -286,6 +286,12 @@ def fetch(host, port, token, slot, name, dest, expect_sha=None, retries=5, progr
                     if reason in ('busy',):
                         last = FetchError(f'{name}: host busy')
                         continue
+                    if reason == 'offset' and offset:
+                        # The host refuses a resume past its file's end before it names the size: a .part longer than
+                        # the offered file (left from another file of this name). Start over from byte 0.
+                        part.unlink(missing_ok=True)
+                        last = FetchError(f'{name}: the partial download was longer than the host\'s file')
+                        continue
                     if reason == 'name':
                         raise FetchError(f'{name}: not offered by the host within {offer_wait_s} s (its saver may not play on that PC)')
                     raise FetchError(f'{name}: refused by the host ({reason})')

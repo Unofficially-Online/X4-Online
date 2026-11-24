@@ -37,6 +37,10 @@ class FetchError(Exception):
     pass
 
 
+class StaleOffset(FetchError):
+    """The host refused the resume offset: the partial file is longer than the file it offers."""
+
+
 def sha256_file(path):
     digest = hashlib.sha256()
     with open(path, 'rb') as source:
@@ -219,6 +223,12 @@ def fetch(host, port, token, slot, name, dest, expect_sha, progress=None, retrie
         except OSError as error:
             last = FetchError(f'{name}: {error}')
             continue
+        except StaleOffset as error:
+            # The host refuses a resume past its file's end before it names the size: a .part longer than the offered
+            # file (left from another file of this name). Start over from byte 0.
+            part.unlink(missing_ok=True)
+            last = error
+            continue
         except FetchError as error:
             if 'refused' in str(error):
                 raise
@@ -241,6 +251,8 @@ def fetch_once(host, port, token, slot, name, part, offset, expect_sha, progress
         conn.settimeout(timeout)
         conn.sendall(request_line(token, slot, name, offset))
         fields = read_head(conn)
+        if fields[0] == 'NO' and offset and len(fields) > 1 and fields[1] == 'offset':
+            raise StaleOffset(f'{name}: the partial download was longer than the host\'s file')
         if fields[0] == 'NO':
             raise FetchError(f'{name}: refused by the host ({fields[1] if len(fields) > 1 else "?"})')
         if len(fields) != 3 or fields[0] != 'OK' or not fields[1].isdigit() or fields[2] != expect_sha:

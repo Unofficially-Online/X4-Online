@@ -11,6 +11,9 @@ others, then the host's public address; the address that took the check-in is th
 A LAN game (a long invite code, an address, a LAN game without a code): the host's lobby admits this PC, names the
 session files its file service offers (netfiles.py), and sends the start on the same connection. A joiner with the
 host's own playtest kit needs no download."""
+from pathlib import Path
+
+from . import game as x4game   # "game" is the joined game in this module
 from . import lobby, netdropin, netfiles, netkit, netlan, netplay
 
 ANSWER_WAIT_S = 10            # the host's lobby answers a hello within this
@@ -137,10 +140,31 @@ class JoinJob(netplay.Job):
 
     def checked_session(self, folder, expected):
         recipe = netkit.check_session_files(folder, netkit.sha256_file(self.config.kit.gate_dll), expected)
+        self.check_dlcs(Path(folder) / netkit.SESSION_SAVE)
         self.show('preparing', 'Building the overlay for this game, here, with this PC\'s own release...',
                   progress={'what': 'overlay', 'done': 0.0})
         return netkit.joined_session(self.config.kit, folder, recipe, progress=lambda done: self.progress('overlay', done),
                                      log=self.flow.log)
+
+    def check_dlcs(self, save):
+        """The host's world and this PC's X4 run the same official DLCs (docs/NETPLAY.md "Same DLCs"), else the join stops
+        here, before X4 starts: a world loaded with a DLC more or less is another world from its first tick. The save's
+        own <patches> header names the host's set; nothing is checked when either side is unknown."""
+        installed = self.flow.backend.installed_dlcs()
+        used = x4game.save_dlcs(save) if installed is not None else None
+        if used is None:
+            return
+        missing, extra, other = x4game.dlc_mismatch(used, installed)
+        if missing:
+            raise netplay.JobFailed(f'The host\'s game uses DLC this PC does not have: {x4game.dlc_names(missing)}.',
+                                    'Every player needs the same DLCs: install them in Steam, then join again.')
+        if extra:
+            raise netplay.JobFailed(f'This PC has DLC the host\'s game does not use: {x4game.dlc_names(extra)}.',
+                                    'Every player needs the same DLCs: turn them off for X4 in Steam (Properties, DLC), '
+                                    'or the host installs them and hosts a new game.')
+        if other:
+            raise netplay.JobFailed(f'Another version of {x4game.dlc_names(other)} than the host\'s.',
+                                    'Every player needs the same DLC versions: let Steam update X4, then join again.')
 
     def install(self, files):
         self.show('preparing', 'X4 starts with the session (about a minute)...', progress={'what': 'session', 'done': 0.0})
@@ -313,6 +337,7 @@ class JoinJob(netplay.Job):
         """The host's own playtest kit: this PC has the session. Otherwise the host's file service has it."""
         own = self.flow.backend.kit_session()
         if own is not None and answer.get('kit') and answer.get('kit') == self.config.kit.kit_id:
+            self.check_dlcs(own.snapshot)
             return own
         files = answer.get('files')
         port = answer.get('file_port')

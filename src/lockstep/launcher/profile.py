@@ -13,6 +13,8 @@ import sys
 from pathlib import Path
 import shutil
 
+from . import game
+
 ALL_PROFILES = (45850, 45851, 45853, 45854, 45855, 45856, 45857, 45858)
 # A second session on the same PC beside a running one takes its profiles from further down the list: the environment
 # variable X4LS_FIRST_PROFILE is the index its client 1 starts at (2: clients 1 and 2 use 45853 and 45854).
@@ -56,7 +58,7 @@ def profile_dir(profile, root=None):
     if profile not in (*PROFILES, CAPTURE_PROFILE):
         raise SystemExit(f'profile {profile} is not a disposable launcher profile')
     path = (Path(root) if root else documents()) / str(profile)
-    if path.is_symlink() or (hasattr(path, 'is_junction') and path.is_junction()):
+    if game.is_link_or_reparse(path):
         raise SystemExit(f'{path} is a link; refusing')
     return path
 

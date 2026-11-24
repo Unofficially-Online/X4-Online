@@ -68,6 +68,9 @@ is chosen in X4's main menu.
   this client's own `x4_lan_lab`. Third-party mods in the installation are not
   linked. The probe finds the gate DLL relative to the working directory, so it
   has to run from the view. Removing a view unlinks; it never enters a junction.
+  Links are found by their reparse attribute (`game.is_link_or_reparse`), not by
+  `Path.is_junction`, which Python 3.10 and 3.11 lack. Before 24 Nov 2026 a view
+  removed under those versions deleted the game's files through its junctions.
 - **Profile:** `-personalfolderid` uses 45850, 45851, 45853 to 45858 for clients,
   and 45841 for snapshot capture only. The profile is wiped before each run,
   then gets a windowed `config.xml` (autosave off, protected UI off) and the

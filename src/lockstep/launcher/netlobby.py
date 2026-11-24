@@ -177,6 +177,9 @@ class LobbyBackend(netplay.Backend):
             self.own = self.kit.own_session()
         return self.own
 
+    def installed_dlcs(self):
+        return game.installed_dlcs(self.game.install)
+
     def default_form(self):
         own = self.kit_session()
         if own is None:

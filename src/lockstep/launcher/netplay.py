@@ -1026,6 +1026,11 @@ class Backend:
         """The kit's own session (a playtest kit's overlay and snapshot), or None."""
         return None
 
+    def installed_dlcs(self):
+        """{DLC id: version} of the official DLCs this PC's X4 runs with (game.installed_dlcs), or None when unknown: a
+        joiner then skips the DLC check."""
+        return None
+
     def work_folder(self):
         """A folder of this run for a job's own files (the relay's allow list, the copies a host uploads)."""
         raise NotImplementedError

@@ -37,7 +37,7 @@ import sys
 import threading
 import time
 
-from . import joinfiles, profile
+from . import game, joinfiles, profile
 
 ROOT = Path(__file__).resolve().parents[3]
 DEV = ROOT / 'tools/dev'
@@ -135,8 +135,11 @@ class HostJoins:
 def remove_join_files(save_dirs):
     """The join saves and packages a session left in its clients' disposable profiles (hundreds of MB each)."""
     for folder in save_dirs.values():
-        for path in (Path(folder) / 'mpjoin').glob('j*.*'):
-            if joinfiles.NAME.fullmatch(path.name):
+        join_folder = Path(folder) / 'mpjoin'
+        if game.is_link_or_reparse(join_folder):   # never delete through a link into another folder
+            continue
+        for path in join_folder.glob('j*.*'):
+            if joinfiles.NAME.fullmatch(path.name) and not game.is_link_or_reparse(path):
                 path.unlink(missing_ok=True)
 
 

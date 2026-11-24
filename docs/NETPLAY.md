@@ -59,6 +59,24 @@ compatible when their `release` strings are equal and their session sha-256 are 
 host's session first). The master lists every game with its `release`; the page marks other releases as
 incompatible.
 
+### Same DLCs
+
+Every player's X4 must run the official DLCs the host's world was made with. A client's game view links every
+`ego_dlc_*` folder of its installation and its profile enables them all, so the DLCs installed on a PC are the ones
+its X4 runs. A joiner with a DLC more or less would run another world from the first tick: X4 adds a DLC's content to
+a save that lacks it. The joiner checks this after the session download and before X4 starts
+(`netjoin.check_dlcs`). The host's set is the `<patch extension="ego_dlc_*">` rows of the session save's own
+`<patches>` header (not its `<history>`). The joiner's set is each `extensions/ego_dlc_*` folder with a
+`content.xml`, with that file's `version`. The page names what differs:
+- a DLC the host's game uses and this PC lacks ("install them in Steam");
+- a DLC this PC has and the host's game does not use ("turn them off for X4 in Steam (Properties, DLC), or the host
+  installs them and hosts a new game");
+- another version of a DLC.
+
+Nothing is checked when the save has no `<patches>` header or the backend cannot name its installation. The idea
+comes from the authoritative-server fork's content comparison (`src/authority/content_compatibility.py` in
+Lith7ium/X4-Online-Aut-Server); the check here is our own.
+
 ## The central server (`x4ls master`)
 
 Module `src/lockstep/master/` (stdlib only; Python 3.10+; Linux and Windows), started by

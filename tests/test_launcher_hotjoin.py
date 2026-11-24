@@ -86,6 +86,14 @@ class FileServiceTests(unittest.TestCase):
         part.write_bytes(b'x' * 1000)
         joinfiles.fetch('127.0.0.1', self.service.port, TOKEN, 3, 'j600.x4join', part.parent / 'j600.x4join', expect_sha=self.sha)
         self.assertEqual((part.parent / 'j600.x4join').read_bytes(), self.data)
+        # A partial file longer than the offered one (left from another file of this name): the host refuses its
+        # offset before it names the size; the joiner drops it and fetches the file from byte 0.
+        part.write_bytes(b'x' * (len(self.data) + 10))
+        with mock.patch.object(joinfiles.time, 'sleep'):
+            joinfiles.fetch('127.0.0.1', self.service.port, TOKEN, 3, 'j600.x4join', part.parent / 'j600.x4join', expect_sha=self.sha)
+        self.assertEqual((part.parent / 'j600.x4join').read_bytes(), self.data)
+        self.assertFalse(part.exists())
+        self.assertEqual(self.service.served[-1][2:], (0, len(self.data)))
 
     def test_refusals(self):
         with self.assertRaisesRegex(joinfiles.FetchError, r'refused by the host \(mac\)'):

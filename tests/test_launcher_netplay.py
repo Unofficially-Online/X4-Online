@@ -331,6 +331,55 @@ class HostOnTheLan(FlowCase):
         self.assertIsNone(host.take_start(timeout=0.5))             # three slots: the third is not there
 
 
+class SameDlcs(FlowCase):
+    """A joiner's X4 runs the official DLCs of the host's world, else the join stops before X4 starts (netjoin.check_dlcs:
+    the save's <patches> header against this PC's DLC folders)."""
+    SAVE = ('<?xml version="1.0" encoding="UTF-8"?>\n<savegame>\n<info>\n<game id="X4" version="900"/>\n<patches>\n'
+            '<patch extension="ego_dlc_split" version="900" name="Split Vendetta"/>\n'
+            '<patch extension="ego_dlc_boron" version="900" name="Kingdom End"/>\n<history>\n</history>\n</patches>\n'
+            '</info>\n<universe/>\n</savegame>\n')
+    HOST_DLCS = {'ego_dlc_split': '900', 'ego_dlc_boron': '900'}
+
+    def joined(self, installed):
+        import gzip
+        files = fakes.make_session(self.root / 'host-session', 3, save=gzip.compress(self.SAVE.encode()))
+        host = self.flow('host', fakes.network(None), master_url=None, host_files=files)
+        host.request('HOST|1|3|LAN party')
+        self.wait_phase(host, 'hosting')
+        joiner = self.flow('joiner', fakes.network(None), master_url=None)
+        joiner.backend.installed_dlcs = lambda: installed
+        joiner.request(f'JOINCODE|127.0.0.1:{self.port + 1}')
+        return joiner
+
+    def test_the_same_dlcs_join(self):
+        joiner = self.joined(dict(self.HOST_DLCS))
+        self.wait_phase(joiner, 'waiting', 20)
+        self.assertEqual(len(self.builds), 1)
+
+    def test_unknown_dlcs_are_not_checked(self):
+        joiner = self.joined(None)          # a backend that cannot say (the fakes, a kit without an installation)
+        self.wait_phase(joiner, 'waiting', 20)
+
+    def test_a_missing_dlc_stops_the_join_before_the_overlay(self):
+        joiner = self.joined({'ego_dlc_split': '900'})
+        self.wait_phase(joiner, 'error', 20)
+        self.assertIn('does not have: Kingdom End', joiner.state.lines[0])
+        self.assertIn('install them in Steam', joiner.state.lines[1])
+        self.assertEqual(self.builds, [])
+        self.assertEqual(joiner.backend.installed, [])
+
+    def test_an_extra_dlc_stops_the_join(self):
+        joiner = self.joined({**self.HOST_DLCS, 'ego_dlc_ventures': '900'})
+        self.wait_phase(joiner, 'error', 20)
+        self.assertIn('does not use: Ventures', joiner.state.lines[0])
+        self.assertIn('turn them off for X4 in Steam', joiner.state.lines[1])
+
+    def test_another_dlc_version_stops_the_join(self):
+        joiner = self.joined({'ego_dlc_split': '900', 'ego_dlc_boron': '910'})
+        self.wait_phase(joiner, 'error', 20)
+        self.assertIn('Another version of Kingdom End', joiner.state.lines[0])
+
+
 class JoinWithMaster(FlowCase):
     def hosted(self, players=2, reachable=False, public=True):
         master = fakes.FakeMaster()
@@ -679,6 +728,16 @@ class LanFiles(unittest.TestCase):
                 part.write_bytes(data[:100000])
                 netfiles.fetch('127.0.0.1', files.port, token, 2, 'session-save.xml.gz', part.parent / 'session-save.xml.gz', sha)
                 self.assertEqual(files.served[-1][2:], (100000, len(data)))
+                # A partial file longer than the offered one (left from another file of this name): the host refuses
+                # its offset, the joiner drops it and fetches the file from byte 0.
+                stale = folder.path / 'stale' / 'session-save.xml.gz.part'
+                stale.parent.mkdir()
+                stale.write_bytes(b'x' * (len(data) + 10))
+                with mock.patch.object(netfiles.time, 'sleep'):
+                    netfiles.fetch('127.0.0.1', files.port, token, 2, 'session-save.xml.gz', stale.parent / 'session-save.xml.gz', sha)
+                self.assertEqual((stale.parent / 'session-save.xml.gz').read_bytes(), data)
+                self.assertFalse(stale.exists())
+                self.assertEqual(files.served[-1][2:], (0, len(data)))
                 with self.assertRaisesRegex(netfiles.FetchError, r'refused by the host \(mac\)'):
                     netfiles.fetch('127.0.0.1', files.port, 'ef' * 16, 2, 'session-save.xml.gz', folder.path / 'a', sha, retries=0)
                 with self.assertRaisesRegex(netfiles.FetchError, r'\(slot\)'):
