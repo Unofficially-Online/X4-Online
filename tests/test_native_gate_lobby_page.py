@@ -139,7 +139,7 @@ late_menu = menu
 Menus = {{name = 'MapMenu'}}
 """
 
-START_ROWS = ['header', 'x4lan_lobby_public', 'x4lan_lobby_players', 'x4lan_lobby_name', 'x4lan_lobby_host',
+START_ROWS = ['header', 'x4lan_lobby_public', 'x4lan_lobby_players', 'x4lan_lobby_dropin', 'x4lan_lobby_name', 'x4lan_lobby_host',
               'header', 'x4lan_lobby_code', 'x4lan_lobby_joincode', 'x4lan_lobby_join',
               'header', 'x4lan_lobby_browse', 'x4lan_lobby_game_none', 'header', 'x4lan_lobby_lan_none']
 LINES = ['header'] * 6 + ['line']
@@ -339,11 +339,30 @@ class Page(unittest.TestCase):
         self.assertEqual(visibility.value(), 'Public')
         players = self.row(g, 'x4lan_lobby_players')
         choices, current = players.value()
-        self.assertEqual(([choices[i].id for i in range(1, len(choices) + 1)], current), (['2', '3', '4', '5', '6', '7', '8'], '2'))
+        self.assertEqual(([choices[i].id for i in range(1, len(choices) + 1)], current), (['1', '2', '3', '4', '5', '6', '7', '8'], '2'))
         players.callback('x4lan_lobby_players', '5')
         players.callback()                                     # the row selected without a choice: unchanged
         players.callback('x4lan_lobby_players', '9')           # out of range: unchanged
         self.assertEqual(players.value()[1], '5')
+        # drop-in slots: players + slots stay at most 8, and 1 player needs a slot
+        drop_in = self.row(g, 'x4lan_lobby_dropin')
+        choices, current = drop_in.value()
+        self.assertEqual(([choices[i].id for i in range(1, len(choices) + 1)], current), ([str(k) for k in range(8)], '0'))
+        drop_in.callback('x4lan_lobby_dropin', '2')
+        self.row(g, 'x4lan_lobby_host').callback()
+        self.assertEqual(self.requests(g)[-1], 'HOST|1|5+2|X4 game')
+        drop_in.callback('x4lan_lobby_dropin', '6')             # 5 + 6 is too many: the players give way
+        self.assertEqual((players.value()[1], drop_in.value()[1]), ('2', '6'))
+        players.callback('x4lan_lobby_players', '4')            # 4 + 6 too: the drop-in slots give way
+        self.assertEqual((players.value()[1], drop_in.value()[1]), ('4', '4'))
+        drop_in.callback('x4lan_lobby_dropin', '0')
+        players.callback('x4lan_lobby_players', '1')            # 1 player alone: one drop-in slot at least
+        self.assertEqual((players.value()[1], drop_in.value()[1]), ('1', '1'))
+        self.row(g, 'x4lan_lobby_host').callback()
+        self.assertEqual(self.requests(g)[-1], 'HOST|1|1+1|X4 game')
+        drop_in.callback('x4lan_lobby_dropin', '0')             # no drop-in slot: 2 players at least
+        self.assertEqual((players.value()[1], drop_in.value()[1]), ('2', '0'))
+        players.callback('x4lan_lobby_players', '5')
         name = self.row(g, 'x4lan_lobby_name')
         name.edit.handlers.onEditBoxDeactivated(None, ' Coop | run\n', True, True)
         self.row(g, 'x4lan_lobby_host').callback()
@@ -512,8 +531,9 @@ end
 """)
         self.state(lua, "{stamp = 1, phase = 'idle', lines = {}}")
         self.open(g)
-        self.assertEqual(self.ids(g), LINES + [i for i in START_ROWS if i != 'x4lan_lobby_players'])
+        self.assertEqual(self.ids(g), LINES + [i for i in START_ROWS if i not in ('x4lan_lobby_players', 'x4lan_lobby_dropin')])
         self.assertTrue(any('DRAW_ERROR x4lan_lobby_players' in t for t in self.logs(g)))
+        self.assertTrue(any('DRAW_ERROR x4lan_lobby_dropin' in t for t in self.logs(g)))
         # a state that breaks the rows: the lines are drawn
         lua.execute("X4LAN_LOBBY.state = setmetatable({phase = 'idle'}, {__index = function(_, key) error('bad state ' .. key) end})")
         self.open(g)

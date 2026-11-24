@@ -15,13 +15,14 @@ from lockstep.master import relays
 
 
 class FakeJoin:
-    """Stands in for tools/dev/native_gate_join.py: a package is its own text, 'save=<sha of the save>=<tick>'."""
+    """Stands in for tools/dev/native_gate_join.py: a package is its own text, 'save=<sha of the save>=<tick>', and may
+    end in zero bytes (as a real one is mostly zeros: the compressed copy's case)."""
     class JoinError(Exception):
         pass
 
     @staticmethod
     def read_package(data):
-        _, save_sha, tick = data.decode().split('=')
+        _, save_sha, tick = data.rstrip(b'\0').decode().split('=')
         return {'sha': hashlib.sha256(data).hexdigest(), 'header': {'save_sha': save_sha},
                 'sections': {'gate': {'tick': int(tick)}}}
 
@@ -171,6 +172,69 @@ class RelayGameTests(MasterCase):
         self.call('DELETE', f'/api/v1/games/{game["game_id"]}', {'secret': game['secret']}, ip=HOST_IP)
         self.assertFalse((self.data / 'games' / game['game_id']).exists())
         self.assertEqual(self.master.budget.used, 0)
+
+    def saved_join(self, game, tick, package, save):
+        """A drop-in game whose relay (a stand-in log) announced that slot 1 saved a join of slot 2 at `tick`."""
+        running = self.master.games[game['game_id']].relay
+        stand_in = running.run_dir / 'stand-in-relay.log'
+        running.dropin.relay_log = serve.RelayLog(stand_in)
+        stand_in.write_text(f'NATIVE_GATE JOIN slot=2 saved slot=1 tick={tick} bytes={len(save)} package={sha256(package)} '
+                            f'portable={"f" * 32}\n')
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            if 'send_join' in self.lobby(game, game['host_ticket'], ip=HOST_IP).json:
+                return running
+            time.sleep(0.2)
+        self.fail('the saver was not asked for the join files')
+
+    def test_a_compressed_package_is_unpacked_checked_and_offered_first(self):
+        import gzip
+        original = hotjoin.join_tools
+        hotjoin.join_tools = lambda: FakeJoin
+        self.addCleanup(setattr, hotjoin, 'join_tools', original)
+        game, tickets, start = self.start_game(players=2, open_slots=(2,), present_ips=())
+        relay = start['relay']
+        late = self.join(game, ip=OTHER_IP).json
+        save = b'the join save'
+        package = f'save={sha256(save)}=900'.encode() + bytes(4096)   # a package is mostly zero bytes
+        self.saved_join(game, 900, package, save)
+        auth = game['host_ticket']
+        self.assertError(self.upload(game, 'j900.x4join.gz', b'not gzip at all', auth=auth), 400, 'bad_gzip')
+        self.assertError(self.upload(game, 'j900.x4join.gz', gzip.compress(b'another package'), auth=auth), 400, 'bad_sha256')
+        packed = gzip.compress(package)
+        self.assertLess(len(packed), len(package))
+        self.assertEqual(self.upload(game, 'j900.x4join.gz', packed, auth=auth).status, 200)
+        self.assertIn('send_join', self.lobby(game, auth, ip=HOST_IP).json)   # the save is still to come
+        self.assertEqual(self.upload(game, 'j900.xml.gz', save, auth=auth).status, 200)
+        self.assertNotIn('send_join', self.lobby(game, auth, ip=HOST_IP).json)
+        with tempfile.TemporaryDirectory() as folder:   # hotjoin.fetch_files' way: the compressed copy when offered
+            target = Path(folder) / 'j900.x4join'
+            how = joinfiles.fetch_package('127.0.0.1', relay['port'], relay['token'], late['slot'], target.name, target,
+                                          sha256(package), offer_wait_s=5, log=lambda line: None)
+            self.assertEqual(how, 'gz')
+            self.assertEqual(target.read_bytes(), package)
+        stored = self.master.games[game['game_id']].join_sizes
+        self.assertEqual(stored['j900.x4join'].size, len(package))   # the unpacked package counts like an upload
+        self.call('DELETE', f'/api/v1/games/{game["game_id"]}', {'secret': game['secret']}, ip=HOST_IP)
+        self.assertEqual(self.master.budget.used, 0)
+
+    def test_a_drop_in_slot_whose_join_never_ran_is_free_again(self):
+        game, tickets, start = self.start_game(players=3, open_slots=(3,), present_ips=(PLAYER_IP,))
+        first = self.join(game, ip=OTHER_IP).json
+        self.assertEqual(first['slot'], 3)
+        self.call('POST', f'/api/v1/games/{game["game_id"]}/leave', {'ticket': first['ticket']}, ip=OTHER_IP)
+        second = self.join(game, ip='192.0.2.50').json   # nobody played slot 3: the next player gets it
+        self.assertEqual(second.get('slot'), 3, second)
+        running = self.master.games[game['game_id']].relay
+        stand_in = running.run_dir / 'stand-in-relay.log'
+        running.dropin.relay_log = serve.RelayLog(stand_in)
+        stand_in.write_text('NATIVE_GATE JOIN slot=3 requested\n')
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline and not running.dropin.played(3):
+            time.sleep(0.2)
+        self.assertTrue(running.dropin.played(3))
+        self.call('POST', f'/api/v1/games/{game["game_id"]}/leave', {'ticket': second['ticket']}, ip='192.0.2.50')
+        self.assertError(self.join(game, ip='192.0.2.51'), 409, 'full')   # the relay took slot 3: it is gone
 
 
 class RelayPoolTests(MasterCase):

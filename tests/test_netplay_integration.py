@@ -80,6 +80,70 @@ class HostAndJoinThroughTheRealMaster(MasterCase):
                 client.code(game['code'])
             self.assertEqual(gone.exception.status, 404)
 
+    def test_a_drop_in_join_from_the_saver_through_the_master_to_the_joiner(self):
+        """The host plays alone with one drop-in slot; a joiner takes it while the game runs; the relay (a stand-in log)
+        has the host save the join; netdropin.JoinSender sends the files with the real client (the package compressed),
+        the master unpacks and checks it, and the joiner fetches it from the relay's file service as hot_join does."""
+        from lockstep.launcher import hotjoin, joinfiles, netdropin, netplay, serve
+        from test_master_relay import FakeJoin
+        original = hotjoin.join_tools
+        hotjoin.join_tools = lambda: FakeJoin
+        self.addCleanup(setattr, hotjoin, 'join_tools', original)
+        client = masterclient.MasterClient(f'http://127.0.0.1:{self.port}', timeout=10)
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            recipe_json = tmp / 'play-recipe.json'
+            recipe_json.write_bytes(recipe(players=2, open_slots=(2,)))
+            game = client.create_game('Drop-in', True, RELEASE, 2, 'a' * 64, open_slots=(2,), want='relay')
+            client.upload(game['game_id'], game['secret'], recipe_json.name, recipe_json)
+            client.start(game['game_id'], game['secret'])       # the host is the whole common load
+            listed = [g for g in client.games(RELEASE) if g['game_id'] == game['game_id']][0]
+            self.assertEqual((listed['state'], listed['open_slots_free']), ('started', 1))
+            joined = client.join(game['game_id'], RELEASE, code=game['code'])
+            self.assertEqual(joined['slot'], 2)
+            start = client.lobby(game['game_id'], joined['ticket'], wait=0)['start']
+            save = tmp / 'profile' / 'mpjoin' / 'j900.xml.gz'
+            package = save.with_name('j900.x4join')
+            save.parent.mkdir(parents=True)
+            save.write_bytes(b'the join save')
+            package.write_bytes(f'save={hashlib.sha256(save.read_bytes()).hexdigest()}=900'.encode() + bytes(200_000))
+            running = self.master.games[game['game_id']].relay
+            stand_in = running.run_dir / 'stand-in-relay.log'
+            running.dropin.relay_log = serve.RelayLog(stand_in)
+            stand_in.write_text(f'NATIVE_GATE JOIN slot=2 saved slot=1 tick=900 bytes=13 '
+                                f'package={hashlib.sha256(package.read_bytes()).hexdigest()} portable={"f" * 32}\n')
+            watch = netplay.LobbyWatch(client, game['game_id'], game['host_ticket'], (masterclient.MasterError, OSError), wait=2)
+            logs = []
+            sender = netdropin.JoinSender(client, game['game_id'], game['secret'], tmp / 'profile', watch,
+                                          (masterclient.MasterError, OSError), log=logs.append)
+            sender.start()
+            try:
+                target = tmp / 'joiner' / 'j900.x4join'
+                target.parent.mkdir()
+                how = joinfiles.fetch_package('127.0.0.1', start['relay']['port'], start['relay']['token'], 2, target.name,
+                                              target, hashlib.sha256(package.read_bytes()).hexdigest(), offer_wait_s=30,
+                                              log=logs.append)
+                self.assertEqual(how, 'gz')
+                self.assertEqual(target.read_bytes(), package.read_bytes())
+                got = joinfiles.fetch('127.0.0.1', start['relay']['port'], start['relay']['token'], 2, save.name,
+                                      target.with_name(save.name), retries=1, offer_wait_s=30)
+                self.assertEqual(got, hashlib.sha256(save.read_bytes()).hexdigest())
+                self.assertTrue(fakes_wait(lambda: 900 in sender.sent, 10), logs)
+            finally:
+                sender.stop()
+                watch.stop()
+            self.assertTrue(any('compressed to' in line for line in logs), logs)
+            client.delete(game['game_id'], game['secret'])
+
+
+def fakes_wait(predicate, seconds):
+    end = time.time() + seconds
+    while time.time() < end:
+        if predicate():
+            return True
+        time.sleep(0.05)
+    return predicate()
+
 
 if __name__ == '__main__':
     unittest.main()

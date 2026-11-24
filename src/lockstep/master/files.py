@@ -110,6 +110,39 @@ def receive(stream, length, folder, expect_sha, final_name=None):
             pass
 
 
+def gunzip(source, dest, cap):
+    """dest = the gzip `source` unpacked (a saver's compressed join package), at most `cap` bytes, written to dest.part
+    first; returns (size, SHA-256). UploadError when it is not gzip, holds more than `cap`, or cannot be written."""
+    import gzip
+    import zlib
+    dest = Path(dest)
+    part = dest.with_name(dest.name + '.part')
+    digest = hashlib.sha256()
+    size = 0
+    try:
+        with gzip.open(source, 'rb') as packed, part.open('wb') as out:
+            while True:
+                block = packed.read(CHUNK)
+                if not block:
+                    break
+                size += len(block)
+                if size > cap:
+                    raise UploadError(413, 'too_large', f'the unpacked package is over {cap >> 20} MiB')
+                out.write(block)
+                digest.update(block)
+        os.replace(part, dest)
+        return size, digest.hexdigest()
+    except (EOFError, zlib.error, gzip.BadGzipFile):
+        raise UploadError(400, 'bad_gzip', 'the compressed package is not gzip, or it is cut short') from None
+    except OSError as error:
+        raise UploadError(503, 'storage', f'the package could not be unpacked ({error.__class__.__name__})') from None
+    finally:
+        try:
+            part.unlink()
+        except OSError:
+            pass
+
+
 def parse_range(header, size):
     """The byte range a Range header asks of a file of `size` bytes: (first, last) inclusive, None for the whole file,
     or ValueError when it cannot be served (416). One range only; a list of ranges is served whole."""

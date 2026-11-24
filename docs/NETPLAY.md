@@ -126,7 +126,7 @@ and the round trip time.
 
 ### Master notes (what package 1 chose where the contract left it open)
 
-- **Errors** (`error`): 400 `bad_request`, `bad_json`, `bad_code`, `bad_name`, `bad_sha256`, `bad_method`, `short_body`,
+- **Errors** (`error`): 400 `bad_request`, `bad_json`, `bad_code`, `bad_name`, `bad_sha256`, `bad_gzip`, `bad_method`, `short_body`,
   `bad_proxy`, `ipv4_only`; 403 `forbidden`; 404 `not_found`; 409 `incompatible`, `full`, `started`, `state`, `not_ready`,
   `not_asked`, `busy`, `unreachable`, `no_recipe`, `bad_recipe`; 413 `too_large`; 416 `bad_range`; 429 `rate_limited`,
   `too_many_games`; 503 `server_full`, `relays_full`, `relay_failed`, `no_public_host`, `storage`; 500 `internal`.
@@ -279,7 +279,8 @@ Both backends (the launcher's X4: log rows `[X4LAN] LOBBY REQUEST <text>` and `l
 X4: named pipes) carry the same requests and the same state table.
 
 Requests (text, at most 200 bytes of UTF-8):
-`HOST|<public 0/1>|<players 2..8>|<name>` · `JOINCODE|<code>` · `JOIN` (code from the clipboard: a join code or a
+`HOST|<public 0/1>|<players 2..8>[+<drop-in slots>]|<name>` (with drop-in slots: players 1..7, together at most 8;
+"Drop-in games") · `JOINCODE|<code>` · `JOIN` (code from the clipboard: a join code or a
 long LAN invite code) · `BROWSE` · `JOINGAME|<game_id>` · `JOINLAN|<index>` · `START` · `READY` · `CANCEL` ·
 `COPY` · `LEAVE`. The existing `JOIN`, `JOIN<k>` (start picker) and `HOST`/`COPY`/`CANCEL` keep working. `READY` is
 not sent by the page: the launcher marks a player ready itself once its files and overlay are done.
@@ -338,7 +339,9 @@ The netplay page, by phase (the state's `lines` always first, at most 6):
 - `session`, `restart`: the lines only.
 
 What the page sends, exactly:
-- `HOST|<0/1>|<2..8>|<name>`: an empty name is sent as `X4 game`. `JOINCODE|<text>`: the box's text as typed, trimmed
+- `HOST|<0/1>|<2..8>|<name>`, or `HOST|<0/1>|<1..7>+<1..7>|<name>` with drop-in slots (the page's "Drop-in slots"
+  dropdown, 0 = none; Players offers 1 for a host who starts alone, and the two stay valid together: at most 8, and
+  without drop-in slots at least 2): an empty name is sent as `X4 game`. `JOINCODE|<text>`: the box's text as typed, trimmed
   (the launcher normalizes codes); sent by Join and by Enter in the box (a click elsewhere, which X4 also reports as a
   confirmed box, sends nothing). Typed fields lose `|` and control characters (they become spaces) and are cut at whole
   UTF-8 characters: a name at 40 bytes, the code box at 100.
@@ -552,10 +555,10 @@ Decisions where the contract left room:
   with the session; `--request HOST|...` makes the session before the first start. A joiner marks itself ready at the
   master (or the LAN host) only after its X4 runs the session (download, build, restart: a ready player may be started
   at once, and the load is 20 to 30 s later). The page never sends READY; the request is accepted and resent.
-- **START waits for every slot.** A session of N players needs N clients at the common load (the relay's barrier and
-  the overlay are made for N), so the host starts the game at the master once every slot is taken and ready (START
-  before that only says so). Fewer players: host a game for fewer. Sessions with open slots (drop-in) are refused by
-  HOST for now.
+- **START waits for every slot of the common load.** A session of N players needs N clients at the common load (the
+  relay's barrier and the overlay are made for N), so the host starts the game at the master once every slot is taken
+  and ready (START before that only says so). Fewer players: host a game for fewer, or with drop-in slots (the next
+  section): those are not part of the common load, and a host with drop-in slots alone starts at once.
 - **Host sessions:** `x4ls new-session --base-start x4ep1_gamestart_discover --players N --mode coop --gate-dll
   <kit's native DLL>` (every slot starts with the session's start; `x4ls lobby --base-start/--mode` change it), kept in
   the kit's `sessions/host-<start>-<N>p-<mode>-<8 hex of the DLL's sha-256>`; a playtest kit and a checkout keep
@@ -597,13 +600,46 @@ Decisions where the contract left room:
   callback accepts `(done, total)`, `(name, done, total)` or a fraction. A join answer that lists fewer than the three
   files (a joiner right after the host registered) is left and joined again, up to five times.
 
-Command lines (all `x4ls lobby` with the first request made): `x4ls host --players N [--name NAME] [--public]`, `x4ls
+### Drop-in games
+
+A game hosted with drop-in slots (`HOST|p|N+M|name`, `x4ls host --players N --drop-in M`) is a session of N + M players
+whose last M slots are open (`x4ls new-session --open N+1,...`; the session is kept under its own key,
+`host-<start>-<N+M>p-open<slots>-<mode>-<dll>`). Every open slot starts with the session's own start, at the host's
+place (no far starts). The common load is slots 1..N; the master starts the game once they are ready (a host alone:
+at once), and the open slots are joined while it runs.
+- **Relay mode only.** The host registers `want: "relay"` and opens no ports (no mapping, no probe): the master's relay
+  runs the session with the drop-in arguments, keeps the join files and serves them to the joiner on its port (TCP, the
+  pool's ports are open for it). A direct or LAN game with drop-in slots is refused with a line: the host's own relay
+  would have to serve the join files on a further mapped TCP port (open).
+- **The saver** (netdropin.JoinSender, in the host's job and in every common-load joiner's): the relay asks a player of
+  the common load to save; the master lists the join in that player's lobby answers (`send_join`); the launcher waits
+  for `save/mpjoin/j<T>.x4join` and `j<T>.xml.gz` in its X4's profile, gzips the package (`joinfiles.gzip_file`, level
+  1: a 192 MB package is about 30 MB) and uploads `j<T>.x4join.gz`, then the save. A master that refuses the compressed
+  copy gets the raw package. The join saves are deleted from the profile when the session ends.
+- **The master** unpacks `j<T>.x4join.gz` beside it (at most 512 MiB, counted against the data budget like an upload),
+  checks the unpacked bytes against the package hash the relay announced (400 `bad_gzip`, `bad_sha256`, 409
+  `not_asked`), offers the compressed copy at once (the joiner's `joinfiles.fetch_package` takes it first and checks the
+  unpacked bytes itself), and once the save is there too, the raw package and the save (serve's DropIn checks).
+- **Slots:** after the start only open slots are given. A drop-in player who leaves (or sends nothing for 90 s) before
+  the relay took its slot (no `NATIVE_GATE JOIN slot=K` row other than `failed`) frees the slot for the next one; a slot
+  the relay took is gone with its player.
+- **The joiner:** the master's join gives an open slot; the session files are downloaded and the overlay built as for
+  any join (the recipe keeps `--open`). Its X4 is not started with the session: the job hands the backend a start with
+  `late` set, the lane's X4 closes, and `hotjoin.hot_join` plays the slot against the master's relay (its early start:
+  X4 boots while the session saves; lane and profile `c<slot>`, the join files from the relay's port, waiting up to
+  780 s for them as `x4ls join --server-file` does). A joiner of an open slot before the start waits for the start, then
+  joins the same way.
+- **The lists:** the public list's games carry `open` (free drop-in slots of a running game); the page shows a running
+  game as `running, 1 drop-in` and joinable, or `(no drop-in slot free)`.
+
+Command lines (all `x4ls lobby` with the first request made): `x4ls host --players N [--drop-in M] [--name NAME] [--public]`, `x4ls
 join --code CODE | --address HOST[:PORT][,...] | --game-id ID`, `x4ls games [--lan] [--json]` (no X4), and `x4ls lobby
 [--kit DIR] [--master URL | --no-master] [--request TEXT] [--state-mirror FILE] [--base-start S] [--mode M]`.
 
-Open: hosting sessions with open slots (drop-in joins of a running netplay game, the master's join files); a Ready
-button (`can_ready`); the in-session page's requests from a Steam-started X4 while the game runs (ignored); the host's
-LEAVE keeps its relay running for the others until the session ends.
+Open: drop-in slots in direct and LAN games (the host's relay and a mapped TCP port for the join files); the
+in-session page for a drop-in joiner (its X4 is hot_join's, without the netplay page's state); a Ready button
+(`can_ready`); the in-session page's requests from a Steam-started X4 while the game runs (ignored); the host's LEAVE
+keeps its relay running for the others until the session ends.
 
 ## Live runs
 

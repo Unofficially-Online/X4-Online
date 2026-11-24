@@ -54,7 +54,8 @@ class Request:
     """One request of the page: kind is its first field, the others its arguments."""
     kind: str
     public: bool = False
-    players: int = 0        # HOST|...: 2..8; 0 is the older page's HOST (the kit's own session)
+    players: int = 0        # HOST|...: 2..8 (1..7 with drop-in slots); 0 is the older page's HOST (the kit's own session)
+    open: int = 0           # HOST|...: drop-in slots, joined while the game runs (players + open <= 8)
     name: str = ''          # HOST|...: the game's name as the host typed it
     text: str = ''          # JOINCODE: what was typed or pasted (a join code, an invite code, addresses)
     game_id: str = ''       # JOINGAME
@@ -75,18 +76,33 @@ def clean_name(text):
 
 
 def parse_host(fields):
-    """HOST|<public 0/1>|<players 2..8>|<name> without its kind; None when a field is wrong."""
+    """HOST|<public 0/1>|<players>[+<drop-in slots>]|<name> without its kind; None when a field is wrong. Without
+    drop-in slots players is 2..8; with them (1..7 more slots, joined while the game runs) the game may start with
+    the host alone, and players + slots is at most 8."""
     parts = fields.split('|', 2)
     if len(parts) != 3:
         return None
     public_text = parts[0]
-    players_text = parts[1]
-    if public_text not in ('0', '1') or not players_text.isdigit():
+    players_text, plus, open_text = parts[1].partition('+')
+    if public_text not in ('0', '1') or not players_text.isdigit() or (plus and not open_text.isdigit()):
         return None
     players = int(players_text)
-    if not PLAYERS_MIN <= players <= PLAYERS_MAX:
+    extra = int(open_text) if plus else 0
+    if not host_counts_valid(players, extra):
         return None
-    return Request('HOST', public=public_text == '1', players=players, name=clean_name(parts[2]))
+    return Request('HOST', public=public_text == '1', players=players, open=extra, name=clean_name(parts[2]))
+
+
+def host_counts_valid(players, extra):
+    """players at the start and drop-in slots of a hosted game (parse_host's rule)."""
+    if extra == 0:
+        return PLAYERS_MIN <= players <= PLAYERS_MAX
+    return 1 <= players and 1 <= extra and players + extra <= PLAYERS_MAX
+
+
+def drop_in_slots(players, extra):
+    """The session's open slots for `players` at the start and `extra` drop-in slots: the last ones."""
+    return tuple(range(players + 1, players + extra + 1))
 
 
 def parse_request(text):
@@ -126,7 +142,8 @@ def request_text(request):
     """The text of a Request, as the page sends it (parse_request's inverse)."""
     if request.kind == 'HOST' and request.players:
         public = '1' if request.public else '0'
-        return f'HOST|{public}|{request.players}|{request.name}'
+        extra = f'+{request.open}' if request.open else ''
+        return f'HOST|{public}|{request.players}{extra}|{request.name}'
     if request.kind == 'JOINCODE':
         return f'JOINCODE|{request.text}'
     if request.kind == 'JOINGAME':
@@ -330,6 +347,7 @@ class SessionStart:
     snapshot: Path
     mode: str             # 'direct', 'relay' or 'lan'
     relay: RelayPlan | None = None
+    late: bool = False    # a drop-in slot: this PC joins the running game (hotjoin.hot_join; arm_at is past or unused)
 
 
 @dataclass
@@ -528,7 +546,7 @@ def game_row(game, release):
     return {'id': str(game.get('game_id')), 'name': clean_name(game.get('name') or 'A game'),
             'players': int(game.get('players') or 0), 'max': int(game.get('players_max') or 0),
             'state': str(game.get('state') or 'lobby'), 'compatible': bool(compatible),
-            'mode': str(game.get('mode') or '') or None}
+            'mode': str(game.get('mode') or '') or None, 'open': int(game.get('open_slots_free') or 0)}
 
 
 def lan_row(index, entry, release):
@@ -991,9 +1009,14 @@ class Backend:
     def clipboard_set(self, text):
         return lobby.clipboard_set(text)
 
-    def host_session(self, players, progress, cancelled):
-        """The session to host for this many players (netkit.SessionFiles); may close X4 to make one."""
+    def host_session(self, players, progress, cancelled, open_slots=()):
+        """The session to host for this many players (netkit.SessionFiles), open_slots joined while it runs; may close
+        X4 to make one."""
         raise NotImplementedError
+
+    def save_folder(self):
+        """The save folder of this PC's X4 in the session (its join saves are in save/mpjoin), or None."""
+        return None
 
     def install_session(self, files, progress):
         """X4 runs this session's overlay with its save staged (starts X4 again when it runs another)."""

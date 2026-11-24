@@ -11,7 +11,7 @@ others, then the host's public address; the address that took the check-in is th
 A LAN game (a long invite code, an address, a LAN game without a code): the host's lobby admits this PC, names the
 session files its file service offers (netfiles.py), and sends the start on the same connection. A joiner with the
 host's own playtest kit needs no download."""
-from . import lobby, netfiles, netkit, netlan, netplay
+from . import lobby, netdropin, netfiles, netkit, netlan, netplay
 
 ANSWER_WAIT_S = 10            # the host's lobby answers a hello within this
 ONE_ADDRESS_TIMEOUT_S = 8     # a typed address or an invite code may be across the internet or a VPN
@@ -54,7 +54,10 @@ class JoinJob(netplay.Job):
         files = self.master_session(master, game, joined['files'])
         if not 2 <= game['slot'] <= files.players:
             raise netplay.JobFailed(f'The master server gave slot {game["slot"]}, which this session does not have.')
-        self.install(files)
+        game['open'] = tuple(sorted(int(slot) for slot in files.recipe.get('open') or ()))
+        game['late'] = game['slot'] in game['open']   # a drop-in slot: joined while the game runs (hotjoin)
+        if not game['late']:
+            self.install(files)   # a drop-in joiner's X4 is started by the hot join, with the join save
         self.ready(game)
         start = self.wait_for_master_start(game, files, hint)
         self.flow.begin_session(start)
@@ -174,19 +177,24 @@ class JoinJob(netplay.Job):
                 self.ready(game)
             players = netplay.player_rows(answer)
             ready = sum(1 for row in players if row['ready'])
+            last = ('You join the game once it runs (a drop-in slot).' if game.get('late')
+                    else 'The game loads when every player is ready.')
             self.show('waiting', f'Joined {game["name"]} as player {game["slot"]} of {files.players}.',
                       f'{len(players)} of {files.players} players here, {ready} ready.',
-                      'The game loads when every player is ready.', code=game['code'] or None, host=False,
+                      last, code=game['code'] or None, host=False,
                       network=game['network'], players=players, slot=game['slot'])
             self.sleep(LOOP_S)
         start = netplay.checked_start(start)
         game['network'] = dict(game['network'], mode=start['mode'])
+        if game.get('late') and start['mode'] != 'relay':
+            raise netplay.JobFailed('This game runs on the host\'s relay, which takes no drop-in players yet.',
+                                    'Ask the host for a game with drop-in slots at the master server.')
         relay_host = self.relay_address(start, game, hint)
         self.flow.log(f'netplay: the game starts in {start["mode"]} mode: player {game["slot"]}, relay {relay_host}:'
-                      f'{start["port"]}, load at {start["load_at"]}')
+                      f'{start["port"]}, ' + ('a drop-in join' if game.get('late') else f'load at {start["load_at"]}'))
         return netplay.SessionStart(slot=game['slot'], clients=files.players, relay_host=relay_host, port=start['port'],
                                     token=start['token'], arm_at=start['load_at'], overlay=files.overlay,
-                                    snapshot=files.snapshot, mode=start['mode'])
+                                    snapshot=files.snapshot, mode=start['mode'], late=bool(game.get('late')))
 
     def relay_address(self, start, game, hint):
         """Relay mode: the master's relay. Direct mode: the host's address that takes this PC's check-in."""
@@ -219,8 +227,11 @@ class JoinJob(netplay.Job):
 
     def in_session(self, start, game):
         """The session runs: the state keeps the players and the network for the in-session page; LEAVE says so to
-        the master (the game's own Leave stops this PC's gate)."""
+        the master (the game's own Leave stops this PC's gate). A common-load player of a drop-in game may be asked
+        to save a join (netdropin.JoinSender)."""
         self.wait_until_running(start, code=game.get('code') or None, host=False, network=game.get('network'))
+        if game.get('open') and not start.late and start.mode == 'relay' and game.get('watch') is not None:
+            self.send_joins(game)
         while not self.flow.session_over.is_set():
             if self.cancelled.is_set():
                 return
@@ -231,10 +242,19 @@ class JoinJob(netplay.Job):
             watch = game.get('watch')
             players = netplay.player_rows(watch.latest() if watch else None, game.get('players') or [])
             first = ('You left the session; it goes on for the others.' if game.get('left')
-                     else f'You are player {start.slot} of {start.clients}.')
+                     else f'You are player {start.slot} of {start.clients}' + (', joined while it runs.' if start.late else '.'))
             self.show('session', first, session_line(start), code=game.get('code') or None, host=False,
                       network=game['network'], players=players, slot=start.slot, arm_at=start.arm_at)
             self.sleep(1.0)
+
+    def send_joins(self, game):
+        folder = self.flow.backend.save_folder()
+        if folder is None:
+            return
+        sender = netdropin.JoinSender(game['master'], game['game_id'], game['ticket'], folder, game['watch'],
+                                      netplay.master_error_types(self.net), self.flow.log)
+        self.on_end(sender.stop)
+        sender.start()
 
     # ---- a LAN game ----
     def join_lan(self, target):

@@ -120,8 +120,8 @@ class Backend(unittest.TestCase):
     def test_host_session_from_the_cache_or_made_with_x4_closed(self):
         made = []
 
-        def make(kit, players, mode, base_start, progress, log, cancelled, steam_fix=False):
-            made.append((players, mode, base_start))
+        def make(kit, players, mode, base_start, progress, log, cancelled, steam_fix=False, open_slots=()):
+            made.append((players, mode, base_start) + ((tuple(open_slots),) if open_slots else ()))
             return 'made'
         with mock.patch.object(netlobby.netkit, 'cached_session', lambda *args: 'cached'):
             self.assertEqual(self.backend.host_session(3, None, None), 'cached')
@@ -130,6 +130,11 @@ class Backend(unittest.TestCase):
                 mock.patch.object(netlobby.netkit, 'make_session', make):
             self.assertEqual(self.backend.host_session(3, None, None), 'made')
         self.assertEqual((self.game.held, made), (1, [(3, 'coop', netkit.HOST_SESSION_START)]))
+        with mock.patch.object(netlobby.netkit, 'cached_session', lambda *args: None), \
+                mock.patch.object(netlobby.netkit, 'make_session', make):   # a drop-in session: its open slots too
+            self.assertEqual(self.backend.host_session(3, None, None, open_slots=(3,)), 'made')
+        self.assertEqual(made[-1], (3, 'coop', netkit.HOST_SESSION_START, (3,)))
+        self.assertEqual(self.backend.save_folder().name, 'save')
 
         def fails(*args, **kwargs):
             raise netkit.KitError('X4 is running; close it first')
@@ -219,6 +224,40 @@ class SessionStart(unittest.TestCase):
                                      arm_at=1800000000, overlay=self.folder.path / 'elsewhere', snapshot=self.snapshot, mode='lan')
         with self.assertRaisesRegex(SystemExit, 'not the one this X4 runs'):
             netlobby.play_session(self.options, flow, game, other, None, self.run_dir, lambda text: None)
+
+    def test_a_drop_in_slot_closes_this_x4_and_hot_joins_the_running_game(self):
+        game = FakeGame(self.folder.path / 'game')
+        kit = netkit.Kit(fakes.release_kit(self.folder.path / 'kit'))
+        flow = netplay.Flow(netplay.FlowConfig(kit=kit, release=kit.release), fakes.FakeBackend(self.folder.path / 'work'),
+                            net=fakes.network(None), log=lambda text: None)
+        start = netplay.SessionStart(slot=2, clients=2, relay_host='203.0.113.50', port=47205, token='ef' * 16,
+                                     arm_at=1700000000, overlay=self.overlay, snapshot=self.snapshot, mode='relay', late=True)
+        joins = []
+
+        def hot_join(options, log):
+            joins.append(options)
+            return {'outcome': 'played'}
+        for others_running in (False, True):   # True: another player's X4 on this PC (a second window)
+            with mock.patch('lockstep.launcher.hotjoin.hot_join', hot_join), \
+                    mock.patch.object(netlobby.session, 'x4_running', lambda: others_running):
+                result = netlobby.late_join(self.options, flow, game, start, lambda text: None)
+            self.assertEqual((result['outcome'], result['late'], result['slot']), ('played', True, 2))
+        alone, beside = joins
+        self.assertEqual((alone.relay, alone.token, alone.slot, alone.offer_wait), ('203.0.113.50:47205', 'ef' * 16, 2, 780))
+        self.assertEqual(alone.overlay, self.overlay.resolve())
+        self.assertEqual((alone.same_pc, alone.state), (False, self.options.state))
+        self.assertTrue(beside.same_pc)
+        self.assertNotEqual(beside.state, self.options.state)   # its own state file beside the other X4's session
+        self.assertEqual(game.held, 2)                            # this lane's X4 closed each time
+        self.assertTrue(flow.session_started.is_set())
+
+        def refused(options, log):
+            raise SystemExit('the relay refused the join: slot_not_absent')
+        with mock.patch('lockstep.launcher.hotjoin.hot_join', refused), \
+                mock.patch.object(netlobby.session, 'x4_running', lambda: False):
+            result = netlobby.late_join(self.options, flow, game, start, lambda text: None)
+        self.assertEqual(result['outcome'], 'failed')
+        self.assertIn('slot_not_absent', result['ended'])
 
 
 class CommandLines(unittest.TestCase):

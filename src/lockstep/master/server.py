@@ -394,6 +394,8 @@ class Master:
         if joined_file:
             game_relay = game.relay
             if game_relay and game_relay.dropin:
+                if name.endswith('.x4join.gz'):
+                    path = self.unpack_join(game, game_relay, path)
                 game_relay.dropin.stored(path)   # once a join's two files are here: verified, then served
             with self.lock:
                 game.touch()   # the saver's send_join list may be shorter now
@@ -424,6 +426,30 @@ class Master:
             raise ApiError(400, 'bad_sha256', 'this is not the package the relay announced')
         self.saw(game, player, ip)
         return relay.dropin.run_dir / 'join', name
+
+    def unpack_join(self, game, relay, path):
+        """A saver's compressed package (j<T>.x4join.gz, about a sixth of the raw one): unpacked beside it as
+        j<T>.x4join (counted like an upload), checked against the package the relay announced, and offered to the
+        joiner compressed (joinfiles.fetch_package takes it first). Returns the raw package's path; ApiError when the
+        bytes are not that package (the saver then sends the raw one)."""
+        tick = files.join_tick(path.name)
+        asked = relay.dropin.pending().get(tick)
+        if asked is None:
+            raise ApiError(409, 'not_asked', f'the relay no longer waits for the join files of tick {tick}')
+        raw = path.with_name(f'j{tick}.x4join')
+        try:
+            size, sha = files.gunzip(path, raw, files.JOIN_FILE_MAX)
+        except files.UploadError as error:
+            raise ApiError(error.status, error.code, error.why) from None
+        if sha != asked[2]:
+            raw.unlink(missing_ok=True)
+            raise ApiError(400, 'bad_sha256', 'the unpacked package is not the one the relay announced')
+        if not self.budget.reserve(size):
+            raw.unlink(missing_ok=True)
+            raise ApiError(503, 'server_full', 'the server has no room for the unpacked package now')
+        self.store(game, raw.name, raw, size, sha)
+        relay.dropin.offer_packed(path)
+        return raw
 
     def store(self, game, name, path, size, sha):
         """A finished upload: keep it in the game (True for a join file), or drop it when the game ended meanwhile."""
@@ -728,7 +754,7 @@ class Master:
             host_left_lobby = player.host and game.state == 'lobby'
             if not host_left_lobby:
                 del game.players[player.slot]
-                if game.state == 'started':
+                if game.state == 'started' and not self.unplayed(game, player.slot):
                     game.gone_slots.add(player.slot)
                 game.touch()
         if host_left_lobby:
@@ -812,6 +838,8 @@ class Master:
                         ending.append((game, f'the host sent nothing for {self.limits.player_idle_s:g} s'))
                         continue
                     self.drop_idle_players(game, now)
+                elif game.open_slots and game.relay:
+                    self.drop_idle_players(game, now)
                 if game.relay:
                     followed.append(game)
             self.prune_probes(now)
@@ -830,9 +858,20 @@ class Master:
             self.finish(game, reason)
         self.empty_trash()
 
+    @staticmethod
+    def unplayed(game, slot):
+        """An open slot of a running relay-mode game that the relay has not taken for a join (none asked, or the join
+        failed): its player leaving frees it for the next one."""
+        relay = game.relay
+        return (slot in game.open_slots and relay is not None and relay.dropin is not None
+                and not relay.dropin.played(slot))
+
     def drop_idle_players(self, game, now):
+        """Players that sent nothing for player_idle_s leave: in the lobby any but the host, in a running game a drop-in
+        player whose join the relay never took (its slot is free again)."""
         idle = [slot for slot, player in game.players.items()
-                if not player.host and now - player.seen > self.limits.player_idle_s]
+                if not player.host and now - player.seen > self.limits.player_idle_s
+                and (game.state == 'lobby' or self.unplayed(game, slot))]
         for slot in idle:
             del game.players[slot]
             self.log(f'master: game {game.game_id}: slot {slot} left (no request for {self.limits.player_idle_s:g} s)')

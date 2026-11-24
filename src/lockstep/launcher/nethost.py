@@ -15,7 +15,7 @@ import threading
 import time
 from pathlib import Path
 
-from . import lobby, netfiles, netkit, netlan, netplay
+from . import lobby, netdropin, netfiles, netkit, netlan, netplay
 
 MAPPING_LEASE_S = 3600
 START_ANSWER_WAIT_S = 60       # after START, the master's start reaches the lobby answer within this
@@ -29,12 +29,16 @@ class HostJob(netplay.Job):
 
     def run(self):
         legacy = self.request.players == 0
+        if self.request.open:   # drop-in games play on the master's relay (it keeps the join files for the joiners)
+            master, note = self.flow.master()
+            if master is None:
+                raise netplay.JobFailed('Drop-in slots need the master server (it relays the game and keeps the join files).',
+                                        note or 'Host without drop-in slots for a game on the local network.')
         files = self.prepare(legacy)
-        if files.recipe.get('open'):
-            raise netplay.JobFailed('This session has open slots (players who join while it runs):',
-                                    'netplay hosts sessions without open slots so far.')
         players = files.players
-        name = self.request.name or f'{players}-player game'
+        opened = drop_in(files)
+        start_players = players - len(opened)
+        name = self.request.name or (f'{start_players}+{len(opened)}-player game' if opened else f'{players}-player game')
         public = self.request.public and not legacy
         self.show('preparing', 'Starting X4 with the session...')
         self.flow.backend.install_session(files, self.session_progress)
@@ -42,9 +46,12 @@ class HostJob(netplay.Job):
         lobby_host = self.open_lobby(files, public)
         master = None
         note = ''
-        if not legacy:
+        if not legacy or opened:
             master, note = self.flow.master()
         self.check()
+        if master is None and opened:
+            raise netplay.JobFailed('This session has drop-in slots, which need the master server.',
+                                    note or 'The master server does not answer.')
         if master is not None:
             start, game = self.host_master(master, files, lobby_host, name, public)
         else:
@@ -61,12 +68,16 @@ class HostJob(netplay.Job):
             if own is None:
                 return self.flow.backend.host_session(netplay.PLAYERS_MIN, self.session_progress, self.cancelled)
             return own
-        if own is not None and own.players == self.request.players:
+        total = self.request.players + self.request.open
+        opened = netplay.drop_in_slots(self.request.players, self.request.open)
+        if own is not None and own.players == total and drop_in(own) == opened:
             return own
         if own is not None:
-            raise netplay.JobFailed(f'This kit\'s session is made for {own.players} players, not {self.request.players}.',
-                                    f'Host a game for {own.players} players.')
-        return self.flow.backend.host_session(self.request.players, self.session_progress, self.cancelled)
+            raise netplay.JobFailed(f'This kit\'s session is made for {counts_text(own.players, drop_in(own))}, not '
+                                    f'{counts_text(total, opened)}.', f'Host a game for {counts_text(own.players, drop_in(own))}.')
+        if opened:
+            return self.flow.backend.host_session(total, self.session_progress, self.cancelled, open_slots=opened)
+        return self.flow.backend.host_session(total, self.session_progress, self.cancelled)
 
     def session_progress(self, done):
         self.progress('session', done)
@@ -89,12 +100,17 @@ class HostJob(netplay.Job):
         port = self.config.port
         tcp_port = port + 1
         errors = netplay.master_error_types(self.net)
-        self.show('preparing', 'Opening the game\'s ports on the router...')
-        mapping = self.map_ports(port, tcp_port)
-        reach = self.reachable(master, port, tcp_port)
-        direct = bool(reach.get('tcp') and reach.get('udp'))
-        network = {'mode': 'direct' if direct else 'relay', 'mapping': mapping_name(mapping, direct),
-                   'public_ip_known': bool(reach.get('ip'))}
+        opened = drop_in(files)
+        if opened:   # the master's relay: nothing reaches this PC from outside, no ports to open
+            mapping, direct = None, False
+            network = {'mode': 'relay', 'mapping': 'none', 'public_ip_known': False, 'drop_in': len(opened)}
+        else:
+            self.show('preparing', 'Opening the game\'s ports on the router...')
+            mapping = self.map_ports(port, tcp_port)
+            reach = self.reachable(master, port, tcp_port)
+            direct = bool(reach.get('tcp') and reach.get('udp'))
+            network = {'mode': 'direct' if direct else 'relay', 'mapping': mapping_name(mapping, direct),
+                       'public_ip_known': bool(reach.get('ip'))}
         if mapping is not None and not direct and netplay.firewall_allowed() is False:
             network['firewall'] = 'blocked'   # no rule for this launcher's Python: the page offers FIREWALL
         known, ping = self.flow.master_ping(master)
@@ -106,7 +122,7 @@ class HostJob(netplay.Job):
         self.show('preparing', 'Registering the game at the master server...', network=network)
         try:
             created = master.create_game(name, public, self.config.release, files.players, files.sha256,
-                                         open_slots=tuple(files.recipe.get('open') or ()), want='auto',
+                                         open_slots=opened, want='relay' if opened else 'auto',
                                          direct={'udp_port': port, 'tcp_port': tcp_port} if direct else None, lan=lan)
         except errors as error:
             raise netplay.JobFailed('The master server did not take the game:', netplay.error_why(error)) from None
@@ -125,7 +141,7 @@ class HostJob(netplay.Job):
         watch = netplay.LobbyWatch(master, game['game_id'], game['host_ticket'], errors, self.flow.log)
         self.on_end(watch.stop)
         game.update(master=master, watch=watch, network=network, mapping=mapping, players_max=files.players,
-                    public=public)
+                    public=public, open=opened)
         start = self.wait_for_master_start(game, lobby_host, files)
         return start, game
 
@@ -214,8 +230,9 @@ class HostJob(netplay.Job):
             lobby_host.checkin_slots = {row['slot'] for row in players if not row['host']}
             lobby_host.poll()
             self.update_announcer(len(players))
-            ready = [row for row in players if not row['host'] and row['ready']]
-            full = len(ready) == game['players_max'] - 1
+            # the common load's slots (all but the drop-in ones) must be ready; the drop-in players join later
+            ready = [row for row in players if not row['host'] and row['ready'] and row['slot'] not in game['open']]
+            full = len(ready) == game['players_max'] - len(game['open']) - 1
             start = (answer or {}).get('start')
             if start:
                 return self.master_start(netplay.checked_start(start), game, lobby_host, files)
@@ -240,6 +257,9 @@ class HostJob(netplay.Job):
             self.flow.log(f'netplay: the master did not start the game: {netplay.error_why(error)}')
 
     def master_start(self, start, game, lobby_host, files):
+        if game['open'] and start['mode'] != 'relay':
+            raise netplay.JobFailed('The master server started this drop-in game without its relay.',
+                                    'Drop-in joins need the master\'s relay: host it again.')
         game['network'] = dict(game['network'], mode=start['mode'])
         if start['mode'] == 'direct':
             plan = netplay.RelayPlan(port=start['port'], token=start['token'], allow_file=lobby_host.allow.path,
@@ -326,6 +346,8 @@ class HostJob(netplay.Job):
         the session's config the page hears 'loading' (it runs the config on 'session'); the players check in at this
         PC's lobby exactly then, so the lobby is followed all the while."""
         left = False
+        if game.get('open') and start.mode == 'relay' and game.get('watch') is not None:
+            self.send_joins(game)
         while not self.flow.session_over.is_set():
             if self.cancelled.is_set():
                 return
@@ -351,8 +373,21 @@ class HostJob(netplay.Job):
                 continue
             lines = ['You left the session; it goes on for the others.' if left else f'You are player 1 of {start.clients}, the host.',
                      session_network_line(start, game)]
+            if game.get('open'):
+                lines.append(drop_in_session_line(game, players))
             self.show('session', *lines, **fields)
             self.sleep(SESSION_LOOP_S)
+
+    def send_joins(self, game):
+        """This PC saves the drop-in players' joins (the relay asks the common load): their files go to the master."""
+        folder = self.flow.backend.save_folder()
+        if folder is None:
+            self.flow.log('netplay: this launcher has no save folder: the drop-in joins cannot be sent from here')
+            return
+        sender = netdropin.JoinSender(game['master'], game['game_id'], game['secret'], folder, game['watch'],
+                                      netplay.master_error_types(self.net), self.flow.log)
+        self.on_end(sender.stop)
+        sender.start()
 
     def session_tick(self):
         reader = self.flow.session_info.get('tick')
@@ -360,6 +395,20 @@ class HostJob(netplay.Job):
             return max(0, int(reader())) if callable(reader) else 0   # the relay says -1 before its first step
         except (OSError, ValueError, TypeError):
             return 0
+
+
+def drop_in(files):
+    """The session's drop-in slots (the recipe's open slots), sorted."""
+    return tuple(sorted(int(slot) for slot in files.recipe.get('open') or ()))
+
+
+def counts_text(players, opened):
+    """'3 players' or '1 player and 2 drop-in slots'."""
+    start = players - len(opened)
+    text = f'{start} player' + ('' if start == 1 else 's')
+    if opened:
+        text += f' and {len(opened)} drop-in slot' + ('' if len(opened) == 1 else 's')
+    return text
 
 
 def checked_created(created):
@@ -398,6 +447,8 @@ def network_line(network):
         # the router opened the ports, yet the master's probe did not reach this PC: a firewall on the PC (Windows Defender
         # Firewall has never been told about a release's own python.exe; the live run of 23 Nov)
         line = 'Through the server\'s relay: a firewall on this PC blocks the ports the router opened.'   # Allow: FIREWALL
+    elif mode == 'relay' and network.get('drop_in'):
+        line = 'Through the master server\'s relay (drop-in players join there).'
     elif mode == 'relay':
         line = 'Through the master server\'s relay (this PC is not reachable from outside).'
     else:
@@ -408,6 +459,9 @@ def network_line(network):
 
 
 def hosting_lines(game, players, full):
+    opened = game.get('open') or ()
+    if opened:
+        return drop_in_lines(game, players, full)
     joined = len(players)
     ready = sum(1 for row in players if row['ready'])
     lines = [f'Join code: {game["code"]} (on the clipboard). Send it to the others.',
@@ -420,6 +474,30 @@ def hosting_lines(game, players, full):
     else:
         lines.append(f'The game loads when all {game["players_max"]} players are ready.')
     return lines
+
+
+def drop_in_lines(game, players, full):
+    """A drop-in game before its start: the common load's players, then the drop-in slots."""
+    opened = game['open']
+    start = game['players_max'] - len(opened)
+    here = [row for row in players if row['slot'] not in opened]
+    ready = sum(1 for row in here if row['ready'])
+    lines = [f'Join code: {game["code"]} (on the clipboard). Send it to the others.',
+             f'{"Public" if game["public"] else "Private"} game, {len(here)} of {start} players here, {ready} ready; '
+             f'{len(opened)} drop-in slot{"" if len(opened) == 1 else "s"} for players who come later.',
+             network_line(game['network'])]
+    if full:
+        lines.append('The game loads in a moment; drop-in players join it while it runs.')
+    else:
+        lines.append(f'The game loads when all {start} players are ready.')
+    return lines
+
+
+def drop_in_session_line(game, players):
+    """During a drop-in game: how many drop-in slots are taken."""
+    opened = game.get('open') or ()
+    taken = sum(1 for row in players if row['slot'] in opened)
+    return f'Drop-in: {taken} of {len(opened)} slot{"" if len(opened) == 1 else "s"} taken; the code still works for them.'
 
 
 def lan_lines(game, lobby_host):

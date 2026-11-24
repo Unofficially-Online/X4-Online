@@ -185,6 +185,18 @@ class MasterDropIn(serve.DropIn):
                 asked = True
         return asked
 
+    def offer_packed(self, path):
+        """A compressed package the master checked (server.unpack_join): offered before the raw one, so that a joiner
+        takes it (joinfiles.fetch_package)."""
+        size, _ = self.service.offer(path.name, path)
+        self.log(f'relay: join {path.name}: offered compressed ({size >> 20} MB)')
+
+    def played(self, slot):
+        """Whether the relay has taken `slot` for a join (requested and on); a slot it never took, or whose join failed,
+        may be joined again."""
+        with self.lock:
+            return slot in self.taken
+
     def pending(self):
         """The joins whose files the master still waits for: {tick: (slot, saver, package sha)}."""
         with self.lock:

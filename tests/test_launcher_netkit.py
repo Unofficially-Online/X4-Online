@@ -186,8 +186,9 @@ class HostSessions(unittest.TestCase):
                 calls.append(command)
                 out = Path(command[command.index('--out') + 1])
                 players = int(command[command.index('--players') + 1])
+                opened = [int(k) for k in command[command.index('--open') + 1].split(',')] if '--open' in command else []
                 if code == 0:
-                    made = fakes.make_session(out, players, dll=kit.gate_dll.read_bytes())
+                    made = fakes.make_session(out, players, dll=kit.gate_dll.read_bytes(), open_slots=opened)
                     (out / 'session.json').write_text(json.dumps(made.recipe['session']))
                 self.stdout = io.StringIO('slot 2: start x\ncapture client pid 4: starting x\nsaved: out\n'
                                           'session out: base start x, 2 players (coop); play it with:\n')
@@ -221,6 +222,17 @@ class HostSessions(unittest.TestCase):
         self.assertIsNone(netkit.cached_session(self.kit, 2))
         self.kit.gate_dll.write_bytes(b'MZ-newer')                     # another gate: the old session is not this release's
         self.assertIsNone(netkit.cached_session(self.kit, 3))
+
+    def test_a_drop_in_session_has_its_own_key_and_open_slots(self):
+        calls = []
+        files = netkit.make_session(self.kit, 3, log=lambda text: None, popen=self.popen(calls), open_slots=(3,))
+        command = calls[0]
+        self.assertEqual(command[command.index('--open') + 1], '3')
+        self.assertEqual(files.recipe['open'], [3])
+        self.assertIn('-3p-open3-', files.overlay.parent.name)
+        self.assertEqual(netkit.cached_session(self.kit, 3, open_slots=(3,)).overlay, files.overlay)
+        self.assertIsNone(netkit.cached_session(self.kit, 3))              # the same players without drop-in: another session
+        self.assertNotIn('--open', netkit.new_session_command(self.kit, 2, 'coop', 'x', Path('out')))
 
     def test_a_failed_capture_leaves_nothing(self):
         with self.assertRaisesRegex(netkit.KitError, 'could not be made'):

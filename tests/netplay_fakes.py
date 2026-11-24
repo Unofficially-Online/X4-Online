@@ -89,13 +89,16 @@ class FakeMaster:
                                'players_max': players_max, 'session_sha256': session_sha256, 'want': want,
                                'direct': direct, 'lan': lan, 'code': code, 'secret': secrets.token_hex(16),
                                'host_ticket': secrets.token_hex(16), 'files': {}, 'state': 'lobby', 'stamp': 1,
-                               'players': [{'slot': 1, 'ready': True, 'host': True}], 'tickets': {}, 'start': None}
+                               'players': [{'slot': 1, 'ready': True, 'host': True}], 'tickets': {}, 'start': None,
+                               'open_slots': tuple(open_slots), 'send_join': []}
         game = self.games[game_id]
         return {'game_id': game_id, 'code': code, 'secret': game['secret'], 'host_ticket': game['host_ticket'], 'slot': 1}
 
     def api_upload(self, game_id, secret, name, path):
         game = self.games[game_id]
-        assert secret == game['secret']
+        assert secret == game['secret'] or (name.startswith('j') and secret in game['tickets'])
+        if name in game.get('refuse', ()):
+            raise MasterError('bad_name', 'this master does not take ' + name, 400)
         data = Path(path).read_bytes()
         game['files'][name] = data
         return {'name': name, 'size': len(data), 'sha256': hashlib.sha256(data).hexdigest()}
@@ -103,7 +106,18 @@ class FakeMaster:
     def info(self, game):
         return {'game_id': game['game_id'], 'name': game['name'], 'release': game['release'], 'players': len(game['players']),
                 'players_max': game['players_max'], 'state': game['state'], 'mode': 'direct' if game['direct'] else 'relay',
-                'open_slots_free': 0, 'age_s': 1}
+                'open_slots_free': len(self.free_slots(game)) if game['state'] != 'lobby' else 0, 'age_s': 1}
+
+    @staticmethod
+    def free_slots(game):
+        """The master's rule: before the start the common load's slots first, then the open ones; after it the open ones."""
+        opened = list(game.get('open_slots') or ())
+        taken = {row['slot'] for row in game['players']}
+        if game['state'] == 'lobby':
+            order = [slot for slot in range(1, game['players_max'] + 1) if slot not in opened] + opened
+        else:
+            order = opened
+        return [slot for slot in order if slot not in taken]
 
     def api_games(self, release):
         return [dict(self.info(game), compatible=game['release'] == release) for game in self.games.values() if game['public']]
@@ -123,9 +137,10 @@ class FakeMaster:
             raise MasterError('unknown', 'no such game', 404)
         if release != game['release']:
             raise MasterError('incompatible', 'another release', 409)
-        if len(game['players']) >= game['players_max']:
+        free = self.free_slots(game)
+        if not free:
             raise MasterError('full', 'the game is full', 409)
-        slot = len(game['players']) + 1
+        slot = free[0]
         ticket = secrets.token_hex(16)
         game['tickets'][ticket] = slot
         game['players'].append({'slot': slot, 'ready': False, 'host': False})
@@ -152,8 +167,11 @@ class FakeMaster:
         game = self.games.get(game_id)
         if game is None:
             raise MasterError('unknown', 'no such game', 404)
-        return {'stamp': game['stamp'], 'state': game['state'], 'players': [dict(row) for row in game['players']],
-                'start': game['start']}
+        answer = {'stamp': game['stamp'], 'state': game['state'], 'players': [dict(row) for row in game['players']],
+                  'start': game['start']}
+        if ticket == game['host_ticket'] and game.get('send_join'):   # the host is the saver of these joins
+            answer['send_join'] = list(game['send_join'])
+        return answer
 
     def api_ready(self, game_id, ticket):
         game = self.games[game_id]
@@ -198,7 +216,7 @@ class FakeMaster:
     # what another player does at the master (a joiner this test does not run as a flow)
     def add_player(self, game_id, ready=True):
         game = self.games[game_id]
-        slot = len(game['players']) + 1
+        slot = self.free_slots(game)[0]
         game['players'].append({'slot': slot, 'ready': ready, 'host': False})
         game['stamp'] += 1
         return slot
@@ -302,9 +320,10 @@ def network(master=None, nat=None, netifs=None, landisco=None):
 SAFE_SETS = ["native_gate_render_motion='interpolate'", 'native_gate_pilot_window={40,640}']
 
 
-def recipe_for(players, save_sha, dll_sha, session=None):
+def recipe_for(players, save_sha, dll_sha, session=None, open_slots=()):
     return {'kind': 'x4ls-play-recipe', 'version': 1, 'role': 'session', 'players': players, 'mode': 'coop',
-            'minutes': 40.0, 'full_logs': False, 'lua_block': 'Pause,Unpause,SaveGame', 'set': list(SAFE_SETS), 'open': [],
+            'minutes': 40.0, 'full_logs': False, 'lua_block': 'Pause,Unpause,SaveGame', 'set': list(SAFE_SETS),
+            'open': list(open_slots),
             'join_mode': 'report', 'window': [40, 72040], 'gate_dll_sha': dll_sha, 'snapshot_sha': save_sha,
             'session': session, 'mixed_platform': False, 'save_every': 10.0}
 
@@ -315,7 +334,7 @@ def session_dict(players, save_sha, save_path):
             'player_sector': 'cluster_14_sector001_macro', 'fixture': ['1' * 16] * 12, 'hulls': {}, 'slots': {}}
 
 
-def make_session(folder, players=2, dll=b'MZ-gate', save=b'SAVE-1'):
+def make_session(folder, players=2, dll=b'MZ-gate', save=b'SAVE-1', open_slots=()):
     """A session as netkit.SessionFiles: an overlay folder with a valid recipe, the save, the gate DLL."""
     folder = Path(folder)
     overlay = folder / 'overlay'
@@ -325,7 +344,7 @@ def make_session(folder, players=2, dll=b'MZ-gate', save=b'SAVE-1'):
     save_path.write_bytes(save)
     save_sha = hashlib.sha256(save).hexdigest()
     dll_sha = hashlib.sha256(dll).hexdigest()
-    recipe = recipe_for(players, save_sha, dll_sha, session_dict(players, save_sha, save_path.resolve()))
+    recipe = recipe_for(players, save_sha, dll_sha, session_dict(players, save_sha, save_path.resolve()), open_slots)
     (overlay / 'play-recipe.json').write_text(json.dumps(recipe))
     return netkit.SessionFiles(overlay=overlay, snapshot=save_path, recipe=recipe, players=players, sha256=save_sha)
 
@@ -348,8 +367,9 @@ def fake_build(calls):
         dll = Path(command[command.index('--gate-dll') + 1])
         save = Path(command[command.index('--snapshot') + 1])
         players = int(command[command.index('--players') + 1])
+        opened = [int(slot) for slot in command[command.index('--open') + 1].split(',')] if '--open' in command else []
         out.mkdir(parents=True)
-        recipe = recipe_for(players, netkit.sha256_file(save), netkit.sha256_file(dll))
+        recipe = recipe_for(players, netkit.sha256_file(save), netkit.sha256_file(dll), open_slots=opened)
         (out / 'play-recipe.json').write_text(json.dumps(recipe))
         return types.SimpleNamespace(returncode=0, stdout='play overlay: ' + str(out), stderr='')
     return run
@@ -373,8 +393,8 @@ class FakeBackend(netplay.Backend):
         self.clipboard = text
         return True
 
-    def host_session(self, players, progress, cancelled):
-        self.hosted.append(players)
+    def host_session(self, players, progress, cancelled, open_slots=()):
+        self.hosted.append((players, tuple(open_slots)) if open_slots else players)
         progress(0.5)
         progress(1.0)
         return self.host_files
@@ -389,6 +409,9 @@ class FakeBackend(netplay.Backend):
     def work_folder(self):
         self.work.mkdir(parents=True, exist_ok=True)
         return self.work
+
+    def save_folder(self):
+        return self.work / 'profile-save'
 
 
 def free_port_pair():

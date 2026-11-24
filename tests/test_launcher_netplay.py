@@ -411,7 +411,7 @@ class JoinWithMaster(FlowCase):
         self.assertTrue(fakes.wait_for(lambda: self.fields(browser).get('games')), browser.state.lines)
         fields = self.fields(browser)
         self.assertEqual(fields['games'][0], {'id': game['game_id'], 'name': 'Friday', 'players': 1, 'max': 2,
-                                              'state': 'lobby', 'compatible': True, 'mode': 'relay'})
+                                              'state': 'lobby', 'compatible': True, 'mode': 'relay', 'open': 0})
         self.assertEqual(fields['lan'][0], {'index': 1, 'name': 'Friday', 'players': 1, 'max': 2, 'compatible': True})
         plan = browser.join_plan(netplay.parse_request('JOINLAN|1'))
         self.assertEqual(plan[1], netplay.JoinTarget('code', code='K7QX-3FNA', addresses=(('192.168.10.9', self.port + 1),)))
@@ -437,6 +437,101 @@ class JoinWithMaster(FlowCase):
         joiner.request('JOINCODE|K7QX-3FNA')
         self.wait_phase(joiner, 'error')
         self.assertIn('need the master server', joiner.state.lines[0])
+
+
+class DropIn(FlowCase):
+    """Hosted games with drop-in slots (the session's last slots open): on the master's relay, started by the common
+    load, and joined while they run (docs/NETPLAY.md "Drop-in games")."""
+
+    def test_the_host_request_carries_the_drop_in_slots(self):
+        parse = netplay.parse_request
+        self.assertEqual(parse('HOST|1|2+1|x'), netplay.Request('HOST', public=True, players=2, open=1, name='x'))
+        self.assertEqual(parse('HOST|0|1+3|'), netplay.Request('HOST', players=1, open=3))
+        self.assertEqual(parse('HOST|0|2+0|'), netplay.Request('HOST', players=2))
+        for bad in ('HOST|1|1|x', 'HOST|1|1+0|x', 'HOST|1|7+2|x', 'HOST|1|0+2|x', 'HOST|1|2+|x', 'HOST|1|2+a|x', 'HOST|1|+2|x'):
+            self.assertIsNone(parse(bad), bad)
+        for text in ('HOST|1|2+1|x', 'HOST|0|1+7|'):
+            self.assertEqual(netplay.request_text(parse(text)), text)
+        self.assertEqual(netplay.drop_in_slots(2, 2), (3, 4))
+
+    def drop_in_host(self, master, request='HOST|1|1+1|Drop', players=2, open_slots=(2,)):
+        nat = fakes.FakeNat(reachable=True)
+        files = fakes.make_session(self.root / 'host-session', players, open_slots=open_slots)
+        host = self.flow('host', fakes.network(master, nat), host_files=files)
+        host.request(request)
+        return host, nat
+
+    def test_a_drop_in_game_plays_on_the_masters_relay_and_starts_with_the_common_load(self):
+        master = fakes.FakeMaster()
+        host, nat = self.drop_in_host(master, request='HOST|1|1+1|')
+        start = host.take_start(timeout=10)    # the host is the whole common load: it starts at once
+        self.assertIsNotNone(start, host.logs[-5:])
+        self.assertEqual(host.backend.hosted, [(2, (2,))])
+        game = next(iter(master.games.values()))
+        self.assertEqual((game['want'], game['direct'], game['open_slots']), ('relay', None, (2,)))
+        self.assertEqual(nat.mappings, [])     # nothing reaches the host from outside: no ports are opened
+        self.assertEqual((start.mode, start.late, start.relay), ('relay', False, None))
+        self.assertEqual(game['name'], '1+1-player game')
+
+    def test_the_host_sends_a_join_it_saved_to_the_master_compressed(self):
+        import gzip
+        master = fakes.FakeMaster()
+        host, _ = self.drop_in_host(master)
+        self.assertIsNotNone(host.take_start(timeout=10))
+        game = next(iter(master.games.values()))
+        folder = host.backend.save_folder() / 'mpjoin'
+        folder.mkdir(parents=True)
+        package = b'PACKAGE' + bytes(100_000)
+        (folder / 'j900.x4join').write_bytes(package)
+        (folder / 'j900.xml.gz').write_bytes(b'the join save')
+        host.session_running(tick=lambda: 900)
+        game['send_join'] = [{'tick': 900, 'slot': 2}]   # the relay had slot 1 save a join of slot 2
+        game['stamp'] += 1
+        self.assertTrue(fakes.wait_for(lambda: 'j900.xml.gz' in game['files'], 10), host.logs[-5:])
+        self.assertEqual(gzip.decompress(game['files']['j900.x4join.gz']), package)
+        self.assertNotIn('j900.x4join', game['files'])
+        self.assertLess(len(game['files']['j900.x4join.gz']), len(package) // 10)
+        self.assertTrue(any("tick 900's files sent" in line for line in host.logs), host.logs[-5:])
+        self.assertIn('Drop-in: 0 of 1 slot taken', ' '.join(host.state.lines))
+
+    def test_a_master_that_refuses_the_compressed_package_gets_the_raw_one(self):
+        master = fakes.FakeMaster()
+        host, _ = self.drop_in_host(master)
+        self.assertIsNotNone(host.take_start(timeout=10))
+        game = next(iter(master.games.values()))
+        game['refuse'] = ('j901.x4join.gz',)
+        folder = host.backend.save_folder() / 'mpjoin'
+        folder.mkdir(parents=True)
+        (folder / 'j901.x4join').write_bytes(b'PACKAGE')
+        (folder / 'j901.xml.gz').write_bytes(b'SAVE')
+        host.session_running(tick=lambda: 901)
+        game['send_join'] = [{'tick': 901, 'slot': 2}]
+        game['stamp'] += 1
+        self.assertTrue(fakes.wait_for(lambda: 'j901.xml.gz' in game['files'], 10), host.logs[-5:])
+        self.assertEqual(game['files']['j901.x4join'], b'PACKAGE')
+
+    def test_a_joiner_of_a_running_drop_in_game_joins_it_late(self):
+        master = fakes.FakeMaster()
+        host, _ = self.drop_in_host(master)
+        self.assertIsNotNone(host.take_start(timeout=10))
+        game = next(iter(master.games.values()))
+        listed = master.api_games(self.RELEASE)[0]
+        self.assertEqual(netplay.game_row(listed, self.RELEASE)['open'], 1)   # the public list shows the free slot
+        joiner = self.flow('joiner', fakes.network(master))
+        joiner.request('JOINCODE|K7QX-3FNA')
+        start = joiner.take_start(timeout=20)
+        self.assertIsNotNone(start, (joiner.state.lines, joiner.logs[-6:]))
+        self.assertEqual((start.slot, start.late, start.mode, start.relay_host), (2, True, 'relay', fakes.RELAY_HOST))
+        self.assertEqual(start.token, game['start']['relay']['token'])
+        self.assertEqual(joiner.backend.installed, [])   # the hot join starts its own X4 with the join save
+        command = self.builds[0]
+        self.assertEqual(command[command.index('--open') + 1], '2')   # the joiner's overlay keeps the open slot
+
+    def test_drop_in_slots_need_the_master(self):
+        master = fakes.FakeMaster(reachable=False)
+        host, _ = self.drop_in_host(master)
+        self.wait_phase(host, 'error')
+        self.assertIn('need the master server', host.state.lines[0])
 
 
 class HandOver(FlowCase):

@@ -48,7 +48,9 @@ def add_lobby_options(parser):
 
 def add_parsers(sub):
     host = sub.add_parser('host', help='host a netplay game: x4ls lobby with Host chosen (the master server, else the LAN)')
-    host.add_argument('--players', type=int, default=2, help='2..8')
+    host.add_argument('--players', type=int, default=2, help='the players who load the game together: 2..8 (1..7 with --drop-in)')
+    host.add_argument('--drop-in', type=int, default=0, metavar='M',
+                      help="M more slots, joined while the game runs (on the master server's relay; players + M <= 8)")
     host.add_argument('--name', default='', help='the game\'s name in the public list (at most 40 bytes)')
     host.add_argument('--public', action='store_true', help='list the game publicly and announce it on the LAN')
     add_netplay_options(host)
@@ -88,10 +90,14 @@ def join_request(args):
 
 
 def host_request(args):
-    if not netplay.PLAYERS_MIN <= args.players <= netplay.PLAYERS_MAX:
+    extra = getattr(args, 'drop_in', 0) or 0
+    if not netplay.host_counts_valid(args.players, extra):
+        if extra:
+            raise SystemExit(f'--players and --drop-in: at least 1 player and 1 drop-in slot, {netplay.PLAYERS_MAX} together at most')
         raise SystemExit(f'--players must be {netplay.PLAYERS_MIN}..{netplay.PLAYERS_MAX}')
     public = '1' if args.public else '0'
-    return f'HOST|{public}|{args.players}|{netplay.clean_name(args.name)}'
+    players = f'{args.players}+{extra}' if extra else str(args.players)
+    return f'HOST|{public}|{players}|{netplay.clean_name(args.name)}'
 
 
 def lobby_options(args, width, height, request):

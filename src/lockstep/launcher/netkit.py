@@ -193,44 +193,51 @@ def session_of_overlay(overlay, snapshot):
 
 
 # ---- the host's session ----
-def host_session_key(kit, players, mode, base_start):
+def host_session_key(kit, players, mode, base_start, open_slots=()):
     dll = kit.gate_dll
     dll_part = sha256_file(dll)[:8] if dll else 'nogate'
-    return f'host-{base_start}-{players}p-{mode}-{dll_part}'
+    opened = f'-open{"_".join(map(str, sorted(open_slots)))}' if open_slots else ''
+    return f'host-{base_start}-{players}p{opened}-{mode}-{dll_part}'
 
 
-def cached_session(kit, players, mode=HOST_SESSION_MODE, base_start=HOST_SESSION_START):
-    """A session x4ls new-session made here before for this many players, with this kit's gate DLL; None if none."""
-    folder = kit.sessions / host_session_key(kit, players, mode, base_start)
+def cached_session(kit, players, mode=HOST_SESSION_MODE, base_start=HOST_SESSION_START, open_slots=()):
+    """A session x4ls new-session made here before for this many players (these open slots), with this kit's gate
+    DLL; None if none."""
+    folder = kit.sessions / host_session_key(kit, players, mode, base_start, open_slots)
     if not all((folder / name).is_file() for name in (SESSION_JSON, SESSION_SAVE)) or not (folder / 'overlay' / RECIPE).is_file():
         return None
     files = session_of_overlay(folder / 'overlay', folder / SESSION_SAVE)
     dll = kit.gate_dll
     if not dll or files.recipe.get('gate_dll_sha') != sha256_file(dll) or files.players != players:
         return None
+    if sorted(files.recipe.get('open') or []) != sorted(open_slots):
+        return None
     return files
 
 
-def new_session_command(kit, players, mode, base_start, out, steam_fix=False):
-    """x4ls new-session for a hosted game: every slot starts with the session's own start."""
+def new_session_command(kit, players, mode, base_start, out, steam_fix=False, open_slots=()):
+    """x4ls new-session for a hosted game: every slot starts with the session's own start; open slots (drop-in) start
+    absent and are joined while the game runs."""
     command = [sys.executable, str(session.ROOT / 'tools' / 'x4ls.py'), 'new-session', '--base-start', base_start,
                '--players', str(players), '--mode', mode, '--gate-dll', str(kit.gate_dll), '--out', str(out)]
+    if open_slots:
+        command += ['--open', ','.join(map(str, sorted(open_slots)))]
     if steam_fix:
         command.append('--steam-fix')
     return command
 
 
 def make_session(kit, players, mode=HOST_SESSION_MODE, base_start=HOST_SESSION_START, progress=None, log=print,
-                 cancelled=None, popen=None, steam_fix=False):
+                 cancelled=None, popen=None, steam_fix=False, open_slots=()):
     """Make the session to host (x4ls new-session: a capture client on the capture profile, so X4 must be closed) and
     keep it in the kit's sessions/. progress(fraction) follows new-session's lines. Returns SessionFiles."""
     if kit.gate_dll is None:
         raise KitError('this kit has no gate DLL (native/x4lan_gate_64.dll): it cannot make a session')
-    key = host_session_key(kit, players, mode, base_start)
+    key = host_session_key(kit, players, mode, base_start, open_slots)
     final = kit.sessions / key
     work = kit.sessions / f'{key}.new-{int(time.time())}'
     kit.sessions.mkdir(parents=True, exist_ok=True)
-    command = new_session_command(kit, players, mode, base_start, work, steam_fix)
+    command = new_session_command(kit, players, mode, base_start, work, steam_fix, open_slots)
     log('netplay: making the session: ' + ' '.join(command[1:]))
     started = time.time()
     reached = 0.05

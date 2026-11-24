@@ -30,6 +30,7 @@ from . import extension, game, instance, lobby, netkit, netplay, profile, sessio
 
 PUMP_S = 0.2
 START_MENU_WAIT_S = 240
+LATE_OFFER_WAIT_S = 780   # a drop-in joiner: the files go from the saver's PC to the master first (as lobby.join_running)
 
 
 @dataclass(frozen=True)
@@ -198,20 +199,24 @@ class LobbyBackend(netplay.Backend):
             lines.append('No master server for this kit: games on the LAN, by invite code or by address.')
         return lines
 
-    def host_session(self, players, progress, cancelled):
+    def host_session(self, players, progress, cancelled, open_slots=()):
         mode = self.o.mode or netkit.HOST_SESSION_MODE
         base_start = self.o.base_start or netkit.HOST_SESSION_START
-        cached = netkit.cached_session(self.kit, players, mode, base_start)
+        cached = netkit.cached_session(self.kit, players, mode, base_start, open_slots)
         if cached is not None:
             return cached
-        self.log(f'lobby: no session for {players} players yet: X4 closes while x4ls new-session makes one')
+        opened = f' (drop-in slots {", ".join(map(str, open_slots))})' if open_slots else ''
+        self.log(f'lobby: no session for {players} players{opened} yet: X4 closes while x4ls new-session makes one')
         self.game.hold()
         try:
             return netkit.make_session(self.kit, players, mode, base_start, progress, self.log, cancelled,
-                                       steam_fix=self.o.steam_fix)
+                                       steam_fix=self.o.steam_fix, open_slots=open_slots)
         except BaseException:
             self.game.start(self.default_form())   # back to the page, which says why
             raise
+
+    def save_folder(self):
+        return profile.profile_dir(self.game.profile_id) / 'save'
 
     def install_session(self, files, progress):
         form = Form(files.overlay, files.snapshot, files.players)
@@ -342,7 +347,9 @@ def run(o, log=print):
     try:
         pump.start()
         result, start = wait_for_start(o, flow, lobby_game, backend, log)
-        if start is not None:
+        if start is not None and start.late:
+            result = late_join(o, flow, lobby_game, start, log)
+        elif start is not None:
             relay, relay_log = start_relay(o, start, run_dir, record, save_record, log)
             result = play_session(o, flow, lobby_game, start, relay, run_dir, log)
     finally:
@@ -442,6 +449,32 @@ def play_session(o, flow, lobby_game, start, relay, run_dir, log):
     return result
 
 
+def late_join(o, flow, lobby_game, start, log):
+    """A drop-in slot: this lane's X4 closes and hotjoin.hot_join plays the slot in the running game (its own lane,
+    view and profile: c<slot>), with the overlay this PC built from the host's recipe. The join files come from the
+    relay's file service (the master's relay keeps them for the joiner); X4 starts early, while the session saves."""
+    from . import hotjoin
+    lobby_game.hold()
+    same_pc = session.x4_running()   # another player's X4 on this PC (a second window), as lobby.run's join_running
+    flow.session_running(run_dir=None, tick=lambda: 0)
+    log(f'lobby: player {start.slot} of {start.clients} joins the running game at the relay {start.relay_host}:{start.port}')
+    options = hotjoin.HotJoinOptions(relay=f'{start.relay_host}:{start.port}', token=start.token, slot=start.slot,
+                                     overlay=Path(start.overlay).resolve(), offer_wait=LATE_OFFER_WAIT_S, width=o.width,
+                                     height=o.height, game=o.game, lanes=o.lanes, runs=o.runs,
+                                     state=session.ROOT / '.local/x4ls-join' if same_pc else o.state,
+                                     steam_fix=o.steam_fix, timeout=o.timeout, close_when_over=o.close_when_over,
+                                     same_pc=same_pc)
+    try:
+        result = hotjoin.hot_join(options, log)
+    except SystemExit as error:   # the join's own refusals carry the reason as text
+        log(f'lobby: the drop-in join failed: {error}')
+        result = {'outcome': 'failed', 'ended': f'the drop-in join failed: {error}'}
+    if not isinstance(result, dict):
+        result = {'outcome': 'failed', 'ended': str(result)}
+    result.update(slot=start.slot, relay=f'{start.relay_host}:{start.port}', mode=start.mode, late=True)
+    return result
+
+
 def relay_tick(status_file):
     try:
         return int(json.loads(Path(status_file).read_text()).get('tick') or 0)
@@ -463,6 +496,8 @@ def finish(o, lobby_game, run_dir, state_file, result, log):
             log(f'lobby: the profile was not collected: {error}')
         if lobby_game.view.exists():
             game.remove_view(lobby_game.view)
+        from . import hotjoin   # a drop-in game's join saves (about 200 MB each) are the master's now
+        hotjoin.remove_join_files({o.lane: profile.profile_dir(lobby_game.profile_id) / 'save'})
     state_file.unlink(missing_ok=True)
     if o.steam_fix and (o.state / 'steam-fix.json').exists():
         steam.restore(o.state / 'steam-fix.json')

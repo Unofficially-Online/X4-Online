@@ -96,9 +96,10 @@ local QUIT_DELAY_FRAMES = 90              -- the restart notice stays this long 
 local INSTALL_TRIES = 3600                -- frames to wait for X4's options menu
 local MIN_PLAYERS = 2
 local MAX_PLAYERS = 8
+local MAX_DROP_IN = MAX_PLAYERS - 1      -- drop-in slots: players who join while the game runs (the host may start alone)
 
 -- form: what the player chose or typed on the page; it outlives redraws (X4 draws the page anew for every state).
-local form = {public = false, players = MIN_PLAYERS, name = '', code = ''}
+local form = {public = false, players = MIN_PLAYERS, open = 0, name = '', code = ''}
 local lobby = {
   state = {phase = 'starting', lines = {'Starting...'}},
   installed = false,
@@ -344,7 +345,7 @@ local function progress_line(progress)
   return what .. ': ' .. percent .. '%'
 end
 
-local GAME_STATE_NAMES = {lobby = 'open', loading = 'loading', running = 'running'}
+local GAME_STATE_NAMES = {lobby = 'open', loading = 'loading', running = 'running', started = 'running'}
 
 -- A public or LAN game as one line, and whether it can be joined (if not, the line ends with the reason).
 local function game_line(game)
@@ -362,9 +363,19 @@ local function game_line(game)
   if ping then
     parts[#parts + 1] = whole(ping) .. ' ms'
   end
+  -- a running game of the master takes players only in its drop-in slots (game.open: the free ones)
+  local running = game.state == 'started' or game.state == 'running'
+  local free_slots = tonumber(game.open)
+  if running and free_slots and free_slots > 0 then
+    parts[#parts + 1] = whole(free_slots) .. ' drop-in'
+  end
   local why
   if game.compatible == false then
     why = 'another release'
+  elseif running and free_slots ~= nil then
+    if free_slots < 1 then
+      why = 'no drop-in slot free'
+    end
   elseif players and max and players >= max then
     why = 'full'
   end
@@ -447,7 +458,11 @@ local function host()
     name = DEFAULT_GAME_NAME
   end
   local public = form.public and 1 or 0
-  request('HOST|' .. public .. '|' .. form.players .. '|' .. name)
+  local players = form.players .. ''   -- a broken form fails here (the action's error row), not as a bad request
+  if form.open > 0 then
+    players = players .. '+' .. form.open   -- HOST|<public>|<players>+<drop-in slots>|<name>
+  end
+  request('HOST|' .. public .. '|' .. players .. '|' .. name)
 end
 
 local function join_typed()
@@ -461,10 +476,39 @@ lobby.join_typed = join_typed
 
 -- The players dropdown's options, as X4's dropdowns take them.
 local PLAYER_CHOICES = {}
-for count = MIN_PLAYERS, MAX_PLAYERS do
-  local choice = {id = tostring(count), text = tostring(count), icon = '', displayremoveoption = false}
+for count = 1, MAX_PLAYERS do
+  local text = tostring(count)
+  if count == 1 then
+    text = '1 (you; the others drop in)'
+  end
+  local choice = {id = tostring(count), text = text, icon = '', displayremoveoption = false}
   PLAYER_CHOICES[#PLAYER_CHOICES + 1] = choice
 end
+local DROP_IN_CHOICES = {}
+for count = 0, MAX_DROP_IN do
+  local text = count == 0 and 'none' or tostring(count)
+  DROP_IN_CHOICES[#DROP_IN_CHOICES + 1] = {id = tostring(count), text = text, icon = '', displayremoveoption = false}
+end
+
+-- The players at the start and the drop-in slots, kept valid together (parse_host's rule): together at most
+-- MAX_PLAYERS, and a game without drop-in slots has at least MIN_PLAYERS players.
+local function fit_counts(changed)
+  if form.players + form.open > MAX_PLAYERS then
+    if changed == 'open' then
+      form.players = MAX_PLAYERS - form.open
+    else
+      form.open = MAX_PLAYERS - form.players
+    end
+  end
+  if form.open == 0 and form.players < MIN_PLAYERS then
+    if changed == 'open' then
+      form.players = MIN_PLAYERS
+    else
+      form.open = 1
+    end
+  end
+end
+lobby.fit_counts = fit_counts
 
 local function host_rows(rows)
   rows[#rows + 1] = header('Host a game')
@@ -482,12 +526,26 @@ local function host_rows(rows)
   -- X4 calls this with the dropdown's choice; selecting the row itself calls it without one.
   local function choose_players(_, choice)
     local count = tonumber(choice)
-    if count and count >= MIN_PLAYERS and count <= MAX_PLAYERS then
+    if count and count >= 1 and count <= MAX_PLAYERS then
       form.players = math.floor(count)
+      fit_counts('players')
     end
   end
   rows[#rows + 1] = {id = 'x4lan_lobby_players', name = 'Players', valuetype = 'dropdown', value = players_value,
-    callback = choose_players, selectable = free, mouseOverText = 'How many players the game has, you included'}
+    callback = choose_players, selectable = free, mouseOverText = 'How many players load the game together, you included'}
+  local function drop_in_value()
+    return DROP_IN_CHOICES, tostring(form.open)
+  end
+  local function choose_drop_in(_, choice)
+    local count = tonumber(choice)
+    if count and count >= 0 and count <= MAX_DROP_IN then
+      form.open = math.floor(count)
+      fit_counts('open')
+    end
+  end
+  rows[#rows + 1] = {id = 'x4lan_lobby_dropin', name = 'Drop-in slots', valuetype = 'dropdown', value = drop_in_value,
+    callback = choose_drop_in, selectable = free,
+    mouseOverText = 'More players who join while the game runs (it plays on the master server\'s relay)'}
   rows[#rows + 1] = {
     id = 'x4lan_lobby_name',
     name = 'Game name',
