@@ -214,10 +214,9 @@ class Loopback(unittest.TestCase):
         browser.join(5)
         announcer.stop()
         games = result['games']
-        senders = [game['ip'] for game in games]
-        self.assertIn('127.0.0.1', senders)
-        self.assertEqual(len(senders), len(set(senders)))              # many copies, one entry per sender
-        self.assertTrue(set(senders) <= {'127.0.0.1', '127.0.0.2'})
+        # many copies by two interfaces with two sender addresses: one game (its host's candidates are the key)
+        self.assertEqual(len(games), 1, games)
+        self.assertIn(games[0]['ip'], {'127.0.0.1', '127.0.0.2'})
         for game in games:
             self.assertEqual((game['code'], game['players'], game['players_max'], game['tcp_port']),
                              ('K7QX-3FNA', 3, 4, 47001))

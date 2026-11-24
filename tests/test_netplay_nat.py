@@ -413,6 +413,17 @@ class DatagramSizes(unittest.TestCase):
     TOKEN = '0123456789abcdef' * 2
     PAYLOAD_LIMIT = 1200
 
+    def test_the_relay_never_asks_for_dont_fragment(self):
+        # a permit above the path MTU is fragmented at once on Linux too (as Windows always does), not lost
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            changed = native_gate_relay.never_dont_fragment(sock)
+            if sys.platform.startswith('linux'):
+                self.assertTrue(changed)
+                option = getattr(socket, 'IP_MTU_DISCOVER', 10)
+                self.assertEqual(sock.getsockopt(socket.IPPROTO_IP, option), getattr(socket, 'IP_PMTUDISC_DONT', 0))
+            else:
+                self.assertFalse(changed)
+
     def report(self, protocol, slot, tick, clients, lookahead, blob):
         clock = struct.pack('>d', tick / 60).hex()
         fields = ['NGSTATE', str(protocol), self.TOKEN, str(slot), str(tick), clock, clock, 'd' * 64, str(clients)]

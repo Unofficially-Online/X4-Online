@@ -300,7 +300,7 @@ def open_listener(port=LAN_PORT, interfaces=None, bind='0.0.0.0', group=LAN_GROU
 
 def scan(seconds=2.5, port=LAN_PORT, *, interfaces=None, bind='0.0.0.0', group=LAN_GROUP, sock=None):
     """The LAN games announced within `seconds`: [{ip (the sender), candidates, release, code, name, tcp_port,
-    players, players_max}], one per (sender, code), in the order first seen with the newest data.
+    players, players_max}], one per game (game_key: its host's candidates, port and code), in the order first seen.
 
     sock: an already open listener (tests); it is left open. 2.5 s covers one 2 s announcement round."""
     own = sock is None
@@ -322,8 +322,22 @@ def scan(seconds=2.5, port=LAN_PORT, *, interfaces=None, bind='0.0.0.0', group=L
                 continue          # Windows reports an earlier ICMP error here; not a datagram
             game = decode(data, source[0])
             if game is not None:
-                found[(game['ip'], game['code'])] = game
+                key = game_key(game)
+                if key in found:   # the same game by another network: keep the first sender, take the newest counts
+                    found[key].update({name: game[name] for name in ('players', 'players_max', 'name') if name in game})
+                else:
+                    found[key] = game
     finally:
         if own:
             sock.close()
     return list(found.values())
+
+
+def game_key(game):
+    """One game, however many of its host's networks its announcements came by. A host sends the same candidate
+    addresses in every announcement, while the sender address differs per network (a PC with Ethernet, Tailscale,
+    Hamachi and ZeroTier heard its own game four times in its own scan, 23 Nov)."""
+    candidates = tuple(sorted(game.get('candidates') or ()))
+    if candidates:
+        return ('host', candidates, game.get('tcp_port'), game.get('code'))
+    return ('sender', game.get('ip'), game.get('code'))

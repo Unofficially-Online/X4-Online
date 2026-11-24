@@ -629,3 +629,13 @@ the host's LAN candidates from the master (both behind one router, one public IP
 address first try, checked in, and the host's relay (UDP on every interface) allowed exactly the address the laptop
 came from. Both loaded at the common second and played 17,565 ticks (9.8 game minutes, 0.88x real time) in sync.
 Found and fixed: the host's heartbeat sent the local relay's tick -1 before the first step, which the master refused.
+
+**23 Nov, without the master (LAN discovery, a VPN address):** the desktop PC hosted with `--no-master --public`;
+the laptop's `x4ls games --lan` listed the game once with all five of the host's candidates (Ethernet, Tailscale,
+Hamachi, ZeroTier, WSL; a scan on the host itself had listed it once per network until the scan keyed on the
+candidates). The laptop then joined with `--address <the host's Tailscale address>` (Tailscale carries no broadcast):
+reached the lobby, got the session from the host, checked in from its Tailscale address, which the host's relay
+allowed, and both played 12,740 ticks in sync. A scan needs the same Windows Firewall permission as hosting: the
+laptop's scan with the release's own python.exe heard nothing (inbound broadcast is blocked for a program Windows
+has never been told about), with a Python the firewall knows it heard the game. The page's "Allow direct connections"
+(FIREWALL) covers both.

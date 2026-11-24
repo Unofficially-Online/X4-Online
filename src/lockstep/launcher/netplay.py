@@ -39,7 +39,7 @@ GAME_ID = re.compile(r'[A-Za-z0-9_-]{1,64}')
 HEX32 = re.compile(r'[0-9a-f]{32}')
 # Requests without fields. JOIN takes the code from the clipboard; HOST alone is the older page's Host (the kit's own
 # session, an invite code); JOIN<k> is a kit server's start picker (lobby.py, steamplay.py).
-SIMPLE_REQUESTS = ('BROWSE', 'START', 'READY', 'CANCEL', 'COPY', 'LEAVE', 'JOIN', 'HOST')
+SIMPLE_REQUESTS = ('BROWSE', 'START', 'READY', 'CANCEL', 'COPY', 'LEAVE', 'JOIN', 'HOST', 'FIREWALL')
 JOIN_KINDS = ('JOIN', 'JOINCODE', 'JOINGAME', 'JOINLAN')
 # What an 8-character join code looks like (NETPLAY.md: XXXX-XXXX, case and dash insensitive). Text of this shape that
 # nat.normalize_code refuses is a mistyped code, not a host name.
@@ -481,6 +481,9 @@ class BrowseJob(Job):
     def run(self):
         self.show('browsing', 'Looking for games...')
         master, master_note = self.flow.master()
+        # a LAN scan listens for broadcasts: inbound, which Windows Firewall blocks for a program it has no rule for
+        # (the laptop heard nothing with the release's own python.exe, 23 Nov); asked once per BROWSE job
+        blocked = firewall_allowed() is False
         while True:
             games = self.public_games(master)
             lan = self.lan_games()
@@ -490,8 +493,9 @@ class BrowseJob(Job):
                 lines.append(master_note)
             if not games and not lan:
                 lines.append('Nobody is hosting right now. Host a game, or join with a code.')
+            extra = {'firewall': 'blocked'} if blocked and not lan else {}
             self.show('browsing', *lines, games=[game_row(game, self.config.release) for game in games],
-                      lan=[lan_row(index, entry, self.config.release) for index, entry in enumerate(lan, 1)])
+                      lan=[lan_row(index, entry, self.config.release) for index, entry in enumerate(lan, 1)], **extra)
             self.command(BROWSE_REFRESH_S)   # BROWSE again asks at once; otherwise the list is asked again after a while
 
     def public_games(self, master):
@@ -721,6 +725,9 @@ class Flow:
         if request.kind == 'COPY':
             self.copy()
             return
+        if request.kind == 'FIREWALL':
+            self.allow_firewall()
+            return
         if request.kind == 'CANCEL' and job is not None and self.state.phase in ('loading', 'session'):
             # the start is out and the others load: this player leaves, the game is not taken away from them
             job.commands.put(Request('LEAVE'))
@@ -810,6 +817,34 @@ class Flow:
     def copy(self):
         if self.copy_text:
             self.backend.clipboard_set(self.copy_text)
+
+    def allow_firewall(self):
+        """FIREWALL: ask Windows for an inbound rule for this launcher's own Python, through Windows' own elevation prompt
+        (the player sees it and decides). The router had opened the ports and the master still could not reach this PC:
+        Windows Defender Firewall knows nothing of a release's own python.exe (the live runs of 23 Nov). The rule takes
+        effect for the next game this PC hosts."""
+        rule = firewall_rule()
+        if rule is None:
+            self.log('netplay: FIREWALL: nothing to do off Windows')
+            return
+        try:
+            import ctypes
+            started = ctypes.windll.shell32.ShellExecuteW(None, 'runas', 'netsh.exe', rule, None, 0)
+        except (OSError, AttributeError) as error:
+            self.log(f'netplay: FIREWALL: could not ask Windows: {error}')
+            return
+        if started > 32:
+            self.log('netplay: FIREWALL: Windows was asked for the rule')
+            self.note('Windows Firewall: once allowed, the next game you host is direct (Cancel, then Host again).')
+        else:
+            self.log(f'netplay: FIREWALL: not allowed (ShellExecute {started})')
+            self.note('Windows Firewall was not changed: the game goes on through the server\'s relay.')
+
+    def note(self, line):
+        """One more line under the page's current lines (the phase and the rest of the state stay)."""
+        _stamp, phase, lines, fields = self.state.view()
+        kept = [text for text in lines if not str(text).startswith('Windows Firewall')][:LINES_MAX - 1]
+        self.state.set(phase, [*kept, line], **fields)
 
     def cancel(self):
         """CANCEL: the job unwinds in its thread (it leaves or deletes its game there); the page is idle at once."""
@@ -985,3 +1020,55 @@ def wait_until(predicate, timeout, step=0.05):
 
 __all__ = ['Request', 'parse_request', 'request_text', 'request_hex', 'request_from_hex', 'JoinTarget', 'join_target',
            'State', 'Network', 'Flow', 'FlowConfig', 'SessionStart', 'RelayPlan', 'Backend', 'Job', 'JobFailed', 'LobbyWatch']
+
+
+def firewall_rule(executable=None):
+    """netsh's arguments for an inbound rule allowing this Python (python.exe beside pythonw.exe), or None off Windows."""
+    import os
+    import sys
+    if os.name != 'nt':
+        return None
+    exe = Path(executable or sys.executable)
+    if exe.name.lower() == 'pythonw.exe':
+        exe = exe.with_name('python.exe')
+    name = f'X4 Online ({exe.parent.parent.name or exe.parent.name})'
+    return (f'advfirewall firewall add rule name="{name}" dir=in action=allow program="{exe}" enable=yes '
+            'profile=any description="X4 Online: other players reach the game on this PC directly"')
+
+
+def firewall_allowed(executable=None, rules_text=None):
+    """Whether Windows Firewall has an enabled inbound Allow rule for this Python (python.exe beside pythonw.exe):
+    True, False, or None off Windows or when netsh cannot be asked. Windows itself adds such rules ("python.exe", TCP
+    and UDP) when the player answers its security alert, which comes when a new program first listens; this tells the
+    page whether to offer FIREWALL. Reading the rules needs no administrator rights (netsh, under a second)."""
+    import os
+    import re as _re
+    import subprocess
+    import sys
+    if os.name != 'nt' and rules_text is None:
+        return None
+    exe = Path(executable or sys.executable)
+    if exe.name.lower() == 'pythonw.exe':
+        exe = exe.with_name('python.exe')
+    wanted = os.path.normcase(os.path.normpath(str(exe)))
+    if rules_text is None:
+        # Popen itself, not subprocess.run: the launcher's tests stand in for run() (the overlay build), and an answer
+        # nobody can get is 'unknown' (no button), never an error of the page
+        try:
+            process = subprocess.Popen(['netsh', 'advfirewall', 'firewall', 'show', 'rule', 'name=all', 'dir=in', 'verbose'],
+                                       stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                                       creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+            out, _ = process.communicate(timeout=20)
+        except Exception:   # noqa: BLE001 - OSError, TimeoutExpired, or a stand-in that does not take these arguments
+            return None
+        if process.returncode:
+            return None
+        rules_text = out.decode('mbcs' if os.name == 'nt' else 'utf-8', errors='replace')
+    for block in _re.split(r'\r?\n\s*\r?\n', rules_text):
+        fields = {key.strip().lower(): value.strip() for key, value in _re.findall(r'^([A-Za-z ]+):\s*(.*)$', block, _re.M)}
+        program = fields.get('program', '')
+        if not program or os.path.normcase(os.path.normpath(program)) != wanted:
+            continue
+        if fields.get('enabled', '').lower() == 'yes' and fields.get('action', '').lower() == 'allow':
+            return True
+    return False

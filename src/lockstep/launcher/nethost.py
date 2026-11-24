@@ -95,6 +95,8 @@ class HostJob(netplay.Job):
         direct = bool(reach.get('tcp') and reach.get('udp'))
         network = {'mode': 'direct' if direct else 'relay', 'mapping': mapping_name(mapping, direct),
                    'public_ip_known': bool(reach.get('ip'))}
+        if mapping is not None and not direct and netplay.firewall_allowed() is False:
+            network['firewall'] = 'blocked'   # no rule for this launcher's Python: the page offers FIREWALL
         known, ping = self.flow.master_ping(master)
         network['public_ip_known'] = network['public_ip_known'] or known
         if ping is not None:

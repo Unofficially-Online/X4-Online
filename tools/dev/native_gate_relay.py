@@ -598,6 +598,21 @@ def atomic_write(path, text):
     return True
 
 
+def never_dont_fragment(sock):
+    """Linux: the relay's datagrams are sent without the don't-fragment bit (IP_PMTUDISC_DONT). A permit carries every
+    player's input blob of one tick, and with three or more full blobs it passes 1200 bytes (docs/NETPLAY.md, "Datagram
+    sizes"). With Linux's default the first such permit on a smaller path (a VPN, a tunnel, VLAN tags) is lost until an
+    ICMP message teaches the path MTU, and a path that filters those ICMP messages loses every one; without DF the kernel
+    fragments it at once, as Windows always does. No effect elsewhere. True when set."""
+    if not sys.platform.startswith('linux'):
+        return False
+    try:
+        sock.setsockopt(socket.IPPROTO_IP, getattr(socket, 'IP_MTU_DISCOVER', 10), getattr(socket, 'IP_PMTUDISC_DONT', 0))
+    except OSError:
+        return False
+    return True
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--bind', default='127.0.0.1')
@@ -822,6 +837,7 @@ def main():
         print('NATIVE_GATE RELAY KEEP_GOING observe=1 clock_splits=notice', flush=True)
     poll = getattr(barrier, 'poll', None)
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    never_dont_fragment(s)
     s.bind((args.bind, args.port));s.settimeout(.1)
     rendezvous = None
     if args.rendezvous_port:

@@ -562,6 +562,15 @@ local function list_rows(rows)
   elseif #state.lan == 0 then
     rows[#rows + 1] = info('x4lan_lobby_lan_none', 'No games found on this network.')
   end
+  -- Windows Firewall has no rule for the launcher's Python (state.firewall, from the launcher): a LAN scan hears
+  -- nothing and other players cannot reach a game hosted here; one click asks Windows for the rule.
+  if state.firewall == 'blocked' then
+    local function allow()
+      request('FIREWALL')
+    end
+    rows[#rows + 1] = button('x4lan_lobby_lan_firewall', 'Windows Firewall may hide LAN games', 'Allow', allow, free,
+      'Ask Windows to let X4 Online hear LAN games and take direct connections (Windows asks for permission)')
+  end
 end
 
 -- The game being made or joined: its code, the connection, the players, Start (the host).
@@ -582,6 +591,15 @@ local function game_rows(rows)
   local network = network_line(state.network)
   if network then
     rows[#rows + 1] = info('x4lan_lobby_network', network)
+  end
+  -- The router opened the ports but a firewall on this PC blocked them (state.network.firewall == 'blocked'): one
+  -- click asks Windows for a firewall rule for the launcher's own Python (Windows shows its permission prompt).
+  if type(state.network) == 'table' and state.network.firewall == 'blocked' then
+    local function allow()
+      request('FIREWALL')
+    end
+    rows[#rows + 1] = button('x4lan_lobby_firewall', 'Allow direct connections (Windows asks first)', 'Allow', allow,
+      nil, 'Let other players connect to this PC directly instead of through the server\'s relay')
   end
   if type(state.players) == 'table' and #state.players > 0 then
     rows[#rows + 1] = header('Players')

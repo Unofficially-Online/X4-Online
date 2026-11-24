@@ -243,6 +243,32 @@ class Page(unittest.TestCase):
             self.assertFalse(any(r.selectable() for r in buttons), text)
             self.assertFalse(any(r.edit.box.active for r in rows if r.edit), text)
 
+    def test_a_blocked_firewall_offers_one_click(self):
+        # the router opened the ports but a firewall on the PC blocked them (the live runs of 23 Nov): FIREWALL
+        lua, g = self.start()
+        self.state(lua, "{stamp = 1, phase = 'hosting', lines = {}, code = 'K7QX-3FNA', host = true, "
+                        "network = {mode = 'relay', mapping = 'natpmp', firewall = 'blocked'}}")
+        self.open(g)
+        self.assertIn('x4lan_lobby_firewall', self.ids(g))
+        self.assertEqual(self.ids(g).index('x4lan_lobby_firewall'), self.ids(g).index('x4lan_lobby_network') + 1)
+        self.row(g, 'x4lan_lobby_firewall').callback()
+        self.assertEqual(self.requests(g)[-1], 'FIREWALL')
+        self.state(lua, "{stamp = 2, phase = 'hosting', lines = {}, code = 'K7QX-3FNA', host = true, "
+                        "network = {mode = 'direct', mapping = 'natpmp'}}")
+        self.open(g)
+        self.assertNotIn('x4lan_lobby_firewall', self.ids(g))
+
+    def test_an_empty_lan_list_offers_the_firewall_when_blocked(self):
+        lua, g = self.start()
+        self.state(lua, "{stamp = 1, phase = 'browsing', lines = {}, games = {}, lan = {}, firewall = 'blocked'}")
+        self.open(g)
+        self.assertIn('x4lan_lobby_lan_firewall', self.ids(g))
+        self.row(g, 'x4lan_lobby_lan_firewall').callback()
+        self.assertEqual(self.requests(g)[-1], 'FIREWALL')
+        self.state(lua, "{stamp = 2, phase = 'browsing', lines = {}, games = {}, lan = {}}")
+        self.open(g)
+        self.assertNotIn('x4lan_lobby_lan_firewall', self.ids(g))
+
     def test_the_three_forms_of_the_page(self):
         idle = "{stamp = 1, phase = 'idle', lines = {}}"
         forms = {

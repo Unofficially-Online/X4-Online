@@ -599,5 +599,72 @@ class HostLines(unittest.TestCase):
         self.assertEqual(host.session_tick(), 1234)
 
 
+class Firewall(unittest.TestCase):
+    """FIREWALL: an inbound rule for the launcher's own Python, asked of Windows through its elevation prompt."""
+    def test_the_rule_names_python_exe_beside_pythonw(self):
+        rule = netplay.firewall_rule(r'C:\Games\X4 Online\python\pythonw.exe')
+        if rule is None:
+            self.skipTest('the known folder is asked on Windows only')
+        self.assertIn(r'program="C:\Games\X4 Online\python\python.exe"', rule)
+        self.assertIn('dir=in action=allow', rule)
+        self.assertTrue(rule.startswith('advfirewall firewall add rule name="X4 Online (X4 Online)"'))
+
+    def test_the_request_asks_windows_and_notes_it(self):
+        self.assertEqual(netplay.parse_request('FIREWALL').kind, 'FIREWALL')
+        if netplay.firewall_rule() is None:
+            self.skipTest('the known folder is asked on Windows only')
+        flow = netplay.Flow.__new__(netplay.Flow)
+        flow.state = netplay.State()
+        flow.state.set('hosting', ('Join code: K7QX-3FNA',), code='K7QX-3FNA')
+        flow.log = lambda *_: None
+        import ctypes
+        with mock.patch.object(ctypes.windll.shell32, 'ShellExecuteW', return_value=42) as shell:
+            flow.allow_firewall()
+        verb, program, arguments = shell.call_args[0][1:4]
+        self.assertEqual((verb, program), ('runas', 'netsh.exe'))
+        self.assertIn('advfirewall firewall add rule', arguments)
+        _stamp, phase, lines, fields = flow.state.view()
+        self.assertEqual(phase, 'hosting')
+        self.assertEqual(fields.get('code'), 'K7QX-3FNA')
+        self.assertTrue(lines[-1].startswith('Windows Firewall: once allowed'))
+
+
+RULES = r"""Rule Name:                            python.exe
+----------------------------------------------------------------------
+Enabled:                              Yes
+Direction:                            In
+Profiles:                             Private,Public
+Protocol:                             TCP
+Action:                               Allow
+Program:                              C:\users\player\appdata\local\x4 online\python\python.exe
+
+Rule Name:                            other.exe
+----------------------------------------------------------------------
+Enabled:                              Yes
+Direction:                            In
+Action:                               Block
+Program:                              C:\games\other\python.exe
+
+Rule Name:                            off.exe
+----------------------------------------------------------------------
+Enabled:                              No
+Direction:                            In
+Action:                               Allow
+Program:                              C:\games\off\python.exe
+"""
+
+
+class FirewallRules(unittest.TestCase):
+    """firewall_allowed: Windows' own rules (its security alert's 'python.exe' rules) for the launcher's Python."""
+    def test_an_enabled_allow_rule_for_this_python(self):
+        allowed = netplay.firewall_allowed(r'C:\Users\Player\AppData\Local\X4 Online\python\pythonw.exe', rules_text=RULES)
+        if sys.platform != 'win32':
+            self.skipTest('the known folder is asked on Windows only')   # paths compare as Windows compares them
+        self.assertTrue(allowed)                        # pythonw -> python.exe, case and separators as Windows
+        self.assertFalse(netplay.firewall_allowed(r'C:\games\other\python.exe', rules_text=RULES))   # a Block rule
+        self.assertFalse(netplay.firewall_allowed(r'C:\games\off\python.exe', rules_text=RULES))     # disabled
+        self.assertFalse(netplay.firewall_allowed(r'C:\games\none\python.exe', rules_text=RULES))    # no rule
+
+
 if __name__ == '__main__':
     unittest.main()
