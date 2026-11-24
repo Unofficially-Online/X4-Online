@@ -159,6 +159,7 @@ class RelayGameTests(MasterCase):
         self.assertError(self.upload(game, 'j900.x4join', b'other', auth=game['host_ticket']), 400, 'bad_sha256')
         self.assertEqual(self.upload(game, 'j900.x4join', package, auth=game['host_ticket']).status, 200)
         self.assertEqual(self.upload(game, 'j900.xml.gz', save, auth=game['host_ticket']).status, 200)
+        self.wait_served(game)   # the upload is answered at once; the files are checked on a thread of their own
         self.assertNotIn('send_join', self.lobby(game, game['host_ticket'], ip=HOST_IP).json)
         downloaded = self.call('GET', f'/api/v1/games/{game["game_id"]}/files/j900.xml.gz',
                                headers={'X-X4MP-Auth': late['ticket']}, ip=OTHER_IP)
@@ -172,6 +173,17 @@ class RelayGameTests(MasterCase):
         self.call('DELETE', f'/api/v1/games/{game["game_id"]}', {'secret': game['secret']}, ip=HOST_IP)
         self.assertFalse((self.data / 'games' / game['game_id']).exists())
         self.assertEqual(self.master.budget.used, 0)
+
+    def wait_served(self, game, seconds=10):
+        """The join's files were checked and offered (the master's check thread), so its saver is asked no more."""
+        service = self.master.games[game['game_id']].relay.dropin.service
+        deadline = time.monotonic() + seconds
+        while time.monotonic() < deadline:
+            with service.lock:
+                if any(name.endswith('.xml.gz') for name in service.offered):
+                    return
+            time.sleep(0.05)
+        self.fail('the join files were not offered')
 
     def saved_join(self, game, tick, package, save):
         """A drop-in game whose relay (a stand-in log) announced that slot 1 saved a join of slot 2 at `tick`."""
@@ -206,6 +218,7 @@ class RelayGameTests(MasterCase):
         self.assertEqual(self.upload(game, 'j900.x4join.gz', packed, auth=auth).status, 200)
         self.assertIn('send_join', self.lobby(game, auth, ip=HOST_IP).json)   # the save is still to come
         self.assertEqual(self.upload(game, 'j900.xml.gz', save, auth=auth).status, 200)
+        self.wait_served(game)
         self.assertNotIn('send_join', self.lobby(game, auth, ip=HOST_IP).json)
         with tempfile.TemporaryDirectory() as folder:   # hotjoin.fetch_files' way: the compressed copy when offered
             target = Path(folder) / 'j900.x4join'

@@ -215,20 +215,25 @@ def cached_session(kit, players, mode=HOST_SESSION_MODE, base_start=HOST_SESSION
     return files
 
 
-def new_session_command(kit, players, mode, base_start, out, steam_fix=False, open_slots=()):
+def new_session_command(kit, players, mode, base_start, out, steam_fix=False, open_slots=(), game=None, lanes=None):
     """x4ls new-session for a hosted game: every slot starts with the session's own start; open slots (drop-in) start
-    absent and are joined while the game runs."""
+    absent and are joined while the game runs. game and lanes: the lobby's own (its capture view goes beside its lane,
+    not into the default lanes, where another session's capture may be)."""
     command = [sys.executable, str(session.ROOT / 'tools' / 'x4ls.py'), 'new-session', '--base-start', base_start,
                '--players', str(players), '--mode', mode, '--gate-dll', str(kit.gate_dll), '--out', str(out)]
     if open_slots:
         command += ['--open', ','.join(map(str, sorted(open_slots)))]
+    if game:
+        command += ['--game', str(game)]
+    if lanes:
+        command += ['--lanes', str(lanes)]
     if steam_fix:
         command.append('--steam-fix')
     return command
 
 
 def make_session(kit, players, mode=HOST_SESSION_MODE, base_start=HOST_SESSION_START, progress=None, log=print,
-                 cancelled=None, popen=None, steam_fix=False, open_slots=()):
+                 cancelled=None, popen=None, steam_fix=False, open_slots=(), game=None, lanes=None):
     """Make the session to host (x4ls new-session: a capture client on the capture profile, so X4 must be closed) and
     keep it in the kit's sessions/. progress(fraction) follows new-session's lines. Returns SessionFiles."""
     if kit.gate_dll is None:
@@ -237,7 +242,7 @@ def make_session(kit, players, mode=HOST_SESSION_MODE, base_start=HOST_SESSION_S
     final = kit.sessions / key
     work = kit.sessions / f'{key}.new-{int(time.time())}'
     kit.sessions.mkdir(parents=True, exist_ok=True)
-    command = new_session_command(kit, players, mode, base_start, work, steam_fix, open_slots)
+    command = new_session_command(kit, players, mode, base_start, work, steam_fix, open_slots, game, lanes)
     log('netplay: making the session: ' + ' '.join(command[1:]))
     started = time.time()
     reached = 0.05

@@ -120,7 +120,8 @@ class Backend(unittest.TestCase):
     def test_host_session_from_the_cache_or_made_with_x4_closed(self):
         made = []
 
-        def make(kit, players, mode, base_start, progress, log, cancelled, steam_fix=False, open_slots=()):
+        def make(kit, players, mode, base_start, progress, log, cancelled, steam_fix=False, open_slots=(), game=None,
+                 lanes=None):
             made.append((players, mode, base_start) + ((tuple(open_slots),) if open_slots else ()))
             return 'made'
         with mock.patch.object(netlobby.netkit, 'cached_session', lambda *args: 'cached'):

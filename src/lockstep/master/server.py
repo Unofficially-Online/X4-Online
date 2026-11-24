@@ -396,10 +396,23 @@ class Master:
             if game_relay and game_relay.dropin:
                 if name.endswith('.x4join.gz'):
                     path = self.unpack_join(game, game_relay, path)
-                game_relay.dropin.stored(path)   # once a join's two files are here: verified, then served
+                # once a join's two files are here they are verified, then served: on a thread of its own, since reading
+                # a 190 MB package takes about 20 s, longer than a client waits for its upload's answer (live, 23 Nov)
+                threading.Thread(target=self.check_join, args=(game, game_relay, path), name='master-join-check',
+                                 daemon=True).start()
             with self.lock:
                 game.touch()   # the saver's send_join list may be shorter now
         return {'name': name, 'size': length, 'sha256': expect_sha}
+
+    def check_join(self, game, relay, path):
+        """serve.DropIn.stored for one stored join file (its own thread); the lobbies hear when it is done."""
+        try:
+            relay.dropin.stored(path)
+        except Exception as error:   # a thread's failure is logged, never lost
+            self.log(f'master: game {game.game_id}: join file {Path(path).name} not checked: {type(error).__name__}: {error}')
+        finally:
+            with self.lock:
+                game.touch()
 
     def upload_target(self, game, name, given, expect_sha, ip):
         """Where an upload of `name` goes and whether this request may make it; ApiError otherwise. A session file is the

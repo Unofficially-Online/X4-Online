@@ -234,6 +234,14 @@ class HostSessions(unittest.TestCase):
         self.assertIsNone(netkit.cached_session(self.kit, 3))              # the same players without drop-in: another session
         self.assertNotIn('--open', netkit.new_session_command(self.kit, 2, 'coop', 'x', Path('out')))
 
+    def test_the_capture_goes_into_the_lobbys_own_lanes(self):
+        # with the default lanes another session's capture view blocked hosting ("c:\x4ls-lanes\capture already
+        # exists"; the laptop, 23 Nov)
+        command = netkit.new_session_command(self.kit, 2, 'coop', 'x', Path('out'), game=Path('G:/X4'), lanes=Path('D:/lanes'))
+        self.assertEqual(command[command.index('--lanes') + 1], str(Path('D:/lanes')))
+        self.assertEqual(command[command.index('--game') + 1], str(Path('G:/X4')))
+        self.assertNotIn('--lanes', netkit.new_session_command(self.kit, 2, 'coop', 'x', Path('out')))
+
     def test_a_failed_capture_leaves_nothing(self):
         with self.assertRaisesRegex(netkit.KitError, 'could not be made'):
             netkit.make_session(self.kit, 2, log=lambda text: None, popen=self.popen([], code=1))

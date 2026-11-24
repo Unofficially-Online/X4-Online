@@ -686,3 +686,20 @@ helper made the session (`x4ls new-session`), started X4 again in its multiplaye
 the server's relay (the page said so). The desktop PC, with the same MSI installed, joined with the code; both loaded
 at the common second and were in sync through the relay past tick 2,154. Playtest kit and X4 Online side by side: the
 playtest kit was uninstalled first on the desktop PC (its menu entry is now named apart).
+
+**23 Nov night, a drop-in game (release kit 004517aa4d49-7dd8b65a956b, gate from 007c9991, the master on the VPS):**
+host and drop-in joiner on the Windows laptop (two X4s at about half speed). `x4ls host --players 1 --drop-in 1 --public`:
+the session for 2 players with slot 2 open was made (about 2.5 min), X4 started with it, the files went up (25 MB), and
+the master started the game at once in relay mode (the host is the whole common load). `x4ls join --game-id <id>` from a
+second lane: the master gave the open slot of the running game, the session was downloaded and the overlay built here,
+then the hot join (early start): the relay queued the join at save tick 313 and the host saved it 14 s after the ask;
+the host's launcher gzipped the 188 MB package to 27 MB and uploaded it in 9 s, the master unpacked and checked it and
+offered it compressed; the joiner fetched it in 11.5 s. The save's upload was answered only after the master had read
+the package (about 20 s, past the client's timeout: fixed, the check now runs on its own thread), so the files were
+complete 41 s after the ask; X4 had waited 24 s in its menu and started again, loaded, caught up from 313, and the relay
+handed over at 3,324 (the joiner at 16.8 ticks/s could not close the gap of 2,833 ticks: why=not_gaining, a pause of
+about 2 min for the host). Joined at tick 3,324 with 0 digest mismatches; the relay's status past tick 4,957: no desync,
+0 mismatches. Also fixed in that run: the host's session capture went to the default lanes (another session's capture
+view there blocked it; now new-session gets the lobby's --lanes/--game), and a saver's retry after the timed-out answer
+met not_asked and began to send the package raw (now: not_asked ends that join's sending; raw only when the master
+refuses the compressed copy).

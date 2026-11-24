@@ -98,7 +98,8 @@ class FakeMaster:
         game = self.games[game_id]
         assert secret == game['secret'] or (name.startswith('j') and secret in game['tickets'])
         if name in game.get('refuse', ()):
-            raise MasterError('bad_name', 'this master does not take ' + name, 400)
+            code = game.get('refuse_code', 'bad_name')
+            raise MasterError(code, 'this master does not take ' + name, 409 if code == 'not_asked' else 400)
         data = Path(path).read_bytes()
         game['files'][name] = data
         return {'name': name, 'size': len(data), 'sha256': hashlib.sha256(data).hexdigest()}

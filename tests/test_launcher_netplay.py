@@ -510,6 +510,26 @@ class DropIn(FlowCase):
         self.assertTrue(fakes.wait_for(lambda: 'j901.xml.gz' in game['files'], 10), host.logs[-5:])
         self.assertEqual(game['files']['j901.x4join'], b'PACKAGE')
 
+    def test_a_join_the_master_no_longer_waits_for_is_not_sent_raw(self):
+        # live, 23 Nov: a retry after a timed-out answer met not_asked and then sent the 190 MB package raw
+        master = fakes.FakeMaster()
+        host, _ = self.drop_in_host(master)
+        self.assertIsNotNone(host.take_start(timeout=10))
+        game = next(iter(master.games.values()))
+        game['refuse'] = ('j902.x4join.gz', 'j902.x4join')
+        game['refuse_code'] = 'not_asked'
+        folder = host.backend.save_folder() / 'mpjoin'
+        folder.mkdir(parents=True)
+        (folder / 'j902.x4join').write_bytes(b'PACKAGE')
+        (folder / 'j902.xml.gz').write_bytes(b'SAVE')
+        host.session_running(tick=lambda: 902)
+        game['send_join'] = [{'tick': 902, 'slot': 2}]
+        game['stamp'] += 1
+        self.assertTrue(fakes.wait_for(lambda: any('no longer waits' in line for line in host.logs), 10), host.logs[-5:])
+        time.sleep(1)
+        uploads = [args[2] for name, args, kwargs in master.called('upload') if args[2].startswith('j902')]
+        self.assertEqual(uploads, ['j902.x4join.gz'])   # once, and never the raw package
+
     def test_a_joiner_of_a_running_drop_in_game_joins_it_late(self):
         master = fakes.FakeMaster()
         host, _ = self.drop_in_host(master)

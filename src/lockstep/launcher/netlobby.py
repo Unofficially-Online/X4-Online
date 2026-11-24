@@ -210,7 +210,8 @@ class LobbyBackend(netplay.Backend):
         self.game.hold()
         try:
             return netkit.make_session(self.kit, players, mode, base_start, progress, self.log, cancelled,
-                                       steam_fix=self.o.steam_fix, open_slots=open_slots)
+                                       steam_fix=self.o.steam_fix, open_slots=open_slots, game=self.o.game,
+                                       lanes=self.o.lanes)
         except BaseException:
             self.game.start(self.default_form())   # back to the page, which says why
             raise

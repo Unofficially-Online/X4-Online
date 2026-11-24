@@ -20,6 +20,8 @@ FILES_WAIT_S = 90      # the relay announces a join once the saver's X4 wrote it
 TRIES = 3              # a failed upload is tried again while the master still lists the join
 RETRY_PAUSE_S = 5
 GONE_STATUSES = (403, 404)   # the game or this player is gone at the master: nothing more to send
+DONE_CODES = ('not_asked',)  # the master waits for this join no longer (it has the files, or the relay moved on)
+PACKED_REFUSED = ('bad_name', 'bad_gzip', 'too_large')   # a master that does not take the compressed copy: send it raw
 
 
 def wanted(answer):
@@ -72,6 +74,10 @@ class JoinSender:
                     self.sent.add(tick)
                 except self.errors as error:
                     status = getattr(error, 'status', 0)
+                    if getattr(error, 'code', '') in DONE_CODES:
+                        self.log(f'netplay: the master no longer waits for the join files of tick {tick} (slot {slot})')
+                        self.sent.add(tick)
+                        continue
                     self.log(f'netplay: the join files of tick {tick} (slot {slot}) were not sent: {error}')
                     if status in GONE_STATUSES:
                         return
@@ -98,8 +104,8 @@ class JoinSender:
             self.master.upload(self.game_id, self.auth, packed.name, packed)
             how = f'compressed to {packed.stat().st_size >> 20} MB'
         except self.errors as error:
-            if getattr(error, 'status', 0) in GONE_STATUSES:
-                raise
+            if getattr(error, 'code', '') not in PACKED_REFUSED:
+                raise   # gone, no longer asked, or the network: not a reason to send 190 MB instead
             self.log(f'netplay: the master did not take the compressed package ({error}); sending it raw')
             self.master.upload(self.game_id, self.auth, package.name, package)
         except OSError as error:
