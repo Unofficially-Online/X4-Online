@@ -397,8 +397,7 @@ def network_line(network):
     elif mode == 'relay' and network.get('mapping') not in (None, 'none', 'manual'):
         # the router opened the ports, yet the master's probe did not reach this PC: a firewall on the PC (Windows Defender
         # Firewall has never been told about a release's own python.exe; the live run of 23 Nov)
-        line = ('Through the master server\'s relay: the router opened the ports, but a firewall on this PC blocks them '
-                '(allow X4 Online\'s python.exe in Windows Firewall to host directly).')
+        line = 'Through the server\'s relay: a firewall on this PC blocks the ports the router opened.'   # Allow: FIREWALL
     elif mode == 'relay':
         line = 'Through the master server\'s relay (this PC is not reachable from outside).'
     else:

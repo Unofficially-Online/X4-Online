@@ -639,3 +639,14 @@ allowed, and both played 12,740 ticks in sync. A scan needs the same Windows Fir
 laptop's scan with the release's own python.exe heard nothing (inbound broadcast is blocked for a program Windows
 has never been told about), with a Python the firewall knows it heard the game. The page's "Allow direct connections"
 (FIREWALL) covers both.
+
+**23 Nov night, the product path end to end (the CI-built "X4 Online" MSI, b2aba19d5c60):** installed on the Windows
+laptop (per user; its helper started in the desktop session and put `x4online_menu` into X4's own extensions folder).
+X4 started from the game folder as Steam starts it (a disposable profile standing in for the player's own): the start
+menu's Multiplayer opened the netplay page through the helper's pipes (BROWSE answered by the master); a click on Host
+went to the helper as a spelled request (`-tbegin`, `-t0`..`-tf`, `-tend`: `HOST|0|2|X4 game`); X4 quit by itself, the
+helper made the session (`x4ls new-session`), started X4 again in its multiplayer profile hosting, mapped the ports
+(NAT-PMP), and the master's probe found the laptop's firewall closed to the new python.exe, so the game went through
+the server's relay (the page said so). The desktop PC, with the same MSI installed, joined with the code; both loaded
+at the common second and were in sync through the relay past tick 2,154. Playtest kit and X4 Online side by side: the
+playtest kit was uninstalled first on the desktop PC (its menu entry is now named apart).
