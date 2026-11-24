@@ -30,7 +30,7 @@ class Identities(unittest.TestCase):
             self.assertEqual((release / 'ui/config.lua').read_text(),
                              "X4LAN_CONFIG = {enabled = false, lobby = {pipe = 'x4online', netplay = true}}\n")
             self.assertEqual((playtest / 'ui/config.lua').read_text(), steamplay.MENU_CONFIG)   # as it always was
-            self.assertIn("lobby = {pipe = 'x4mp-playtest', server = true}", steamplay.MENU_CONFIG)
+            self.assertIn("lobby = {pipe = 'x4mp-playtest', server = true, title = 'Multiplayer (playtest)'}", steamplay.MENU_CONFIG)
             self.assertIn('id="x4online_menu" name="X4 Online (menu)"', (release / 'content.xml').read_text())
             self.assertIn('<addon name="x4online_menu">', (release / 'ui.xml').read_text())
             x4 = folder.path / 'X4'

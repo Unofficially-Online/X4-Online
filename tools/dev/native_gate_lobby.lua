@@ -843,7 +843,10 @@ end
 
 local function install(options)
   local rows = page_rows()
-  local entry = {id = PAGE, name = 'Multiplayer', submenu = PAGE, mouseOverText = 'Host or join a multiplayer game'}
+  -- lobby.title: the entry's name (a playtest kit's menu says so, so a PC with it and an X4 Online install shows two
+  -- rows that can be told apart)
+  local title = type(lobby_config.title) == 'string' and lobby_config.title ~= '' and lobby_config.title or 'Multiplayer'
+  local entry = {id = PAGE, name = title, submenu = PAGE, mouseOverText = 'Host or join a multiplayer game'}
   local stock_row = options.displayOption
   local stock_draw = options.displayOptions
   local stock_handle = options.submenuHandler

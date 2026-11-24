@@ -355,7 +355,7 @@ class HostJob(netplay.Job):
     def session_tick(self):
         reader = self.flow.session_info.get('tick')
         try:
-            return int(reader()) if callable(reader) else 0
+            return max(0, int(reader())) if callable(reader) else 0   # the relay says -1 before its first step
         except (OSError, ValueError, TypeError):
             return 0
 
@@ -392,6 +392,11 @@ def network_line(network):
     if mode == 'direct':
         how = {'upnp': 'UPnP', 'natpmp': 'NAT-PMP', 'pcp': 'PCP', 'manual': 'a forwarded port'}.get(network.get('mapping'), 'its ports')
         line = f'Direct: the other players reach this PC ({how}).'
+    elif mode == 'relay' and network.get('mapping') not in (None, 'none', 'manual'):
+        # the router opened the ports, yet the master's probe did not reach this PC: a firewall on the PC (Windows Defender
+        # Firewall has never been told about a release's own python.exe; the live run of 23 Nov)
+        line = ('Through the master server\'s relay: the router opened the ports, but a firewall on this PC blocks them '
+                '(allow X4 Online\'s python.exe in Windows Firewall to host directly).')
     elif mode == 'relay':
         line = 'Through the master server\'s relay (this PC is not reachable from outside).'
     else:

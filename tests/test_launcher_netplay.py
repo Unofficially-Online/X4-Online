@@ -579,5 +579,25 @@ class LanFiles(unittest.TestCase):
             folder.cleanup()
 
 
+class HostLines(unittest.TestCase):
+    """The live run of 23 Nov: the router opened the ports (NAT-PMP) but Windows Firewall blocked the release's own
+    python.exe, and the host's local relay said tick -1 before its first step, which the master refuses."""
+    def test_mapped_but_unreachable_names_the_firewall(self):
+        from lockstep.launcher import nethost
+        line = nethost.network_line({'mode': 'relay', 'mapping': 'natpmp', 'ping_ms': 11})
+        self.assertIn('firewall on this PC', line)
+        self.assertIn('Ping to the server 11 ms', line)
+        self.assertNotIn('firewall', nethost.network_line({'mode': 'relay', 'mapping': 'none'}))
+        self.assertIn('NAT-PMP', nethost.network_line({'mode': 'direct', 'mapping': 'natpmp'}))
+
+    def test_the_heartbeat_tick_is_never_negative(self):
+        from lockstep.launcher import nethost
+        host = nethost.HostJob.__new__(nethost.HostJob)
+        host.flow = mock.Mock(session_info={'tick': lambda: -1})
+        self.assertEqual(host.session_tick(), 0)
+        host.flow.session_info = {'tick': lambda: 1234}
+        self.assertEqual(host.session_tick(), 1234)
+
+
 if __name__ == '__main__':
     unittest.main()

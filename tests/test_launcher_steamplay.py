@@ -34,7 +34,7 @@ class Menu(unittest.TestCase):
             tmp = Path(tmp)
             source = steamplay.write_menu(tmp / 'steam-menu')
             self.assertEqual(sorted(steamplay.tree(source)), ['content.xml', 'ui.xml', 'ui/config.lua', 'ui/native_gate_lobby.lua'])
-            self.assertIn("lobby = {pipe = 'x4mp-playtest', server = true}", (source / 'ui/config.lua').read_text())
+            self.assertIn("lobby = {pipe = 'x4mp-playtest', server = true, title = 'Multiplayer (playtest)'}", (source / 'ui/config.lua').read_text())
             self.assertIn('save="false"', (source / 'content.xml').read_text())     # no save depends on the menu
             x4 = tmp / 'X4'
             (x4 / 'extensions' / 'ego_dlc_boron').mkdir(parents=True)

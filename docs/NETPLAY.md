@@ -622,3 +622,10 @@ splits) past tick 1,720; the lobby view showed the game as 2/2 started.
   without an answer, or without administrator rights, it stays blocked). The host then goes through the master's relay
   by itself, which is what happened here. To host directly, allow "python.exe" of the X4 Online folder for private (and
   public, if wanted) networks. A per-user installer cannot add a firewall rule.
+
+**23 Nov, direct mode on one site (same kit; the host run with a Python Windows Firewall already allows):** the
+master's probe reached the PC through the NAT-PMP mapping, so the game registered direct; the laptop's join by code got
+the host's LAN candidates from the master (both behind one router, one public IP), reached the host's lobby on its LAN
+address first try, checked in, and the host's relay (UDP on every interface) allowed exactly the address the laptop
+came from. Both loaded at the common second and played 17,565 ticks (9.8 game minutes, 0.88x real time) in sync.
+Found and fixed: the host's heartbeat sent the local relay's tick -1 before the first step, which the master refused.

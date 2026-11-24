@@ -67,7 +67,8 @@ class Identity:
         return f'X4LAN_CONFIG = {{enabled = false, lobby = {self.lobby}}}\n'
 
 
-PLAYTEST = Identity('x4mp_playtest_menu', 'x4mp-playtest', 'X4 Multiplayer Playtest', "{pipe = 'x4mp-playtest', server = true}")
+PLAYTEST = Identity('x4mp_playtest_menu', 'x4mp-playtest', 'X4 Multiplayer Playtest',
+                    "{pipe = 'x4mp-playtest', server = true, title = 'Multiplayer (playtest)'}")
 RELEASE = Identity('x4online_menu', 'x4online', 'X4 Online', "{pipe = 'x4online', netplay = true}")
 # The playtest kit's names, as they always were (its tests and kits use them)
 PIPE = PLAYTEST.pipe
