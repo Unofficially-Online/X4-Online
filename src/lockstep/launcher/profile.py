@@ -184,6 +184,15 @@ def prepare(profile, extension_ids, width=1280, height=720, snapshot=None, root=
     return path
 
 
+def stage(profile, snapshot, root=None):
+    """Put a save into the snapshot slot of a prepared profile (an early hot joiner: its X4 already waits in the start menu)."""
+    staged = profile_dir(profile, root) / 'save' / SNAPSHOT_SLOT
+    part = staged.with_name(staged.name + '.part')
+    shutil.copyfile(snapshot, part)
+    part.replace(staged)
+    return staged
+
+
 def unstage(profile, root=None):
     """Remove the snapshot prepare() staged: the lane tool shares these profiles and refuses to overwrite a staged save."""
     staged = profile_dir(profile, root) / 'save' / SNAPSHOT_SLOT

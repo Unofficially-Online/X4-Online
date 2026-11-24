@@ -1486,6 +1486,67 @@ class Relay(unittest.TestCase):
         self.assertEqual(j.state, 'joined', (j.failure, net.notices[-3:]))
         self.assertIn('joined tick=', ' '.join(net.notices))
 
+    def _loaded_late(self, net, load_rounds):
+        for _ in range(40):
+            net.round()
+        net.request()
+        while net.relay.join.state == 'queued':
+            net.round()
+        for _ in range(load_rounds):
+            net.round()                                     # the joiner loads while the session runs on
+        net.boot_joiner()
+        net.round(joiner_steps=1)                           # its first report: the loaded world at T
+        assert net.relay.join.state == 'catching_up', net.relay.join.state
+        return net.relay.join
+
+    def test_a_gaining_joiner_is_never_paused_for(self):
+        # Past --join-catchup-limit too: twice the session's rate closes a 300-tick gap in about 10 s, so the handover waits
+        # for the gap and the session never stands still at H.
+        net = Network(ticks=4000, catchup_limit=2.0, max_pause=60.0, handover_gap=5)
+        j = self._loaded_late(net, 300)
+        rounds = 0
+        while j.state == 'catching_up' and rounds < 2000:
+            net.round(joiner_steps=2)                       # the joiner 2 ticks a round, the session 1
+            rounds += 1
+        self.assertEqual(j.state, 'handover', (j.failure, net.notices[-3:]))
+        self.assertEqual(j.decision, 'gap')
+        self.assertGreater(net.now-j.catchup_started, 2.0)  # past the catch-up limit, still no pause
+        self.assertIn('why=gap', net.notices[-1])
+        self.assertLessEqual(net.relay.released-net.joiner.tick, 5+net.relay.lookahead+1)
+
+    def test_a_joiner_that_does_not_gain_is_handed_over_once_its_rate_is_known(self):
+        # Waiting for the catch-up limit only grows the pause: the session outruns such a joiner.
+        net = Network(ticks=4000, catchup_limit=60.0, max_pause=60.0, handover_gap=5)
+        j = self._loaded_late(net, 100)
+        while j.state == 'catching_up':
+            net.round(joiner_steps=1)
+        self.assertEqual(j.state, 'handover', j.failure)
+        self.assertEqual(j.decision, 'not_gaining')
+        waited = net.now-j.catchup_started
+        self.assertGreaterEqual(waited, join.RATE_SETTLE_S)
+        self.assertLess(waited, join.RATE_SETTLE_S+1.0)
+        self.assertIn('why=not_gaining', net.notices[-1])
+
+    def test_a_joiner_too_slow_to_arrive_within_the_converge_limit_waits_for_the_catchup_limit(self):
+        # 1.1 x: a 1000-tick gap takes about 330 s; with a converge limit of 30 s the catch-up limit hands it over.
+        net = Network(ticks=8000, catchup_limit=15.0, max_pause=120.0, handover_gap=5, converge_limit=30.0)
+        j = self._loaded_late(net, 1000)
+        rounds = 0
+        while j.state == 'catching_up' and rounds < 5000:
+            net.round(joiner_steps=2 if rounds % 10 == 0 else 1)    # 11 ticks per 10 rounds: 1.1 x
+            rounds += 1
+        self.assertEqual(j.state, 'handover', j.failure)
+        self.assertEqual(j.decision, 'limit')
+        self.assertGreaterEqual(net.now-j.catchup_started, 15.0)
+
+    def test_converge_limit_zero_keeps_the_old_rule(self):
+        net = Network(ticks=4000, catchup_limit=2.0, max_pause=60.0, handover_gap=5, converge_limit=0)
+        j = self._loaded_late(net, 300)
+        while j.state == 'catching_up':
+            net.round(joiner_steps=2)
+        self.assertIn(j.decision, ('limit', 'not_gaining'))
+        self.assertLess(net.now-j.catchup_started, 3.0)
+
     def test_launcher_answers_and_refusals(self):
         net = Network()
         for _ in range(20):

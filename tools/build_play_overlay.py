@@ -175,11 +175,12 @@ def save_every_ticks(minutes, mixed_platform, opened):
 
 def joiner_command(recipe, snapshot, gate_dll, out, package, package_sha, session=None):
     """The build_play_overlay.py arguments of a joiner's overlay: the session's recipe with the join save and package
-    (session: the recipe's session.json written on the joiner's PC, when the session has one)."""
+    (session: the recipe's session.json written on the joiner's PC, when the session has one). package None: an early
+    joiner's overlay (--join-early; snapshot is a stand-in file)."""
+    joined = ['--join-early'] if package is None else ['--join-package', str(package), '--join-package-sha', package_sha]
     cmd = ['--snapshot', str(snapshot), '--gate-dll', str(gate_dll), '--out', str(out), '--players', str(recipe['players']),
            '--mode', recipe['mode'], '--minutes', repr(recipe['minutes']), '--lua-block', recipe['lua_block'],
-           '--open', ','.join(map(str, recipe['open'])), '--join-mode', recipe['join_mode'],
-           '--join-package', str(package), '--join-package-sha', package_sha,
+           '--open', ','.join(map(str, recipe['open'])), '--join-mode', recipe['join_mode'], *joined,
            '--save-every', repr(recipe.get('save_every', 0))]   # the session's own (an older recipe: none)
     if recipe['full_logs']:
         cmd.append('--full-logs')
@@ -299,6 +300,10 @@ def main(argv=None):
                    help="with --open: the join's mode (report: what the live join tests run; strict refuses diagnostic packages)")
     p.add_argument('--join-package', type=Path, help="the joiner's overlay: the saver's j<T>.x4join (--snapshot is the join save)")
     p.add_argument('--join-package-sha', help='the package SHA-256 the relay announced (NGJOINSTATE)')
+    p.add_argument('--join-early', action='store_true',
+                   help="the joiner's overlay before its join files exist (x4ls join: X4 starts while the session saves): "
+                        '--snapshot is a stand-in, the probe waits in the start menu for the staged save and package '
+                        '(hotjoin.stage_early checks them against this overlay as --join-package does)')
     p.add_argument('--mixed-platform', action='store_true',
                    help='a session with Windows and Linux PCs: the strict float recomputes of Option B on every client '
                         '(native_gate_fp_redirect, _solver, _drones); give it to every PC of the session')
@@ -312,11 +317,14 @@ def main(argv=None):
         if session_data.get('players') != args.players or session_data.get('mode') != args.mode:
             raise SystemExit(f"--session: {session_data.get('players')} players in {session_data.get('mode')} mode, not "
                              f'{args.players} in {args.mode}')
-        if not args.join_package and sha256(args.snapshot) != session_data.get('snapshot', {}).get('sha256'):
+        if not args.join_package and not args.join_early and sha256(args.snapshot) != session_data.get('snapshot', {}).get('sha256'):
             raise SystemExit('--session: --snapshot is not its session save')
     opened = open_slots(args.open, args.players)
     if bool(args.join_package) != bool(args.join_package_sha) or (args.join_package and not opened):
         raise SystemExit('--join-package needs --join-package-sha and --open')
+    if args.join_early and (args.join_package or not opened or not session_data):
+        raise SystemExit('--join-early needs --open and --session, and no --join-package')
+    joiner = bool(args.join_package or args.join_early)
     out = args.out.resolve()
     base = out.with_name(out.name + '.base')
     for path in (out, base):
@@ -338,7 +346,8 @@ def main(argv=None):
         import native_gate_join_overlays as join_overlays
         join_base = ['--world-identities', '--join-absent', ','.join(map(str, opened))]
         join_base += (['--join-package', args.join_package.resolve(), '--join-package-sha', args.join_package_sha.lower(),
-                       '--join-mode', args.join_mode] if args.join_package else ['--join', args.join_mode])
+                       '--join-mode', args.join_mode] if args.join_package else
+                      ['--join-early', '--join-mode', args.join_mode] if args.join_early else ['--join', args.join_mode])
         # Every join of a play session is inside the pilot window (it starts at WINDOW_START): the savers' package must carry
         # the window's Lua state and the joiner must resume into it (reports/LOCKSTEP-JOIN-IN-WINDOW-20261104.txt; hj1:
         # lua_state:pilot_window:late without it).
@@ -362,7 +371,7 @@ def main(argv=None):
         sets = join_overlays.default_sets(join_overlays.ids_sets(join_overlays.refresh_sets(join_overlays.precise_sets(sets))))
     step('base', [DEV / 'build_native_gate_overlay.py', '--mode', 'battle', '--gate-dll', args.gate_dll.resolve(),
                   '--snapshot', args.snapshot.resolve(), '--session-clients', *join_base, '--out', base, *coverage])
-    if session_data and not args.join_package:   # a joiner's base boots the join save (its package carries the session's state)
+    if session_data and not joiner:   # a joiner's base boots the join save (its package carries the session's state)
         bind_session_save(base, args.snapshot, session_data)
     elif session_data:                           # ...with the session's own fixture and watch list
         bind_session_joiner(base, session_data)
@@ -382,14 +391,14 @@ def main(argv=None):
     if save_ticks and not any(item.replace(' ', '').startswith('native_gate_save_every=') for item in sets):
         cmd += ['--set', f'native_gate_save_every={save_ticks}', '--set', f'native_gate_save_keep={args.save_keep}']
     if args.session:
-        cmd += ['--session', args.session.resolve()] + (['--session-joiner'] if args.join_package else [])
+        cmd += ['--session', args.session.resolve()] + (['--session-joiner'] if joiner else [])
     for item in sets:
         cmd += ['--set', item]
     step('players', cmd)
     print(step('check', [DEV / 'check_gate_options.py', out / 'ui/config.lua.append']).strip()[-600:])
     if args.join_package:
         check_joiner(out, args.join_package, args.join_package_sha.lower(), args.snapshot, args.players, args.join_mode)
-    recipe = {'kind': RECIPE_KIND, 'version': RECIPE_VERSION, 'role': 'joiner' if args.join_package else 'session',
+    recipe = {'kind': RECIPE_KIND, 'version': RECIPE_VERSION, 'role': 'joiner' if joiner else 'session',
               'players': args.players, 'mode': args.mode, 'minutes': args.minutes, 'full_logs': args.full_logs,
               'lua_block': args.lua_block, 'set': list(args.set), 'open': opened, 'join_mode': args.join_mode,
               'window': [WINDOW_START, end], 'gate_dll_sha': sha256(out / 'native/x4lan_gate_64.dll'),

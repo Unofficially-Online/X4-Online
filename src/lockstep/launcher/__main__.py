@@ -140,6 +140,16 @@ def main(argv=None):
     j.add_argument('--startup', type=int, default=70)
     j.add_argument('--steam-fix', action='store_true')
     j.add_argument('--same-pc', action='store_true', help='test: the host runs on this PC too (own state file, its X4 tolerated)')
+    j.add_argument('--late-boot', action='store_true',
+                   help='hot join: start X4 only after the join files are here (the order before 23 Nov); by default X4 boots '
+                        'to its start menu first and the session saves once it waits there')
+    j.add_argument('--join-fetch-delay', type=float, default=0.0, metavar='S',
+                   help='DIAGNOSTIC: an early start acts as if the download took S seconds longer (a slow link)')
+    j.add_argument('--ask-first', action='store_true', help='hot join, early start: ask for the save as X4 starts (the default)')
+    j.add_argument('--menu-wait', action='store_true',
+                   help='an early start asks for the save only once X4 waits in its start menu: a smaller gap, but that wait '
+                        "raised the joiner's risk of parting (reports/LOCKSTEP-FAST-JOIN-20261123.txt); by default the save is "
+                        'asked as X4 starts')
     j.add_argument('--display', type=int, help='keep the client window on this monitor only (as x4ls play --display)')
     j.add_argument('--no-focus', action='store_true', help='while the client starts its window gives the keyboard focus back')
     j.add_argument('--never-focus', action='store_true',
@@ -417,7 +427,8 @@ def main(argv=None):
                                                          timeout=args.timeout, close_when_over=args.close_when_over,
                                                          same_pc=args.same_pc, display=args.display,
                                                          focus=not (args.no_focus or args.never_focus), never_focus=args.never_focus,
-                                                         tile_skip=args.tile_skip,
+                                                         tile_skip=args.tile_skip, early=not args.late_boot, ask_first=not args.menu_wait,
+                                                         fetch_delay=args.join_fetch_delay,
                                                          **({'state': session.ROOT / '.local/x4ls-join'} if args.same_pc else {})))
         print(json.dumps(result, indent=2))
         return 0 if result['outcome'] == 'played' else 1

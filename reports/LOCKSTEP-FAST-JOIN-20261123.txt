@@ -1,0 +1,89 @@
+HOT JOIN: HOW LONG, WHO WAITS, AND WHAT WAS CUT (23 Nov 2026, branch contrib/ferrite-fast-join)
+
+QUESTION
+--------
+How long does a hot join take, does it stop the session, and can it become quick and seamless (a short stop at the
+save, no stop at the handover, as Factorio's joins)?
+
+MEASURED BEFORE (one PC, late joins at T about 6,000, 200 s into a session)
+-------------------------------------------------------------------------
+From the relay's per-tick release times (native-inputs.jsonl) and the joiner's launcher and X4 logs:
+  hq166 (20 Nov)  request to save tick 2.1 s | save stop 8.8 s | joiner fetch, overlay, X4 boot and load 72.1 s |
+                  catch-up 20.3 s with the session running | handover stop 61.4 s | 165 s in all, 70 s of it stopped
+  fj2 (23 Nov)    save stop 8 s; fetch 6 s, overlay 6 s, X4 boot to its start menu 31 s, load and admission 40 s;
+                  2,356 ticks behind at the joiner's first step
+Saver's stop (fj2, its log): X4's save 3.0 s, the side-table capture 3.9 s, the 192 MB package's write and hash ~1.9 s.
+Per-step timing (native_gate_frame_timing, fj2): host and joiner both sim-bound, sim_us 31-32 ms (render slot 10
+~1 ms, FrameTick 1.5 ms, permit wait 0.1 ms). A joiner on the same PC steps no faster than the session, so only a
+pause can close its gap; skipping presentation on the joiner would gain ~1 ms of ~33 (not done).
+
+CHANGES
+-------
+1. Relay (tools/dev/native_gate_join.py consider_handover). The joiner's rate over its reports of the last 10 s.
+   gap <= --join-handover-gap: handover now, no pause (why=gap).
+   rate > session rate x 1.05 and expected arrival within --join-converge-limit (default 600 s): keep catching up,
+   past --join-catchup-limit too, no pause.
+   not gaining once the rate is known (10 s): handover now (why=not_gaining): every later second only adds the
+   session's lead to the pause. Otherwise the catch-up limit (why=limit). The pause stays bounded by --join-max-pause.
+   A saver's SAVED record may come up to 30 s after T plus the lead (change 3).
+2. Early start (src/lockstep/launcher/hotjoin.py EarlyJoin, tools/build_play_overlay.py --join-early, probe
+   X4LAN_JOIN_EARLY_READY). The joiner's overlay is built from the recipe with stand-ins; X4 starts and the save is
+   asked for at the same time; the launcher fetches, checks the files against the overlay (check_joiner), stages the
+   save as save_009 and the package, and writes native/join-ready.lua {save, package SHA-256}; the probe takes it in
+   the start menu (before the gate boots) and loads at once. Default: the save is asked as X4 starts; files that
+   come more than 5 s after X4 reached its menu start X4 again (DWELL_MAX_S; see the finding). --menu-wait asks once
+   X4 waits in its menu (the whole boot before the save: a few seconds less gap, with that wait); --late-boot keeps
+   the old order.
+3. Saver (src/native/engine/lockstep_join.h): the package's write and SHA-256 on a worker thread (state writing);
+   the probe's SAVED record follows once the file is complete. JOIN status: cap_ms= (engine save/tables/identities/
+   gone/fixture/world/build) and write_ms=; the saver logs JOIN_SAVER_TIMES.
+4. Transfer (src/lockstep/launcher/joinfiles.py): j<T>.x4join.gz (gzip level 1; 192 MB -> ~30 MB in ~1 s) offered
+   beside the raw package; joinfiles.offered() probes a name at offset 2^62 (NO|offset = offered); the joiner takes the
+   .gz when offered and checks the unpacked bytes against the raw SHA-256 the relay announced, else the raw file.
+
+FINDINGS: TWO WAYS A JOINER PARTED (BOTH IN THE CENSUS MOTION DOMAIN FROM T+1, THE DIGEST FROM THE HANDOVER)
+-----------------------------------------------------------------------------------------------------
+1. Every join saved at T >= 6,183 of this test session parted, in any order: the old late-boot order forced to T=6186
+   (fjl3), the early start at 6183..6186 (fje7, fje9) and at ~6890 (fje1, fje2, fje4). A join-tick class the package does
+   not carry yet, like T=6046 (BCLK) and T=6058 (DEFR); the 20 Nov sweep covered T 6040..6082 only. Pre-existing. Open.
+   Object rows: exactly one object's motion differs, each time a ShipMedium (vtable 0x2b82440) created after T and so
+   not in the join save: fje4 (T=6894) at 7200 id 0xa07e8 in zone 0x5b4, fjl5 (old order, T=6186) at 6600 id 0xa08a2 in
+   0x4495e; every other differing row is nav_raw only (per-process words). Next: what spawns it and which input of
+   its spawn (or first flight) differs on the joiner.
+2. Below 6,183: all six joins whose X4 loaded on arrival in its start menu stayed equal (fjl2 6095, fje3 6114, fje10 6120,
+   fje6 6123, fje5 6135, fje8 6178), and of two early starts that waited about 25 s in the menu first, fjd1 (T=6140)
+   parted and fjm1 (T=6154) did not. Suggestive, not proven; so the default never lets X4 wait in its menu.
+
+RESULTS (one PC, the host's and the joiner's X4 with up to three other sessions' clients beside them)
+-----------------------------------------------------------------------------------------------
+  run   order                        T     save stop  behind at 1st step   handover stop  save to H  after H
+  fjl2  late boot (old)              6095   9.4 s     2,304 ticks (81 s)     80.3 s         181 s      equal
+  fje5  early, asked at X4 start     6135   9.2 s     1,722 ticks (60 s)     58.8 s         138 s      equal
+  fje6  as fje5, 40 s slower link    6123  10.3 s     3,392 ticks (122 s)   122.8 s         265 s      equal
+        (--join-fetch-delay 40: X4 had waited 34 s in its menu, was started again and loaded on arrival)
+  fjm1  early, asked at the menu     6154   9.3 s     1,568 ticks (55 s)     57.4 s         132 s      equal
+  fjd1  early, asked at the menu     6140   9.3 s     1,491 ticks (52 s)     54.9 s         127 s      PARTED
+  fje3, fje8, fje10 (ask first, T 6114..6178): equal; fjl3 (old order, T=6186), fje7, fje9 (T 6183..6186) and
+  fje1, fje2, fje4 (T ~6890): parted (finding 1)
+  (equal: relay digest 0 mismatches from H to the run's end, ~900 ticks; world/hash parts differ before the first
+   census capture after T as in every join, the known dead-temp-zone rows.)
+fje5: files staged 22 s after X4 started (save 11 s, fetch 8 s with the .gz in 5-6 s, check and stage 3 s), before X4
+reached its menu (~29 s). The joiner stepped at 21-26 a second against the session's ~28, so the relay handed over at
+10 s (why=not_gaining): the handover stop is gap/rate.
+
+NOT DONE / OPEN
+---------------
+- A joiner on its own PC that steps faster than the session: the no-pause path is unit-tested only
+  (tests/test_native_gate_join.py: gaining, not gaining, too slow for the converge limit, converge limit 0).
+- The saver's stop (~9-10 s). fje6's JOIN_SAVER_TIMES: X4's save 3.5 s, side tables 0.2 s, identities 0.1 s, gone and
+  fixture 0.02 s, the world side table 5.1 s, the package build 1.4 s, write and hash 0.6 s on the worker. fje7's
+  cap_world (the world side table's slowest parts, ms): objects 807, srcs 314, lstn 289, sorts 247, attk 225, livef 156,
+  viewf 153, kids 145; the other ~48 sections share the remaining ~2.7 s. No single hot spot: the next cut is running the
+  independent sections in parallel inside the frame (the world is still then).
+- The package build on the worker thread (tried, reverted): both such joiners parted (fje7 at T=6186, fjw2 at T=6147
+  with no menu wait, where every join with the build in the frame stayed equal). The build's 192 MB of growing
+  allocations on the process heap while the session steps on are the suspect: work that runs alongside the steps must
+  not allocate on the game's heap. The write and hash on the worker (no allocations) stayed equal in every run.
+- The join-tick class from T=6,183 (finding 1) and the menu wait (finding 2).
+- Kit/server flow: the master server (netplay) stores and serves j<T>.x4join.gz; serve.py and the saver's upload in
+  lobby.py still carry the raw package only.

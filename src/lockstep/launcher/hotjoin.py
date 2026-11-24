@@ -12,6 +12,18 @@ relay (resent as a poll) until the state is saved, then both files from the host
 overlay is the host's recipe (play-recipe.json) rebuilt with the join save and the package (build_play_overlay.py
 --join-package, checked as native_gate_join_overlays.py checks a joiner's), and X4 starts on this PC with the join save as
 its snapshot: it loads at once (no arm time), the relay replays the session's rows from T to it and hands slot K over at H.
+
+Early start (the default for a session with a session.json and one candidate slot; HotJoinOptions.early): the joiner's X4
+starts while the session is asked to save. Its overlay is built from the recipe with stand-ins (build_play_overlay.py
+--join-early), X4 boots (about 30 s) while the session saves and the files are fetched (about 20 s), and the probe takes
+them in its start menu (JOIN_EARLY_WAIT) and loads at once: the joiner's gap behind the session (what it has to replay,
+or what everyone waits for at the handover) loses the boot. X4 should not wait in its start menu before the load: of the
+joins saved before tick 6,183 of the test session, all six that loaded on arrival stayed equal and one of the two that
+waited there about 25 s parted in the motion census (fjd1; fjm1 stayed equal), so files that come more than DWELL_MAX_S
+after X4 reached its menu start X4 again (reports/LOCKSTEP-FAST-JOIN-20261123.txt). ask_first False (--menu-wait) asks
+once X4 waits in its menu: a smaller gap (fjm1: 1,568 ticks, 55 s; asking first: 1,722, 60 s), that wait included. The files are checked against the overlay as
+--join-package checks them (check_joiner), the save goes into the profile's snapshot slot, the package to the extension's
+native folder, and the ready file (native/join-ready.lua) names both SHA-256 for the probe (EarlyJoin).
 """
 from dataclasses import dataclass
 import json
@@ -99,6 +111,15 @@ class HostJoins:
             loaded = join.read_package(package.read_bytes())
             if loaded['sha'] != package_sha:
                 raise ValueError(f'the package is {loaded["sha"][:16]}.., the saver announced {package_sha[:16]}..')
+            # The compressed package first (joinfiles.py: a joiner that sees it takes it; one that sees the raw package
+            # alone takes that), then the raw one and the save.
+            started = time.monotonic()
+            try:
+                packed = joinfiles.gzip_file(package, package.with_name(package.name + '.gz'))
+                self.service.offer(packed.name, packed)
+                self.log(f'join slot {slot}: package packed to {packed.stat().st_size >> 20} MB in {time.monotonic() - started:.1f} s')
+            except OSError as error:
+                self.log(f'join slot {slot}: the package is served unpacked ({error})')
             self.service.offer(package.name, package, package_sha)
             size, _ = self.service.offer(save.name, save, loaded['header']['save_sha'])
         except (OSError, ValueError, join.JoinError) as error:
@@ -178,6 +199,11 @@ class HotJoinOptions:
     focus: bool = True
     never_focus: bool = False
     tile_skip: int = 0
+    early: bool = True     # start X4 before the save when the recipe allows it (see the module text); False: the old order
+    menu_wait: int = 300   # an early joiner: seconds for its X4 to reach the start menu
+    ask_first: bool = True    # an early joiner asks for the save as X4 starts (its boot overlaps the save and the fetch);
+                              # False (--menu-wait): once X4 waits in its start menu (smaller gap, a wait in the menu)
+    fetch_delay: float = 0.0  # DIAGNOSTIC: seconds added after the download (a slow link: the early joiner's restart)
 
 
 def request(host, port, token, slot, wait_s=600, log=print, sock=None, interval=1.0, nonce=None):
@@ -246,7 +272,9 @@ def fetch_files(host, port, token, slot, state, folder, log=print, offer_wait_s=
             log(f'download {name}: {got >> 20} of {size >> 20} MB')
     package = folder / f'j{tick}.x4join'
     more = {'offer_wait_s': offer_wait_s} if offer_wait_s else {}
-    joinfiles.fetch(host, port, token, slot, package.name, package, expect_sha=state['package_sha'], progress=progress, **more)
+    started = time.monotonic()
+    how = joinfiles.fetch_package(host, port, token, slot, package.name, package, state['package_sha'], progress=progress, **more)
+    log(f'download {package.name}: {"compressed copy" if how == "gz" else "raw"}, {time.monotonic() - started:.1f} s')
     try:
         loaded = join.read_package(package.read_bytes())
     except join.JoinError as error:
@@ -259,13 +287,15 @@ def fetch_files(host, port, token, slot, state, folder, log=print, offer_wait_s=
 
 
 def build_joiner_overlay(host_overlay, save, package, package_sha, out, log=print):
-    """The joiner's overlay: the host overlay's recipe with the join save and package (build_play_overlay.py)."""
+    """The joiner's overlay: the host overlay's recipe with the join save and package (build_play_overlay.py); package None:
+    an early joiner's overlay (save is a stand-in file, see EarlyJoin)."""
     tools = recipe_tools()
     recipe = tools.read_recipe(host_overlay)
     if recipe is None or not recipe['open']:
         raise SystemExit(f'{host_overlay}: not a hot-joinable play overlay (build it with tools/build_play_overlay.py --open K)')
     host_overlay = Path(host_overlay).resolve()   # build_play_overlay.py runs from the checkout: a relative --overlay is the caller's
-    save, package, out = Path(save).resolve(), Path(package).resolve(), Path(out).resolve()
+    save, out = Path(save).resolve(), Path(out).resolve()
+    package = Path(package).resolve() if package is not None else None
     dll = Path(host_overlay) / 'native/x4lan_gate_64.dll'
     if tools.sha256(dll) != recipe['gate_dll_sha']:
         raise SystemExit(f'{dll}: not the gate the overlay was built with')
@@ -285,6 +315,151 @@ def build_joiner_overlay(host_overlay, save, package, package_sha, out, log=prin
     if line:
         log(line)
     return Path(out), recipe
+
+
+EARLY_STANDIN = b'x4ls early hot joiner: the join save is staged once X4 waits in its start menu\n'
+READY = 'join-ready.lua'   # build_native_gate_overlay.py JOIN_READY
+EARLY_WAIT = b'JOIN_EARLY_WAIT'
+
+
+IDLE_PRIORITY, NORMAL_PRIORITY = 0x40, 0x20   # Windows priority classes
+
+
+def set_priority(pid, priority):
+    """An X4 waiting in its start menu draws the menu as fast as it can: on a PC that also runs the saver it took CPU from
+    the save, which every client waits for (fje1, 23 Nov: 10.1 s). Windows only; False when it could not be set."""
+    if sys.platform != 'win32':
+        return False
+    import ctypes
+    kernel = ctypes.windll.kernel32
+    handle = kernel.OpenProcess(0x0200, False, int(pid))   # PROCESS_SET_INFORMATION
+    if not handle:
+        return False
+    try:
+        return bool(kernel.SetPriorityClass(handle, priority))
+    finally:
+        kernel.CloseHandle(handle)
+
+
+DWELL_MAX_S = 5.0   # an early joiner's X4 may wait this long in its start menu for its files; longer: started again
+
+
+class EarlyJoin:
+    """session.JoinOptions.early: once the joiner's X4 runs, wait for its probe in the start menu, then ask the relay for the
+    join, fetch and check the files and stage them for the waiting probe. Raises SystemExit (session.join ends X4)."""
+    def __init__(self, o, slot, recipe, overlay, folder):
+        self.o, self.slot, self.recipe, self.overlay, self.folder = o, slot, recipe, Path(overlay), Path(folder)
+        self.times = {}
+
+    def wait_menu(self, profile_id, proc):
+        path = profile.profile_dir(profile_id) / f'x4ls-c{self.slot}.log'
+        start, offset, tail = time.monotonic(), 0, b''
+        while time.monotonic() - start < self.o.menu_wait:
+            if proc.poll() is not None:
+                raise SystemExit(f'X4 exited ({proc.returncode}) before it reached its start menu')
+            try:
+                with open(path, 'rb') as f:
+                    f.seek(offset)
+                    data = f.read()
+            except FileNotFoundError:
+                data = b''
+            if data:
+                offset += len(data)
+                window = tail + data
+                if EARLY_WAIT in window:
+                    return time.monotonic() - start
+                if b'native_gate_probe.lua' in window and b'NATIVE_GATE ERROR' in window:
+                    raise SystemExit('the probe refused the early joiner overlay (see the client log)')
+                tail = window[-64:]
+            time.sleep(0.25)
+        raise SystemExit(f'X4 did not reach its start menu within {self.o.menu_wait} s')
+
+    def stage(self, view, profile_id, save, package, save_sha, package_sha):
+        """The save into the profile's snapshot slot, the package where the overlay names it, then the ready file (each file
+        complete before its name appears: the probe polls for the ready file every frame)."""
+        import shutil
+        profile.stage(profile_id, save)
+        native = Path(view) / 'extensions' / 'x4_lan_lab' / 'native'
+        part = native / 'join.x4join.part'
+        shutil.copyfile(package, part)
+        part.replace(native / 'join.x4join')
+        ready = native / (READY + '.part')
+        ready.write_text(f"return {{save = '{save_sha}', package = '{package_sha}'}}\n")
+        ready.replace(native / READY)
+
+    def __call__(self, view, profile_id, proc, log, relaunch=None):
+        o, slot = self.o, self.slot
+        host, _, port = o.relay.rpartition(':')
+        port = int(port)
+        t0 = time.monotonic()
+        watch = {}
+        if o.ask_first:
+            menu, idle = 0.0, False
+            # X4 must load on arrival in its start menu (a wait there parts the joiner's motion; fje2): note when it
+            # arrives while the session saves and the files come.
+            def watch_menu():
+                try:
+                    self.wait_menu(profile_id, proc)
+                    watch['at'] = time.monotonic()
+                except SystemExit as error:
+                    watch['error'] = str(error)
+            threading.Thread(target=watch_menu, daemon=True).start()
+            log('join: asking the session to save while X4 starts')
+        else:
+            menu = self.wait_menu(profile_id, proc)
+            idle = set_priority(proc.pid, IDLE_PRIORITY)   # back to normal before the load (below)
+            log(f'join: X4 waits in its start menu ({menu:.0f} s); asking the session to save')
+        nonce = o.nonce or previous_nonce(o.runs, slot, o.relay)
+        if nonce:
+            log(f'join: resuming the join of nonce {nonce}')
+        t1 = time.monotonic()
+        state = request(host, port, o.token, slot, o.wait, log, nonce=nonce)
+        state['relay'] = o.relay
+        (self.folder / 'join/state.json').write_text(json.dumps(state, indent=1) + '\n')
+        t2 = time.monotonic()
+        save, package, loaded = fetch_files(host, port, o.token, slot, state, self.folder / 'join', log, o.offer_wait)
+        if o.fetch_delay:
+            log(f'join: DIAGNOSTIC fetch delay {o.fetch_delay:.0f} s')
+            time.sleep(o.fetch_delay)
+        t3 = time.monotonic()
+        recipe_tools().check_joiner(self.overlay, package, state['package_sha'], save, self.recipe['players'],
+                                    self.recipe['join_mode'])
+        if idle:
+            set_priority(proc.pid, NORMAL_PRIORITY)
+        dwell = time.monotonic() - watch['at'] if 'at' in watch else 0.0
+        if dwell > DWELL_MAX_S and relaunch:
+            # The files came after X4 reached its start menu: a fresh X4 finds them there and loads at once.
+            log(f'join: X4 waited {dwell:.0f} s in its start menu for the files; starting it again so that it loads on arrival')
+            proc = relaunch()
+        elif 'error' in watch:
+            raise SystemExit(watch['error'])
+        self.stage(view, profile_id, save, package, loaded['header']['save_sha'], state['package_sha'])
+        t4 = time.monotonic()
+        self.times = {'menu_s': round(menu, 1), 'save_s': round(t2 - t1, 1), 'fetch_s': round(t3 - t2, 1),
+                      'stage_s': round(t4 - t3, 1), 'before_load_s': round(t4 - t0, 1), 'menu_wait_s': round(dwell, 1),
+                      'menu_at_s': round(watch['at'] - t0, 1) if 'at' in watch else None}
+        log(f"join: T={state['tick']} saver={state['saver']} save {save.stat().st_size >> 20} MB, package "
+            f"{package.stat().st_size >> 20} MB, verified and staged; X4 loads now "
+            f"(asked {t2 - t1:.0f} s, fetched {t3 - t2:.0f} s, checked and staged {t4 - t3:.0f} s)")
+        (self.folder / 'join/early.json').write_text(json.dumps(self.times, indent=1) + '\n')
+
+
+def early_join(o, slot, recipe, log=print):
+    """hot_join's early start (the module text): the stand-in overlay, then session.join with EarlyJoin."""
+    from . import session
+    folder = o.runs / (time.strftime('%Y%m%d-%H%M%S') + f'-hotjoin{slot}')
+    (folder / 'join').mkdir(parents=True)
+    standin = folder / 'join/early-standin.bin'
+    standin.write_bytes(EARLY_STANDIN)
+    overlay, recipe = build_joiner_overlay(o.overlay, standin, None, None, folder / 'overlay', log)
+    o.slot = slot
+    return session.join(session.JoinOptions(relay=o.relay, token=o.token, slot=slot, clients=recipe['players'], arm_at=None,
+                                            overlay=overlay, snapshot=None, seed=int(recipe['session']['seed']),
+                                            early=EarlyJoin(o, slot, recipe, overlay, folder), width=o.width, height=o.height,
+                                            game=o.game, lanes=o.lanes, runs=o.runs, state=o.state, startup=o.startup,
+                                            steam_fix=o.steam_fix, timeout=o.timeout, close_when_over=o.close_when_over,
+                                            tick_hz=None, run_dir=folder, same_pc=o.same_pc, display=o.display, focus=o.focus,
+                                            never_focus=o.never_focus, tile_skip=o.tile_skip), log)
 
 
 def hot_join(o, log=print):
@@ -310,6 +485,9 @@ def hot_join(o, log=print):
     if session.x4_running() and not o.same_pc:
         raise SystemExit('X4 is running; close it first')
     port = int(port)
+    session_data = recipe.get('session') or {}
+    if o.early and len(candidates) == 1 and str(session_data.get('seed', '')).isdigit():
+        return early_join(o, candidates[0], recipe, log)
     state = None
     for index, slot in enumerate(candidates):
         nonce = o.nonce or previous_nonce(o.runs, slot, o.relay)

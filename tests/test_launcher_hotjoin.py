@@ -137,6 +137,86 @@ class FileServiceTests(unittest.TestCase):
             other.close()
 
 
+class CompressedPackageTests(unittest.TestCase):
+    def test_a_host_without_the_compressed_copy_is_served_raw(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            raw = Path(tmp) / 'j600.x4join'
+            raw.write_bytes(bytes(100000) + b'package')
+            sha = hashlib.sha256(raw.read_bytes()).hexdigest()
+            service = joinfiles.FileService(TOKEN, '127.0.0.1', 0, slots=(3,)).start()
+            try:
+                self.assertFalse(joinfiles.offered('127.0.0.1', service.port, TOKEN, 3, 'j600.x4join'))
+                service.offer(raw.name, raw, sha)
+                self.assertTrue(joinfiles.offered('127.0.0.1', service.port, TOKEN, 3, 'j600.x4join'))
+                self.assertFalse(joinfiles.offered('127.0.0.1', service.port, TOKEN, 3, 'j600.x4join.gz'))
+                how = joinfiles.fetch_package('127.0.0.1', service.port, TOKEN, 3, 'j600.x4join', Path(tmp) / 'got/j600.x4join', sha)
+                self.assertEqual(how, 'raw')
+                self.assertEqual((Path(tmp) / 'got/j600.x4join').read_bytes(), raw.read_bytes())
+                # With the compressed copy offered: that one, unpacked to the same bytes; a wrong announcement is refused.
+                packed = joinfiles.gzip_file(raw, raw.with_name('j600.x4join.gz'))
+                self.assertLess(packed.stat().st_size, 2000)
+                service.offer(packed.name, packed)
+                how = joinfiles.fetch_package('127.0.0.1', service.port, TOKEN, 3, 'j600.x4join', Path(tmp) / 'gz/j600.x4join', sha)
+                self.assertEqual(how, 'gz')
+                self.assertEqual((Path(tmp) / 'gz/j600.x4join').read_bytes(), raw.read_bytes())
+                with self.assertRaisesRegex(joinfiles.FetchError, 'does not match the announced'):
+                    joinfiles.fetch_package('127.0.0.1', service.port, TOKEN, 3, 'j600.x4join', Path(tmp) / 'bad/j600.x4join', 'f' * 64)
+                self.assertFalse((Path(tmp) / 'bad/j600.x4join').exists())
+            finally:
+                service.close()
+
+
+class EarlyJoinTests(unittest.TestCase):
+    """hotjoin.EarlyJoin's parts: the start menu seen in the client log, and the files staged for the waiting probe."""
+    class Proc:
+        def __init__(self, code=None):
+            self.pid, self.returncode = 1234, code
+
+        def poll(self):
+            return self.returncode
+
+    def early(self, tmp, menu_wait=2):
+        o = hotjoin.HotJoinOptions(relay='127.0.0.1:47000', token=TOKEN, slot=2, overlay=Path(tmp) / 'ov', menu_wait=menu_wait)
+        return hotjoin.EarlyJoin(o, 2, {'players': 2, 'join_mode': 'report'}, Path(tmp) / 'ov', Path(tmp) / 'run')
+
+    def test_the_start_menu_is_seen_in_the_client_log(self):
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(profile, 'profile_dir', lambda p, root=None: Path(tmp) / str(p)):
+            log = Path(tmp) / '45856' / 'x4ls-c2.log'
+            log.parent.mkdir()
+            e = self.early(tmp)
+            def later():
+                time.sleep(0.3)
+                log.write_bytes(b'[General] boot\n[=ERROR=] 4.47 [X4LAN] NATIVE_GATE JOIN_EARLY_WAIT ready=./x\n')
+            threading.Thread(target=later).start()
+            self.assertLess(e.wait_menu(45856, self.Proc()), 2)
+            with self.assertRaisesRegex(SystemExit, 'exited'):
+                e.wait_menu(45856, self.Proc(1))
+            log.write_bytes(b'[=ERROR=] NATIVE_GATE ERROR [string "native_gate_probe.lua"]:12: refused\n')
+            with self.assertRaisesRegex(SystemExit, 'refused'):
+                e.wait_menu(45856, self.Proc())
+            log.write_bytes(b'nothing yet\n')
+            with self.assertRaisesRegex(SystemExit, 'start menu within'):
+                e.wait_menu(45856, self.Proc())
+
+    def test_the_files_and_the_ready_file_for_the_probe(self):
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(profile, 'profile_dir', lambda p, root=None: Path(tmp) / str(p)):
+            (Path(tmp) / '45856' / 'save').mkdir(parents=True)
+            view = Path(tmp) / 'view'
+            (view / 'extensions/x4_lan_lab/native').mkdir(parents=True)
+            save, package = Path(tmp) / 'j600.xml.gz', Path(tmp) / 'j600.x4join'
+            save.write_bytes(b'save'), package.write_bytes(b'package')
+            self.early(tmp).stage(view, 45856, save, package, 'a' * 64, 'b' * 64)
+            self.assertEqual((Path(tmp) / '45856/save/save_009.xml.gz').read_bytes(), b'save')
+            native = view / 'extensions/x4_lan_lab/native'
+            self.assertEqual((native / 'join.x4join').read_bytes(), b'package')
+            self.assertEqual((native / hotjoin.READY).read_text(), f"return {{save = '{'a' * 64}', package = '{'b' * 64}'}}\n")
+            self.assertEqual(sorted(p.name for p in native.iterdir()), [hotjoin.READY, 'join.x4join'])   # no .part left
+            # the overlay builder and the launcher name the same file
+            sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'tools/dev'))
+            import build_native_gate_overlay
+            self.assertEqual(build_native_gate_overlay.JOIN_READY, hotjoin.READY)
+
+
 class PortTests(unittest.TestCase):
     def test_a_port_free_for_udp_and_tcp(self):
         """The join file service shares the relay's number: a UDP pick whose TCP side is taken (or kept by Windows,
@@ -180,7 +260,7 @@ class HostJoinsTests(unittest.TestCase):
                 hosting.line(f'NATIVE_GATE JOIN slot=3 saved slot=2 tick=600 bytes=11000 package={sha} portable={"a" * 32}')
                 for thread in hosting.threads:
                     thread.join(10)
-                self.assertEqual(sorted(service.offered), ['j600.x4join', 'j600.xml.gz'])
+                self.assertEqual(sorted(service.offered), ['j600.x4join', 'j600.x4join.gz', 'j600.xml.gz'])
                 self.assertIn((3, 600, 1), hosting.offered)
                 self.assertEqual(hosting.failed, {(3, 600, 2): 'saver_not_local'})
                 self.assertTrue(any('serving j600 from saver 1' in l for l in lines))
@@ -190,6 +270,8 @@ class HostJoinsTests(unittest.TestCase):
                                                                     log=lines.append)
                 self.assertEqual(got_save.read_bytes(), save)
                 self.assertEqual(loaded['sha'], sha)
+                self.assertEqual(got_package.read_bytes(), package)
+                self.assertTrue(any('compressed copy' in l for l in lines), lines[-3:])   # the .gz, unpacked and checked
                 # A saver whose package is not the announced one is not served.
                 hosting.line(f'NATIVE_GATE JOIN slot=3 saved slot=1 tick=600 bytes=11000 package={"e" * 64} portable={"a" * 32}')
                 for thread in hosting.threads:
@@ -499,6 +581,10 @@ class RecipeTests(unittest.TestCase):
             self.assertEqual(cmd[cmd.index('--snapshot') + 1], 'j600.xml.gz')
             self.assertEqual(cmd[cmd.index('--set') + 1], 'native_gate_own_predict=false')
             self.assertNotIn('--full-logs', cmd)
+            early = build_play_overlay.joiner_command(recipe, 'standin.bin', 'gate.dll', 'out', None, None)   # an early joiner
+            self.assertIn('--join-early', early)
+            self.assertNotIn('--join-package', early)
+            self.assertNotIn('--join-package-sha', early)
             recipe['open'] = [4]                                 # beyond the players
             (overlay / build_play_overlay.RECIPE).write_text(json.dumps(recipe))
             with self.assertRaises(SystemExit):

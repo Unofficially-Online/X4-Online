@@ -95,6 +95,19 @@ class Client(unittest.TestCase):
                                                      'portable': portable})
         self.assertIsNone(c.proposal(602, 480))                       # once
 
+    def test_the_record_waits_while_the_package_is_written(self):
+        # lockstep_join.h JOIN_WRITING: the package is written and hashed off the frame; the SAVED record follows the file.
+        c = self.g.make(1)
+        c.apply(560, self.inputs('', '', join.encode_record(join.OP_SAVE_AT, 3, 600, mask=3, nonce=1)), 3)
+        self.g.result = f'writing|600|3|0|{"00"*32}|{"cd"*16}|0|-'
+        self.assertIsNone(c.proposal(601, 480))
+        self.assertIsNone(c.proposal(640, 480))
+        self.assertFalse(any('JOIN_RESULT' in t for t in self.g.logs.values()))
+        package, portable = 'ab'*32, 'cd'*16
+        self.g.result = f'done|600|3|99999|{package}|{portable}|0|-'
+        self.assertEqual(join.decode_record(c.proposal(641, 480))['op'], 'saved')
+        self.assertIsNone(c.proposal(642, 480))
+
     def test_failed_save_and_late_or_refused_arming(self):
         c = self.g.make(2)
         c.apply(560, self.inputs('', '', join.encode_record(join.OP_SAVE_AT, 3, 600, mask=2, nonce=1)), 3)

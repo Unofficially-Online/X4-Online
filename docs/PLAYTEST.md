@@ -355,8 +355,9 @@ loads; the others play on.
    from the session's rows, and takes over its ship at the handover tick.
 
 The joiner has 900 s from the save to report in (the relay's `--join-joiner-timeout`). The host serves the files
-of its own clients only, so slot 1's PC must be one of the savers. With `--open` the relay hands over after 20 s
-of catch-up and may pause everyone for up to 180 s while the joiner closes the gap.
+of its own clients only, so slot 1's PC must be one of the savers. With `--open` the relay hands a joiner that does not
+gain on the session over after 10 s of catch-up (at most 20 s) and may pause everyone for up to 180 s while it closes the
+gap; a joiner that gains catches up with no pause (below).
 
 Status (9 Nov, one PC). The whole join runs: the request, the save at the next join tick, the 176 MB download
 (verified), the joiner's overlay and its checks, the load, the resume into the open pilot window, the catch-up,
@@ -367,6 +368,49 @@ everyone for about as long as the joiner took to load (hj28: 75 s); a faster joi
 joiner replays without the 30-per-second hold. Measured with two X4 on one PC: a simulation step costs about 25 ms
 there, so the replay ran at 35 steps a second and the pause was 62 s instead of 70 to 77 s. The hold was not the
 limit on that PC; a joiner on its own PC should gain more, which is not measured yet.
+
+### How long a join takes, and who waits (23 Nov)
+
+A join stops the session twice: while the saver writes the join save and package (every client waits for its step),
+and at the handover when the joiner is still behind (everyone waits until it reaches the handover tick). In between
+the session plays on while the joiner fetches, loads and replays. Measured on one PC (the host's X4 and the joiner's,
+other sessions' clients beside them; late joins at T about 6,000, 200 s into a session):
+
+| | before (late boot, fjl2) | now (fje5) |
+|---|---|---|
+| save stop (everyone) | 9.4 s | 9.2 s |
+| joiner behind at its first step | 2,304 ticks (81 s after the save) | 1,722 ticks (60 s) |
+| handover stop (everyone) | 80.3 s | 58.8 s |
+| save to handover | 181 s | 138 s |
+
+- **X4 boots while the session saves.** `x4ls join` builds the joiner's overlay with stand-ins (`build_play_overlay.py
+  --join-early`), starts X4 and asks the relay for the save at the same time: the boot (about 30 s) covers the save, the
+  download and the checks (about 20 s on one PC), and the probe, in the start menu, takes the staged files
+  (`native/join-ready.lua` with both SHA-256) and loads at once. X4 should not wait in its start menu before the load: of
+  the joins saved before tick 6,183, all six that loaded on arrival stayed equal and one of two that waited there about
+  25 s parted (fjd1; fjm1 stayed equal). Files that come more than 5 s after X4 reached its menu (a slow link) start X4
+  again, which then loads on arrival (fje6). `--menu-wait` asks only once X4 waits in its menu (a few seconds less gap,
+  fjm1 1,568 ticks against fje5 1,722, with that wait); `--late-boot` keeps the old order.
+- **The package travels packed.** The host offers `j<T>.x4join.gz` (gzip level 1: 192 MB to about 30 MB in about a
+  second) beside the raw package; the joiner takes it when offered and checks the unpacked bytes against the raw SHA-256
+  the relay announced, else it fetches the raw file (an older host, a server that stores only raw files).
+- **The saver writes the package off the frame.** The package's write and hash (about 2 s of the stop for 192 MB) run on a
+  worker thread; the SAVED record follows once the file is complete (the relay waits up to 30 s past the lead for it). The
+  rest of the stop is X4's own save (about 3 s) and the capture of the side tables; `JOIN_SAVER_TIMES` in the saver's log
+  breaks it down (`cap_ms`: engine save/tables/identities/gone/fixture/world/build).
+- **No pause for a joiner that gains.** The relay measures the joiner's steps over 10 s. One that steps at least 5 % faster
+  than the session catches up with no pause at all, past `--join-catchup-limit` too, as long as it arrives within
+  `--join-converge-limit` (600 s). One that does not gain is handed over as soon as its rate is known (10 s into the
+  catch-up), because every further second of catch-up only lengthens the stop. The handover row says why (`why=gap`
+  caught up, `not_gaining`, or `limit`).
+- **Joins saved at tick 6,183 or later of this test session part** (relay digest from the handover on; the census motion
+  domain from T+1), in the old order as in the new (fjl3, T=6186), while every join saved at 6,095..6,178 stayed equal.
+  A join-tick class the package does not carry yet, as T=6046/6058 were (the 20 Nov sweep covered T 6040..6082 only);
+  not fixed here.
+- **Why one PC still stops at the handover.** Both X4 are bound by the simulation step (about 31-35 ms on this PC with
+  other clients beside them; drawing is about 1 ms of it, waiting for permits 0.1 ms), so a joiner on the same PC steps no
+  faster than the session and the handover stop is its gap over its rate. A joiner on its own PC that steps faster than
+  the session needs joins with no handover stop; that two-PC case is not measured yet.
 
 What a joiner sees and hears (10 Nov, after a player's report of a flashing screen and of the host's combat chatter
 on the joiner):

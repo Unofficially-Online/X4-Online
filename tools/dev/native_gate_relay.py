@@ -716,6 +716,9 @@ def main():
     join.add_argument('--join-catchup-limit', type=float, default=300, metavar='S',
                       help='after this many seconds of catch-up the handover is announced even with a larger gap, if the '
                            'expected pause stays within --join-max-pause (default 300)')
+    join.add_argument('--join-converge-limit', type=float, default=600, metavar='S',
+                      help='a joiner that gains on the session catches up without any pause while its expected arrival lies within '
+                           'this many seconds of its first report (default 600; 0: only --join-catchup-limit, as before)')
     join.add_argument('--join-observe', action='store_true',
                       help='DIAGNOSTIC (default off): a joiner whose declared digest differs before its handover is counted and '
                            'noticed instead of stopped (game and real time stay exact), so the handover runs while the join is not '
@@ -815,6 +818,7 @@ def main():
                                   join_options={'lead': args.join_lead, 'handover_gap': args.join_handover_gap,
                                                 'handover_lead': args.join_handover_lead, 'max_pause': args.join_max_pause,
                                                 'catchup_limit': args.join_catchup_limit, 'joiner_timeout': args.join_joiner_timeout,
+                                                'converge_limit': args.join_converge_limit,
                                                 'savers': savers or None, 'observe': args.join_observe,
                                                 'save_at': args.join_save_at or None})
         except ValueError as error: p.error(f'--join: {error}')

@@ -33,6 +33,11 @@ def _snapshot_starts(path):
                 element.clear()
 
 
+# An early joiner's ready file (--join-early): written by the launcher into the installed extension's native folder once
+# the join save and the package are staged; the probe reads it in the start menu (return {save = SHA, package = SHA}).
+JOIN_READY = 'join-ready.lua'
+
+
 def snapshot_fixture(path):
     """Resolve only the saved MD fixture's ordered Spawn.$ships list."""
     references=[]
@@ -225,6 +230,10 @@ def main():
     p.add_argument('--join-package', type=Path, help='hot join, joiner side: the saver\'s j<T>.x4join (copied into the overlay); '
                    'the join save itself is the --snapshot')
     p.add_argument('--join-package-sha', help='the package SHA-256 the saver announced (its SAVED record, NGJOINSTATE)')
+    p.add_argument('--join-early', action='store_true',
+                   help='hot join, joiner side, without the package yet: X4 starts and waits in its start menu for the files '
+                        '(the launcher stages the join save and the package, then writes native/'+JOIN_READY+' with both SHA-256); '
+                        '--snapshot is a stand-in whose checksum the ready file replaces')
     p.add_argument('--join-absent', metavar='K[,K...]',
                    help="hot join, both sides: the session's absent slots (the relay's --absent; never slot 1). Every per-slot "
                         'module then treats them as neutral until their HANDOVER and requires their records from H+delay '
@@ -448,7 +457,7 @@ def main():
                 or args.world_log_mode != 'hashes'):
             p.error('--world-rolling-slices requires Linux, 1..18000 slices, schema 2 and hashes-only output')
         if any((args.world_hash_watch, args.world_trace_ticks, args.world_health_ticks,
-                args.join, args.join_package)):
+                args.join, args.join_package, args.join_early)):
             p.error('rolling census does not support watches, trace or join/checkpoint consumers')
     if args.world_hash_watch and (args.world_hash_stride is None or len(args.world_hash_watch)>64 or len(set(args.world_hash_watch))!=len(args.world_hash_watch) or any(len(s)!=16 or any(c not in '0123456789abcdef' for c in s) or int(s,16)==0 for s in args.world_hash_watch)):
         p.error('--world-hash-watch requires stride,1..64 unique nonzero16-digit lowercase hex IDs')
@@ -706,7 +715,7 @@ def main():
             shutil.copy2(root/'tools/dev'/name,args.out/'ui'/name)
         shutil.copy2(root/'tools/dev/native_gate_player_orders.xml',args.out/'md/native_gate_player_orders.xml')
         ui_files = 'ui/native_gate_player_orders_core.lua\nui/native_gate_player_orders.lua\n'+ui_files
-    if args.join or args.join_package:
+    if args.join or args.join_package or args.join_early:
         # Hot join: the JOIN input section and the probe state providers (native_gate_join_core.lua).
         shutil.copy2(root/'tools/dev/native_gate_join_core.lua', args.out/'ui/native_gate_join_core.lua')
         # The shipyard diagnostic's cue (native_gate_join_shipyards = {ticks}); it acts only on the probe's event.
@@ -1123,12 +1132,17 @@ X4LAN_CONFIG.slot = "@X4LANE_SLOT@"
                          f"watchdog_s = {args.fork_save_watchdog}{every}}}\n")
     elif args.fork_save_budget_ms != 50 or args.fork_save_watchdog != 600 or args.fork_save_every is not None or args.fork_save_slot is not None:
         p.error('--fork-save-budget-ms, --fork-save-watchdog, --fork-save-every and --fork-save-slot need --fork-save')
-    if args.join or args.join_package:
+    if args.join or args.join_package or args.join_early:
         if args.gate_so or not args.gate_dll or not args.snapshot or not args.session_clients or not args.world_identities:
             p.error('--join and --join-package need the Windows gate (--gate-dll), the snapshot boot, --session-clients and '
                     '--world-identities')
+        if args.join_early and (args.join_package or args.join_package_sha):
+            p.error('--join-early takes no package: the launcher stages it after X4 started')
         joiner = ''
-        if args.join_package:
+        if args.join_early:
+            joiner = (f", joiner = {{package = './extensions/x4_lan_lab/native/join.x4join', sha = 'early', "
+                      f"ready = './extensions/x4_lan_lab/native/{JOIN_READY}', mode = '{args.join_mode}'}}")
+        elif args.join_package:
             sha = (args.join_package_sha or '').lower()
             if len(sha) != 64 or any(c not in '0123456789abcdef' for c in sha) or not args.join_package.is_file():
                 p.error('--join-package needs the package file and --join-package-sha (64 hex)')
@@ -1139,7 +1153,7 @@ X4LAN_CONFIG.slot = "@X4LANE_SLOT@"
             joiner = (f", joiner = {{package = './extensions/x4_lan_lab/native/join.x4join', sha = '{sha}', "
                       f"mode = '{args.join_mode}'}}")
         elif args.join_package_sha or args.join_mode != 'strict':
-            p.error('--join-package-sha and --join-mode need --join-package')
+            p.error('--join-package-sha and --join-mode need --join-package or --join-early')
         absent = ''
         if args.join_absent:
             try:
@@ -1161,7 +1175,7 @@ X4LAN_CONFIG.slot = "@X4LANE_SLOT@"
             rejoin = f", rejoin = {{{', '.join(map(str, again))}}}"
         with (args.out/'ui/config.lua.append').open('a') as config:
             config.write(f"X4LAN_CONFIG.native_gate_join = {{save = '{args.join or 'strict'}'{joiner}{absent}{rejoin}}}\n")
-    elif args.join_package_sha or args.join_mode != 'strict' or args.join_absent or args.join_rejoin:
+    elif args.join_package_sha or args.join_mode != 'strict' or args.join_absent or args.join_rejoin or args.join_early:
         p.error('--join-package-sha, --join-mode, --join-absent and --join-rejoin need --join or --join-package')
     if args.attention_all:
         if not args.gate_so or not args.snapshot or not args.world_identities:

@@ -312,7 +312,10 @@ if cfg.native_gate_join then
  assert(save_mode=='strict' or save_mode=='report','native_gate_join.save must be strict or report')
  join_joiner=j.joiner
  if join_joiner then
-  assert(type(join_joiner.package)=='string' and type(join_joiner.sha)=='string' and #join_joiner.sha==64 and
+  -- sha='early' with ready=<path> (the overlay builders' --join-early): X4 started before the session saved; the probe
+  -- waits in the start menu until the launcher staged the join save and the package and wrote the ready file (frame()).
+  assert(type(join_joiner.package)=='string' and type(join_joiner.sha)=='string' and
+   (#join_joiner.sha==64 or (join_joiner.sha=='early' and type(join_joiner.ready)=='string')) and
    (join_joiner.mode==nil or join_joiner.mode=='strict' or join_joiner.mode=='report'),'native_gate_join.joiner needs package, sha and mode')
  end
  -- The probe's state across ticks that enters the declared digest travels as providers (fixture, world_hash, identity,
@@ -611,7 +614,15 @@ if cfg.native_gate_join then
    -- Only the Windows gate writes the join package; the Linux gate's fork-save has no side table yet.
    return package.config:sub(1,1)=='\\' and gate.join_arm(t,k,mask,savepath,save_mode=='report' and 1 or 0)==1
   end,
-  result=function() return gate.join_result() end,
+  result=function()
+   local r=gate.join_result()
+   -- Where the saver's stop went (lockstep_join.h cap_ms: engine save/tables/ids/gone/fixture/world/build; write_ms: the
+   -- package's write and hash off the frame), once the result is final.
+   if r and (r:match('^done|') or r:match('^failed|')) and gate.join_status then
+    DebugError('[X4LAN] NATIVE_GATE JOIN_SAVER_TIMES '..(tostring(gate.join_status()):match('save_us=%d+ capture_us=%d+ cap_ms=%S+ write_ms=%d+ cap_world=%S+') or '-'))
+   end
+   return r
+  end,
   handover=function(k,h)
    if join_joiner and k==own then assert(gate.join_handover(h)==1,'join handover refused '..tostring(gate.join_status())) end
    -- Every client, the same tick: slot k's ship is enrolled at H, its records required from H+delay (when the pilot
@@ -4750,6 +4761,28 @@ local function sample(tick)
  end
  return data
 end
+-- An early joiner (native_gate_join.joiner.sha='early', the overlay builders' --join-early): its X4 started while the
+-- session played on, so the join save is made only once this client waits in the start menu (the launcher sees
+-- JOIN_EARLY_WAIT, asks the relay, fetches and checks the files, stages the save as save_009 and the package at
+-- joiner.package, then writes the ready file). Until then the gate is not booted; the ready file names both SHA-256,
+-- which replace the overlay's stand-ins. True once ready (and for every other client).
+if join_joiner and join_joiner.sha=='early' then
+ local noted
+ X4LAN_JOIN_EARLY_READY=function()
+  if join_joiner.sha~='early' then return true end
+  if not noted then noted=true;log('JOIN_EARLY_WAIT ready='..join_joiner.ready) end
+  local chunk=loadfile(join_joiner.ready)
+  if not chunk then return false end
+  local ok,r=pcall(chunk)
+  local function hex64(v) return type(v)=='string' and #v==64 and v:match('^[a-f0-9]+$')~=nil end
+  assert(ok and type(r)=='table' and hex64(r.save) and hex64(r.package),'join: the ready file is not {save = SHA-256, package = SHA-256}')
+  snapshot=r.save;cfg.native_gate_snapshot_sha=r.save;join_joiner.sha=r.package
+  log('JOIN_EARLY_READY save='..r.save..' package='..r.package)
+  return true
+ end
+else
+ X4LAN_JOIN_EARLY_READY=nil
+end
 local function frame()
  if done then return end
  assert(not command_error,'native tactical command refused')
@@ -4775,6 +4808,9 @@ local function frame()
    end
    if tonumber(ffi.C.GetCurrentUTCDataTime())<at then return end
   end
+  -- An early joiner waits here for its staged files (X4LAN_JOIN_EARLY_READY, defined before frame: a global, so frame
+  -- keeps within LuaJIT's 60 upvalues).
+  if X4LAN_JOIN_EARLY_READY and not X4LAN_JOIN_EARLY_READY() then return end
   local data=snapshot and ('SNAPSHOT_BYTES_1|'..snapshot) or sample(0)
   if cfg.native_gate_snapshot_fixture then data=data..'|SNAPSHOT_FIXTURE_1|'..table.concat(cfg.native_gate_snapshot_fixture,',') end
   -- The session defaults' effective stack (native_gate_defaults.lua): a client with another stack differs at tick 0, where

@@ -10,7 +10,13 @@ Names: j<T>.xml.gz and j<T>.x4join, and only what the host offered: a join's two
 them and they matched their hashes (hotjoin.HostJoins). A wrong mac, a nonce seen before, an unknown name or an offset past
 the end is NO; so is a source address the session does not allow. A fetch resumes a partial download (<dest>.part) from its
 length and keeps the file only when the size and SHA-256 match the host's, which must match the hash the caller expects
-(the relay's NGJOINSTATE names the package's)."""
+(the relay's NGJOINSTATE names the package's).
+
+Compressed package (optional, same protocol): j<T>.x4join.gz is the gzip of j<T>.x4join (about 30 MB for a 192 MB
+package of a late join: two thirds of it are zero bytes). A host that has it offers it before the raw package; the
+identity stays the raw name and the raw SHA-256 the relay announced: the joiner checks the unpacked bytes against it
+(fetch_package). offered() asks for a name at an offset past any file: NO|offset means offered, NO|name not (yet); no
+bytes cross. A host without the .gz (an older launcher, a server that only stores the raw files) is served raw."""
 import hashlib
 import hmac
 from pathlib import Path
@@ -22,7 +28,9 @@ import threading
 import time
 
 PROTOCOL = 1
-NAME = re.compile(r'j\d{1,7}\.(?:xml\.gz|x4join)')
+NAME = re.compile(r'j\d{1,7}\.(?:xml\.gz|x4join(?:\.gz)?)')
+PROBE_OFFSET = 1 << 62   # offered(): past the end of any file
+GZ_LEVEL = 1             # fast: 192 MB in about a second, 30 MB out (level 6: 27 MB in 2.7 s)
 HEX64 = re.compile(r'[0-9a-f]{64}')
 LINE_MAX = 512
 CHUNK = 1 << 20
@@ -179,6 +187,69 @@ class FileService:
 
 
 OFFER_WAIT_S = 180   # the relay answers saved before the host has read the notice and hashed the files: 'name' is retried this long
+
+
+def gzip_file(source, dest):
+    """dest = gzip of source (the host's compressed package), written to dest.part first; returns dest."""
+    import gzip
+    import shutil
+    dest = Path(dest)
+    part = dest.with_name(dest.name + '.part')
+    with open(source, 'rb') as src, open(part, 'wb') as raw:
+        with gzip.GzipFile(filename='', mode='wb', fileobj=raw, compresslevel=GZ_LEVEL, mtime=0) as out:
+            shutil.copyfileobj(src, out, CHUNK)
+    part.replace(dest)
+    return dest
+
+
+def offered(host, port, token, slot, name, timeout=TIMEOUT_S):
+    """True when the host offers name now, False when not (yet); raises FetchError on any other answer."""
+    if not NAME.fullmatch(name):
+        raise FetchError(f'not a join file name: {name}')
+    try:
+        with socket.create_connection((host, port), timeout=timeout) as conn:
+            conn.settimeout(timeout)
+            conn.sendall(request_line(token, slot, name, PROBE_OFFSET))
+            head = b''
+            while not head.endswith(b'\n') and len(head) <= LINE_MAX:
+                data = conn.recv(1)
+                if not data:
+                    break
+                head += data
+    except OSError as error:
+        raise FetchError(f'{name}: {error}') from None
+    f = head.decode('ascii', 'replace').rstrip('\n').split('|')
+    if f[0] == 'NO' and len(f) > 1 and f[1] in ('offset', 'name', 'busy'):
+        return f[1] == 'offset'
+    raise FetchError(f'{name}: unexpected answer {head[:80]!r}')
+
+
+def fetch_package(host, port, token, slot, name, dest, expect_sha, progress=None, offer_wait_s=OFFER_WAIT_S, log=print):
+    """The package into dest, by its compressed copy when the host offers one (the module text), else raw. Returns
+    'gz' or 'raw'. The unpacked bytes must hash to expect_sha. Raises FetchError."""
+    import gzip
+    import shutil
+    dest = Path(dest)
+    gz = dest.with_name(dest.name + '.gz')
+    deadline = time.monotonic() + offer_wait_s
+    while True:
+        if offered(host, port, token, slot, gz.name):
+            fetch(host, port, token, slot, gz.name, gz, progress=progress)
+            part = dest.with_name(dest.name + '.part')
+            with gzip.open(gz, 'rb') as src, open(part, 'wb') as out:
+                shutil.copyfileobj(src, out, CHUNK)
+            if sha256_file(part) != expect_sha:
+                part.unlink()
+                gz.unlink()
+                raise FetchError(f'{gz.name}: the unpacked package does not match the announced SHA-256 {expect_sha[:16]}..')
+            part.replace(dest)
+            return 'gz'
+        if offered(host, port, token, slot, dest.name):
+            fetch(host, port, token, slot, dest.name, dest, expect_sha=expect_sha, progress=progress)
+            return 'raw'
+        if time.monotonic() > deadline:
+            raise FetchError(f'{dest.name}: not offered by the host within {offer_wait_s} s (its saver may not play on that PC)')
+        time.sleep(0.5)
 
 
 def fetch(host, port, token, slot, name, dest, expect_sha=None, retries=5, progress=None, timeout=TIMEOUT_S, offer_wait_s=OFFER_WAIT_S):

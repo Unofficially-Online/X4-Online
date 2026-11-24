@@ -189,7 +189,9 @@ enum {JOIN_SEC_GATE=1,JOIN_SEC_IDS,JOIN_SEC_WAKE,JOIN_SEC_WAKEVEC,JOIN_SEC_MDHEA
 /* FAILED/ABORT reasons, shared with native_gate_join.py REASONS and native_gate_join_core.lua. */
 enum {JOIN_WHY_NONE,JOIN_WHY_NOT_ARMED,JOIN_WHY_NOT_POSSIBLE,JOIN_WHY_SAVE_FAILED,JOIN_WHY_FILE_MISSING,JOIN_WHY_CAPTURE,
       JOIN_WHY_UNSUPPORTED,JOIN_WHY_PACKAGE_WRITE,JOIN_WHY_BUSY,JOIN_WHY_TIMEOUT,JOIN_WHY_MISMATCH};
-enum {JOIN_IDLE,JOIN_ARMED,JOIN_DONE,JOIN_FAILED};
+/* JOIN_WRITING: the save and the capture are done, the package is written and hashed on a worker thread while the
+ * session steps on (join_writer_poll turns it into DONE or FAILED at a later step boundary). */
+enum {JOIN_IDLE,JOIN_ARMED,JOIN_DONE,JOIN_FAILED,JOIN_WRITING};
 enum {JOIN_STRICT=0,JOIN_REPORT=1};
 typedef struct {uint64_t owner,script;uint32_t klass,version;} join_ctx_rec;
 typedef struct {uint64_t owner,script,due;uint32_t klass,version,reason,flags;} join_wake_rec;
@@ -2585,7 +2587,7 @@ static unsigned join_audit(join_tables *t) {
 /* ---- session side: arm, then the boundary ---- */
 /* gate.join_arm(T, k, mask, save folder): on the UI thread (the MoveWorker), at least two ticks ahead. */
 static int join_arm(uint64_t tick,unsigned slot_k,unsigned mask,const char *folder,int mode) {
-    if(!stats.active || !accept_ui() || join_cap.state==JOIN_ARMED || (boot_mode && boot_phase<3) || tick<=stats.issued+1 || tick>0xffffffffu ||
+    if(!stats.active || !accept_ui() || join_cap.state==JOIN_ARMED || join_cap.state==JOIN_WRITING || (boot_mode && boot_phase<3) || tick<=stats.issued+1 || tick>0xffffffffu ||
        !slot_k || slot_k>wire_clients || slot_k==stats.slot || !(mask>>(stats.slot-1)&1u) || wire_version!=3 || peer_on() || wcg.armed) return 0;
 #ifdef LOCKSTEP_ADAPTIVE
     if(wire_adaptive) return 0;
@@ -2823,7 +2825,43 @@ static void join_shape_reset(uint64_t completed) {
                                        (unsigned long long)completed,held,join_shape_resets,join_shape_joiner);
     if(n>0) crash_note_write(row,n<(int)sizeof(row)?n:(int)sizeof(row)-1);
 }
+/* The package's write and SHA-256 off the frame (JOIN_WRITING): with the 192 MB package of a late join they held every
+ * client for about 1.9 s after the save and the capture (fj2, 23 Nov). The build stays in the frame: built on the worker
+ * (its allocations while the session stepped on) the joiner of fje7 parted in the motion census from T+1, while every
+ * joiner with the build in the frame and no wait in its start menu stayed equal (fje3, fje5, fje6). The worker owns the
+ * buffer; the step boundary takes its result (join_writer_poll). */
+typedef struct {WCHAR path[MAX_PATH];unsigned char *data;size_t size;unsigned char sha[32];volatile LONG done;} join_write_job;
+static join_write_job join_writer;
+/* Where the saver's stop goes (status cap_ms=): the engine save, the side tables, the identities, the gone rows, the
+ * fixture, the world side table, the package build; write_ms= the worker's write and hash after it. */
+static uint64_t join_cap_phase_us[7];
+static HANDLE join_writer_thread;
+static uint64_t join_write_us;   /* the worker's write and hash, for the status line */
+static DWORD WINAPI join_write_main(void *arg) {
+    join_write_job *j=arg;LARGE_INTEGER a,b,f;QueryPerformanceFrequency(&f);QueryPerformanceCounter(&a);
+    int ok=join_file_write(j->path,j->data,j->size);
+    if(ok) lockstep_sha256(j->data,j->size,j->sha);
+    QueryPerformanceCounter(&b);join_write_us=f.QuadPart?(uint64_t)((b.QuadPart-a.QuadPart)*1000000/f.QuadPart):0;
+    InterlockedExchange(&j->done,ok?1:-1);return 0;
+}
+/* Hand the built package to the worker; 0 when no thread could start (the caller then writes it in the frame). */
+static int join_writer_start(const WCHAR *path,join_buf *b) {
+    if(join_writer_thread || wcslen(path)>=MAX_PATH) return 0;
+    memset(&join_writer,0,sizeof(join_writer));wcscpy(join_writer.path,path);join_writer.data=b->data;join_writer.size=b->size;
+    join_writer_thread=CreateThread(NULL,0,join_write_main,&join_writer,0,NULL);
+    if(!join_writer_thread) {join_writer.data=NULL;return 0;}
+    b->data=NULL;b->size=b->cap=0;return 1;
+}
+static void join_writer_poll(void) {
+    if(join_cap.state!=JOIN_WRITING || !join_writer_thread || !InterlockedCompareExchange(&join_writer.done,0,0)) return;
+    WaitForSingleObject(join_writer_thread,INFINITE);CloseHandle(join_writer_thread);join_writer_thread=NULL;
+    const int ok=join_writer.done==1;
+    if(ok) {memcpy(join_cap.package_sha,join_writer.sha,32);join_cap.package_bytes=join_writer.size;}
+    free(join_writer.data);join_writer.data=NULL;
+    if(ok) join_cap.state=JOIN_DONE;else join_fail_cap(JOIN_WHY_PACKAGE_WRITE,"write");
+}
 static void join_boundary(uint64_t completed) {
+    join_writer_poll();
     if(join_shape_hold_on && !join_shape_joiner && join_shape_at) {   /* a session client: step T refreshes all, step T+1 none */
         if(completed+1u==join_shape_at) {
             const unsigned held=join_shape_forget();
@@ -2872,6 +2910,9 @@ static void join_boundary(uint64_t completed) {
     int saved=join_save_with_worker_tls(file,title);
     join_cuei_bp_disarm();
     QueryPerformanceCounter(&t1);join_cap.save_us=(uint64_t)((t1.QuadPart-t0.QuadPart)*1000000/f.QuadPart);
+    memset(join_cap_phase_us,0,sizeof(join_cap_phase_us));join_cap_phase_us[0]=join_cap.save_us;
+    LARGE_INTEGER tp=t1;
+#define JOIN_CAP_PHASE(i) do {LARGE_INTEGER now_;QueryPerformanceCounter(&now_);join_cap_phase_us[i]=(uint64_t)((now_.QuadPart-tp.QuadPart)*1000000/f.QuadPart);tp=now_;} while(0)
     if(!saved) {join_tables_free(&t);join_fail_cap(JOIN_WHY_SAVE_FAILED,"engine_save");return;}
     int found=0;
     for(int gz=1;gz>=0 && !found;gz--) {
@@ -2884,11 +2925,15 @@ static void join_boundary(uint64_t completed) {
         join_engine e=join_engine_get();
         if(!join_capture_tables(&e,&t)) {join_tables_free(&t);join_fail_cap(JOIN_WHY_CAPTURE,join_tables_why);return;}
     }
+    JOIN_CAP_PHASE(1);
     if(!join_capture_ids(&t)) {join_tables_free(&t);join_fail_cap(JOIN_WHY_CAPTURE,"identities");return;}
+    JOIN_CAP_PHASE(2);
     t.cuei=join_cuei_pending;t.ncuei=join_cuei_npending;join_cuei_pending=NULL;join_cuei_npending=0;   /* read inside the save (CUEI) */
     join_cuei_cap=t.ncuei;
     if(!join_capture_gone(&t,(world_hash_find_fn)(image+0xced70),*(void **)(image+0x6cf1500))) {join_tables_free(&t);join_fail_cap(JOIN_WHY_CAPTURE,"gone");return;}
+    JOIN_CAP_PHASE(3);
     join_capture_fixture(&t,(snapshot_find_fn)(image+0xced70),*(void **)(image+0x6cf1500));
+    JOIN_CAP_PHASE(4);
     /* The world side table: what the save rounds or omits in the census health and motion domains (lockstep_join_world.h). */
     snprintf(join_fault,sizeof(join_fault),"-");t.version=JOIN_PACKAGE_VERSION;
     if(!join_capture_world(&t,stats.game)) {
@@ -2899,14 +2944,22 @@ static void join_boundary(uint64_t completed) {
     join_cap.route=t.nroute;join_cap.param=t.nparam;join_cap.dock=t.ndock;join_cap.steer=t.nsteer;join_cap.steerpt=t.nsteerpt;
     join_cap.solver=t.nsolver;join_cap.bullet=t.nbullet;join_cap.grav=t.ngrav;join_cap.gravc=t.ngravc;join_cap.gravs=t.ngravs;
     join_cap.splm=t.nsplm;join_cap.splme=t.nsplme;join_cap.splmseg=t.nsplmseg;join_cap.gravn=t.ngravn;join_cap.gravp=t.ngravp;join_cap.gravq=t.ngravq;join_cap.jobe=t.njobe;join_cap.evqt=t.nevqt;join_cap.gravd=t.ngravd;join_cap.viewk=t.nviewk;join_cap.viewkc=t.nviewkc;join_cap.viewf=t.nviewf;join_cap.viewp=t.nviewp;join_cap.shoot=t.nshoot;join_cap.attk=t.nattk;join_cap.livef=t.nlivef;join_cap.spec=t.nspec;join_cap.navc=t.nnavc;join_cap.jobs=t.njobs;join_cap.gone=t.ngone;join_cap.body=t.nbody;join_cap.bupd=t.nbupd;join_cap.ldc=t.nldc;join_cap.navt=t.nnavt;join_cap.nmesh=t.nnmesh;join_cap.noct=t.nnoct;join_cap.agtt=t.nagtt;join_cap.agcb=t.nagcb;join_cap.pbnk=t.npbnk;join_cap.pend=t.npend;join_cap.gravb=t.ngravb;join_cap.viewl=t.nviewl;join_cap.ikv=t.nikv;join_cap.rcnt=t.nrcnt;join_cap.ecos=t.necos;join_cap.shpw=t.nshpw;join_cap.trdn=t.ntrdn;join_cap.npca=t.nnpca;join_cap.jobg=t.njobg;join_cap.code=t.ncode;join_cap.engr=t.nengr;join_cap.shgr=t.nshgr;join_cap.bnds=t.nbnds;join_cap.omgs=t.nomgs;join_cap.resv=t.nresv;join_cap.pcsv=t.npcsv;join_cap.conn=t.nconn;join_cap.warp=t.nwarp;join_cap.ares=t.nares;join_cap.lstn=t.nlstn;join_cap.undk=t.nundk;join_cap.srcs=t.nsrcs;join_cap.fobj=t.nfobj;join_cap.anis=t.nanis;join_cap.anil=t.nanil;join_cap.zref=t.nzref;join_cap.sref=t.nsref;join_cap.pmod=t.npmod;join_cap.need=t.nneed;join_cap.acct=t.nacct;join_cap.kids=t.nkids;join_cap.door=t.ndoor;join_cap.dron=t.ndron;join_cap.refp=t.nrefp;join_cap.spwn=t.nspwn;join_cap.dkey=t.ndkey;join_cap.defr=t.ndefr;join_cap.bclk=t.nbclk;
+    JOIN_CAP_PHASE(5);
     QueryPerformanceCounter(&t2);t.gate.save_us=join_cap.save_us;t.gate.capture_us=(uint64_t)((t2.QuadPart-t1.QuadPart)*1000000/f.QuadPart);
     join_buf b={0};
     if(!join_package_build(&t,&b)) {free(b.data);join_tables_free(&t);join_fail_cap(JOIN_WHY_PACKAGE_WRITE,"build");return;}
-    if(_snwprintf(path,MAX_PATH,L"%ls\\%hs.x4join",dir,join_cap.name)<0 || !join_file_write(path,b.data,b.size))
+    JOIN_CAP_PHASE(6);
+#undef JOIN_CAP_PHASE
+    if(_snwprintf(path,MAX_PATH,L"%ls\\%hs.x4join",dir,join_cap.name)<0)
         {free(b.data);join_tables_free(&t);join_fail_cap(JOIN_WHY_PACKAGE_WRITE,"write");return;}
-    lockstep_sha256(b.data,b.size,join_cap.package_sha);memcpy(join_cap.portable,t.gate.portable,16);
-    join_cap.package_bytes=b.size;join_cap.capture_us=t.gate.capture_us;free(b.data);join_tables_free(&t);
-    join_cap.state=JOIN_DONE;join_t1_arm(completed);join_watch_arm(completed);join_ai_watch_dump('s',completed);join_job_watch_dump('s');   /* the capture listed the linear models' targets at T */
+    memcpy(join_cap.portable,t.gate.portable,16);join_cap.capture_us=t.gate.capture_us;
+    if(join_writer_start(path,&b)) join_cap.state=JOIN_WRITING;   /* the SAVED record follows once the file is complete */
+    else {
+        if(!join_file_write(path,b.data,b.size)) {free(b.data);join_tables_free(&t);join_fail_cap(JOIN_WHY_PACKAGE_WRITE,"write");return;}
+        lockstep_sha256(b.data,b.size,join_cap.package_sha);join_cap.package_bytes=b.size;join_cap.state=JOIN_DONE;
+    }
+    free(b.data);join_tables_free(&t);
+    join_t1_arm(completed);join_watch_arm(completed);join_ai_watch_dump('s',completed);join_job_watch_dump('s');   /* the capture listed the linear models' targets at T */
 }
 
 /* ---- joiner side ---- */
@@ -4339,7 +4392,7 @@ static const char *join_views_text(const unsigned char views[12],char out[13]) {
     out[12]=0;return any?out:"-";
 }
 static int join_status(char *out,size_t cap) {
-    static const char *const states[]={"idle","armed","done","failed"};char pkg[65],port[33],rx_save[65];hex32(join_cap.package_sha,pkg);
+    static const char *const states[]={"idle","armed","done","failed","writing"};char pkg[65],port[33],rx_save[65];hex32(join_cap.package_sha,pkg);
     for(int i=0;i<16;i++) snprintf(port+2*i,3,"%02x",join_cap.portable[i]);
     hex32(join_rx.t.save_sha,rx_save);char fixture[13],rx_fixture[13],nav_fields[256],agent_fields[512];join_nav_fields_text(nav_fields,sizeof(nav_fields));
     join_agent_fields_text(agent_fields,sizeof(agent_fields));
@@ -4348,7 +4401,13 @@ static int join_status(char *out,size_t cap) {
     char bp_text[JOIN_BP_CHAIN*10+8];join_bp_text(bp_text,sizeof(bp_text));
     char pord_text[120],pord_s_text[120];join_pord_text(pord_text,sizeof(pord_text),join_pord_vt,join_pord_vtn);
     join_pord_text(pord_s_text,sizeof(pord_s_text),join_pord_svt,join_pord_svtn);
+    char cap_ms[96];snprintf(cap_ms,sizeof(cap_ms),"%llu/%llu/%llu/%llu/%llu/%llu/%llu",
+        (unsigned long long)(join_cap_phase_us[0]/1000),(unsigned long long)(join_cap_phase_us[1]/1000),(unsigned long long)(join_cap_phase_us[2]/1000),
+        (unsigned long long)(join_cap_phase_us[3]/1000),(unsigned long long)(join_cap_phase_us[4]/1000),(unsigned long long)(join_cap_phase_us[5]/1000),
+        (unsigned long long)(join_cap_phase_us[6]/1000));
+    char cap_world[256];jcw_text(cap_world,sizeof(cap_world));
     int n=snprintf(out,cap,"state=%s tick=%llu k=%u mask=%u why=%u detail=%s save_bytes=%llu package_bytes=%llu save_us=%llu capture_us=%llu"
+        " cap_ms=%s write_ms=%llu cap_world=%s"
         " package=%s portable=%s modified_cleared=%u possible=%u joiner=%d mode=%d based=%d handover=%lld imported=%lld saved=%lld"
         " created=%lld unmapped=%lld created_failures=%lld ctx_missing=%llu ctx_extra=%llu ctx_ambiguous=%llu wake_erased=%llu"
         " wake_applied=%llu wake_missing=%llu vec_applied=%llu vec_missing=%llu mask_cleared=%llu md_applied=%llu md_missing=%llu md_extra=%llu"
@@ -4364,7 +4423,7 @@ static int join_status(char *out,size_t cap) {
         " grav_cap=%u:%u:%u splm=%llu:%llu:%llu:%llu:%llu:%llu:%llu:%llu gravn=%llu:%llu:%llu:%llu solver_heap=%llu gravp=%llu:%llu:%llu:%llu:%llu solver_mapped=%u gravq=%llu:%llu:%llu:%llu:%llu:%llu gravq_cap=%u:%u:%u jobe=%llu:%llu:%016llx:%llu:%llu jobinit=%lld:%lld:%d:%u:%u bootev=%lld:%lld:%d:%d:%u:%u:%u jobe_cap=%u evq=%u:%u:%u:%u:%s evq_rx=%u:%u:%u:%u:%s evqt=%llu:%llu:%llu:%llu:%llu evqt_cap=%u gravd=%llu:%llu:%llu:%llu gravd_cap=%u gravp_restore=%llu:%llu:%llu:%u gravp_moved=%llu gravp_moved_pose=%llu gravp_first=%llu:%llu:%llu:%llu:%llu gravp_settled=%d:%llu:%llu:%llu gravd_keep=%u:%llu:%llu:%llu viewp=%llu:%llu:%llu viewp_cap=%u shoot=%llu:%llu:%llu:%llu shoot_cap=%u shoot_time=%llu:%llu shoot_late=%llu:%llu attk=%llu:%llu:%llu:%llu:%llu attk_cap=%u livef=%llu:%llu:%llu livef_cap=%u spec=%llu:%llu:%llu:%llu:%llu spec_added=%llu spec_cap=%u navc=%llu:%llu:%llu navc_cap=%u jobs=%llu:%llu:%llu:%llu:%llu jobs_cap=%u precise=%lld:%lld:%lld:%lld:%lld:%lld ids=%s gone=%u:%u:%u:%u left_out=%u body=%llu:%llu:%llu:%llu:%llu:%llu:%llu body_cap=%u bupd=%llu:%llu:%llu:%llu bupd_cap=%u ldc=%llu:%llu:%llu:%llu ldc_cap=%u navt=%llu:%llu:%llu navt_cap=%u cid=%llx:%llx unpaused=%llx:%llx nmesh=%d:%llu nmesh_cap=%u noct=%d:%llu:%llu:%llu:%llu:%llu noct_cap=%u agtt=%llu:%llu:%llu agtt_cap=%u agcb=%llu:%llu:%llu agcb_cap=%u pbnk=%llu:%llu:%llu:%llu pbnk_cap=%u pend=%d:%llu:%llu:%llu:%llu pend_cap=%u gravb=%llu:%llu:%llu:%llu gravb_cap=%u viewl=%d:%llu:%llu:%llu:%llu:%llu viewl_cap=%u ikv=%llu:%llu:%llu:%llu ikv_cap=%u ikv_refused=%s rcnt=%d:%llu:%llu:%llu:%llu rcnt_cap=%u ecos=%d:%llu:%llu:%llu ecos_cap=%u shpw=%d:%llu:%llu:%llu shpw_cap=%u trdn=%d:%llu:%llu:%llu trdn_cap=%u npca=%d:%llu:%llu:%llu:%llu:%llu:%llu npca_cap=%u jobg=%d:%llu:%llu:%llu jobg_cap=%u code=%d:%u:%x:%x:%x:%x code_cap=%u code_resume=%u engr=%d:%llu:%llu:%llu engr_cap=%u shgr=%d:%llu:%llu:%llu:%u:%llu:%llu:%llu shgr_cap=%u bnds=%d:%llu:%llu:%llu bnds_cap=%u omgs=%d:%llu:%llu:%llu omgs_cap=%u omgs_vec=%llu:%llu:%llu:%llu resv=%d:%llu:%llu:%llu:%llu resv_cap=%u pcsv=%d:%llu:%llu:%llu:%llu pcsv_cap=%u conn=%d:%llu:%llu:%llu:%llu:%llu conn_cap=%u warp=%d:%llu:%llu:%llu:%llu warp_cap=%u ares=%d:%llu:%llu:%llu:%llu ares_cap=%u lstn=%d:%llu:%llu:%llu:%llu:%llu:%llu lstn_cap=%u undk=%d:%llu:%llu:%llu:%llu undk_cap=%u srcs=%d:%llu:%llu:%llu:%llu:%llu:%llu:%llu srcs_cap=%u fobj=%d:%llu:%llu:%llu:%llu:%llu:%llu fobj_cap=%u join_bp=%x:%d:%llu:%llx:%llx:%llx:%llx:%s pord=%d:%lld:%llu:%s pord_s=%lld:%s gravn_kept=%d:%llu jobw=%d:%llu viewk=%llu:%llu:%llu:%llu:%llu:%llu viewk_cap=%u:%u viewf=%llu:%llu:%llu:%llu:%llu viewf_cap=%u",
         states[join_cap.state],(unsigned long long)join_cap.tick,join_cap.slot_k,join_cap.mask,join_cap.why,join_cap.detail[0]?join_cap.detail:"-",
         (unsigned long long)join_cap.save_bytes,(unsigned long long)join_cap.package_bytes,(unsigned long long)join_cap.save_us,
-        (unsigned long long)join_cap.capture_us,pkg,port,join_cap.modified_cleared,join_cap.possible,join_rx.loaded,join_rx.mode,join_rx.based,
+        (unsigned long long)join_cap.capture_us,cap_ms,(unsigned long long)(join_write_us/1000),cap_world,pkg,port,join_cap.modified_cleared,join_cap.possible,join_rx.loaded,join_rx.mode,join_rx.based,
         join_rx.handover==UINT64_MAX?-1LL:(long long)join_rx.handover,(long long)join_rx.imported,(long long)join_rx.mapped_saved,
         (long long)join_rx.mapped_created,(long long)join_rx.unmapped,(long long)join_rx.created_failures,
         (unsigned long long)join_rx.ctx_missing,(unsigned long long)join_rx.ctx_extra,(unsigned long long)join_rx.ctx_ambiguous,

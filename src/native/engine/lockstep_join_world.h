@@ -7538,7 +7538,35 @@ static void join_admit_ldc(const join_tables *s,const join_tables *mine) {
         if(changed) ++join_ldc_written; else ++join_ldc_equal;
     }
 }
+/* Where the world side table's capture spends its time (the saver's stop; JOIN status cap_world=, the eight slowest
+ * parts in ms): the object walk, its sorts, each section after it. */
+#define JCW_MAX 96u
+static const char *jcw_name[JCW_MAX];
+static uint64_t jcw_us[JCW_MAX];
+static unsigned jcw_n;
+static LARGE_INTEGER jcw_last;
+static void jcw_begin(void) {jcw_n=0;QueryPerformanceCounter(&jcw_last);}
+static void jcw_mark(const char *name) {
+    LARGE_INTEGER now,f;QueryPerformanceCounter(&now);QueryPerformanceFrequency(&f);
+    if(jcw_n<JCW_MAX && f.QuadPart) {jcw_name[jcw_n]=name;jcw_us[jcw_n]=(uint64_t)((now.QuadPart-jcw_last.QuadPart)*1000000/f.QuadPart);++jcw_n;}
+    jcw_last=now;
+}
+#define JCW_MARK(n) jcw_mark(#n)
+static void jcw_text(char *out,size_t cap) {
+    unsigned used[JCW_MAX]={0};size_t at=0;out[0]=0;
+    for(unsigned k=0;k<8 && k<jcw_n;k++) {
+        unsigned best=JCW_MAX;
+        for(unsigned i=0;i<jcw_n;i++) if(!used[i] && (best==JCW_MAX || jcw_us[i]>jcw_us[best])) best=i;
+        if(best==JCW_MAX) break;
+        used[best]=1;
+        int n=snprintf(out+at,cap-at,"%s%s:%llu",k?",":"",jcw_name[best],(unsigned long long)(jcw_us[best]/1000));
+        if(n<0 || (size_t)n>=cap-at) break;
+        at+=(size_t)n;
+    }
+    if(!at) snprintf(out,cap,"-");
+}
 static int join_capture_world(join_tables *t,double now) {
+    jcw_begin();
     join_agtt_capn=0;join_ares_capn=0;join_undk_capn=0;join_agcb_capn=0;join_pbnk_capn=0;join_pcsv_capn=0;
     uint32_t ntcap=0,bupdcap=0,bodycap=0,hcap=0,pcap=0,scap=0,ncap=0,acap=0,gcap=0,fcap=0,lcap=0,agcap=0,rcap=0,pacap=0,dcap=0,stcap=0,stpcap=0,socap=0,bcap=0;join_t1_reset();
     join_splm_mcap=join_splm_ecap=join_splm_scap=0;
@@ -7630,6 +7658,7 @@ static int join_capture_world(join_tables *t,double now) {
             if(!JOIN_PUSH(t->pose,t->npose,pcap,p)) return join_note("memory");
         }
     }
+    JCW_MARK(objects);
     if(t->nhealth) qsort(t->health,t->nhealth,sizeof(*t->health),join_health_cmp);
     if(!join_body_sort(t)) return 0;
     if(t->nbupd) qsort(t->bupd,t->nbupd,sizeof(*t->bupd),join_bupd_cmp);
@@ -7666,68 +7695,69 @@ static int join_capture_world(join_tables *t,double now) {
     if(t->nsteer) qsort(t->steer,t->nsteer,sizeof(*t->steer),join_steer_cmp);          /* pushed with FLIGHT: the same portable IDs */
     if(t->nsteerpt) qsort(t->steerpt,t->nsteerpt,sizeof(*t->steerpt),join_route_cmp);  /* (portable, index): kind and list constant */
     if(t->nsolver) qsort(t->solver,t->nsolver,sizeof(*t->solver),join_solver_cmp);
-    join_capture_bullets(t,&bcap);   /* version 10 */
-    join_capture_grav(t);            /* version 11 */
-    join_capture_jobe(t);            /* version 12 */
-    join_capture_evq_census(now);    /* census only */
-    join_capture_evqt(t);            /* version 13 */
-    join_capture_gravd(t);           /* version 13 */
-    join_capture_gravb(t);           /* version 13 */
-    join_capture_viewl(t);           /* version 13 */
-    join_capture_ikv(t);             /* version 13 */
-    join_capture_anis(t);            /* version 13 */
-    join_capture_rcnt(t);            /* version 13 */
-    join_capture_ecos(t);            /* version 13 */
-    join_capture_shpw(t);            /* version 13 */
-    join_capture_trdn(t);            /* version 13 */
-    join_capture_npca(t);            /* version 13 */
-    join_capture_code(t);            /* version 13 */
-    join_capture_engr(t);            /* version 13 */
-    join_capture_shgr(t);            /* version 13 */
-    join_capture_bnds(t);            /* version 13 */
-    join_capture_resv(t);            /* version 13: the zones' space reservations */
-    join_capture_zref(t);            /* version 13: the zone reference table */
-    join_capture_sref(t);            /* version 13: the script values the join save's <ref> writers were given */
-    join_capture_conn(t);            /* version 13: the NPCs' connected connections */
-    join_capture_warp(t);            /* version 13: the pending warps' destinations */
-    join_capture_lstn(t);            /* version 13: the script listeners' order per event source and type */
-    join_capture_srcs(t);            /* version 13: the listeners' sources */
-    join_capture_fobj(t);            /* version 13: the region fields' spawned-object lists */
-    join_capture_pmod(t);            /* version 13: the processing modules' due times */
-    join_capture_need(t);            /* version 13: the containers' resource needs */
-    join_capture_acct(t);            /* version 13: the containers' accounts */
-    join_capture_kids(t);            /* version 13: the order of the children the session made */
-    join_capture_door(t);            /* version 13: the containers whose dock doors are not set up */
-    join_capture_dkey(t);            /* version 13: the keys of the dock door maps that are not empty */
-    join_capture_defr(t);            /* version 13: the posts the frame's last workers left on the deferred list */
-    join_capture_bclk(t);            /* version 13: the body clock's notes of the people's running animations */
-    join_capture_dron(t);            /* version 13: the pending and user drone modes */
-    join_capture_refp(t);            /* version 13: the price lists to the hundredth */
-    join_capture_spwn(t);            /* version 13: where field-spawned objects came from */
+    JCW_MARK(sorts);
+    join_capture_bullets(t,&bcap); JCW_MARK(bullets);   /* version 10 */
+    join_capture_grav(t); JCW_MARK(grav);            /* version 11 */
+    join_capture_jobe(t); JCW_MARK(jobe);            /* version 12 */
+    join_capture_evq_census(now); JCW_MARK(evq_census);    /* census only */
+    join_capture_evqt(t); JCW_MARK(evqt);            /* version 13 */
+    join_capture_gravd(t); JCW_MARK(gravd);           /* version 13 */
+    join_capture_gravb(t); JCW_MARK(gravb);           /* version 13 */
+    join_capture_viewl(t); JCW_MARK(viewl);           /* version 13 */
+    join_capture_ikv(t); JCW_MARK(ikv);             /* version 13 */
+    join_capture_anis(t); JCW_MARK(anis);            /* version 13 */
+    join_capture_rcnt(t); JCW_MARK(rcnt);            /* version 13 */
+    join_capture_ecos(t); JCW_MARK(ecos);            /* version 13 */
+    join_capture_shpw(t); JCW_MARK(shpw);            /* version 13 */
+    join_capture_trdn(t); JCW_MARK(trdn);            /* version 13 */
+    join_capture_npca(t); JCW_MARK(npca);            /* version 13 */
+    join_capture_code(t); JCW_MARK(code);            /* version 13 */
+    join_capture_engr(t); JCW_MARK(engr);            /* version 13 */
+    join_capture_shgr(t); JCW_MARK(shgr);            /* version 13 */
+    join_capture_bnds(t); JCW_MARK(bnds);            /* version 13 */
+    join_capture_resv(t); JCW_MARK(resv);            /* version 13: the zones' space reservations */
+    join_capture_zref(t); JCW_MARK(zref);            /* version 13: the zone reference table */
+    join_capture_sref(t); JCW_MARK(sref);            /* version 13: the script values the join save's <ref> writers were given */
+    join_capture_conn(t); JCW_MARK(conn);            /* version 13: the NPCs' connected connections */
+    join_capture_warp(t); JCW_MARK(warp);            /* version 13: the pending warps' destinations */
+    join_capture_lstn(t); JCW_MARK(lstn);            /* version 13: the script listeners' order per event source and type */
+    join_capture_srcs(t); JCW_MARK(srcs);            /* version 13: the listeners' sources */
+    join_capture_fobj(t); JCW_MARK(fobj);            /* version 13: the region fields' spawned-object lists */
+    join_capture_pmod(t); JCW_MARK(pmod);            /* version 13: the processing modules' due times */
+    join_capture_need(t); JCW_MARK(need);            /* version 13: the containers' resource needs */
+    join_capture_acct(t); JCW_MARK(acct);            /* version 13: the containers' accounts */
+    join_capture_kids(t); JCW_MARK(kids);            /* version 13: the order of the children the session made */
+    join_capture_door(t); JCW_MARK(door);            /* version 13: the containers whose dock doors are not set up */
+    join_capture_dkey(t); JCW_MARK(dkey);            /* version 13: the keys of the dock door maps that are not empty */
+    join_capture_defr(t); JCW_MARK(defr);            /* version 13: the posts the frame's last workers left on the deferred list */
+    join_capture_bclk(t); JCW_MARK(bclk);            /* version 13: the body clock's notes of the people's running animations */
+    join_capture_dron(t); JCW_MARK(dron);            /* version 13: the pending and user drone modes */
+    join_capture_refp(t); JCW_MARK(refp);            /* version 13: the price lists to the hundredth */
+    join_capture_spwn(t); JCW_MARK(spwn);            /* version 13: where field-spawned objects came from */
     if(t->npcsv>1) qsort(t->pcsv,t->npcsv,sizeof(*t->pcsv),join_solver_cmp);   /* version 13: the PlayerControllers' solvers */
     for(uint32_t i=1;i<t->npcsv;i++) if(t->pcsv[i].portable==t->pcsv[i-1].portable) return join_note("pcsv_duplicate,id=%llx",(unsigned long long)t->pcsv[i].portable);
     join_sort_omgs(t);               /* version 13: OMGS, taken in the FLIGHT walk */
-    join_capture_viewk(t);           /* version 13 */
-    join_capture_viewf(t);           /* version 13 */
-    join_capture_pend(t);            /* version 13 */
-    join_capture_viewp(t);           /* version 13 */
-    join_capture_shoot(t);           /* version 13 */
-    join_capture_attk(t);            /* version 13 */
-    join_capture_livef(t);           /* version 13 */
-    join_capture_spec(t);            /* version 13 */
-    join_capture_navc(t);            /* version 13 */
-    join_capture_ldc(t);             /* version 13 */
-    join_capture_nmesh(t);           /* version 13 */
-    join_capture_noct(t);            /* version 13 */
-    join_capture_jobs(t);            /* version 13 */
-    join_capture_jobg(t);            /* version 13 */
+    join_capture_viewk(t); JCW_MARK(viewk);           /* version 13 */
+    join_capture_viewf(t); JCW_MARK(viewf);           /* version 13 */
+    join_capture_pend(t); JCW_MARK(pend);            /* version 13 */
+    join_capture_viewp(t); JCW_MARK(viewp);           /* version 13 */
+    join_capture_shoot(t); JCW_MARK(shoot);           /* version 13 */
+    join_capture_attk(t); JCW_MARK(attk);            /* version 13 */
+    join_capture_livef(t); JCW_MARK(livef);           /* version 13 */
+    join_capture_spec(t); JCW_MARK(spec);            /* version 13 */
+    join_capture_navc(t); JCW_MARK(navc);            /* version 13 */
+    join_capture_ldc(t); JCW_MARK(ldc);             /* version 13 */
+    join_capture_nmesh(t); JCW_MARK(nmesh);           /* version 13 */
+    join_capture_noct(t); JCW_MARK(noct);            /* version 13 */
+    join_capture_jobs(t); JCW_MARK(jobs);            /* version 13 */
+    join_capture_jobg(t); JCW_MARK(jobg);            /* version 13 */
     join_watch_session(t,t->gate.tick);   /* diagnostic (native_gate_join_watch) */
     if(t->nsplm) qsort(t->splm,t->nsplm,sizeof(*t->splm),join_splm_cmp);            /* version 12 */
     if(t->nsplme) qsort(t->splme,t->nsplme,sizeof(*t->splme),join_splme_cmp);
     if(t->nsplmseg) qsort(t->splmseg,t->nsplmseg,sizeof(*t->splmseg),join_splmseg_cmp);
     if(t->nbullet) qsort(t->bullet,t->nbullet,sizeof(*t->bullet),join_bullet_cmp);
     for(uint32_t i=0;i<t->nbullet;i++) t->bullet[i].index=i && t->bullet[i].zone==t->bullet[i-1].zone?t->bullet[i-1].index+1u:0u;
-    return join_capture_keys(t) && join_capture_path(t);
+    {int ok=join_capture_keys(t);JCW_MARK(keys);ok=ok && join_capture_path(t);JCW_MARK(path);return ok;}
 }
 
 /* ---- the joiner ---- */

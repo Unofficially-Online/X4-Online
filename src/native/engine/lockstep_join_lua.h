@@ -2,7 +2,8 @@
  *   gate.join_arm(T, k, mask, save_folder[, mode])  a saver: save and capture after step T (UI thread, >= 2 ticks
  *                                                   ahead); mode 0 strict (refuse unaudited modules), 1 report
  *   gate.join_result()                              'state|T|k|bytes|package_sha|portable|why|detail' of the last
- *                                                   arming (state idle, armed, done, failed)
+ *                                                   arming (state idle, armed, done, failed, writing: the package is
+ *                                                   still written and hashed off the frame; asked again next step)
  *   gate.join_load(package, sha[, mode])            a joiner, before the load request: verify and keep the package
  *   gate.join_handover(H)                           a joiner: its handover tick (from the HANDOVER record)
  *   gate.join_base()                                a joiner's tick base T after its admission, else nil
@@ -20,7 +21,7 @@ static int lua_join_arm(lua_State *L) {
     p_lua_pushnumber(L,ok);return 1;
 }
 static int lua_join_result(lua_State *L) {
-    static const char *const states[]={"idle","armed","done","failed"};char out[640],pkg[65],port[33];
+    static const char *const states[]={"idle","armed","done","failed","writing"};char out[640],pkg[65],port[33];
     if(!accept_ui()) {p_lua_pushnil(L);return 1;}
     hex32(join_cap.package_sha,pkg);for(int i=0;i<16;i++) snprintf(port+2*i,3,"%02x",join_cap.portable[i]);
     int n=snprintf(out,sizeof(out),"%s|%llu|%u|%llu|%s|%s|%u|%s",states[join_cap.state],(unsigned long long)join_cap.tick,join_cap.slot_k,

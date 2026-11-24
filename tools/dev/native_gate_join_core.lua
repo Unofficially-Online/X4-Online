@@ -120,8 +120,11 @@ function K.client(o)
  end
  -- After the save tick: the gate's result becomes this client's SAVED or FAILED record (once).
  function C.proposal(tick,budget)
-  if C.armed and tick>C.armed.tick then
-   local text=o.result() or ''
+  -- 'writing': the gate still writes and hashes the package off the frame (lockstep_join.h join_writer): asked again
+  -- next step, the record goes out once the file is complete.
+  local text=C.armed and tick>C.armed.tick and (o.result() or '') or nil
+  if text and text:match('^writing|') then text=nil end
+  if text then
    local state,t,k,bytes,package,portable,why=text:match('^(%a+)|(%d+)|(%d+)|(%d+)|(%x+)|(%x+)|(%d+)|')
    local a=C.armed;C.armed=nil
    if state=='done' and tonumber(t)==a.tick and tonumber(k)==a.k then

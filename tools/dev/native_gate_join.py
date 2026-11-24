@@ -1464,6 +1464,13 @@ def catch_up_seconds(gap_ticks, live_hz, joiner_steps_per_second):
     return math.inf if margin <= 0 else gap_ticks/margin
 
 
+SAVED_WAIT_S = 30           # a saver's SAVED record: at most this long after T plus the lead (the package's write)
+RATE_WINDOW_S = 10.0       # the joiner's rate: its reports of the last 10 s
+RATE_SETTLE_S = 10.0       # a rate is trusted after 10 s of catch-up (the first steps after a load are slow)
+CONVERGE_MARGIN = 0.05     # gaining: at least 5 % faster than the session
+CONVERGE_LIMIT_S = 600.0   # the longest catch-up a gaining joiner is given before the pause (--join-converge-limit)
+
+
 def handover_pause(gap_ticks, lead_ticks, live_hz, joiner_steps_per_second):
     """Seconds the live session waits at H when the handover is announced with gap_ticks between the live tick and
     the joiner and H lies lead_ticks after the live tick: the joiner must step gap+lead ticks, the session lead."""
@@ -1493,7 +1500,7 @@ class JoinCoordinator:
     placed, waiting for the save tick and the savers' SAVED records), saved (package known, the joiner boots),
     catching_up (the joiner replays), handover (H announced), joined, failed."""
     def __init__(self, barrier, slot, nonce, lead=30, handover_gap=60, handover_lead=8, max_pause=60.0, catchup_limit=300.0,
-                 joiner_timeout=900.0, savers=None, observe=False, save_at=None):
+                 joiner_timeout=900.0, savers=None, observe=False, save_at=None, converge_limit=CONVERGE_LIMIT_S):
         self.b, self.slot, self.nonce = barrier, slot, nonce
         # --join-save-at (diagnostic, default off): the save tick no earlier than this one, so a test lands on a chosen T
         # (the T+2 class of 9 Nov: the session is the same run to run, T is not: the joiner's start moves it by 30 ticks).
@@ -1504,6 +1511,9 @@ class JoinCoordinator:
         self.observe, self.digest_mismatches, self.first_digest_mismatch = observe, 0, None
         self.lead, self.handover_gap, self.handover_lead = lead, handover_gap, handover_lead
         self.max_pause, self.catchup_limit, self.joiner_timeout = max_pause, catchup_limit, joiner_timeout
+        # A joiner that gains on the session is never paused for: it catches up for as long as its expected arrival at the
+        # handover gap lies within converge_limit seconds of its first report (0: the catch-up limit alone, as before).
+        self.converge_limit = converge_limit
         present = [s for s in barrier.slots if s not in barrier.absent]
         self.savers = sorted(savers) if savers else present
         if not self.savers or any(s not in present for s in self.savers):
@@ -1512,7 +1522,8 @@ class JoinCoordinator:
         self.saved = {}            # saver slot -> SAVED record
         self.saver = None          # the slot whose files the joiner loads
         self.joiner_tick, self.first_real, self.started, self.progress = None, None, None, []
-        self.catchup_started = None   # the first report's time (progress keeps only the last 64 reports)
+        self.catchup_started = None   # the first report's time (progress keeps the reports of the last RATE_WINDOW_S)
+        self.decision = None          # why the handover was placed: gap (caught up), not_gaining or limit
         self.address, self.last_seen, self.notices = None, None, []
 
     def notice(self, text):
@@ -1563,7 +1574,10 @@ class JoinCoordinator:
             self.notice(f'ready saver={self.saver} package={self.saved[self.saver]["package"]}')
 
     def poll(self, now):
-        if self.state == 'queued' and self.b.released > self.save_tick+self.b.lookahead+4*self.lead and len(self.saved) < len(self.savers):
+        # The savers write and hash the package off the frame (lockstep_join.h JOIN_WRITING): their SAVED records may come
+        # some seconds after T while the session steps on, so the wait counts SAVED_WAIT_S on top of the lead.
+        if (self.state == 'queued' and self.b.released > self.save_tick+self.b.lookahead+4*self.lead+SAVED_WAIT_S*self.b.tick_hz
+                and len(self.saved) < len(self.savers)):
             self.fail('timeout:no_saved_record', now)
         if self.state in ('saved', 'catching_up', 'handover') and self.last_seen is not None and now-self.last_seen > self.joiner_timeout:
             self.fail('joiner_lost', now)
@@ -1623,7 +1637,8 @@ class JoinCoordinator:
         if self.joiner_tick is None or tick > self.joiner_tick:
             self.joiner_tick = tick
             self.progress.append((now, tick))
-            del self.progress[:-64]
+            while len(self.progress) > 2 and self.progress[1][0] < now-RATE_WINDOW_S:
+                del self.progress[0]
         self.last_seen = now
         permits = range(tick+1, tick+2+self.b.lookahead) if first else (tick+1+self.b.lookahead,)
         out = []
@@ -1637,24 +1652,41 @@ class JoinCoordinator:
         return out
 
     def rate(self):
-        """The joiner's steps per second over its recent reports (0 until measurable)."""
+        """The joiner's steps per second over its reports of the last RATE_WINDOW_S (0 until measurable)."""
         if len(self.progress) < 2 or self.progress[-1][0] <= self.progress[0][0]:
             return 0.0
         (t0, k0), (t1, k1) = self.progress[0], self.progress[-1]
         return (k1-k0)/(t1-t0)
 
     def consider_handover(self, now):
+        """Where the catch-up ends. A joiner within --join-handover-gap is handed over at once and nobody waits. A joiner
+        that gains on the session (its rate above the session's by CONVERGE_MARGIN) keeps catching up while its expected
+        arrival lies within --join-converge-limit: the session never pauses for it. A joiner that does not gain is handed
+        over as soon as its rate is known (RATE_SETTLE_S): from then on every second of catch-up only adds the session's
+        lead to the pause at H (the pause is the gap over the joiner's rate, and the gap grows while the session outruns
+        it). Past --join-catchup-limit a joiner that gains too slowly is handed over too. The pause at H stays bounded by
+        --join-max-pause (refused above it)."""
         if self.handover is not None or self.joiner_tick is None:
             return
         gap = self.b.released-self.joiner_tick
         lead = self.b.lookahead+1+self.handover_lead
-        rate = self.rate()
-        # Since the catch-up began (not progress[0]: that list keeps the last 64 reports, about 2-3 s, so a joiner no faster
-        # than the session never reached --join-catchup-limit and was never handed over; rj2, rj3).
+        rate, hz = self.rate(), self.b.tick_hz
+        # Since the catch-up began (not progress[0]: that list keeps only the recent reports, so a joiner no faster than the
+        # session would never reach --join-catchup-limit and never be handed over; rj2, rj3).
         waited = now-(self.catchup_started if self.catchup_started is not None else now)
-        if gap > self.handover_gap and waited < self.catchup_limit:
+        measured = waited >= RATE_SETTLE_S and rate > 0
+        gaining = measured and rate > hz*(1+CONVERGE_MARGIN)
+        if gap <= self.handover_gap:
+            decision = 'gap'
+        elif gaining and self.converge_limit and waited+(gap-self.handover_gap)/(rate-hz) <= self.converge_limit:
+            return                                          # it arrives in time: no pause for anyone
+        elif waited < self.catchup_limit and not (measured and not gaining):
             return
-        pause = handover_pause(max(gap, 0), lead, self.b.tick_hz, rate) if rate else math.inf
+        elif self.converge_limit and not measured and rate > hz*(1+CONVERGE_MARGIN):
+            return                                          # it looks faster than the session: its rate settles first
+        else:
+            decision = 'not_gaining' if measured and not gaining and waited < self.catchup_limit else 'limit'
+        pause = handover_pause(max(gap, 0), lead, hz, rate) if rate else math.inf
         if gap > self.handover_gap and pause > self.max_pause:
             # The catch-up does not pause the session, so a pause estimate that is too long first lets it go on, up to
             # --join-max-pause past the limit: a joiner in a slow step reports no progress (hj12, 8 Nov: its T+1 capture logged
@@ -1667,9 +1699,10 @@ class JoinCoordinator:
         self.handover = placed+lead
         self.b.schedule(self.slot, encode_record(OP_HANDOVER, self.slot, self.handover), placed)
         self.b.handover_at(self.slot, self.handover)
-        self.state = 'handover'
+        self.state, self.decision = 'handover', decision
         self.notice(f'handover tick={self.handover} placed={placed} gap={gap} joiner_rate={rate:.1f} '
-                    f'expected_pause_s={0.0 if gap <= self.handover_gap and rate > self.b.tick_hz else pause:.1f}')
+                    f'expected_pause_s={0.0 if gap <= self.handover_gap and rate > hz else pause:.1f} why={decision} '
+                    f'catch_up_s={waited:.1f}')
 
     def joined(self, now):
         self.state = 'joined'
