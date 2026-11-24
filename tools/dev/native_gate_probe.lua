@@ -616,7 +616,7 @@ if cfg.native_gate_join then
   end,
   result=function()
    local r=gate.join_result()
-   -- Where the saver's stop went (lockstep_join.h cap_ms: engine save/tables/ids/gone/fixture/world/build; write_ms: the
+   -- Where the saver's stop went (lockstep_join.h cap_ms: engine save/tables/ids/gone/fixture/world/hand-off; write_ms: the worker's build,
    -- package's write and hash off the frame), once the result is final.
    if r and (r:match('^done|') or r:match('^failed|')) and gate.join_status then
     DebugError('[X4LAN] NATIVE_GATE JOIN_SAVER_TIMES '..(tostring(gate.join_status()):match('save_us=%d+ capture_us=%d+ cap_ms=%S+ write_ms=%d+ cap_world=%S+') or '-'))

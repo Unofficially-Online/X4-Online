@@ -625,10 +625,11 @@ at once), and the open slots are joined while it runs.
   the relay took is gone with its player.
 - **The joiner:** the master's join gives an open slot; the session files are downloaded and the overlay built as for
   any join (the recipe keeps `--open`). Its X4 is not started with the session: the job hands the backend a start with
-  `late` set, the lane's X4 closes, and `hotjoin.hot_join` plays the slot against the master's relay (its early start:
-  X4 boots while the session saves; lane and profile `c<slot>`, the join files from the relay's port, waiting up to
-  780 s for them as `x4ls join --server-file` does). A joiner of an open slot before the start waits for the start, then
-  joins the same way.
+  `late` set, the lane's X4 closes, and `hotjoin.hot_join` plays the slot against the master's relay (its early start at
+  its defaults since fast-join 113dae38: X4 boots first, the save is asked once it waits in its start menu, and files
+  that come late only keep it waiting there, no restart; lane and profile `c<slot>`, the join files from the relay's
+  port, waiting up to 780 s for them as `x4ls join --server-file` does). A joiner of an open slot before the start
+  waits for the start, then joins the same way.
 - **The lists:** the public list's games carry `open` (free drop-in slots of a running game); the page shows a running
   game as `running, 1 drop-in` and joinable, or `(no drop-in slot free)`.
 

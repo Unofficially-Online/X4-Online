@@ -376,26 +376,24 @@ and at the handover when the joiner is still behind (everyone waits until it rea
 the session plays on while the joiner fetches, loads and replays. Measured on one PC (the host's X4 and the joiner's,
 other sessions' clients beside them; late joins at T about 6,000, 200 s into a session):
 
-| | before (late boot, fjl2) | now (fje5) |
+| | before (late boot, fjl2) | now (fjv1, fjv2) |
 |---|---|---|
-| save stop (everyone) | 9.4 s | 9.2 s |
-| joiner behind at its first step | 2,304 ticks (81 s after the save) | 1,722 ticks (60 s) |
-| handover stop (everyone) | 80.3 s | 58.8 s |
-| save to handover | 181 s | 138 s |
+| save stop (everyone) | 9.4 s | 7.9-8.3 s |
+| joiner behind at its first step | 2,304 ticks (81 s after the save) | 1,443-1,472 ticks (50-51 s) |
+| handover stop (everyone) | 80.3 s | 49.6-52.1 s |
+| save to handover | 181 s | 119-122 s |
 
-- **X4 boots while the session saves.** `x4ls join` builds the joiner's overlay with stand-ins (`build_play_overlay.py
-  --join-early`), starts X4 and asks the relay for the save at the same time: the boot (about 30 s) covers the save, the
-  download and the checks (about 20 s on one PC), and the probe, in the start menu, takes the staged files
-  (`native/join-ready.lua` with both SHA-256) and loads at once. X4 should not wait in its start menu before the load: of
-  the joins saved before tick 6,183, all six that loaded on arrival stayed equal and one of two that waited there about
-  25 s parted (fjd1; fjm1 stayed equal). Files that come more than 5 s after X4 reached its menu (a slow link) start X4
-  again, which then loads on arrival (fje6). `--menu-wait` asks only once X4 waits in its menu (a few seconds less gap,
-  fjm1 1,568 ticks against fje5 1,722, with that wait); `--late-boot` keeps the old order.
+- **X4 boots before the session saves.** `x4ls join` builds the joiner's overlay with stand-ins (`build_play_overlay.py
+  --join-early`) and starts X4 at once; once it waits in its start menu (about 30 s) the relay is asked for the save, and
+  the launcher fetches and checks the files, stages them and writes `native/join-ready.lua` (both SHA-256), which the
+  waiting probe takes before it loads. The session plays on while X4 boots, so the joiner's gap is the download and the
+  load alone (fjm1: 1,568 ticks, 55 s after the save). `--ask-first` asks as X4 starts instead: the joiner is in about
+  10 s sooner, but its gap is a few seconds longer (fje5: 1,722 ticks, 60 s). `--late-boot` keeps the old order.
 - **The package travels packed.** The host offers `j<T>.x4join.gz` (gzip level 1: 192 MB to about 30 MB in about a
   second) beside the raw package; the joiner takes it when offered and checks the unpacked bytes against the raw SHA-256
   the relay announced, else it fetches the raw file (an older host, a server that stores only raw files).
-- **The saver writes the package off the frame.** The package's write and hash (about 2 s of the stop for 192 MB) run on a
-  worker thread; the SAVED record follows once the file is complete (the relay waits up to 30 s past the lead for it). The
+- **The saver writes the package off the frame.** The package's build, write and hash (about 2 s of the stop for 192 MB)
+  run on a worker thread; the SAVED record follows once the file is complete (the relay waits up to 30 s past the lead for it). The
   rest of the stop is X4's own save (about 3 s) and the capture of the side tables; `JOIN_SAVER_TIMES` in the saver's log
   breaks it down (`cap_ms`: engine save/tables/identities/gone/fixture/world/build).
 - **No pause for a joiner that gains.** The relay measures the joiner's steps over 10 s. One that steps at least 5 % faster
@@ -403,10 +401,10 @@ other sessions' clients beside them; late joins at T about 6,000, 200 s into a s
   `--join-converge-limit` (600 s). One that does not gain is handed over as soon as its rate is known (10 s into the
   catch-up), because every further second of catch-up only lengthens the stop. The handover row says why (`why=gap`
   caught up, `not_gaining`, or `limit`).
-- **Joins saved at tick 6,183 or later of this test session part** (relay digest from the handover on; the census motion
-  domain from T+1), in the old order as in the new (fjl3, T=6186), while every join saved at 6,095..6,178 stayed equal.
-  A join-tick class the package does not carry yet, as T=6046/6058 were (the 20 Nov sweep covered T 6040..6082 only);
-  not fixed here.
+- **Joins at some ticks part** (relay digest from the handover on; the census motion domain from T+1), in the old order
+  as in the new: in these tests at T=6140, 6147, from 6183 on and near 6890, each time by one medium ship flying in low
+  attention whose linear movement controller (its plan beyond its pose) the package does not carry. Pre-existing, open
+  (reports/LOCKSTEP-FAST-JOIN-20261123.txt).
 - **Why one PC still stops at the handover.** Both X4 are bound by the simulation step (about 31-35 ms on this PC with
   other clients beside them; drawing is about 1 ms of it, waiting for permits 0.1 ms), so a joiner on the same PC steps no
   faster than the session and the handover stop is its gap over its rate. A joiner on its own PC that steps faster than

@@ -30,41 +30,42 @@ CHANGES
    X4LAN_JOIN_EARLY_READY). The joiner's overlay is built from the recipe with stand-ins; X4 starts and the save is
    asked for at the same time; the launcher fetches, checks the files against the overlay (check_joiner), stages the
    save as save_009 and the package, and writes native/join-ready.lua {save, package SHA-256}; the probe takes it in
-   the start menu (before the gate boots) and loads at once. Default: the save is asked as X4 starts; files that
-   come more than 5 s after X4 reached its menu start X4 again (DWELL_MAX_S; see the finding). --menu-wait asks once
-   X4 waits in its menu (the whole boot before the save: a few seconds less gap, with that wait); --late-boot keeps
-   the old order.
-3. Saver (src/native/engine/lockstep_join.h): the package's write and SHA-256 on a worker thread (state writing);
-   the probe's SAVED record follows once the file is complete. JOIN status: cap_ms= (engine save/tables/identities/
+   the start menu (before the gate boots) and loads at once. Default: the save is asked once X4 waits in its start
+   menu (the whole boot before the save: the smallest gap, so the shortest handover stop); --ask-first asks as X4
+   starts (the joiner in ~10 s sooner, a few seconds more gap); --late-boot keeps the old order.
+3. Saver (src/native/engine/lockstep_join.h): the package's build, write and SHA-256 on a worker thread (state
+   writing; the tables it builds from are its own); the probe's SAVED record follows once the file is complete. JOIN status: cap_ms= (engine save/tables/identities/
    gone/fixture/world/build) and write_ms=; the saver logs JOIN_SAVER_TIMES.
 4. Transfer (src/lockstep/launcher/joinfiles.py): j<T>.x4join.gz (gzip level 1; 192 MB -> ~30 MB in ~1 s) offered
    beside the raw package; joinfiles.offered() probes a name at offset 2^62 (NO|offset = offered); the joiner takes the
    .gz when offered and checks the unpacked bytes against the raw SHA-256 the relay announced, else the raw file.
 
-FINDINGS: TWO WAYS A JOINER PARTED (BOTH IN THE CENSUS MOTION DOMAIN FROM T+1, THE DIGEST FROM THE HANDOVER)
------------------------------------------------------------------------------------------------------
-1. Every join saved at T >= 6,183 of this test session parted, in any order: the old late-boot order forced to T=6186
-   (fjl3), the early start at 6183..6186 (fje7, fje9) and at ~6890 (fje1, fje2, fje4). A join-tick class the package does
-   not carry yet, like T=6046 (BCLK) and T=6058 (DEFR); the 20 Nov sweep covered T 6040..6082 only. Pre-existing. Open.
-   Object rows: exactly one object's motion differs, each time a ShipMedium (vtable 0x2b82440) created after T and so
-   not in the join save: fje4 (T=6894) at 7200 id 0xa07e8 in zone 0x5b4, fjl5 (old order, T=6186) at 6600 id 0xa08a2 in
-   0x4495e; every other differing row is nav_raw only (per-process words). Next: what spawns it and which input of
-   its spawn (or first flight) differs on the joiner.
-2. Below 6,183: all six joins whose X4 loaded on arrival in its start menu stayed equal (fjl2 6095, fje3 6114, fje10 6120,
-   fje6 6123, fje5 6135, fje8 6178), and of two early starts that waited about 25 s in the menu first, fjd1 (T=6140)
-   parted and fjm1 (T=6154) did not. Suggestive, not proven; so the default never lets X4 wait in its menu.
+FINDING: JOINS AT SOME TICKS PART: A LOW-ATTENTION SHIP'S LINEAR MOVEMENT CONTROLLER IS NOT CARRIED (PRE-EXISTING)
+--------------------------------------------------------------------------------------------------------------
+Every parting join in these tests parted by its join tick T, in any order and with any of the variants tried: at T=6140
+and 6147 (with and without a menu wait, with the package built in the frame or on the worker: fjd1, fjw2, fjx3, fjx5),
+at T >= 6183 (the old late-boot order too: fjl3, fjl5, fjx1, fje7, fje9) and at T ~6890 (fje1, fje2, fje4). Joins at
+6095..6135, 6154 and 6173..6178 stayed equal. Each time exactly one object's census motion differs from T+1 on, a
+ShipMedium (vtable 0x2b82440) that flies in low attention: GCC-006 (Xenon M solid miner, ID 0xa08a2, T=6186),
+WIR-567 (Boron M gunboat, 0x8ee88, T=6147), TZG-441 (Xenon M solid miner, 0xa07e8, T=6894); every other differing row
+is nav_raw only (per-process words). JOIN_WATCH on GCC-006 (fjx4, T+1..T+200): its position stays equal for 200 ticks,
+but its movement controller, a linear one (vtable 0x2c3f7c0, the controller bullets use; 0xb0 bytes), differs at
+every tick: the session's has words at +0x18 (0x20e0faa2), +0x68 (0x20c9dcbe), +0x78 (0x410d) and +0xa0 (11) and a
+list, where the joiner's loaded one has zeros (+0x50/+0x58 a few ulps apart). The package carries that controller's
+pose (POSE) but nothing of its plan, so a ship whose linear move is under way at T moves differently once the move
+ends. Open: what those fields are (the controller's plan and timing), carrying them in a package section, a sweep.
+The first readings (a wait in X4's start menu, the package build on a worker) were wrong: those runs had such a T.
 
 RESULTS (one PC, the host's and the joiner's X4 with up to three other sessions' clients beside them)
 -----------------------------------------------------------------------------------------------
   run   order                        T     save stop  behind at 1st step   handover stop  save to H  after H
   fjl2  late boot (old)              6095   9.4 s     2,304 ticks (81 s)     80.3 s         181 s      equal
+  fjv1  final default (menu, worker) 6120   8.3 s     1,443 ticks (50 s)     49.6 s         119 s      equal
+  fjv2  final default (menu, worker) 6173   7.9 s     1,472 ticks (51 s)     52.1 s         122 s      equal
+  fjm1  early, asked at the menu     6154   9.3 s     1,568 ticks (55 s)     57.4 s         132 s      equal
   fje5  early, asked at X4 start     6135   9.2 s     1,722 ticks (60 s)     58.8 s         138 s      equal
   fje6  as fje5, 40 s slower link    6123  10.3 s     3,392 ticks (122 s)   122.8 s         265 s      equal
-        (--join-fetch-delay 40: X4 had waited 34 s in its menu, was started again and loaded on arrival)
-  fjm1  early, asked at the menu     6154   9.3 s     1,568 ticks (55 s)     57.4 s         132 s      equal
-  fjd1  early, asked at the menu     6140   9.3 s     1,491 ticks (52 s)     54.9 s         127 s      PARTED
-  fje3, fje8, fje10 (ask first, T 6114..6178): equal; fjl3 (old order, T=6186), fje7, fje9 (T 6183..6186) and
-  fje1, fje2, fje4 (T ~6890): parted (finding 1)
+  also equal: fje3 6114, fje10 6120, fjx2 6173, fje8 6178; parted (the finding): 6140, 6147, >= 6183, ~6890
   (equal: relay digest 0 mismatches from H to the run's end, ~900 ticks; world/hash parts differ before the first
    census capture after T as in every join, the known dead-temp-zone rows.)
 fje5: files staged 22 s after X4 started (save 11 s, fetch 8 s with the .gz in 5-6 s, check and stage 3 s), before X4
@@ -80,10 +81,6 @@ NOT DONE / OPEN
   cap_world (the world side table's slowest parts, ms): objects 807, srcs 314, lstn 289, sorts 247, attk 225, livef 156,
   viewf 153, kids 145; the other ~48 sections share the remaining ~2.7 s. No single hot spot: the next cut is running the
   independent sections in parallel inside the frame (the world is still then).
-- The package build on the worker thread (tried, reverted): both such joiners parted (fje7 at T=6186, fjw2 at T=6147
-  with no menu wait, where every join with the build in the frame stayed equal). The build's 192 MB of growing
-  allocations on the process heap while the session steps on are the suspect: work that runs alongside the steps must
-  not allocate on the game's heap. The write and hash on the worker (no allocations) stayed equal in every run.
-- The join-tick class from T=6,183 (finding 1) and the menu wait (finding 2).
+- The linear movement controller of low-attention ships (the finding), then a join sweep over T.
 - Kit/server flow: the master server (netplay) stores and serves j<T>.x4join.gz; serve.py and the saver's upload in
   lobby.py still carry the raw package only.

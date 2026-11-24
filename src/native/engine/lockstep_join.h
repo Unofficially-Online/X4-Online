@@ -2825,32 +2825,41 @@ static void join_shape_reset(uint64_t completed) {
                                        (unsigned long long)completed,held,join_shape_resets,join_shape_joiner);
     if(n>0) crash_note_write(row,n<(int)sizeof(row)?n:(int)sizeof(row)-1);
 }
-/* The package's write and SHA-256 off the frame (JOIN_WRITING): with the 192 MB package of a late join they held every
- * client for about 1.9 s after the save and the capture (fj2, 23 Nov). The build stays in the frame: built on the worker
- * (its allocations while the session stepped on) the joiner of fje7 parted in the motion census from T+1, while every
- * joiner with the build in the frame and no wait in its start menu stayed equal (fje3, fje5, fje6). The worker owns the
- * buffer; the step boundary takes its result (join_writer_poll). */
-typedef struct {WCHAR path[MAX_PATH];unsigned char *data;size_t size;unsigned char sha[32];volatile LONG done;} join_write_job;
+/* The package's build, write and SHA-256 off the frame (JOIN_WRITING): with the 192 MB package of a late join they held
+ * every client for about 3.3 s after the save and the capture (fj2, 23 Nov: write and hash ~1.9 s; fje6: build 1.4 s).
+ * The build reads only the captured tables (join_package_build); the worker owns them and the buffer and frees both; the
+ * step boundary takes its result (join_writer_poll). Its partings at T=6147 and 6186 were the join-tick class of those
+ * ticks (fjx5: the build in the frame parted at 6147 on the same ship), not the worker. */
+typedef struct {WCHAR path[MAX_PATH];unsigned char *data;size_t size;unsigned char sha[32];volatile LONG done;
+                join_tables t;int has_tables;} join_write_job;
 static join_write_job join_writer;
 /* Where the saver's stop goes (status cap_ms=): the engine save, the side tables, the identities, the gone rows, the
- * fixture, the world side table, the package build; write_ms= the worker's write and hash after it. */
+ * fixture, the world side table, the hand-off to the worker; write_ms= the worker's build, write and hash after it. */
 static uint64_t join_cap_phase_us[7];
 static HANDLE join_writer_thread;
 static uint64_t join_write_us;   /* the worker's write and hash, for the status line */
 static DWORD WINAPI join_write_main(void *arg) {
     join_write_job *j=arg;LARGE_INTEGER a,b,f;QueryPerformanceFrequency(&f);QueryPerformanceCounter(&a);
-    int ok=join_file_write(j->path,j->data,j->size);
+    int ok=1;
+    if(j->has_tables) {
+        join_buf out={0};
+        ok=join_package_build(&j->t,&out);
+        join_tables_free(&j->t);j->has_tables=0;
+        if(ok) {j->data=out.data;j->size=out.size;} else free(out.data);
+    }
+    ok=ok && join_file_write(j->path,j->data,j->size);
     if(ok) lockstep_sha256(j->data,j->size,j->sha);
     QueryPerformanceCounter(&b);join_write_us=f.QuadPart?(uint64_t)((b.QuadPart-a.QuadPart)*1000000/f.QuadPart):0;
     InterlockedExchange(&j->done,ok?1:-1);return 0;
 }
-/* Hand the built package to the worker; 0 when no thread could start (the caller then writes it in the frame). */
-static int join_writer_start(const WCHAR *path,join_buf *b) {
+/* Hand the captured tables to the worker (it builds, writes and hashes the package); 0 when no thread could start (the
+ * caller then does all of it in the frame and still owns the tables). */
+static int join_writer_start(const WCHAR *path,join_tables *t) {
     if(join_writer_thread || wcslen(path)>=MAX_PATH) return 0;
-    memset(&join_writer,0,sizeof(join_writer));wcscpy(join_writer.path,path);join_writer.data=b->data;join_writer.size=b->size;
+    memset(&join_writer,0,sizeof(join_writer));wcscpy(join_writer.path,path);join_writer.t=*t;join_writer.has_tables=1;
     join_writer_thread=CreateThread(NULL,0,join_write_main,&join_writer,0,NULL);
-    if(!join_writer_thread) {join_writer.data=NULL;return 0;}
-    b->data=NULL;b->size=b->cap=0;return 1;
+    if(!join_writer_thread) {memset(&join_writer,0,sizeof(join_writer));return 0;}
+    memset(t,0,sizeof(*t));return 1;
 }
 static void join_writer_poll(void) {
     if(join_cap.state!=JOIN_WRITING || !join_writer_thread || !InterlockedCompareExchange(&join_writer.done,0,0)) return;
@@ -2946,19 +2955,22 @@ static void join_boundary(uint64_t completed) {
     join_cap.splm=t.nsplm;join_cap.splme=t.nsplme;join_cap.splmseg=t.nsplmseg;join_cap.gravn=t.ngravn;join_cap.gravp=t.ngravp;join_cap.gravq=t.ngravq;join_cap.jobe=t.njobe;join_cap.evqt=t.nevqt;join_cap.gravd=t.ngravd;join_cap.viewk=t.nviewk;join_cap.viewkc=t.nviewkc;join_cap.viewf=t.nviewf;join_cap.viewp=t.nviewp;join_cap.shoot=t.nshoot;join_cap.attk=t.nattk;join_cap.livef=t.nlivef;join_cap.spec=t.nspec;join_cap.navc=t.nnavc;join_cap.jobs=t.njobs;join_cap.gone=t.ngone;join_cap.body=t.nbody;join_cap.bupd=t.nbupd;join_cap.ldc=t.nldc;join_cap.navt=t.nnavt;join_cap.nmesh=t.nnmesh;join_cap.noct=t.nnoct;join_cap.agtt=t.nagtt;join_cap.agcb=t.nagcb;join_cap.pbnk=t.npbnk;join_cap.pend=t.npend;join_cap.gravb=t.ngravb;join_cap.viewl=t.nviewl;join_cap.ikv=t.nikv;join_cap.rcnt=t.nrcnt;join_cap.ecos=t.necos;join_cap.shpw=t.nshpw;join_cap.trdn=t.ntrdn;join_cap.npca=t.nnpca;join_cap.jobg=t.njobg;join_cap.code=t.ncode;join_cap.engr=t.nengr;join_cap.shgr=t.nshgr;join_cap.bnds=t.nbnds;join_cap.omgs=t.nomgs;join_cap.resv=t.nresv;join_cap.pcsv=t.npcsv;join_cap.conn=t.nconn;join_cap.warp=t.nwarp;join_cap.ares=t.nares;join_cap.lstn=t.nlstn;join_cap.undk=t.nundk;join_cap.srcs=t.nsrcs;join_cap.fobj=t.nfobj;join_cap.anis=t.nanis;join_cap.anil=t.nanil;join_cap.zref=t.nzref;join_cap.sref=t.nsref;join_cap.pmod=t.npmod;join_cap.need=t.nneed;join_cap.acct=t.nacct;join_cap.kids=t.nkids;join_cap.door=t.ndoor;join_cap.dron=t.ndron;join_cap.refp=t.nrefp;join_cap.spwn=t.nspwn;join_cap.dkey=t.ndkey;join_cap.defr=t.ndefr;join_cap.bclk=t.nbclk;
     JOIN_CAP_PHASE(5);
     QueryPerformanceCounter(&t2);t.gate.save_us=join_cap.save_us;t.gate.capture_us=(uint64_t)((t2.QuadPart-t1.QuadPart)*1000000/f.QuadPart);
-    join_buf b={0};
-    if(!join_package_build(&t,&b)) {free(b.data);join_tables_free(&t);join_fail_cap(JOIN_WHY_PACKAGE_WRITE,"build");return;}
+    /* The portable key (the SAVED record's) here; the package itself is built by the worker (join_package_build computes the
+     * same key again from the same tables). */
+    if(t.version!=JOIN_PACKAGE_VERSION || !join_portable(&t,t.gate.portable)) {join_tables_free(&t);join_fail_cap(JOIN_WHY_PACKAGE_WRITE,"build");return;}
+    if(_snwprintf(path,MAX_PATH,L"%ls\\%hs.x4join",dir,join_cap.name)<0)
+        {join_tables_free(&t);join_fail_cap(JOIN_WHY_PACKAGE_WRITE,"write");return;}
+    memcpy(join_cap.portable,t.gate.portable,16);join_cap.capture_us=t.gate.capture_us;
+    if(join_writer_start(path,&t)) join_cap.state=JOIN_WRITING;   /* the SAVED record follows once the file is complete */
+    else {
+        join_buf b={0};
+        if(!join_package_build(&t,&b)) {free(b.data);join_tables_free(&t);join_fail_cap(JOIN_WHY_PACKAGE_WRITE,"build");return;}
+        if(!join_file_write(path,b.data,b.size)) {free(b.data);join_tables_free(&t);join_fail_cap(JOIN_WHY_PACKAGE_WRITE,"write");return;}
+        lockstep_sha256(b.data,b.size,join_cap.package_sha);join_cap.package_bytes=b.size;join_cap.state=JOIN_DONE;free(b.data);
+    }
     JOIN_CAP_PHASE(6);
 #undef JOIN_CAP_PHASE
-    if(_snwprintf(path,MAX_PATH,L"%ls\\%hs.x4join",dir,join_cap.name)<0)
-        {free(b.data);join_tables_free(&t);join_fail_cap(JOIN_WHY_PACKAGE_WRITE,"write");return;}
-    memcpy(join_cap.portable,t.gate.portable,16);join_cap.capture_us=t.gate.capture_us;
-    if(join_writer_start(path,&b)) join_cap.state=JOIN_WRITING;   /* the SAVED record follows once the file is complete */
-    else {
-        if(!join_file_write(path,b.data,b.size)) {free(b.data);join_tables_free(&t);join_fail_cap(JOIN_WHY_PACKAGE_WRITE,"write");return;}
-        lockstep_sha256(b.data,b.size,join_cap.package_sha);join_cap.package_bytes=b.size;join_cap.state=JOIN_DONE;
-    }
-    free(b.data);join_tables_free(&t);
+    join_tables_free(&t);
     join_t1_arm(completed);join_watch_arm(completed);join_ai_watch_dump('s',completed);join_job_watch_dump('s');   /* the capture listed the linear models' targets at T */
 }
 

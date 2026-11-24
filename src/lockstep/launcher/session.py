@@ -111,8 +111,8 @@ class JoinOptions:
     tick_hz: int | None = None
     run_dir: Path | None = None  # default: .local/runs/<time>-join<slot> (a hot join brings its own, with the join files)
     seed: int | None = None      # the world seed when there is no snapshot yet (an early hot joiner: the session's)
-    early: object = None         # an early hot joiner: early(view, profile_id, proc, log, relaunch) once X4 runs, before the
-                                 # monitor; relaunch() ends that X4 and starts a new one (returns it)
+    early: object = None         # an early hot joiner: early(view, profile_id, proc, log) once X4 runs, before the monitor
+                                 # (hotjoin.EarlyJoin: the request, the files, the stage, the ready file); snapshot None
                                  # (hotjoin.EarlyJoin: the request, the files, the stage, the ready file); snapshot None
     same_pc: bool = False  # test: the host's X4 runs on this PC too (no "X4 is running" refusal; own state file)
     display: int | None = None   # the client window on this monitor only (as Options.display)
@@ -714,19 +714,7 @@ def join(o: JoinOptions, log=print):
             + (f'loads in {round(o.arm_at - time.time())} s' if o.arm_at is not None else
                'waits in its start menu for the join files' if o.early else 'loads the join save at the start menu'))
         if o.early:
-            def relaunch():
-                """A fresh X4 for an early joiner whose files came after it reached its start menu (hotjoin.EarlyJoin)."""
-                nonlocal proc
-                old = proc
-                kill(old.pid)
-                old.wait(30)
-                proc = subprocess.Popen(client_command(view, profile_id, o.slot, seed), cwd=view, env=steam.client_environment())
-                state['pids'].append(proc.pid)
-                started[:] = [entry for entry in started if entry[2] is not old] + [(o.slot, profile_id, proc)]
-                save_state(o, state)
-                log(f'client {o.slot}: pid {proc.pid} (started again), profile {profile_id}')
-                return proc
-            o.early(view, profile_id, proc, log, relaunch)
+            o.early(view, profile_id, proc, log)
         result = monitor_play(play, run_dir, None, [(o.slot, profile_id, proc)], log)
     finally:
         placed.set()

@@ -14,14 +14,15 @@ overlay is the host's recipe (play-recipe.json) rebuilt with the join save and t
 its snapshot: it loads at once (no arm time), the relay replays the session's rows from T to it and hands slot K over at H.
 
 Early start (the default for a session with a session.json and one candidate slot; HotJoinOptions.early): the joiner's X4
-starts while the session is asked to save. Its overlay is built from the recipe with stand-ins (build_play_overlay.py
---join-early), X4 boots (about 30 s) while the session saves and the files are fetched (about 20 s), and the probe takes
-them in its start menu (JOIN_EARLY_WAIT) and loads at once: the joiner's gap behind the session (what it has to replay,
-or what everyone waits for at the handover) loses the boot. X4 should not wait in its start menu before the load: of the
-joins saved before tick 6,183 of the test session, all six that loaded on arrival stayed equal and one of the two that
-waited there about 25 s parted in the motion census (fjd1; fjm1 stayed equal), so files that come more than DWELL_MAX_S
-after X4 reached its menu start X4 again (reports/LOCKSTEP-FAST-JOIN-20261123.txt). ask_first False (--menu-wait) asks
-once X4 waits in its menu: a smaller gap (fjm1: 1,568 ticks, 55 s; asking first: 1,722, 60 s), that wait included. The files are checked against the overlay as
+starts BEFORE the session is asked to save. Its overlay is built from the recipe with stand-ins (build_play_overlay.py
+--join-early), X4 boots to its start menu (about 30 s) and the probe waits there (JOIN_EARLY_WAIT); only then the relay
+is asked, so the session plays on while X4 boots and the joiner's gap behind the session (what it has to replay, or what
+everyone waits for at the handover) is the download and the load alone (fjm1, 23 Nov: 1,568 ticks, 55 s after the
+save, against 2,304 and 81 s in the old order). ask_first asks as X4 starts instead: the joiner is in about 10 s
+sooner, but its boot then overlaps the save and the fetch only partly, so the gap and everyone's handover stop are a
+few seconds longer (fje5: 1,722 ticks, 60 s). A wait in the start menu is harmless: the joins that parted in these tests
+did so by their join tick T in any order (fjx3/fjx5: the same ShipMedium at T=6147 with and without a menu wait or a
+worker build; reports/LOCKSTEP-FAST-JOIN-20261123.txt), and fjm1 waited 24 s and stayed equal. The files are checked against the overlay as
 --join-package checks them (check_joiner), the save goes into the profile's snapshot slot, the package to the extension's
 native folder, and the ready file (native/join-ready.lua) names both SHA-256 for the probe (EarlyJoin).
 """
@@ -201,8 +202,8 @@ class HotJoinOptions:
     tile_skip: int = 0
     early: bool = True     # start X4 before the save when the recipe allows it (see the module text); False: the old order
     menu_wait: int = 300   # an early joiner: seconds for its X4 to reach the start menu
-    ask_first: bool = True    # an early joiner asks for the save as X4 starts (its boot overlaps the save and the fetch);
-                              # False (--menu-wait): once X4 waits in its start menu (smaller gap, a wait in the menu)
+    ask_first: bool = False   # an early joiner asks for the save as X4 starts (the joiner is in sooner, the others wait a
+                              # few seconds longer at the handover); default: once X4 waits in its start menu
     fetch_delay: float = 0.0  # DIAGNOSTIC: seconds added after the download (a slow link: the early joiner's restart)
 
 
@@ -341,9 +342,6 @@ def set_priority(pid, priority):
         kernel.CloseHandle(handle)
 
 
-DWELL_MAX_S = 5.0   # an early joiner's X4 may wait this long in its start menu for its files; longer: started again
-
-
 class EarlyJoin:
     """session.JoinOptions.early: once the joiner's X4 runs, wait for its probe in the start menu, then ask the relay for the
     join, fetch and check the files and stage them for the waiting probe. Raises SystemExit (session.join ends X4)."""
@@ -387,7 +385,7 @@ class EarlyJoin:
         ready.write_text(f"return {{save = '{save_sha}', package = '{package_sha}'}}\n")
         ready.replace(native / READY)
 
-    def __call__(self, view, profile_id, proc, log, relaunch=None):
+    def __call__(self, view, profile_id, proc, log):
         o, slot = self.o, self.slot
         host, _, port = o.relay.rpartition(':')
         port = int(port)
@@ -395,9 +393,7 @@ class EarlyJoin:
         watch = {}
         if o.ask_first:
             menu, idle = 0.0, False
-            # X4 must load on arrival in its start menu (a wait there parts the joiner's motion; fje2): note when it
-            # arrives while the session saves and the files come.
-            def watch_menu():
+            def watch_menu():   # when X4 reaches its start menu while the session saves and the files come (for the times)
                 try:
                     self.wait_menu(profile_id, proc)
                     watch['at'] = time.monotonic()
@@ -427,11 +423,7 @@ class EarlyJoin:
         if idle:
             set_priority(proc.pid, NORMAL_PRIORITY)
         dwell = time.monotonic() - watch['at'] if 'at' in watch else 0.0
-        if dwell > DWELL_MAX_S and relaunch:
-            # The files came after X4 reached its start menu: a fresh X4 finds them there and loads at once.
-            log(f'join: X4 waited {dwell:.0f} s in its start menu for the files; starting it again so that it loads on arrival')
-            proc = relaunch()
-        elif 'error' in watch:
+        if 'error' in watch:
             raise SystemExit(watch['error'])
         self.stage(view, profile_id, save, package, loaded['header']['save_sha'], state['package_sha'])
         t4 = time.monotonic()
