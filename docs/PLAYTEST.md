@@ -1431,10 +1431,20 @@ with both players in one game.
   passed the accelerator).
 - **The same world on both PCs:** two two-client runs of 7,241 ticks, in sync, the census equal at 1800, 3600, 5400
   and 7200.
-- **Open:** at a superhighway's entry X4 disrupts its own player's travel mode ("Travel Mode disrupted"; player 1
-  leaves the highway at 157 m/s); player 2's travel mode runs on (it leaves the highway and goes on at 2.2 km/s):
-  X4's travel stop tells its own player only. And a pending "Entering" line of player 1 can still be cancelled by
-  another player's sector change within its two seconds.
+- **Travel mode** (built 25 Nov, after the above). X4's own player's travel mode follows its travel drive: the
+  autopilot's travel start shows "Travel Mode charging" and "Travel Mode activated", the travel mode stays on, and at a
+  superhighway's entry X4 ends it ("Travel Mode disrupted"); the ship leaves the highway at its normal speed (157 m/s
+  here). Player 2's drive ran without its travel mode (the activity stayed none), so nothing ended the drive at the
+  highway: player 2 left it at 2.2 km/s, still travelling. X4's start, stop and disruption of a drive tell X4's own
+  player only. **Now** (`native_gate_pilot_travel`, on by default, `lockstep_pilot_travel.h`) they run for a player
+  2..8 ship as that player's, the same on every PC: player 2's travel mode is on from the autopilot's travel start
+  (tick 498), ends at the highway's entry, and player 2 leaves the highway at 157 m/s, as player 1 does (the same
+  630 m in every 4 s after it). Player 2's PC shows "Travel Mode charging" and "Travel Mode activated" at the
+  autopilot's start and "Travel Mode disrupted" at the highway, once each, as player 1's does. Player 1 alone: the same
+  as before, tick for tick. Two clients (player 2 through the highway, player 1 elsewhere): in sync for 7,241 ticks,
+  the census equal at 1800, 3600, 5400 and 7200, the module's counts the same on both PCs.
+- **Open:** a pending "Entering" line of player 1 can still be cancelled by another player's sector change within its
+  two seconds.
 
 ## Mission types, tested without a person (built 16 Nov; two clients on one PC)
 

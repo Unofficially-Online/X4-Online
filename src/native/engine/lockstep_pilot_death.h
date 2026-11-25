@@ -592,6 +592,16 @@ static void pvehk_deliver_leave(int scope) {if(scope>=2 && scope<=(int)PILOT_SLO
 /* U::PlayerOwnedObjectAttackedObjectEvent::vftable: its MD handler (0xcabfa0) answers event_player_owned_attacked_object
  * whatever the source, so the two forms would both run the cue (lockstep_pilot_attack.h hands slot k's here). */
 #define PVEHK_FWD_OWNED_ATTACK_EVENT 0x2ba95f0u
+/* The travel drive's events on a player (lockstep_pilot_travel.h hands slot k's here): MD's event_player_travelmode_*
+ * handlers take them from any source as well (live 25 Nov: "Travel Mode charging" and "activated" twice for player 2). */
+static const unsigned pvehk_fwd_once_events[]={0x2baaf50u,0x2b48e40u,0x2b48dd0u,0x2b48e08u};   /* charge started, started,
+                                                                                                    charge aborted, stopped */
+static int pvehk_fwd_once(void **vtable) {
+    if(vtable==(void**)(void*)(pnat_base+PVEHK_FWD_UI_EVENT) || vtable==(void**)(void*)(pnat_base+PVEHK_FWD_OWNED_ATTACK_EVENT)) return 1;
+    for(unsigned i=0;i<sizeof(pvehk_fwd_once_events)/sizeof(*pvehk_fwd_once_events);i++)
+        if(vtable==(void**)(void*)(pnat_base+pvehk_fwd_once_events[i])) return 1;
+    return 0;
+}
 static int pvehk_forward_on;
 static volatile LONG64 pvehk_forward_events,pvehk_forward_calls,pvehk_forward_owned,pvehk_forward_over;
 static unsigned pvehk_forward_slot;   /* the slot whose event is being handed to player 1's listeners now, else 0 (lockstep_mission_owners.h's notices) */
@@ -625,8 +635,7 @@ static void pvehk_forward_from(unsigned k,unsigned char *first,unsigned char *ow
         /* A UI event's condition names no source: both forms below would match it and the cue would run twice (seen
          * live, 17 Nov: two rows for each ping of player 2, one for player 1's). It is handed over once, as the
          * slot's player's. */
-        const int once=own && read_local(event,&vtable,8) && (vtable==(void**)(void*)(pnat_base+PVEHK_FWD_UI_EVENT) ||
-                                                              vtable==(void**)(void*)(pnat_base+PVEHK_FWD_OWNED_ATTACK_EVENT));
+        const int once=own && read_local(event,&vtable,8) && pvehk_fwd_once(vtable);
         if(read_local(event,&vtable,8) && vtable) {
             type=((unsigned(*)(void*))vtable[1])(event);
             if(!rsch_event_private(k,type))

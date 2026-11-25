@@ -3236,9 +3236,15 @@ function K.script(plan,start,tools)
     local sector,zone=env.GetContextByClass(ship,'sector',false),env.GetContextByClass(ship,'zone',false)
     local highway=env.GetContextByClass(ship,'highway',false)
     local p=tools.C.GetObjectPositionInSector(env.ConvertIDTo64Bit(ship))
-    return string.format('sector=%s zone=%s highway=%s pos=%.0f,%.0f,%.0f speed=%s',tostring(sector and env.GetComponentData(sector,'macro')),
+    -- the player's activity and the ship's pilot's AI command (who flies it: a script left running shows here)
+    local pilot=env.GetComponentData(ship,'assignedpilot')
+    local command,action
+    if pilot then command,action=env.GetComponentData(pilot,'aicommand','aicommandaction') end
+    local function word(v) return (tostring(v):gsub('%s+','_')) end
+    return string.format('sector=%s zone=%s highway=%s pos=%.0f,%.0f,%.0f speed=%s activity=%s ai=%s/%s',tostring(sector and env.GetComponentData(sector,'macro')),
       tostring(zone and env.GetComponentData(zone,'macro')),tostring(highway and env.GetComponentData(highway,'macro')),p.x,p.y,p.z,
-      tostring(math.floor(tonumber(env.GetComponentData(ship,'speed')) or -1))) end
+      tostring(math.floor(tonumber(env.GetComponentData(ship,'speed')) or -1)),word(env.GetPlayerActivity and env.GetPlayerActivity()),
+      word(command),word(action)) end
   elseif op=='mis_goto' or op=='mis_target' or op=='mis_goto_at' then call=function()
     for i=1,tonumber(tools.env.GetNumMissions()) or 0 do
      local id,name=tools.env.GetMissionDetails(i)

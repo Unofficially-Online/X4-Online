@@ -72,6 +72,7 @@ PROBE_OPTIONS = {
     'native_gate_camera_probe': (('true',), (), None),
     'native_gate_highway_speed': (('key',), (), None),
     'native_gate_highway_players': (('true',), (), None),
+    'native_gate_pilot_travel': (('true',), (), None),
     'native_gate_sound_rng': (('split',), (), None),
     'native_gate_view_scenes': (('true',), (), None),
     'native_gate_field_fill': (('view', 'block'), (), None),

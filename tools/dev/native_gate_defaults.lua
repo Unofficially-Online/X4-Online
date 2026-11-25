@@ -220,6 +220,9 @@ D.ON={
  {'native_gate_pilot_death_suit',true,'native_gate_pilot_death native_gate_pilot_present native_gate_pilot_ship_state','a dead slot 2..N waits in its own spacesuit'},
  {'native_gate_ui_replay','@families','native_gate_pilot_stock_slots=all native_gate_pilot_present native_gate_runtime_ids native_gate_world_identities','stock UI actions as events of the slot: every family'},
  {'native_gate_ui_guard','all','native_gate_ui_replay','every other world-changing stock UI entry refused, with an info line'},
+ -- A slot 2+ ship's travel drive tells its player as X4's own does (its start, stop and disrupt run in the slot's scope):
+ -- 25 Nov, player 2's activity read none while its autopilot travelled and it left a superhighway at 2.2 km/s.
+ {'native_gate_pilot_travel',true,'native_gate_pilot_slots native_gate_ui_replay','the travel drive of every player tells that player: the travel mode, its notices, its end at a superhighway or a hit'},
  {'native_gate_pilot_foot',true,'native_gate_pilot_stock native_gate_ui_replay native_gate_ui_guard','slot 1 gets up and walks on every client'},
  {'native_gate_nav_mesh','sync','native_gate_pilot_foot native_gate_world_identities','interior nav helpers built at an agreed join (stop 186): with on foot, the wharf patrol split without it (footlook5 in sync with it)'},
  {'native_gate_pilot_foot_bodies',true,'native_gate_pilot_foot native_gate_pilot_stock_slots','slots 2..N in their seats rooms'},

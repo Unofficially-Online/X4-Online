@@ -566,14 +566,46 @@ static int uirep_drive_active(void *ship) {
  * after the teardown). In stock that is an event for MD, harmless by then; here it comes back into the adapter, and into
  * the setter (live u1..u3: stack overflow at the stop). What the setter causes is the setter's. */
 static int uirep_setter_depth;
+/* The setter's own last step: a ChangedPlayerActivityEvent on the player (0x7113a3, at once: +0x18 the new activity,
+ * +0x1c the old one). On P_k that reaches P_k's own listeners only; md/notifications.xml's ModeStarted ("Travel Mode
+ * aborted", "disrupted", the scan modes) and every other script nobody owns listen on player 1's object, and slot k never
+ * had those notices. After the setter the same event goes to them as slot k's (lockstep_pilot_death.h pvehk_forward, in
+ * slot k's scope: shown on client k), as X4's post reaches them for its own player. Counted in PILOT_TRAVEL (activity=). */
+#define UIREP_ACTIVITY_EVENT 0x2b48d60u   /* U::ChangedPlayerActivityEvent's vtable */
+static volatile LONG64 uirep_activity_told;
+static void (*uirep_activity_tell_test)(unsigned k,const unsigned char *event);
+static void uirep_activity_tell(pslot_slot *s,int before,int activity) {
+    const unsigned k=(unsigned)(s-pslots);
+    if(k<2 || k>PILOT_SLOTS || activity==before || activity<0 || activity>=5 || pstk_scope_slot!=k || GetCurrentThreadId()!=ui_thread) return;
+    int now_activity=0;memcpy(&now_activity,s->player+UIREP_PLAYER_ACTIVITY,4);
+    if(now_activity!=activity) return;   /* the setter refused it: no event */
+    _Alignas(16) unsigned char event[0x20];void *vt=pnat_base+UIREP_ACTIVITY_EVENT;double now=0.0;
+    memset(event,0,sizeof(event));memcpy(event,&vt,8);memcpy(event+0x18,&activity,4);memcpy(event+0x1c,&before,4);
+    void **slots=*(void***)((unsigned char*)NtCurrentTeb()+0x58);
+    if(slots && slots[0]) read_local((unsigned char*)slots[0]+0x300,&now,8);
+    InterlockedIncrement64(&uirep_activity_told);
+    if(uirep_activity_tell_test) uirep_activity_tell_test(k,event);else pvehk_forward(k,event,now);
+}
 static void uirep_set_activity(pslot_slot *s,int activity) {
+    int before=0;memcpy(&before,s->player+UIREP_PLAYER_ACTIVITY,4);
     ++uirep_setter_depth;
     __try {uirep_fn.set_activity(s->player,activity);}
     __finally {--uirep_setter_depth;}
+    uirep_activity_tell(s,before,activity);
 }
 /* md/modes.xml for travel on slot k's player: its check, then its set_player_activity. */
+/* X4's travel start of slot k's ship running in slot k's scope (lockstep_pilot_travel.h): the TravelModeChargeStarted it
+ * posts on P_k comes back here (U::Player's Start / StopPlayerActivity) while the routine has not finished. For X4's own
+ * player that start of the activity is MD's, later (md/modes.xml at the 'startactivity' signal), and the setter then
+ * finds the drive charging; here the setter at once would start the drive a second time from inside the first start
+ * (live 25 Nov: four "Travel Mode activated" for player 2). So the travel start waits for the routine's end, where
+ * lockstep_pilot_travel.h hands it back (uirep_travel_resume). */
+static int uirep_travel_defer;
+static pslot_slot *uirep_travel_held;
+static volatile LONG64 uirep_travel_deferred;
 static void uirep_adapter_start(pslot_slot *s,int activity) {
     if(uirep_setter_depth) {InterlockedIncrement64(&uirep_scope_nested);return;}
+    if(activity==UIREP_ACTIVITY_TRAVEL && uirep_travel_defer) {uirep_travel_held=s;InterlockedIncrement64(&uirep_travel_deferred);return;}
     int current=0;memcpy(&current,s->player+UIREP_PLAYER_ACTIVITY,4);
     if(activity==current) return;
     if(activity==2 && scl_armed) {   /* md/modes.xml's long-range scan: X4's own "can scan" test, then the activity */

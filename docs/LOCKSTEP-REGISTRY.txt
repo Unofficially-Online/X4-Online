@@ -251,6 +251,21 @@ function's entry, must agree with its owner first)
   0x5ffc70
   0xeb09a4
   0xeb1048
+  0x6d0f19   a ship's travel drive routines: start 0x6d8bf0     lockstep_pilot_travel.h ptrv_    call / jmp / je re-pointed (own
+  0xbe4182   (the StartTravelMode event's je, ForceStartTravel   rule_* (native_gate_pilot_       page near the image, jmp [rip]
+  0x6d0f36   ModeAction), stop 0x6d9190 (the StopTravelMode      travel, every client)            to the rule): a seated slot
+  0x442b8e   event, a container, Ship slot 94, two script                                          2..N ship's routine runs in
+  0x7cdf9a   actions), disrupt 0x6d9600 (Object slot 258's                                         that slot's scope (a disrupt
+  0x11fc09e  jmp: TravelDisabledEvent, damage, Disable                                             without travel also X4's
+  0x120f924  TravelModeAction, the player's controller)                                            stop); X4's routine as it is
+  0x6d0a78                                                                                         otherwise
+  0x51fb14
+  0xbe3eba
+  0xd8d570
+  0x6d8de6   the routines' posts on X4's player (PostEvent       lockstep_pilot_travel.h ptrv_    call re-pointed: X4's post, then
+  0x6d8ec7   0x99a3f0): TravelModeStarted, ChargeStarted,        post_rule (same)                 inside slot k's scope on P_k at
+  0x6d92ae   ChargeAborted, TravelModeStopped                                                      once, a copy to the scripts
+  0x6d9473                                                                                         nobody owns (pvehk_forward)
   Called, not patched: 0xaea500 (the UI message manager's player setter; lockstep_pilot_foot.h puts X4's own player back
   when a slot's scope left another one there), 0x730f30 / 0x1252850 (the GET_UP context's request and withdrawal, same file),
   0x703ac0 (a player's speaker entity among its children; lockstep_speech_local.h), 0xb3be20 / 0xb3be90 (the UI's game plan
@@ -265,7 +280,8 @@ function's entry, must agree with its owner first)
   presentation scope, so its target elements come from that slot's zone; lockstep_pilot_hud_zone.h),
   0x3ca1b0 / 0x55b150 / 0x7cf7c0 / 0x9fc0e0 (the cockpit gate effect, the player's controlled ship, a ship's cockpit, the
   external view test: X4's player branch of the gate pass run in a client of slot 2..N's own presentation scope for a gate
-  its slot's ship passed; lockstep_pilot_transit.h).
+  its slot's ship passed; lockstep_pilot_transit.h), 0x6d9190 (the travel drive's stop: X4's stop of a slot ship's drive
+  after a disrupt that found no travel activity, in that slot's scope; lockstep_pilot_travel.h).
 
 4. STOP REASONS (gate finish(reason); stats.reason, the probe's STOP line)
 Codes 1..99 belong to the gate core (lockstep_gate.c, linux/gate_linux.c);
@@ -519,11 +535,14 @@ Modules (define, owner):
   237 HWP_STOP_REASON           lockstep_highway_players.h (native_gate_highway_players, a default: one of its 15 call sites
                                 no longer ours; why site_lost. The pins refuse the arming: pins; a page or CAS failure: page,
                                 site; status HIGHWAY_PLAYERS)
+  238 PTRV_STOP_REASON          lockstep_pilot_travel.h (native_gate_pilot_travel, a default: one of its 15 call sites of the
+                                travel drive's start, stop, disrupt and posts no longer ours; why site_lost. The pins refuse the
+                                arming: pins; a page or CAS failure: page, site; status PILOT_TRAVEL)
   240 PATK_STOP_REASON          lockstep_pilot_attack.h (armed with native_gate_pilot_fire, a default: slot k's attacks
                                 posted on slot k's player as X4 posts the player's; the decision's jump at 0x520172, the post
                                 call at 0x5201ba or their page no longer ours; whys site_changed, page_changed; status
                                 attacks= in PILOT_FIRE_STATUS)
-  free: 109, 114-119, 122-129, 147-149, 225, 227-229, 232-235, 238-239, 241-255.
+  free: 109, 114-119, 122-129, 147-149, 225, 227-229, 232-235, 239, 241-255.
 Not stop reasons although named *_STOP*: PSLOT_STOP_WAIT (a wait count),
 PFIRE_STOP, PNAT_STOP_IN_MENU, PNAT_FULL_STOP (flags, 0).
 Renumbered on 1 November 2026 (integration): region camera 130 -> 165, speak

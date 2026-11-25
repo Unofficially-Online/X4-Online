@@ -979,7 +979,7 @@ end
 ticklog.watcher=X4LAN_NATIVE_GATE_DEFAULTS and X4LAN_NATIVE_GATE_DEFAULTS.watcher()
 -- Modules whose status the frame does not poll (written at the stop only): read for the watcher every 600 ticks, no row.
 ticklog.watched={{'native_gate_engine_refresh_rng','engine_refresh_rng_status','ENGINE_REFRESH_RNG'},
- {'native_gate_build_rng','build_rng_status','BUILD_RNG'},{'native_gate_highway_players','highway_players_status','HIGHWAY_PLAYERS'},{'native_gate_portable_math','portable_math_status','PORTABLE_MATH'},
+ {'native_gate_build_rng','build_rng_status','BUILD_RNG'},{'native_gate_highway_players','highway_players_status','HIGHWAY_PLAYERS'},{'native_gate_pilot_travel','pilot_travel_status','PILOT_TRAVEL'},{'native_gate_portable_math','portable_math_status','PORTABLE_MATH'},
  {'native_gate_safe_pos_order','safe_pos_order_status','SAFE_POS_ORDER'},
  {'native_gate_exact_reciprocal','exact_reciprocal_status','EXACT_RECIPROCAL'},{'native_gate_fp_env','fp_env_status','FP_ENV'},
  {'native_gate_decimal','decimal_status','DECIMAL'},{'native_gate_macro_arena','macro_arena_status','MACRO_ARENA'},
@@ -6618,6 +6618,13 @@ local function frame()
     'highway players refused '..tostring(gate.highway_players_status and gate.highway_players_status()))
    log('HIGHWAY_PLAYERS_ARMED')
   end
+  -- Players 2..N's travel drive tells its player as X4's own does: X4's start, stop and disrupt of a slot's ship run in
+  -- that slot's scope, on every client alike (lockstep_pilot_travel.h). Armed before the load.
+  if cfg.native_gate_pilot_travel then
+   assert(cfg.native_gate_pilot_travel==true and gate.pilot_travel and gate.pilot_travel_status and gate.pilot_travel()==1,
+    'pilot travel refused '..tostring(gate.pilot_travel_status and gate.pilot_travel_status()))
+   log('PILOT_TRAVEL_ARMED')
+  end
   if cfg.native_gate_build_rng then
    assert(cfg.native_gate_build_rng==true and cfg.native_gate_world_identities and gate.build_rng and
     gate.build_rng_status and gate.build_rng()==1,
@@ -8146,6 +8153,7 @@ local function frame()
   if cfg.native_gate_event_rng then log('EVENT_RNG_STOP '..tostring(gate.event_rng_status())) end
   if cfg.native_gate_build_rng then log('BUILD_RNG_STOP '..tostring(gate.build_rng_status())) end
   if cfg.native_gate_highway_players and gate.highway_players_status then log('HIGHWAY_PLAYERS_STOP '..tostring(gate.highway_players_status())) end
+  if cfg.native_gate_pilot_travel and gate.pilot_travel_status then log('PILOT_TRAVEL_STOP '..tostring(gate.pilot_travel_status())) end
   if cfg.native_gate_ui_cargo then log('UI_CARGO_STOP '..tostring(gate.ui_cargo_status())) end
   if cfg.native_gate_supply_rows then log('SUPPLY_ROWS_STOP '..tostring(gate.supply_rows_status())) end
   if cfg.native_gate_ui_lazy then log('UI_LAZY_STOP '..tostring(gate.ui_lazy_status())) end
@@ -8584,6 +8592,10 @@ local function frame()
   ticklog.status('REGION_PASS',tick,gate.region_pass_status,'region pass status unavailable')
  end
  ticklog.watch_statuses(tick)
+ if cfg.native_gate_pilot_travel and gate.pilot_travel_status and tick%60==0 then   -- a row when the travel status changes
+  local row=gate.pilot_travel_status()
+  if row and row~=ticklog.pilot_travel_last then ticklog.pilot_travel_last=row;log('PILOT_TRAVEL tick='..tick..' '..row) end
+ end
  if cfg.native_gate_gravidar_digest then
   log('GRAVIDAR_DIGEST tick='..tick..' '..assert(gate.gravidar_digest_frame(),'Gravidar digest unavailable'))
   if cfg.native_gate_gravidar_digest_rows then drain_gravidar_digest() end
@@ -9464,6 +9476,7 @@ SetScript('onUpdate',function()
    if cfg.native_gate_event_rng then ticklog.try(function() log('EVENT_RNG_STOP '..tostring(gate.event_rng_status())) end) end
    if cfg.native_gate_build_rng then ticklog.try(function() log('BUILD_RNG_STOP '..tostring(gate.build_rng_status())) end) end
    if cfg.native_gate_highway_players and gate.highway_players_status then ticklog.try(function() log('HIGHWAY_PLAYERS_STOP '..tostring(gate.highway_players_status())) end) end
+   if cfg.native_gate_pilot_travel and gate.pilot_travel_status then ticklog.try(function() log('PILOT_TRAVEL_STOP '..tostring(gate.pilot_travel_status())) end) end
    if cfg.native_gate_economy_load_rng then ticklog.try(function() log('ECONOMY_LOAD_RNG_STOP '..tostring(gate.economy_load_rng_status())) end) end
    if cfg.native_gate_ui_cargo then ticklog.try(function() log('UI_CARGO_STOP '..tostring(gate.ui_cargo_status())) end) end
    if cfg.native_gate_supply_rows then ticklog.try(function() log('SUPPLY_ROWS_STOP '..tostring(gate.supply_rows_status())) end) end
