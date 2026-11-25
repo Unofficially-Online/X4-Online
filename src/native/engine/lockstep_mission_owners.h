@@ -665,12 +665,32 @@ static void mpp_frame_leave(unsigned code) {
  * as it is. Inside another slot's scope: as it is, counted. Unlike an owned MD frame it is not an owned mission frame:
  * mpp_depth and the speech owner stay as they are (what the script shows and says goes to every client as before).
  * A scope that cannot open now (no store yet, a presentation scope, inside X4's controller update) is not asked for:
- * the frame runs as before and is counted, on every client alike. */
+ * the frame runs as before and is counted, on every client alike.
+ * The entities aboard the ship a player 2..N sits in (25 Nov, turrets per player): its defence computer runs the turret
+ * script (aiscripts/fight.attack.object.medium / capital: X4's "defence" post, a computer entity of the ship), its
+ * engineer computer the repairs. On player 1's ship that script reads "the player" as its own: the attack branch needs
+ * `this.ship.assignedpilot` (the player in its seat), the assist mode fires at `player.target`, the mining mode and the
+ * weapons the script leaves to the player go by `player.occupiedship`, and the target changes it listens for are the
+ * player's (event_player_changed_target). Outside every scope a player 2..N's own ship has no pilot (it holds its player
+ * only inside that player's scope, native_gate_pilot_slots_post) and `player` is player 1: that ship's turrets never
+ * fired in any attack mode, and "attack my current target" would have taken player 1's target. So a frame whose entity
+ * is aboard the ship slot k is seated in (an ancestor within MPP_AI_ABOARD_DEPTH parent steps is pslots[k].ship, slot k
+ * seated and not walking: the ship that slot's player flies) also runs in slot k's scope, as player 1's own ship's
+ * scripts run as player 1. The seat and the parent pointers are simulation state: the same answer on every client.
+ * The turrets' own pick in that mode is X4's native weapon-mode update, outside every script: lockstep_turret_assist.h. */
 #define MPP_AI_ENTITY 0x120u   /* AI::AIScriptContext: the entity that runs the script */
 #define MPP_AI_PARENT 0x70u    /* a component's parent */
+#define MPP_AI_ABOARD_DEPTH 4u /* entity -> its post's room or the ship itself -> ... -> the ship */
 static int mpp_ai_on;
-static volatile LONG64 mpp_ai_frames,mpp_ai_entered,mpp_ai_inside,mpp_ai_conflicts,mpp_ai_refused;
-/* The slot (2..N) whose player is this AI script context's entity or that entity's parent; 0 none. */
+static volatile LONG64 mpp_ai_frames,mpp_ai_entered,mpp_ai_inside,mpp_ai_conflicts,mpp_ai_refused,mpp_ai_aboard;
+/* The slot (2..N) seated in `ship` (its player flies it), else 0. */
+static unsigned mpp_ai_seat_of(uintptr_t ship) {
+    for(unsigned i=2;ship && i<=PILOT_SLOTS;i++)
+        if(pslots[i].player && pslots[i].seated && !pslots[i].walking && (uintptr_t)pslots[i].ship==ship) return i;
+    return 0;
+}
+/* The slot (2..N) whose player is this AI script context's entity or that entity's parent, or whose seated ship the
+ * entity is aboard; 0 none. */
 static unsigned mpp_ai_slot_of(uintptr_t context) {
     uintptr_t vtable=0,entity=0,parent=0;unsigned k=2;
     while(k<=PILOT_SLOTS && !pslots[k].player) k++;
@@ -680,6 +700,13 @@ static unsigned mpp_ai_slot_of(uintptr_t context) {
     for(unsigned i=k;i<=PILOT_SLOTS;i++) if(pslots[i].player && (uintptr_t)pslots[i].player==entity) return i;
     if(!script_rng_read((const void*)(entity+MPP_AI_PARENT),&parent,8) || !parent) return 0;
     for(unsigned i=k;i<=PILOT_SLOTS;i++) if(pslots[i].player && (uintptr_t)pslots[i].player==parent) return i;
+    for(unsigned depth=1;parent && depth<=MPP_AI_ABOARD_DEPTH;depth++) {
+        const unsigned seat=mpp_ai_seat_of(parent);
+        if(seat) {InterlockedIncrement64(&mpp_ai_aboard);return seat;}
+        uintptr_t up=0;
+        if(!script_rng_read((const void*)(parent+MPP_AI_PARENT),&up,8) || up==parent) break;
+        parent=up;
+    }
     return 0;
 }
 /* The script RNG's AI scope (lockstep_script_rng.h script_rng_enter); the answer goes back to mpp_frame_leave. */
@@ -853,7 +880,7 @@ static int mpp_arm(void) {
     memset(mpp_first_scripts,0,sizeof(mpp_first_scripts));memset(mpp_first_not,0,sizeof(mpp_first_not));
     mpp_notice_open=mpp_notice_depth=0;mpp_notice_frames=mpp_notice_claims=mpp_notice_forwarded=0;
     memset(mpp_notice_scripts,0,sizeof(mpp_notice_scripts));memset(mpp_notice_not,0,sizeof(mpp_notice_not));
-    mpp_ai_frames=mpp_ai_entered=mpp_ai_inside=mpp_ai_conflicts=mpp_ai_refused=0;
+    mpp_ai_frames=mpp_ai_entered=mpp_ai_inside=mpp_ai_conflicts=mpp_ai_refused=mpp_ai_aboard=0;
     mpp_once_count=0;mpp_place_slot=0;mpp_place_cue=NULL;mpp_place_frames=mpp_place_claims=mpp_place_released=mpp_place_denials=0;
     memset(mpp_place_scripts_denied,0,sizeof(mpp_place_scripts_denied));memset(mpp_place_scripts_allowed,0,sizeof(mpp_place_scripts_allowed));
     mpp_armed=1;return 1;
@@ -862,14 +889,14 @@ static int mpp_status(char *out,size_t cap) {
     return snprintf(out,cap,"armed=%d owners=%u hash=%016llx claims=%lld gone=%lld full=%lld frames=%lld entered=%lld inside=%lld "
         "conflicts=%lld refused=%lld calls=%lld call_refused=%lld leave_failed=%lld active=%llx/%llx/%llx swaps=%lld active_gone=%lld "
         "shown=%lld/%lld/%llx generations=%lld generated=%lld/%lld pruned=%lld depth=%u hook=%d/%s faction=%lld/%lld/%lld story=%lld/%lld "
-        "ai=%d/%lld/%lld/%lld/%lld/%lld sched=%d/%lld/%lld/%lld guidance=%lld/%lld notices=%d/%lld/%lld/%lld place=%lld/%lld/%lld/%lld",mpp_armed,mpp_count,(unsigned long long)mpp_owners_hash(),
+        "ai=%d/%lld/%lld/%lld/%lld/%lld/%lld sched=%d/%lld/%lld/%lld guidance=%lld/%lld notices=%d/%lld/%lld/%lld place=%lld/%lld/%lld/%lld",mpp_armed,mpp_count,(unsigned long long)mpp_owners_hash(),
         (long long)mpp_claims,(long long)mpp_claim_gone,(long long)mpp_full,(long long)mpp_frames,(long long)mpp_entered,(long long)mpp_inside,
         (long long)mpp_conflicts,(long long)mpp_refused,(long long)mpp_calls,(long long)mpp_call_refused,(long long)mpp_leave_failed,
         (unsigned long long)mpp_active[2],(unsigned long long)mpp_active[3],(unsigned long long)mpp_active[4],(long long)mpp_active_swaps,
         (long long)mpp_active_gone,(long long)mpp_active_shown,(long long)mpp_active_shown_changed,(unsigned long long)mpp_active_shown_id,(long long)mpp_generations,(long long)mpp_generated,
         (long long)mpp_created,(long long)mpp_pruned,mpp_depth,mpp_site_installed[0]+mpp_site_installed[1],mpp_hook_why,
         (long long)mpp_faction_swaps,(long long)mpp_faction_same,(long long)mpp_faction_changed,(long long)mpp_story_asked,(long long)mpp_story_claimed,
-        mpp_ai_on,(long long)mpp_ai_frames,(long long)mpp_ai_entered,(long long)mpp_ai_inside,(long long)mpp_ai_conflicts,(long long)mpp_ai_refused,
+        mpp_ai_on,(long long)mpp_ai_frames,(long long)mpp_ai_entered,(long long)mpp_ai_inside,(long long)mpp_ai_conflicts,(long long)mpp_ai_refused,(long long)mpp_ai_aboard,
         mpp_sched_installed[0]+mpp_sched_installed[1]+mpp_sched_installed[2],(long long)mpp_sched_calls[0],(long long)mpp_sched_calls[1],(long long)mpp_sched_calls[2],
         (long long)mpp_active_guidance,(long long)mpp_active_guidance_refused,mpp_notices_on,(long long)mpp_notice_frames,(long long)mpp_notice_claims,(long long)mpp_notice_forwarded,
         (long long)mpp_place_frames,(long long)mpp_place_claims,(long long)mpp_place_released,(long long)mpp_place_denials);

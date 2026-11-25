@@ -48,6 +48,7 @@ class MilestoneProbeTests(unittest.TestCase):
           gate.mpp_unscope=function(k) return 1 end
           gate.mpp_claim=function(k,id) claims[#claims+1]=k..':'..id;return 1 end
           gate.mpp_status=function() return 'armed=1 owners=3 hash=00000000000000aa claims=3 gone=0' end
+          gate.mpp_state=function() return mpp_state_text end   -- the gate's table line: claims | slots 2..N's active missions
           inventory={software_scannerobjectmk3={amount=1},weapon_gen_spacesuit_repairlaser_01_mk1={amount=1}}
           GetPlayerInventory=function() return inventory end
           added={};AddInventory=function(_,ware,n) added[#added+1]=ware..'='..n;inventory[ware]={amount=n} end
@@ -69,6 +70,9 @@ class MilestoneProbeTests(unittest.TestCase):
 
     def test_a_milestone_saves_at_a_tick_from_its_game_time_and_says_so(self):
         self.lua.execute("X4LAN_CONFIG.native_gate_milestones={save=true,watch={{'terran_cadet',1,2},{'terran_cadet',2,2}}}")
+        # slot 2's active mission is the gate's (0xc = 12): the second of the list, a plot mission
+        self.lua.execute("mpp_state_text='v2|2:5|2:c';GetNumMissions=function() return 2 end;"
+                         "GetMissionDetails=function(i) return 10+i,'m','',0,'',({'upkeep','plot'})[i] end")
         self.start()
         self.assertTrue(self.rows('MILESTONE_CLOCK first=1 time=7 hz=60 save=true'))
         # MD: the chapter is over at game time 10; the probe hears it at tick 300 (any tick before T-25 gives the same T)
@@ -83,7 +87,9 @@ class MilestoneProbeTests(unittest.TestCase):
         slot2 = self.rows('SAVE_SLOT name=terran_cadet-M1-slot2 tick=541 slot=2')
         self.assertEqual(len(slot2), 1)
         self.assertIn('player=502 ship=1002 walking=0 inventory=software_scannerobjectmk3:1,weapon_gen_spacesuit_repairlaser_01_mk1:1', slot2[0])
+        self.assertIn(' active=2:plot at=516', slot2[0])
         self.assertTrue(self.rows('SAVE_SLOT name=terran_cadet-M1-slot2 tick=541 slot=1 player=501 ship=1001 walking=0 inventory=- '))
+        self.assertTrue(self.rows('SAVE_SLOT name=terran_cadet-M1-slot2 tick=541 slot=1')[0].endswith('active=- at=516'))
         self.assertTrue(self.rows('SAVE_OWNERS name=terran_cadet-M1-slot2 tick=541 kept=unavailable'))   # no UI replay here
         self.assertTrue(self.rows('MILESTONE_SAVE armed name=terran_cadet-M1-slot2 tick=541 at=516'))
         self.to(541)

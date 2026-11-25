@@ -266,6 +266,24 @@ function's entry, must agree with its owner first)
   0x6d8ec7   0x99a3f0): TravelModeStarted, ChargeStarted,        post_rule (same)                 inside slot k's scope on P_k at
   0x6d92ae   ChargeAborted, TravelModeStopped                                                      once, a copy to the scripts
   0x6d9473                                                                                         nobody owns (pvehk_forward)
+  0x4ef43f   the weapon-mode update 0x4ef380: call 0x9fccd0     lockstep_turret_assist.h tast_   call re-pointed (own page near
+             (X4's player's soft target) for a turret in mode   rule (native_gate_turret_assist,  the image, mov r8,rdi then the
+             13, attack my current target                       every client)                    rule): X4's answer, or for a
+                                                                                                   turret on a seated slot 2..N
+                                                                                                   ship that slot's soft target
+  0xb0607f   the five weapon readers of the HUD (GetPrimaryWeapon, lockstep_hud_weapons.h hudw_    call re-pointed (own page near
+  0xb06c9f   GetSecondaryWeapon, GetWeaponDetails, ...2, ...3):   primary / hudw_secondary         the image, jmp to the rule): X4's
+  0xb07fd9   call 0x81d530 (primary) or 0x81d590 (secondary),     (native_gate_hud_weapons,        test, and for its no under another
+  0xb07fe0   the weapon's active flag from its shoot controller   every client, UI thread)         controller than X4's
+  0xb08479                                                                                         PlayerShootController X4's group
+  0xb08480                                                                                         rule: active when in the active
+  0xb08949                                                                                         group of X4's player's occupied
+  0xb08950                                                                                         ship (presentation only)
+  0x1a2370   GetObjectCoverAbilityFaction, IsPlayerCoverable,     lockstep_cover_slots.h           E9 -> the module's own page near
+  0x1b3560   CanPlayerActivateCoverAbility, GetPlayerCoverFaction (native_gate_cover_slots)       the image, the head moved to a
+  0x177680   (their entries): the cover readers of client k's UI                                  trampoline (one displacement at
+  0xb05dc0                                                                                        0x177684): slot k's player on
+                                                                                                   its own client's UI, else X4's
   Called, not patched: 0xaea500 (the UI message manager's player setter; lockstep_pilot_foot.h puts X4's own player back
   when a slot's scope left another one there), 0x730f30 / 0x1252850 (the GET_UP context's request and withdrawal, same file),
   0x703ac0 (a player's speaker entity among its children; lockstep_speech_local.h), 0xb3be20 / 0xb3be90 (the UI's game plan
@@ -538,11 +556,23 @@ Modules (define, owner):
   238 PTRV_STOP_REASON          lockstep_pilot_travel.h (native_gate_pilot_travel, a default: one of its 15 call sites of the
                                 travel drive's start, stop, disrupt and posts no longer ours; why site_lost. The pins refuse the
                                 arming: pins; a page or CAS failure: page, site; status PILOT_TRAVEL)
+  239 TAST_STOP_REASON          lockstep_turret_assist.h (native_gate_turret_assist, a default: the call at 0x4ef43f in the
+                                turrets' weapon-mode update no longer ours; why site_lost. The pins refuse the arming: pins;
+                                a page or CAS failure: page, site; status TURRET_ASSIST)
   240 PATK_STOP_REASON          lockstep_pilot_attack.h (armed with native_gate_pilot_fire, a default: slot k's attacks
                                 posted on slot k's player as X4 posts the player's; the decision's jump at 0x520172, the post
                                 call at 0x5201ba or their page no longer ours; whys site_changed, page_changed; status
                                 attacks= in PILOT_FIRE_STATUS)
-  free: 109, 114-119, 122-129, 147-149, 225, 227-229, 232-235, 239, 241-255.
+  246 PCOV_STOP_REASON          lockstep_cover_slots.h (native_gate_cover_slots, a default: every player's cover and ship
+                                stance; one of the four reader entries (GetObjectCoverAbilityFaction, IsPlayerCoverable,
+                                CanPlayerActivateCoverAbility, GetPlayerCoverFaction) no longer jumps to its page; why
+                                entry_lost. The pins refuse the arming: pins; a page or CAS failure: page, entry,
+                                displacement; status COVER_SLOTS)
+  248 HUDW_STOP_REASON          lockstep_hud_weapons.h (native_gate_hud_weapons, a default: the HUD weapon panel's active
+                                weapons by X4's group rule; one of its eight call sites in the five weapon readers no
+                                longer ours; why site_lost. The pins refuse the arming: pins; a page or CAS failure: page,
+                                site; status HUD_WEAPONS)
+  free: 109, 114-119, 122-129, 147-149, 225, 227-229, 232-235, 241-245, 247, 249-255.
 Not stop reasons although named *_STOP*: PSLOT_STOP_WAIT (a wait count),
 PFIRE_STOP, PNAT_STOP_IN_MENU, PNAT_FULL_STOP (flags, 0).
 Renumbered on 1 November 2026 (integration): region camera 130 -> 165, speak

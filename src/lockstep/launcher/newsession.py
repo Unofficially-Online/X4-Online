@@ -89,12 +89,12 @@ def own_starts(o, cat, log=print):
     """(starts, omit) for the spec: every slot 2..N without --start takes the base start's own ship, place and kit beside
     slot 1's (as --start K=BASE --omit K=world), so each player starts in that start's ship with its loadout. Before
     24 Nov such a slot flew one of the capture fixture's fighters (a two-PC game at the Terran cadet start: player 2
-    in an Argon fighter). Kept: o.fixture_ships, open slots (--open: a joiner picks its start) and a base start that
-    cannot give a slot its ship (logged)."""
+    in an Argon fighter). Open slots (--open) take it too: since then no fixture fighter waits in them, and a drop-in
+    session's open slot without a ship refused its play overlay. Kept: o.fixture_ships and a base start that cannot
+    give a slot its ship (logged)."""
     gamestarts, _ = tools()
     starts, omit = dict(o.starts), dict(o.omit)
-    opened = {int(k) for k in str(o.open or '').split(',') if k.strip().isdigit()}
-    missing = [k for k in range(2, o.players + 1) if k not in starts and k not in opened]
+    missing = [k for k in range(2, o.players + 1) if k not in starts]
     if o.fixture_ships or not missing:
         return starts, omit
     why = gamestarts.per_player_refusal(cat.record(o.base_start), world=True)

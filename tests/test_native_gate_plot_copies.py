@@ -630,7 +630,11 @@ class StoryCopyTests(unittest.TestCase):
                                  # its second debug cue, 1000 higher: the wingmate's own setup (the wingmate's tests)
                                  'event.param2 == 1101': 'md.Story_Yaki.DEBUG_Setup_Wingmate',
                                  'event.param2 == 1202': 'md.Story_Yaki_P2.DEBUG_Setup_Wingmate',
-                                 'event.param2 == 1203': 'md.Story_Yaki_P3.DEBUG_Setup_Wingmate'})
+                                 'event.param2 == 1203': 'md.Story_Yaki_P3.DEBUG_Setup_Wingmate',
+                                 # its third, 2000 higher: the ship's cover ability (the cover's tests)
+                                 'event.param2 == 2101': 'md.Story_Yaki.DEBUG_New_Cover_Ability',
+                                 'event.param2 == 2202': 'md.Story_Yaki_P2.DEBUG_New_Cover_Ability',
+                                 'event.param2 == 2203': 'md.Story_Yaki_P3.DEBUG_New_Cover_Ability'})
         # the play overlay's lines: each slot begins its copies (no stock script: false), both stock scripts are player 1's
         lines, stories, listed, _ = players.story_config({'slots': spec['slots']})
         self.assertEqual(lines, ["X4LAN_CONFIG.native_gate_story = {[2]={false,'GS_Terran1_P2.Start','Story_Yaki_P2.Start'},"
@@ -692,6 +696,13 @@ class StoryCopyTests(unittest.TestCase):
             # the wingmate's tests' step: the copy's own wingmate setup, under its root cue (its frames are the slot's), and
             # the setup protects the ship of the player whose frame runs it (player.ship: the slot's, in the slot's scope)
             self.assertIsNotNone(plot.find("cues/cue[@name='Start']/cues/cue[@name='DEBUG_Setup_Wingmate']"))
+            # the cover's tests' step: the copy's cover ability for player.ship (the slot's in the slot's scope) through
+            # md.Cover's RegisterCoverAbility, under its root cue
+            cover = plot.find("cues/cue[@name='Start']/cues/cue[@name='DEBUG_New_Cover_Ability']")
+            self.assertEqual(cover.find('actions/signal_cue_instantly').get('cue'), 'Cover_Handler_v2')
+            self.assertIn('$CoverShip = player.ship', cover.find('actions/signal_cue_instantly').get('param'))
+            handler = plot.find("cues/cue[@name='Start']/cues/cue[@name='Cover_Handler_v2']")
+            self.assertIn('md.Cover.RegisterCoverAbility', [s.get('cue') for s in handler.iter('signal_cue_instantly')])
             setup = plot.find("cues/cue[@name='Start']/cues/library[@name='Setup_Wingmate']")
             protect = [o for o in setup.iter('create_order') if o.get('id') == "'ProtectShip'"]
             self.assertEqual([[(p.get('name'), p.get('value')) for p in o.iter('param')] for o in protect], [[('target', '$CurrentPlayerShip')]])

@@ -93,14 +93,17 @@ class TableTests(unittest.TestCase):
                                   'SetAllNonMissileTurretModes': 0x223cd0, 'SetAllNonMissileTurretsArmed': 0x223e90,
                                   'SetDroneMode': 0x2244c0, 'SetDroneTypeArmed': 0x2245e0, 'SetAllDronesArmed': 0x223aa0,
                                   'ActivateObject': 0x175930, 'SelfDestructComponent': 0x1b6f70, 'DropCargo': 0x1df990,
-                                  'StartScan': 0x735000})
+                                  'StartScan': 0x735000,
+                                  # the docked menu's cover and stance (lockstep_cover_slots.h)
+                                  'SetObjectCoverFaction': 0x1b88f0, 'SetPlayerLastCoverFaction': 0x1b8a60, 'SetShipStance': 0x1f0ea0})
         covered = {name for (kind, name), (_, _, cov) in inv.INVENTORY.items() if cov & inv.FLIGHT}
         self.assertEqual(covered, {'ToggleFlightAssist', 'CycleTurretMode', 'CycleTurretMissile', 'ToggleDrones', 'CycleNextDroneMode',
                                    'LaunchMine', 'LaunchNavBeacon', 'LaunchResourceProbe', 'LaunchSatellite', 'LaunchLaserTower',
                                    'SetWeaponArmed', 'SetAmmoOfWeapon', 'SetTurretGroupMode2', 'SetTurretGroupArmed', 'SetAllTurretModes',
                                    'SetAllTurretsArmed', 'SetAllMissileTurretModes', 'SetAllMissileTurretsArmed',
                                    'SetAllNonMissileTurretModes', 'SetAllNonMissileTurretsArmed', 'SetDroneMode', 'SetDroneTypeArmed',
-                                   'SetAllDronesArmed', 'ActivateObject', 'SelfDestructComponent', 'DropCargo'})
+                                   'SetAllDronesArmed', 'ActivateObject', 'SelfDestructComponent', 'DropCargo',
+                                   'SetObjectCoverFaction', 'SetPlayerLastCoverFaction', 'SetShipStance'})
 
     def test_the_ui_only_events_agree_in_every_mirror(self):
         native = re.search(r'uiguard_ui_only\[\]=\{(.*?)\};', GUARD_H, re.S).group(1)

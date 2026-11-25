@@ -48,6 +48,9 @@
  *                     SetAllDronesArmed; a deployable's ActivateObject and SelfDestructComponent; DropCargo (container,
  *                     ware, amount). Each names its object: no singleton, the same call in any scope. None draws from
  *                     the RNG in its direct calls three deep (static reading).
+ *                     The docked menu's cover (SetObjectCoverFaction: ship, faction; its pilot, P_k in slot k's scope, and
+ *                     the ship take it), the player's last chosen cover (SetPlayerLastCoverFaction, the singleton's) and the
+ *                     stance (SetShipStance: ship, stance): lockstep_cover_slots.h.
  *             These are generic calls (op 5): a hook's arguments by a spec (the player, components as references, bytes,
  *             words, 16-byte vectors, strings), a check-only argument passes through and predicts the return value,
  *             and the apply calls the same function through its trampoline with the slot's player.
@@ -144,7 +147,7 @@ enum {UIREP_H_UI=0,UIREP_H_START,UIREP_H_STOP,UIREP_H_CLEAR,UIREP_H_CLEAR2,UIREP
     UIREP_H_LAUNCH_LASERTOWER,UIREP_H_LAUNCH_MINE,UIREP_H_LAUNCH_NAVBEACON,UIREP_H_LAUNCH_PROBE,UIREP_H_LAUNCH_SATELLITE,
     UIREP_H_WEAPON_ARMED,UIREP_H_WEAPON_AMMO,UIREP_H_TGROUP_MODE,UIREP_H_TGROUP_ARMED,UIREP_H_TURRETS_MODE,UIREP_H_TURRETS_ARMED,UIREP_H_MTURRETS_MODE,UIREP_H_MTURRETS_ARMED,
     UIREP_H_NTURRETS_MODE,UIREP_H_NTURRETS_ARMED,UIREP_H_DRONE_SET_MODE,UIREP_H_DRONE_TYPE_ARMED,UIREP_H_DRONES_ARMED,UIREP_H_ACTIVATE,UIREP_H_SELF_DESTRUCT,UIREP_H_DROP_CARGO,
-    UIREP_H_CS_SINGLE,UIREP_H_CS_MULTI,UIREP_H_SCAN_START,UIREP_H_RESET_LOOP,UIREP_HOOKS};
+    UIREP_H_CS_SINGLE,UIREP_H_CS_MULTI,UIREP_H_SCAN_START,UIREP_H_RESET_LOOP,UIREP_H_COVER_FACTION,UIREP_H_COVER_LAST,UIREP_H_STANCE,UIREP_HOOKS};
 #define UIREP_ARGS 8u
 #define UIREP_STRING_MAX 48u
 #define UIREP_AUTOPILOT 0x2f4b7d8u        /* the input bank's autopilot target (SIM, per slot) */
@@ -236,6 +239,9 @@ UIREP_CALL(activate,UIREP_H_ACTIVATE)
 UIREP_CALL(self_destruct,UIREP_H_SELF_DESTRUCT)
 UIREP_CALL(drop_cargo,UIREP_H_DROP_CARGO)
 UIREP_CALL(scan_start,UIREP_H_SCAN_START)
+UIREP_CALL(cover_faction,UIREP_H_COVER_FACTION)
+UIREP_CALL(cover_last,UIREP_H_COVER_LAST)
+UIREP_CALL(stance,UIREP_H_STANCE)
 static int uirep_local_phase(void);
 static void uirep_guard_refuse(unsigned slot);
 static uint64_t uirep_queue_call(unsigned hook,uint64_t a[UIREP_ARGS]);
@@ -339,6 +345,12 @@ static const struct {const char *name;unsigned rva,prefix,family;unsigned char b
      * default order (MapMenu.buttonDefaultOrderConfirm). Uncaptured, the guard refused it and that button stayed
      * blocked: no player could change a ship's default behaviour in a session (17 Nov). */
     {"ResetOrderLoop",0x1ff090u,5,UIREP_FAMILY_QUEUE,UIREP_ENTRY5,(void*)uirep_guard_reset_loop,0x7e,"8800e327a812255a5709edd66da0ecfb4120fcbf9114fbd2f26bccc11efd363e"},
+    /* The docked menu's cover and stance (lockstep_cover_slots.h): the cover button and dropdown (the ship, a faction or
+     * "" for none: the ship's pilot, in slot k's scope P_k, and the ship wear it), the last chosen faction of the player
+     * (U::Player +0x8a780 of the singleton: P_k in slot k's scope), the stance dropdown (the ship, the stance). */
+    {"SetObjectCoverFaction",0x1b88f0u,5,UIREP_FAMILY_FLIGHT,UIREP_ENTRY5,(void*)uirep_call_cover_faction,0x16b,"2040d7dcc9da2b3c9400dea00a723c038323decffe3b0d9b51a0627135798eca"},
+    {"SetPlayerLastCoverFaction",0x1b8a60u,6,UIREP_FAMILY_FLIGHT,{0x4c,0x8b,0xc9,0x48,0x85,0xc9},(void*)uirep_call_cover_last,0x1b,"549ed03ccc4c9d8d6a1af8877e0669e448545857c52e3e017fd415ac44e82562"},
+    {"SetShipStance",0x1f0ea0u,5,UIREP_FAMILY_FLIGHT,UIREP_ENTRY5,(void*)uirep_call_stance,0x1d0,"2ae3c41897107f51b6db496552f1fab4540dde59b091a087a0aeacc3b9eb6ef9"},
 };
 /* The generic calls: argument spec (P the player, C a component pointer, I a UniverseID, b a byte, w a word, V a
  * pointer to 16 bytes, s a string, k the check-only flag: set, the call is a query and passes; - passed through as 0),
@@ -381,7 +393,10 @@ static const uirep_call_spec uirep_call_specs[]={
     {UIREP_H_ACTIVATE,"Ib",UIREP_RET_ONE},
     {UIREP_H_SELF_DESTRUCT,"I",UIREP_RET_ONE},
     {UIREP_H_DROP_CARGO,"Isw",UIREP_RET_ONE},
-    {UIREP_H_SCAN_START,"PC--",UIREP_RET_ONE}};       /* the player, the target; the action's data and the force flag go as 0 */
+    {UIREP_H_SCAN_START,"PC--",UIREP_RET_ONE},        /* the player, the target; the action's data and the force flag go as 0 */
+    {UIREP_H_COVER_FACTION,"Is",UIREP_RET_ONE},       /* the ship, the faction ("" none) (void) */
+    {UIREP_H_COVER_LAST,"s",UIREP_RET_ONE},           /* the faction (void) */
+    {UIREP_H_STANCE,"Is",UIREP_RET_ONE}};             /* the ship, the stance (void) */
 #define UIREP_CALL_SPECS (sizeof(uirep_call_specs)/sizeof(*uirep_call_specs))
 /* The queue editor (family queue), Lua-run events in call order, applied in the probe's frame: q is an order index
  * (as the capturing menu saw the queue), the create's answer is predicted (UIREP_RET_ORDER), void returns nothing. */

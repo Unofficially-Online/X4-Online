@@ -222,8 +222,13 @@ static int pstk_release_due(unsigned slot,uint64_t tick) {
 static int mfs_key_replayed(unsigned kind,int id);
 static int mfs_key_local(unsigned char *map,int id,int scripted);
 static void mfs_key_apply(int id);
+/* lockstep_cover_slots.h (native_gate_cover_slots): TOGGLE_COVER and TOGGLE_STANCE ride the record; their replay runs X4's
+ * two cases of the player handler for the replayed slot's player, its notice on that slot's own client only. */
+static int pcov_key_replayed(unsigned kind,int id);
+static void pcov_key_walk(unsigned char *header,unsigned kind,int id,uint32_t value);
 static unsigned pstk_verdict(unsigned kind,int id) {
     if(mfs_key_replayed(kind,id)) return PSTK_REPLAY;
+    if(pcov_key_replayed(kind,id)) return PSTK_REPLAY;   /* the cover and stance keys (lockstep_cover_slots.h) */
     /* Slot 1 on foot (lockstep_pilot_foot.h): the walking ids and GET_UP ride the record; mouselook too, split at the
      * local dispatch (pstk_dispatch_split); the pick's interaction click is refused everywhere. */
     if(pfoot_armed) {
@@ -489,6 +494,7 @@ static void pstk_walk(unsigned char *header,unsigned kind,int id,uint32_t value)
  * with the session's clock as its real time (the run's double-tap, lockstep_pilot_foot.h). */
 static void pstk_replay_walk(unsigned char *header,unsigned kind,int id,uint32_t value) {
     if(mfs_key_replayed(kind,id)) {mfs_key_apply(id);return;}   /* a cutscene's key: X4's handler once, on every client */
+    if(pcov_key_replayed(kind,id)) {pcov_key_walk(header,kind,id,value);return;}   /* the cover and stance keys, per slot */
     pnat_node *upper=NULL,*n=pnat_first((pnat_node*)header,id,&upper);
     if(!n) return;
     while(n!=upper) {

@@ -1040,6 +1040,57 @@ function K.session(p)
   if ok and docked~=nil then undock_was=docked end
  end
  S.undock_watch=undock_watch
+ -- The ships that protect this client's own player's ship drawn in the player's own colour on this client only
+ -- (native_gate_escort_present, p.escort; lockstep_escort_present.h colours the HUD's targets, the target monitor and
+ -- the map's and the radar's icons): the list the ProtectShip orders keep on this player's entity ($X4LAN_Escorts,
+ -- native_gate_player_escort.xml), the ships of it that still exist, handed to the gate whenever it changes; the map's
+ -- lists and its info header take the player's colour for them too (its own two colour functions, wrapped once).
+ -- Presentation only: nothing here goes to the simulation. Row ESCORT_PRESENT_SET when the set changes.
+ local escort_keys,escort_text,escort_row={},'',nil
+ local function escort_key(id)
+  local text=tostring(id):gsub('ULL$','')
+  if text:match('^%d+$') then return text end
+  local ok,value=pcall(env.ConvertStringTo64Bit,tostring(id))
+  return ok and (tostring(value):gsub('ULL$','')) or text
+ end
+ local function escort_map()
+  local map
+  for _,menu in ipairs(type(env.Menus)=='table' and env.Menus or {}) do if type(menu)=='table' and menu.name=='MapMenu' then map=menu end end
+  if not map or map.x4lan_escort_wrapped or type(map.getContainerNameAndColors)~='function' or type(map.getObjectColor)~='function' then return end
+  local list,info=map.getContainerNameAndColors,map.getObjectColor
+  map.x4lan_escort_wrapped=true
+  map.getContainerNameAndColors=function(container,...)
+   local r=(function(...) return {n=select('#',...),...} end)(list(container,...))   -- LuaJIT has no table.pack
+   if r[2]~=nil and escort_keys[escort_key(container)] and map.holomapcolor and map.holomapcolor.playercolor then r[2]=map.holomapcolor.playercolor end
+   return unpack(r,1,r.n)
+  end
+  map.getObjectColor=function(object,...)
+   local colour=info(object,...)
+   if escort_keys[escort_key(object)] and map.holomapcolor and map.holomapcolor.playercolor then return map.holomapcolor.playercolor end
+   return colour
+  end
+ end
+ function S.escort(tick)
+  local e=p.escort
+  if not e or tick<e.first or (tick-e.first)%e.every~=0 then return end
+  escort_map()
+  local player=e.player()
+  local ok,list=pcall(function() return player and env.GetNPCBlackboard(player,'$X4LAN_Escorts') end)
+  local ids,keys={},{}
+  if ok and type(list)=='table' then
+   for _,ship in ipairs(list) do
+    local alive=pcall(env.IsValidComponent,ship) and env.IsValidComponent(ship)
+    local key=alive and escort_key(ship)
+    if key and not keys[key] and #ids<16 then keys[key]=true;ids[#ids+1]=key end
+   end
+  end
+  local text=table.concat(ids,',')
+  if text==escort_text then return end
+  local set=gate.escort_present_set(text)
+  if set==1 then escort_text=text;escort_keys=keys end
+  local row=' slot='..tostring(p.own_slot)..' ships='..(text~='' and text or '-')..' set='..tostring(set)
+  if row~=escort_row then escort_row=row;log('ESCORT_PRESENT_SET tick='..tick..row) end   -- a refusal once, not every half second
+ end
  -- Test console (native_gate_ui_replay_console, default off): p.console() loads a Lua file of this client that the
  -- person at the test rig rewrites while the session runs: `return {n=NUMBER, run=function(tools,S) ... end}`. A
  -- number above the last one seen runs once, where a scripted op runs: as a person's click (not the probe's own
@@ -1140,6 +1191,7 @@ function K.session(p)
   run_script(tick)
   run_console(tick)
   undock_watch(tick)
+  S.escort(tick)
   guard_frame(tick)
   local refusals=gate.ui_replay_refusals()
   if refusals then log('UI_REPLAY_REFUSED_NATIVE tick='..tick..' '..refusals) end
@@ -1159,7 +1211,7 @@ end
 -- ship the player controls (ui/core/messageconfigurationgraph.xml: untargetableconditions is_playercontrolled), and in
 -- the probe's canonical frame that is slot 1's ship on every client, so slot k could not target it. The other ops keep
 -- the canonical frame their live runs (U5, U7) passed with. Guidance is set and ended where the map's click runs too.
-K.SCOPED={place=true,suit_to=true,dock_named=true,panel_find=true,hack_yes=true,inv_total=true,trader_pick=true,trader_look=true,itemtrader_buy=true,foot_where=true,transport_list=true,transport_to=true,transport_named=true,target_slot=true,target_none=true,target_home=true,dock_home=true,suit_home=true,guidance_slot=true,guidance_end=true,guidance_set=true,guidance_look=true,inv_read=true,inv_drop=true,inv_research_seen=true,inv_research_hqs=true,toplevel_tab=true,menu_back=true,escort_colour=true,escort_select=true,escort_map=true}
+K.SCOPED={hud_weapons=true,cover_ui=true,cover_button=true,stance_set=true,place=true,suit_to=true,dock_named=true,panel_find=true,hack_yes=true,inv_total=true,trader_pick=true,trader_look=true,itemtrader_buy=true,foot_where=true,transport_list=true,transport_to=true,transport_named=true,target_slot=true,target_none=true,target_home=true,dock_home=true,suit_home=true,guidance_slot=true,guidance_end=true,guidance_set=true,guidance_look=true,inv_read=true,inv_drop=true,inv_research_seen=true,inv_research_hqs=true,toplevel_tab=true,menu_back=true,escort_colour=true,escort_select=true,escort_map=true,aim_look=true}
 -- The stock calls of the station overview and the station menu's trade settings, by what their names hold.
 function K.station_call(what)
  local name=tostring(what):match('^[%w_]+') or ''
@@ -1170,7 +1222,7 @@ function K.station_call(what)
 end
 -- A canonical op is the probe's own call, not a person's click: a test fixture that every client's plan holds at the same
 -- tick (MD runs it on every client alike, nothing is captured).
-K.CANONICAL={panel_look=true,refit_why=true,dock_approach=true,dock_warp=true,station_blueprints=true,mis_fixture=true,mt_offer=true,gm_limit=true,slot_kill=true,slot_airlock=true,launch_stock=true,hold_stock=true,hull_set=true,marines_stock=true,abandon=true,dock_kit=true,wallet=true,probe_far=true,groups_look=true,escort_look=true,escort_front=true,inv_seed=true,inv_look=true,inv_join_state=true,inv_join_give=true,transporter_find=true}
+K.CANONICAL={cover_look=true,cover_blow=true,cover_trigger=true,panel_look=true,refit_why=true,dock_approach=true,dock_warp=true,station_blueprints=true,mis_fixture=true,mt_offer=true,gm_limit=true,slot_kill=true,slot_airlock=true,launch_stock=true,hold_stock=true,hull_set=true,marines_stock=true,abandon=true,dock_kit=true,wallet=true,probe_far=true,groups_look=true,escort_look=true,escort_front=true,inv_seed=true,inv_look=true,inv_join_state=true,inv_join_give=true,transporter_find=true}
 -- Refused entries the stock HUD calls by itself, not on a person's action: logged, no info line. AddKnownItem: the
 -- encyclopedia entry the HUD adds for whatever comes into view (45 refusals and their info lines in a playtest of 9 Nov).
 K.GUARD_QUIET={AddKnownItem=true}
@@ -2122,6 +2174,15 @@ function K.script(plan,start,tools)
   elseif op=='target_slot' then call=function() return tools.C.SetSofttarget(tools.slot_id(e[3]),'') end
   elseif op=='target_none' then call=function() return tools.env.RemoveSofttarget() end
   elseif op=='match' then call=function() return tools.gate.pilot_stock_inject('state',0x5b,e[3]) end
+  -- {tick,'aim_look'} (read only): this client's aim HUD as X4 shows it: the aim assist icon (GetAimAssistState: 0 off, 1 on,
+  -- 2 active), mouse steering, the soft target and whether it is in the player's weapon range (the lead mark's circle or X).
+  elseif op=='aim_look' then call=function()
+    for _,line in ipairs({'int32_t GetAimAssistState(void);','bool IsMouseSteeringActive(void);','bool IsTargetInPlayerWeaponRange(const UniverseID componentid);',
+      'typedef struct { UniverseID softtargetID; const char* softtargetConnectionName; uint32_t messageID; } SofttargetDetails2;',
+      'SofttargetDetails2 GetSofttarget2(void);'}) do pcall(ffi.cdef,line) end
+    local target=tools.C.GetSofttarget2().softtargetID
+    return 'assist='..tostring(tools.C.GetAimAssistState())..' mouse='..tostring(tools.C.IsMouseSteeringActive())..
+      ' target='..tostring(target)..' in_range='..tostring(target~=0 and tools.C.IsTargetInPlayerWeaponRange(target)) end
   elseif op=='input' then call=function() return tools.gate.pilot_stock_inject(e[3],e[4],e[5]) end
   -- {tick,'input_local',KIND,ID,VALUE}: the same as this client's own key or mouse (pstk_local_press: X4's handler on
   -- this client, then the record as a person's input is captured), for presentation ids such as the camera's look.
@@ -2847,10 +2908,10 @@ function K.script(plan,start,tools)
     local lua=type(e[3])=='number' and tools.slot_lua(e[3]) or tools.saved_lua(e[3])
     tools.env.AddUITriggeredEvent('X4LAN_UiReplay','Hull',{ship=lua,percent=e[4]});return 'lua' end
   -- Test only (MD Friendly, canonical: in every client's plan at the same tick; friendly fire, 24 Nov):
-  -- {tick,'friendly',SLOT,NAME[,FACTION[,MACRO[,METRES[,PILOT[,SHIELD[,HULL[,HOLD[,FLOOR]]]]]]]]}: a ship of FACTION (terran)
+  -- {tick,'friendly',SLOT,NAME[,FACTION[,MACRO[,METRES[,PILOT[,SHIELD[,HULL[,HOLD[,FLOOR[,SIDE]]]]]]]]]}: a ship of FACTION (terran)
   -- with its pilot (PILOT 0: none, it stays put; SHIELD 0: its shield down at the start; HULL: its hull percentage; HOLD 1: its
   -- pilot waits where it is; FLOOR: its minimum hull percentage), called NAME, METRES (400) straight ahead of slot SLOT's ship
-  -- (MACRO: ship_ter_m_corvette_01_a_macro).
+  -- (MACRO: ship_ter_m_corvette_01_a_macro) and SIDE metres (0) to its right.
   -- {tick,'target_named',NAME[,FACTION]}: this
   -- client's player targets the ship of that name and owner (the soft target, as a click on it).
   elseif op=='friendly' then call=function()
@@ -2860,6 +2921,7 @@ function K.script(plan,start,tools)
     if e[6] and e[6]~='ship_ter_m_corvette_01_a_macro' then t.m=e[6] end
     if e[10] then t.h=e[10] end
     if e[12] then t.k=e[12] end
+    if e[13] then t.x=e[13] end
     tools.env.AddUITriggeredEvent('X4LAN_UiReplay','Friendly',t);return 'lua' end
   -- Test only (MD Hostile, canonical by its UI event; enemy AI per player, 25 Nov):
   -- {tick,'hostile',SLOT,NAME[,FACTION[,MACRO[,METRES[,COUNT[,PURPOSE[,WARP[,FLOOR[,ORDER]]]]]]]]}: COUNT (2) armed ships
@@ -2880,6 +2942,99 @@ function K.script(plan,start,tools)
     if e[11] then t.k=e[11] end
     if e[12] and e[12]~='patrol' then t.o=e[12] end
     tools.env.AddUITriggeredEvent('X4LAN_UiReplay','Hostile',t);return 'lua' end
+  -- {tick,'slot_near',SLOT,OTHER[,METRES]}: test fixture (canonical by its UI event; MD SlotNear): slot SLOT's ship
+  -- METRES (5000) to the right of slot OTHER's ship, facing as it does.
+  elseif op=='slot_near' then call=function()
+    tools.env.AddUITriggeredEvent('X4LAN_UiReplay','SlotNear',{s=tools.slot_lua(e[3]),o=tools.slot_lua(e[4]),d=e[5] or 5000});return 'lua' end
+  -- Test only (MD TurretWatch / TurretLook, canonical by its UI event; turrets per player, 25 Nov):
+  -- {tick,'turret_watch',SLOT[,SECONDS]}: count that slot ship's attacks by target and weapon kind (TURRET_WATCH rows);
+  -- {tick,'turret_look',SLOT}: one TURRET_LOOK row of its turrets, modes, pilot and defence entity.
+  elseif op=='turret_watch' or op=='turret_look' then call=function()
+    local t={s=tools.slot_lua(e[3]),k=e[3]}
+    if op=='turret_watch' and e[4] then t.t=e[4] end
+    tools.env.AddUITriggeredEvent('X4LAN_UiReplay',op=='turret_watch' and 'TurretWatch' or 'TurretLook',t);return 'lua' end
+  -- A player's cover and its ship's stance (lockstep_cover_slots.h; 25 Nov):
+  --   {tick,'cover_look',SLOT}: canonical, read only: SLOT's cover as the simulation holds it (its ship's and its player's
+  --     cover owner, the ship's cover ability, the last chosen faction, can=1 when the cooldown is over, the last key's
+  --     notice state);
+  --   {tick,'cover_ui'}: scoped, read only: what this client's docked menu and HUD read (the four readers for its own
+  --     ship, the menus' "player is covered");
+  --   {tick,'cover_button'[,FACTION]}: scoped, as the docked menu's cover button (menu_docked.lua buttonCover: the
+  --     ship's ability faction to put on, "" to take it off, its default the button's own choice); FACTION for the
+  --     dropdown of a ship that may take any cover;
+  --   {tick,'cover_key'} / {tick,'stance_key'}: this client's TOGGLE_COVER / TOGGLE_STANCE key;
+  --   {tick,'stance_set',STANCE}: scoped, the docked menu's stance dropdown;
+  --   {tick,'cover_blow',SLOT[,SCANNED]}: canonical (MD CoverBlow): SLOT's ship is told to lose its cover, as an
+  --     attacker that saw it or a police scan tells it (SCANNED 1: as a scan);
+  --   {tick,'cover_trigger',SLOT,FACTION}: canonical (MD CoverTrigger): SLOT's ship gets FACTION's scripted cover as a
+  --     story or an envoy ship's order gives one (md.Cover's TriggerCover).
+  elseif op=='cover_look' then call=function() return tostring(tools.gate.cover_slots_look and tools.gate.cover_slots_look(e[3])) end
+  -- Test only (scoped, read only): what this client's HUD weapon panel reads (ui/core/lua/crosshair handling.lua's
+  -- updateWeaponPanel): the occupied ship's stance block, the active groups and, per primary (p) and secondary (s) weapon,
+  -- GetWeaponDetails3's active flag, mode, damage, heat and reload: p<i>=<active>/<mode>/<damage>/<heat%>/<reload%>.
+  elseif op=='hud_weapons' then call=function()
+    local ffi,C=tools.ffi,tools.C
+    for _,line in ipairs({'UniverseID GetPlayerOccupiedShipID(void);','bool IsObjectShootingDisabledByStanceOnly(UniverseID objectid);',
+                          'uint32_t GetActivePrimaryWeaponGroup();','uint32_t GetActiveSecondaryWeaponGroup();','size_t GetNumPrimaryWeapons();',
+                          'size_t GetNumSecondaryWeapons();',
+                          'typedef struct { const char* icon; uint32_t damageState; bool active; bool usesAmmo; uint32_t ammo; int32_t currentclip; '..
+                          'int32_t maxclip; uint32_t mode; float reloadPercent; bool isAutoReloading; double clipReloadTime; uint32_t heatState; '..
+                          'float heatPercent; float nextShotHeatPercent; float lockPercent; uint64_t counterMeasureTarget; } WeaponDetails4;',
+                          'WeaponDetails4 GetWeaponDetails3(size_t weaponnum, bool issecondary);'}) do
+     pcall(ffi.cdef,line)
+    end
+    local ship=C.GetPlayerOccupiedShipID()
+    if ship==0 then return 'no_ship' end
+    local out={'ship='..tostring(ship):gsub('ULL$',''),'stance='..tostring(C.IsObjectShootingDisabledByStanceOnly(ship)),
+               'groups='..tonumber(C.GetActivePrimaryWeaponGroup())..'/'..tonumber(C.GetActiveSecondaryWeaponGroup())}
+    for _,secondary in ipairs({false,true}) do
+     local n=tonumber(secondary and C.GetNumSecondaryWeapons() or C.GetNumPrimaryWeapons()) or 0
+     for i=1,math.min(n,8) do
+      local d=C.GetWeaponDetails3(i,secondary)
+      out[#out+1]=string.format('%s%d=%d/%d/%d/%.0f/%.0f',secondary and 's' or 'p',i,d.active and 1 or 0,tonumber(d.mode),tonumber(d.damageState),
+                                tonumber(d.heatPercent),tonumber(d.reloadPercent))
+     end
+    end
+    return table.concat(out,' ')
+   end
+  elseif op=='cover_ui' or op=='cover_button' or op=='stance_set' then call=function()
+    local ffi,C=tools.ffi,tools.C
+    for _,line in ipairs({'UniverseID GetPlayerOccupiedShipID(void);','const char* GetObjectCoverAbilityFaction(UniverseID shipid);',
+                          'bool IsPlayerCoverable(UniverseID controllableid);','bool CanPlayerActivateCoverAbility(void);',
+                          'const char* GetPlayerCoverFaction(void);','void SetObjectCoverFaction(UniverseID objectid, const char* factionid);',
+                          'void SetPlayerLastCoverFaction(const char* factionid);','bool CanShipSwitchStance(UniverseID shipid);',
+                          'const char* GetShipActiveStance(UniverseID shipid);','void SetShipStance(UniverseID shipid, const char* stanceid);'}) do
+     pcall(ffi.cdef,line)
+    end
+    local ship=C.GetPlayerOccupiedShipID()
+    if ship==0 then return 'no_ship' end
+    local ability=ffi.string(C.GetObjectCoverAbilityFaction(ship))
+    local coverable=C.IsPlayerCoverable(ship)
+    local current=ffi.string(C.GetPlayerCoverFaction())
+    if op=='cover_ui' then
+     local covered=type(tools.env.Helper)=='table' and tools.env.Helper.isPlayerCovered and tools.env.Helper.isPlayerCovered()
+     return 'ability='..(ability~='' and ability or '-')..' coverable='..tostring(coverable)..' can='..tostring(C.CanPlayerActivateCoverAbility())..
+      ' cover='..(current~='' and current or '-')..' covered='..tostring(covered)..' stance='..ffi.string(C.GetShipActiveStance(ship))..
+      ' can_stance='..tostring(C.CanShipSwitchStance(ship))
+    end
+    if op=='stance_set' then
+     if not C.CanShipSwitchStance(ship) then return 'stance_not_now' end
+     C.SetShipStance(ship,e[3] or '');return 'stance='..tostring(e[3])
+    end
+    if not C.CanPlayerActivateCoverAbility() then return 'cooldown' end
+    local faction=e[3] or ((current=='') and ability or '')
+    if (coverable or faction==ability or faction=='') then
+     C.SetObjectCoverFaction(ship,faction)
+     if coverable and faction~='' then C.SetPlayerLastCoverFaction(faction) end
+     return 'set='..(faction~='' and faction or 'none')..' ability='..(ability~='' and ability or '-')
+    end
+    return 'refused ability='..(ability~='' and ability or '-') end
+  elseif op=='cover_key' then call=function() return tools.gate.pilot_stock_inject('action',0x179,0) end
+  elseif op=='stance_key' then call=function() return tools.gate.pilot_stock_inject('action',0x17d,0) end
+  elseif op=='cover_blow' then call=function()
+    tools.env.AddUITriggeredEvent('X4LAN_UiReplay','CoverBlow',{ship=tools.slot_lua(e[3]),scanned=e[4]==1});return 'lua' end
+  elseif op=='cover_trigger' then call=function()
+    tools.env.AddUITriggeredEvent('X4LAN_UiReplay','CoverTrigger',{ship=tools.slot_lua(e[3]),faction=tostring(e[4])});return 'lua' end
   -- {tick,'leak_goto',NAME[,OWNER[,METRES]]}: test fixture (canonical by its UI event): this player's ship (its spacesuit)
   -- METRES (4) in front of the claim signal of the ship of that name and owner (ownerless: abandoned), looking at it (MD
   -- LeakGoto). {tick,'dock_named',NAME[,OWNER]}: this player asks to dock at that ship (RequestDockAt, the ship menu's

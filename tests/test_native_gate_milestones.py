@@ -195,12 +195,15 @@ class ContinueBlockTests(unittest.TestCase):
         line, = milestones.continue_lines({'continue': self.block(research=['research_radioreceiver'])})
         self.assertEqual(line, "X4LAN_CONFIG.native_gate_continue = {name='terran_cadet-M1-slot2',slots={[2]={inventory="
                                "{{'software_scannerobjectmk3',1}},blueprints={},research={'research_radioreceiver'}}}}")
+        line, = milestones.continue_lines({'continue': self.block(active=[3, 'plot'])})
+        self.assertIn("research={},active={3,'plot'}}", line)
         self.assertEqual(milestones.continue_lines({'slots': {}}), [])
 
     def test_what_a_host_could_put_into_a_joiners_config_is_refused(self):
         for slot in ({'inventory': [{'ware': "x'}os.exit()--", 'amount': 1}]}, {'inventory': [{'ware': 'a', 'amount': 0}]},
                      {'inventory': [{'ware': 'a', 'amount': 1.5}]}, {'research': ['a b']}, {'blueprints': [1]},
-                     {'inventory': [{'ware': 'a', 'amount': 1}, {'ware': 'a', 'amount': 2}]}):
+                     {'inventory': [{'ware': 'a', 'amount': 1}, {'ware': 'a', 'amount': 2}]}, {'active': [0, 'plot']},
+                     {'active': [1, "x'}--"]}, {'active': [1.5, 'plot']}, {'active': 'plot'}):
             with self.assertRaises(milestones.MilestoneError, msg=slot):
                 milestones.continue_lines({'continue': self.block(**slot)})
         with self.assertRaises(milestones.MilestoneError):

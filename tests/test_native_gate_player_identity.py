@@ -545,7 +545,7 @@ class MdScriptTests(unittest.TestCase):
         self.assertEqual(sorted(defaults.MD_PATCHES), ['aiscripts/build.shiptrader.xml', 'aiscripts/interrupt.disengage.xml',
                                                        'aiscripts/lib.target.selection.xml', 'aiscripts/masstraffic.generic.xml',
                                                        'aiscripts/masstraffic.police.xml', 'aiscripts/masstraffic.watchdog.xml',
-                                                       'aiscripts/move.seekenemies.xml', 'aiscripts/order.fight.protect.ship.xml', 'md/guidance.xml',
+                                                       'aiscripts/move.seekenemies.xml', 'aiscripts/order.fight.protect.ship.xml', 'md/cover.xml', 'md/guidance.xml',
                                                        'md/notifications.xml', 'md/playerreputation.xml', 'md/setup.xml', 'md/tutorial_global.xml'])
         cues = {'md/playerreputation.xml': "/mdscript/cues/cue[@name='TrackPlayerReputation']/cues/cue[@name='Base']/conditions",
                 'md/notifications.xml': "/mdscript/cues/cue[@name='Init']/cues/cue[@name='PlayerDiscountCommission']/conditions"}
@@ -615,7 +615,24 @@ class MdScriptTests(unittest.TestCase):
                           ('replace', '//check_all[event_object_attacked_object]/check_value/@value', None),
                           ('add', '/aiscript/on_abort', 'prepend'),
                           ('replace', "/aiscript/on_abort/do_if[@value='$target.pilot.$escortgroup?']/@value", None),
-                          ('replace', '/aiscript/on_abort/do_if/remove_from_group/@group', None)])
+                          ('replace', '/aiscript/on_abort/do_if/remove_from_group/@group', None),
+                          # who protects whom, for the protected player's own screen (native_gate_escort_present): the list
+                          # on that player's entity, at the order's start and whenever it starts over; off at its finish
+                          ('add', '/aiscript/init', None),
+                          ('add', "/aiscript/attention[@min='visible']/actions/label[@name='start']", 'after'),
+                          ('add', "/aiscript/attention[@min='unknown']/actions/label[@name='start']", 'after'),
+                          ('add', "/aiscript/attention[@min='visible']/actions/label[@name='finish']", 'after'),
+                          ('add', "/aiscript/attention[@min='unknown']/actions/label[@name='finish']", 'after')])
+        noted = [ET.tostring(e, encoding='unicode') for e in escort[10:13]]
+        self.assertEqual(len(set(n.split('>', 1)[1] for n in noted)), 1)   # the same note at the three places
+        note = escort[10]
+        self.assertEqual(note[0].attrib, {'name': '$X4LAN_Escorted', 'exact': '@player.entity.$X4LAN_Pilots.{$target}'})
+        self.assertEqual(note[1].get('value'), '@$X4LAN_Escorted.exists and not @$X4LAN_Escorted.$X4LAN_Escorts.indexof.{this.ship}')
+        self.assertIn({'name': '$X4LAN_Escorted.$X4LAN_Escorts', 'exact': 'this.ship'}, [a.attrib for a in note.iter('append_to_list')])
+        self.assertEqual([r.get('name') for r in note.iter('remove_value')][:1], ['$X4LAN_E.$X4LAN_Escorts.{$X4LAN_E.$X4LAN_Escorts.indexof.{this.ship}}'])   # off every other list
+        for e in escort[13:15]:
+            self.assertEqual([(a.tag, a.get('value')) for a in e], [('do_if', '@$X4LAN_Escorted.$X4LAN_Escorts.indexof.{this.ship}')])
+        self.assertNotIn('set_owner', ET.tostring(escort, encoding='unicode'))   # presentation's data only: no owner, relation or order
         self.assertEqual(escort[0].text, alt[1:-1])
         self.assertEqual(escort[1].text, 'if @$target.pilot then $target.pilot else player.entity.$X4LAN_Pilots.{$target}')
         self.assertEqual(escort[6].text, '$target == player.occupiedship or @player.entity.$X4LAN_Pilots.{$target}')
@@ -654,7 +671,8 @@ class MdScriptTests(unittest.TestCase):
         self.assertNotIn('player.entity.hascontext', text)
         for name, source in defaults.MD_PATCHES.items():
             if name in ('md/tutorial_global.xml', 'md/setup.xml', 'aiscripts/build.shiptrader.xml', 'md/guidance.xml',
-                        'aiscripts/order.fight.protect.ship.xml') or name in COMBAT_AI_PATCHES:   # the last: test_native_gate_player_combat_ai.py
+                        'aiscripts/order.fight.protect.ship.xml', 'md/cover.xml') or name in COMBAT_AI_PATCHES:
+                # the combat AI's: test_native_gate_player_combat_ai.py; md/cover.xml's: test_native_gate_cover_slots.py
                 continue
             diff = ET.fromstring((DEV / source).read_text(encoding='utf-8'))
             self.assertEqual(diff.tag, 'diff')

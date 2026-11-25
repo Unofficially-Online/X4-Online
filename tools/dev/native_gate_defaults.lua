@@ -223,6 +223,15 @@ D.ON={
  -- A slot 2+ ship's travel drive tells its player as X4's own does (its start, stop and disrupt run in the slot's scope):
  -- 25 Nov, player 2's activity read none while its autopilot travelled and it left a superhighway at 2.2 km/s.
  {'native_gate_pilot_travel',true,'native_gate_pilot_slots native_gate_ui_replay','the travel drive of every player tells that player: the travel mode, its notices, its end at a superhighway or a hit'},
+ -- The turrets of a slot 2+ ship in "attack my current target" take that slot's target (X4's turret update asks X4's own
+ -- player's): 25 Nov, player 2's turrets fired at player 1's target in that mode.
+ {'native_gate_turret_assist',true,'native_gate_pilot_slots native_gate_ui_replay','the turrets of every player ship in attack my current target fire at that player target'},
+ -- The HUD weapon panel shows the weapons of the active groups as selected for every player (X4 asks the weapon's shoot
+ -- controller, and the lease's is none of X4's player classes): 25 Nov, player 2's selected weapons and their bars grey.
+ {'native_gate_hud_weapons',true,'native_gate_pilot_fire','the HUD weapon panel of every player shows the weapons of its active groups as selected, in the stock colours'},
+ -- Every player's cover (disguise) and ship stance: the cover and stance keys and the docked menu's cover and stance for
+ -- every slot, client k's menus and HUD read its own player's cover (25 Nov: nobody could put a cover on in a session).
+ {'native_gate_cover_slots',true,'native_gate_pilot_slots native_gate_pilot_present native_gate_ui_replay','every player puts on and takes off a cover (disguise) and switches a ship stance as player 1 does: keys, docked menu, notices and HUD'},
  {'native_gate_pilot_foot',true,'native_gate_pilot_stock native_gate_ui_replay native_gate_ui_guard','slot 1 gets up and walks on every client'},
  {'native_gate_nav_mesh','sync','native_gate_pilot_foot native_gate_world_identities','interior nav helpers built at an agreed join (stop 186): with on foot, the wharf patrol split without it (footlook5 in sync with it)'},
  {'native_gate_pilot_foot_bodies',true,'native_gate_pilot_foot native_gate_pilot_stock_slots','slots 2..N in their seats rooms'},
@@ -251,7 +260,7 @@ D.ON={
  {'native_gate_pilot_present_transit',true,'native_gate_pilot_present','a player 2+ passing a jump gate or an accelerator gets the cockpit gate effect on its own screen, as player 1 does'},
  {'native_gate_pilot_slots_post',true,'native_gate_pilot_stock_slots','a player 2+ own ship answers that player as its pilot while the game runs as that player (the autopilot check)'},
  {'native_gate_pilot_slots_room_attention',true,'native_gate_pilot_stock_slots','a player 2+ room in its own ship (or where it walks) is at the attention the game gives its own player room, so that player ship computer runs its autopilot through every zone change as player 1 does (it ended unheard when the cockpit dipped below visible for one tick: the autopilot stayed on and missed its arrival)'},
- {'native_gate_missions_per_player_ai_frames',true,'native_gate_missions_per_player','the autopilot and other scripts of a player 2+ own ship computer run as that player'},
+ {'native_gate_missions_per_player_ai_frames',true,'native_gate_missions_per_player','the autopilot and other scripts of a player 2+ own ship computer, and the turret and repair scripts of the ship that player flies, run as that player'},
  {'native_gate_notices_per_player',true,'native_gate_missions_per_player','the game notices about a player ship (docking, Successfully docked, the station welcome, the bridge lines) are said and shown for that player on its own screen (player 1 docking was heard on both screens, player 2 docking on none)'},
  {'native_gate_md_media',true,'native_gate_pilot_stock_slots','a mission call on the target monitor starts in the simulation at one tick on every client and shows on its owner client only'},
  {'native_gate_md_fullscreen',true,'native_gate_md_media','a mission full-screen cutscene (a story scene camera shot) shows, with the hidden HUD and its input context, on its owner screen only; the other players keep their own view, HUD and controls'},
@@ -264,6 +273,7 @@ D.ON={
  {'native_gate_anim_listeners',true,'native_gate_pilot_stock_slots native_gate_view_points','an animation event its listeners wait for is posted by the simulation only: a client that draws a station no longer rebuilds its walk mesh alone'},
  {'native_gate_undock_screen',true,'native_gate_pilot_stock_slots','an undock closes the dock menu and brings the HUD top menu back on the undocking player screen only (one player undock closed the other player dock menu; player 2 got no top menu after its own)'},
  {'native_gate_faction_present',true,'native_gate_pilot_stock_slots native_gate_pilot_present','factions mode: a player with a faction of its own sees that faction as the player faction in its own menus and HUD (its own stations and ships under Property Owned, not those of player 1)'},
+ {'native_gate_escort_present',true,'native_gate_player_groups native_gate_ui_replay','a ship that protects a player own ship (a story wingman: the Terran cadet wingmate) shows in the player colour, as an ally, on that player screen only: HUD target, target monitor, map icon and list, radar (presentation only; its owner and relations stay the game ones)'},
  {'native_gate_swarm_seed',true,'native_gate_pilot_stock_slots','swarm missiles keep the same formation on every client (X4 seeds the offsets of a swarm with a memory address, so each client flew its missiles elsewhere)'},
  {'native_gate_shared_listeners',true,'native_gate_pilot_stock_slots','a script no player owns (world plots, story activators, statistics) hears the events of every player, each inside that player scope'},
  {'native_gate_computer_forward',true,'native_gate_shared_listeners native_gate_notices_per_player','a player 2+ ship computer says Autopilot engaged and disengaged to that player (its signals reached no script)'},
@@ -596,6 +606,7 @@ D.EXCLUDED={
  {'native_gate_player_settings_spawn','player settings spawn check (test)'},
  {'native_gate_hit_claims_script','Lua test carrier of hit claims'},
  {'native_gate_pilot_fire_slots','scripted fire schedule (test)'},
+ {'native_gate_pilot_fire_stock','slots whose guns keep X4 own controllers: a stock reference in a --solo run (test)'},
  {'native_gate_camera_perturb','parity-leak harness'},
  {'native_gate_camera_offset','two-player camera experiment'},
  {'native_gate_camera_anchor','chase camera: X4s own camera presents the slot instead (pilot_present)'},

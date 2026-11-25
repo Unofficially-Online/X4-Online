@@ -23,9 +23,9 @@ def saved_row(client, tick, body):
             f'bytes={len(body)} sha256={hashlib.sha256(body).hexdigest()} ms=2600 at={tick + 1}')
 
 
-def slot_row(tick, slot, player, ship, inventory='-', walking=0):
+def slot_row(tick, slot, player, ship, inventory='-', walking=0, active=None):
     return (f'[X4LAN] NATIVE_GATE SAVE_SLOT name={NAME} tick={tick} slot={slot} player={player} ship={ship} walking={walking} '
-            f'inventory={inventory} research=- at={tick - 25}')
+            f'inventory={inventory} research=-' + (f' active={active}' if active else '') + f' at={tick - 25}')
 
 
 class CollectorTests(unittest.TestCase):
@@ -61,7 +61,8 @@ class CollectorTests(unittest.TestCase):
             self.assertTrue(self.keeper.line(client, '[X4LAN] NATIVE_GATE MILESTONE reached name=terran_cadet-M1-slot2 age=10 due=481 save=541 at=301',
                                              self.profiles[client]))
             self.assertTrue(self.keeper.line(client, slot_row(541, 1, 501, 1001), self.profiles[client]))
-            self.assertTrue(self.keeper.line(client, slot_row(541, 2, 502, 1002, 'software_scannerobjectmk3:1,weapon_x:3'), self.profiles[client]))
+            self.assertTrue(self.keeper.line(client, slot_row(541, 2, 502, 1002, 'software_scannerobjectmk3:1,weapon_x:3', active='3:plot'),
+                                             self.profiles[client]))
             (self.profiles[client] / 'mpsave/s541.xml.gz').write_bytes(bodies[client])
             self.assertTrue(self.keeper.line(client, saved_row(client, 541, bodies[client]), self.profiles[client]))
             self.keeper.poll()
@@ -76,8 +77,10 @@ class CollectorTests(unittest.TestCase):
         self.assertEqual(sorted(data['clients']), ['1', '2'])
         self.assertTrue(all(c['verified'] for c in data['clients'].values()))
         self.assertEqual(data['slots']['2'], {'player': f'{502:016x}', 'ship': f'{1002:016x}', 'walking': False, 'research': [],
-                                              'inventory': [{'ware': 'software_scannerobjectmk3', 'amount': 1}, {'ware': 'weapon_x', 'amount': 3}]})
+                                              'inventory': [{'ware': 'software_scannerobjectmk3', 'amount': 1}, {'ware': 'weapon_x', 'amount': 3}],
+                                              'active': [3, 'plot']})   # its active mission: the 3rd of the list, a plot
         self.assertIsNone(data['slots']['1']['inventory'])   # slot 1: X4's own player, kept in the save itself
+        self.assertIsNone(data['slots']['1']['active'])      # ...and its active mission (the manager's own)
         self.assertEqual(data['session'], self.context['session'])
         self.assertEqual(data['reached']['due'], 481)
         self.assertIn('cadet part 1', data['title'])
@@ -195,7 +198,7 @@ class ContinueTests(unittest.TestCase):
                 'slots': slots if slots is not None else
                 {'1': {'player': '0000000000069539', 'ship': '0000000000069534', 'walking': False, 'inventory': None, 'research': []},
                  '2': {'player': '0000000000160455', 'ship': '000000000003ce11', 'walking': False,
-                       'inventory': [{'ware': 'weapon_x', 'amount': 4}], 'research': []}},
+                       'inventory': [{'ware': 'weapon_x', 'amount': 4}], 'research': [], 'active': [2, 'plot']}},
                 'session': json.loads(json.dumps(FIRST)), 'recipe': dict(RECIPE)}
         data.update(change)
         (self.root / f'milestones/{NAME}.json').write_text(json.dumps(data))
@@ -233,7 +236,8 @@ class ContinueTests(unittest.TestCase):
         self.assertEqual(session['slots']['2']['plots'], FIRST['slots']['2']['plots'])   # the story copies stay the slot's
         block = session['continue']
         self.assertEqual((block['format'], block['name'], block['tick']), ('X4LAN_CONTINUE_1', NAME, 541))
-        self.assertEqual(block['slots'], {'2': {'inventory': [{'ware': 'weapon_x', 'amount': 4}]}})   # the probe's row wins
+        self.assertEqual(block['slots'], {'2': {'inventory': [{'ware': 'weapon_x', 'amount': 4}],   # the probe's row wins
+                                                'active': [2, 'plot']}})                           # its active mission again
         self.assertEqual(session['snapshot']['sha256'], hashlib.sha256((self.root / 'new/session-save.xml.gz').read_bytes()).hexdigest())
         cmd = calls[0]
         self.assertEqual(cmd[cmd.index('--session') + 1], str(self.root / 'new/session.json'))

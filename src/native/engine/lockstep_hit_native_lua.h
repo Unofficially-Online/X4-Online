@@ -78,6 +78,13 @@ static int lua_pilot_fire(lua_State *L) {
     if(ok) pfire_script_mask=(unsigned)slots;
     p_lua_pushnumber(L,ok);return 1;
 }
+/* gate.pilot_fire_stock(mask): test, the slots whose guns are never leased (pfire_stock_mask). */
+static int lua_pilot_fire_stock(lua_State *L) {
+    const double mask=p_lua_tonumber(L,1);
+    const int ok=accept_ui() && isfinite(mask) && mask>=0 && mask<(1u<<PILOT_SLOTS) && floor(mask)==mask;
+    if(ok) pfire_stock_mask=(unsigned)mask;
+    p_lua_pushnumber(L,ok);return 1;
+}
 static int lua_pilot_fire_frame(lua_State *L) {
     char out[96];int n=accept_ui() && pfire_armed && stats.active?pfire_frame_text(out,sizeof(out)):0;
     if(n) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);return 1;

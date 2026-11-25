@@ -17,9 +17,17 @@
      player's entity at the same ticks on every client: $X4LAN_Pilots, a table from each player's controlled object to
      that player's entity; X4 keeps no script variables on a ship, and AI scripts read no MD globals), and the ship that
      player controls is also "the player's ship". Player 1's own ship has its pilot, so the stock lines decide as
-     before; without the gate nothing sets the table and every line is the stock one. The colour of the wingmate is
-     not changed: the HUD colours by owner only (X4 9.00 GetRelationStatus4: own property = the true owner is the
-     player faction), and the cadet's wingmate is the Terran faction's in the stock game too.
+     before; without the gate nothing sets the table and every line is the stock one. X4 itself colours
+     the wingmate by its owner only (GetRelationStatus4: own property = the true owner is the player faction), and the
+     cadet's wingmate is the Terran faction's ship: its green on its player's screen is presentation (below).
+     The order also notes whom it protects, for that player's own screen (native_gate_escort_present, lockstep_escort_
+     present.h: the user's requirement of 25 Nov, the story wingman green, as an ally, on its player's HUD, target monitor,
+     map and radar): when it starts, and whenever it starts over, the ship goes on the list $X4LAN_Escorts of the entity
+     of the player who controls the protected ship (and off every other player's list); when the order is done (its
+     finish: the protected ship gone or its time up) it comes off. An interruption (an attack it answers, its orders
+     cancelled by the story) leaves it on: the probe of that player's client draws a listed ship that still exists in
+     the player's colour, and only there. A list on the player's entity, set at the same ticks on every client, and
+     nothing of the ship's owner, relations or orders.
      Our own clauses only; the stock script is patched in memory by X4's own diff loading, never on disk. -->
 <diff>
  <replace sel="//do_if[@value='@$target.pilot']/@value">@$target.pilot or @player.entity.$X4LAN_Pilots.{$target}</replace>
@@ -34,4 +42,68 @@
  </add>
  <replace sel="/aiscript/on_abort/do_if[@value='$target.pilot.$escortgroup?']/@value">$X4LAN_LeaderPilot.$escortgroup?</replace>
  <replace sel="/aiscript/on_abort/do_if/remove_from_group/@group">$X4LAN_LeaderPilot.$escortgroup</replace>
+ <add sel="/aiscript/init">
+  <set_value name="$X4LAN_Escorted" exact="@player.entity.$X4LAN_Pilots.{$target}"/>
+  <do_if value="@$X4LAN_Escorted.exists and not @$X4LAN_Escorted.$X4LAN_Escorts.indexof.{this.ship}">
+   <set_value name="$X4LAN_Keys" exact="player.entity.$X4LAN_Pilots.keys.list"/>
+   <do_all exact="$X4LAN_Keys.count" counter="$X4LAN_I">
+    <set_value name="$X4LAN_E" exact="player.entity.$X4LAN_Pilots.{$X4LAN_Keys.{$X4LAN_I}}"/>
+    <do_if value="@$X4LAN_E.$X4LAN_Escorts.indexof.{this.ship}">
+     <remove_value name="$X4LAN_E.$X4LAN_Escorts.{$X4LAN_E.$X4LAN_Escorts.indexof.{this.ship}}"/>
+    </do_if>
+   </do_all>
+   <do_if value="not $X4LAN_Escorted.$X4LAN_Escorts?">
+    <set_value name="$X4LAN_Escorted.$X4LAN_Escorts" exact="[]"/>
+   </do_if>
+   <append_to_list name="$X4LAN_Escorted.$X4LAN_Escorts" exact="this.ship"/>
+   <remove_value name="$X4LAN_Keys"/>
+   <remove_value name="$X4LAN_E"/>
+  </do_if>
+ </add>
+ <add sel="/aiscript/attention[@min='visible']/actions/label[@name='start']" pos="after">
+  <set_value name="$X4LAN_Escorted" exact="@player.entity.$X4LAN_Pilots.{$target}"/>
+  <do_if value="@$X4LAN_Escorted.exists and not @$X4LAN_Escorted.$X4LAN_Escorts.indexof.{this.ship}">
+   <set_value name="$X4LAN_Keys" exact="player.entity.$X4LAN_Pilots.keys.list"/>
+   <do_all exact="$X4LAN_Keys.count" counter="$X4LAN_I">
+    <set_value name="$X4LAN_E" exact="player.entity.$X4LAN_Pilots.{$X4LAN_Keys.{$X4LAN_I}}"/>
+    <do_if value="@$X4LAN_E.$X4LAN_Escorts.indexof.{this.ship}">
+     <remove_value name="$X4LAN_E.$X4LAN_Escorts.{$X4LAN_E.$X4LAN_Escorts.indexof.{this.ship}}"/>
+    </do_if>
+   </do_all>
+   <do_if value="not $X4LAN_Escorted.$X4LAN_Escorts?">
+    <set_value name="$X4LAN_Escorted.$X4LAN_Escorts" exact="[]"/>
+   </do_if>
+   <append_to_list name="$X4LAN_Escorted.$X4LAN_Escorts" exact="this.ship"/>
+   <remove_value name="$X4LAN_Keys"/>
+   <remove_value name="$X4LAN_E"/>
+  </do_if>
+ </add>
+ <add sel="/aiscript/attention[@min='unknown']/actions/label[@name='start']" pos="after">
+  <set_value name="$X4LAN_Escorted" exact="@player.entity.$X4LAN_Pilots.{$target}"/>
+  <do_if value="@$X4LAN_Escorted.exists and not @$X4LAN_Escorted.$X4LAN_Escorts.indexof.{this.ship}">
+   <set_value name="$X4LAN_Keys" exact="player.entity.$X4LAN_Pilots.keys.list"/>
+   <do_all exact="$X4LAN_Keys.count" counter="$X4LAN_I">
+    <set_value name="$X4LAN_E" exact="player.entity.$X4LAN_Pilots.{$X4LAN_Keys.{$X4LAN_I}}"/>
+    <do_if value="@$X4LAN_E.$X4LAN_Escorts.indexof.{this.ship}">
+     <remove_value name="$X4LAN_E.$X4LAN_Escorts.{$X4LAN_E.$X4LAN_Escorts.indexof.{this.ship}}"/>
+    </do_if>
+   </do_all>
+   <do_if value="not $X4LAN_Escorted.$X4LAN_Escorts?">
+    <set_value name="$X4LAN_Escorted.$X4LAN_Escorts" exact="[]"/>
+   </do_if>
+   <append_to_list name="$X4LAN_Escorted.$X4LAN_Escorts" exact="this.ship"/>
+   <remove_value name="$X4LAN_Keys"/>
+   <remove_value name="$X4LAN_E"/>
+  </do_if>
+ </add>
+ <add sel="/aiscript/attention[@min='visible']/actions/label[@name='finish']" pos="after">
+  <do_if value="@$X4LAN_Escorted.$X4LAN_Escorts.indexof.{this.ship}">
+   <remove_value name="$X4LAN_Escorted.$X4LAN_Escorts.{$X4LAN_Escorted.$X4LAN_Escorts.indexof.{this.ship}}"/>
+  </do_if>
+ </add>
+ <add sel="/aiscript/attention[@min='unknown']/actions/label[@name='finish']" pos="after">
+  <do_if value="@$X4LAN_Escorted.$X4LAN_Escorts.indexof.{this.ship}">
+   <remove_value name="$X4LAN_Escorted.$X4LAN_Escorts.{$X4LAN_Escorted.$X4LAN_Escorts.indexof.{this.ship}}"/>
+  </do_if>
+ </add>
 </diff>

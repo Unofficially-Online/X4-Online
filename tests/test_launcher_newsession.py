@@ -125,8 +125,8 @@ class OwnStartTests(unittest.TestCase):
             fake_game(Path(d) / 'game')
             cat = newsession.catalog(Path(d) / 'game', Path(d) / 'cache', log=lambda *_: None)
             starts, omit = newsession.own_starts(self.options(d, starts={2: 'beta_start'}, omit={3: 'reputation'}, open='4'), cat)
-            self.assertEqual(starts, {2: 'beta_start', 3: 'war_start'})   # open slot 4: its joiner picks
-            self.assertEqual(omit, {3: 'reputation,world'})
+            self.assertEqual(starts, {2: 'beta_start', 3: 'war_start', 4: 'war_start'})   # open slot 4 too
+            self.assertEqual(omit, {3: 'reputation,world', 4: 'world'})
             self.assertEqual(newsession.own_starts(self.options(d, fixture_ships=True), cat), ({}, {}))
             lines = []
             gamestarts, _ = newsession.tools()

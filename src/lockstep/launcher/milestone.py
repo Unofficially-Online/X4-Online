@@ -418,7 +418,7 @@ def slot_state(k, sidecar, removed, mode, slots=()):
     ship = row.get('ship') or saved.get('ship')
     inventory = row.get('inventory') if row.get('inventory') is not None else saved.get('inventory') or []
     state = {'inventory': sorted(inventory, key=lambda i: i['ware']), 'walking': bool(row.get('walking')),
-             'player_saved': bool(saved)}
+             'player_saved': bool(saved), 'active': row.get('active')}
     if mode == 'factions':   # coop: the one shared library is X4's player's, kept in the save
         state['research'] = saved.get('research') or [w for w in row.get('research') or []]
         state['blueprints'] = saved.get('blueprints') or []
@@ -451,7 +451,8 @@ def continue_session(sidecar, first, save, header, removed, components):
              'story': sidecar.get('story'), 'milestone': sidecar.get('milestone'), 'slot': sidecar.get('slot'),
              'title': sidecar.get('title'), 'tick': sidecar['tick'],
              'from': {'file': Path(sidecar.get('file') or '').name, 'sha256': sidecar['sha256']},
-             'slots': {k: {part: v[part] for part in ('inventory', 'blueprints', 'research') if part in v} for k, v in slots_state.items()}}
+             'slots': {k: {part: v[part] for part in ('inventory', 'blueprints', 'research', 'active') if v.get(part) is not None}
+                       for k, v in slots_state.items()}}
     milestones.check_continue(block)
     out.update({'snapshot': {'path': str(Path(save).resolve()), 'sha256': sha256(save), 'bytes': Path(save).stat().st_size},
                 'seed': header.get('seed'), 'build': header.get('build'), 'player_ship': header['player']['ship'],

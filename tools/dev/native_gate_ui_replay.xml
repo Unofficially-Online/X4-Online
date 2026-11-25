@@ -151,7 +151,7 @@
     <set_value name="$faction" exact="faction.{if event.param3.$f? then event.param3.$f else 'terran'}"/>
     <do_if value="@$near.isoperational">
      <transform_position name="$At" refposition="$near.position" refrotation="$near.rotation">
-      <position x="0m" y="0m" z="event.param3.$d * 1m"/>
+      <position x="(if event.param3.$x? then event.param3.$x else 0) * 1m" y="0m" z="event.param3.$d * 1m"/>
      </transform_position>
      <do_if value="event.param3.$p">
       <create_ship name="$friend" macro="macro.{if event.param3.$m? then event.param3.$m else 'ship_ter_m_corvette_01_a_macro'}" zone="$near.zone">
@@ -358,6 +358,95 @@
     </cue>
    </cues>
   </cue>
+  <!-- Test only (script ops turret_watch and turret_look; turrets per player, 25 Nov). TurretWatch: for SECONDS (600)
+       every attack slot SLOT's ship makes (X4's event_object_attacked_object on the attacker: the target and the weapon)
+       is counted by target and by weapon kind (turret, or a gun), and every two seconds a TURRET_WATCH row gives the
+       counts when they changed (`TA/turret=12`: twelve hits on the ship called TA by the slot ship's turrets).
+       TurretLook: a TURRET_LOOK row of that ship's turrets (count, each one's mode), its pilot and its defence entity
+       (class, command, action and the action's object), and what `player` names in the frame the row is written in
+       (its ship, its target). -->
+  <cue name="TurretWatch" instantiate="true" namespace="this">
+   <conditions><event_ui_triggered screen="'X4LAN_UiReplay'" control="'TurretWatch'"/></conditions>
+   <actions>
+    <set_value name="$ship" exact="event.param3.$s"/>
+    <set_value name="$slot" exact="event.param3.$k"/>
+    <set_value name="$until" exact="player.age + (if event.param3.$t? then event.param3.$t else 600) * 1s"/>
+    <set_value name="$keys" exact="[]"/>
+    <set_value name="$values" exact="[]"/>
+    <set_value name="$last" exact="''"/>
+    <set_value name="$n" exact="0"/>
+    <debug_text text="'[X4LAN] TURRET_WATCH_SETUP slot=%s ship=%s turrets=%s time=%s'.[$slot, @$ship.idcode, @$ship.turrets.operational.count, player.age]"/>
+   </actions>
+   <cues>
+    <cue name="TurretWatchHit" instantiate="true">
+     <conditions>
+      <event_object_attacked_object object="$ship"/>
+      <check_value value="player.age lt $until"/>
+     </conditions>
+     <actions>
+      <set_value name="$weapon" exact="@event.param3.{2}"/>
+      <set_value name="$key" exact="(if @event.param.knownname then event.param.knownname else 'unnamed') + '/' + (if @$weapon.isclass.turret then 'turret' else 'gun')"/>
+      <set_value name="$at" exact="$keys.indexof.{$key}"/>
+      <do_if value="$at">
+       <set_value name="$values.{$at}" exact="$values.{$at} + 1"/>
+      </do_if>
+      <do_else>
+       <append_to_list name="$keys" exact="$key"/>
+       <append_to_list name="$values" exact="1"/>
+      </do_else>
+      <set_value name="$n" operation="add"/>
+     </actions>
+    </cue>
+    <cue name="TurretWatchRow" instantiate="true" checkinterval="2s">
+     <conditions><check_value value="player.age lt $until + 2s"/></conditions>
+     <actions>
+      <set_value name="$line" exact="''"/>
+      <do_all exact="$keys.count" counter="$i">
+       <set_value name="$line" exact="$line + ' ' + $keys.{$i} + '=' + $values.{$i}"/>
+      </do_all>
+      <do_if value="$line != $last">
+       <set_value name="$last" exact="$line"/>
+       <debug_text text="'[X4LAN] TURRET_WATCH slot=%s ship=%s time=%s attacks=%s%s'.[$slot, @$ship.idcode, player.age, $n, $line]"/>
+      </do_if>
+     </actions>
+    </cue>
+   </cues>
+  </cue>
+  <!-- Test only (script op slot_near; turrets per player, 25 Nov): slot SLOT's ship is put METRES to the right of slot
+       OTHER's ship, in its zone, facing as it does, so two players meet the same test in the same space.
+       Row SLOT_NEAR. -->
+  <cue name="SlotNear" instantiate="true" namespace="this">
+   <conditions><event_ui_triggered screen="'X4LAN_UiReplay'" control="'SlotNear'"/></conditions>
+   <actions>
+    <set_value name="$ship" exact="event.param3.$s"/>
+    <set_value name="$other" exact="event.param3.$o"/>
+    <do_if value="@$ship.isoperational and @$other.isoperational and $ship != $other">
+     <transform_position name="$At" refposition="$other.position" refrotation="$other.rotation">
+      <position x="event.param3.$d * 1m" y="0m" z="0m"/>
+     </transform_position>
+     <warp object="$ship" zone="$other.zone">
+      <position value="$At"/>
+      <rotation value="$other.rotation"/>
+     </warp>
+     <debug_text text="'[X4LAN] SLOT_NEAR ship=%s other=%s zone=%s metres=%s time=%s'.[$ship.idcode, $other.idcode, $other.zone.macro.id, event.param3.$d, player.age]"/>
+    </do_if>
+    <do_else>
+     <debug_text text="'[X4LAN] SLOT_NEAR_REFUSED time=%s'.[player.age]"/>
+    </do_else>
+   </actions>
+  </cue>
+  <cue name="TurretLook" instantiate="true" namespace="this">
+   <conditions><event_ui_triggered screen="'X4LAN_UiReplay'" control="'TurretLook'"/></conditions>
+   <actions>
+    <set_value name="$ship" exact="event.param3.$s"/>
+    <set_value name="$modes" exact="''"/>
+    <do_for_each name="$turret" in="@$ship.turrets.operational.list">
+     <set_value name="$modes" exact="$modes + (if $modes == '' then '' else ',') + @$turret.mode"/>
+    </do_for_each>
+    <set_value name="$defence" exact="@$ship.defencenpc"/>
+    <debug_text text="'[X4LAN] TURRET_LOOK slot=%s ship=%s turrets=%s modes=%s pilot=%s defence=%s defence_computer=%s command=%s action=%s action_object=%s player_ship=%s player_target=%s time=%s'.[event.param3.$k, @$ship.idcode, @$ship.turrets.operational.count, $modes, @$ship.pilot.knownname, @$defence.knownname, @$defence.isclass.computer, @$defence.command.value, @$defence.commandaction.value, @$defence.commandaction.param.knownname, @player.occupiedship.idcode, @player.target.knownname, player.age]"/>
+   </actions>
+  </cue>
   <!-- Test only (script op hold_stock, in every client's plan at the same tick): wares into a slot ship's hold, so a
        scripted run has cargo to drop. has= is what the ship then holds of it. -->
   <cue name="Hold" instantiate="true">
@@ -376,6 +465,37 @@
   </cue>
   <!-- Test only (script op hull_set, in every client's plan at the same tick): a ship's hull at a percentage, so a
        scripted run has a damaged ship to repair. -->
+  <!-- Test only (script op cover_blow, in every client's plan at the same tick): a slot's ship is told to lose its cover, as
+       X4's AI scripts tell it (an attacker that saw it put on, a police scan: param2 true), heard by md/cover.xml. -->
+  <cue name="CoverBlow" instantiate="true">
+   <conditions><event_ui_triggered screen="'X4LAN_UiReplay'" control="'CoverBlow'"/></conditions>
+   <actions>
+    <set_value name="$ship" exact="event.param3.$ship"/>
+    <do_if value="@$ship.isoperational">
+     <debug_text text="'[X4LAN] COVER_BLOW ship=%s cover=%s scanned=%s time=%s'.[$ship.idcode, @$ship.coverowner.id, event.param3.$scanned, player.age]"/>
+     <signal_objects object="$ship" param="'LoseCover'" param2="event.param3.$scanned"/>
+    </do_if>
+    <do_else>
+     <debug_text text="'[X4LAN] COVER_BLOW_REFUSED time=%s'.[player.age]"/>
+    </do_else>
+   </actions>
+  </cue>
+  <!-- Test only (script op cover_trigger, in every client's plan at the same tick): a slot's ship gets a faction's scripted
+       cover, as a story or an envoy ship's VisitStations order asks md/cover.xml for one. -->
+  <cue name="CoverTrigger" instantiate="true">
+   <conditions><event_ui_triggered screen="'X4LAN_UiReplay'" control="'CoverTrigger'"/></conditions>
+   <actions>
+    <set_value name="$ship" exact="event.param3.$ship"/>
+    <set_value name="$faction" exact="faction.{event.param3.$faction}"/>
+    <do_if value="@$ship.isoperational and $faction">
+     <debug_text text="'[X4LAN] COVER_TRIGGER ship=%s faction=%s time=%s'.[$ship.idcode, $faction.id, player.age]"/>
+     <signal_objects object="player.galaxy" param="'Cover'" param2="[$ship, $faction]"/>
+    </do_if>
+    <do_else>
+     <debug_text text="'[X4LAN] COVER_TRIGGER_REFUSED faction=%s time=%s'.[@event.param3.$faction, player.age]"/>
+    </do_else>
+   </actions>
+  </cue>
   <cue name="Hull" instantiate="true">
    <conditions><event_ui_triggered screen="'X4LAN_UiReplay'" control="'Hull'"/></conditions>
    <actions>

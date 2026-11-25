@@ -1,0 +1,190 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- md/cover.xml's cover ability manager for every player's ship (native_gate_cover_slots, a session default; this patch
+     ships with md/setup.xml's, tools/dev/native_gate_player_groups.xml).
+
+     X4's manager (the cue CoverAbilityManager, begun with the game) blows a disguise the player wears: when the ship the
+     player flies is attacked, attacks or is told to lose its cover (an attacker that saw the cover change, a police scan,
+     an inspection), one second later it takes the cover off that ship and off the player, says "Cover exposed", makes
+     the attacked faction hostile to the ship, and starts the player's cooldown (30 s, again with every attack while
+     exposed). When the cooldown is over the computer says "Cover available". It runs in no player's scope: "the
+     player" there is player 1, so for a player 2..N's ship (the group of the players' ships holds every player's,
+     native_gate_player_groups) it took player 1's cover off, put the cooldown on player 1, spoke on player 1's PC and never
+     ended player 2's cooldown.
+
+     Here the manager's lines that name the player name the player whose ship it is ($X4LAN_Pilots on every player's
+     entity, kept by the player groups at the same ticks on every client); for player 1's ship and without the gate that
+     is player.entity and every line is the stock one. A player 2..N keeps its own last exposed ship on its entity
+     ($X4LAN_LastExposedObject), as the manager keeps player 1's in its own variable. The voice lines of a player 2..N
+     are said by that player's computer in that player's scope: by that player's own script X4LAN_CoverP<k> (generated
+     per session, tools/dev/native_gate_defaults.py cover_slot_md; slot k's by its name, lockstep_mission_owners.h), so
+     they are heard on that player's PC only. The cooldown's end for
+     players 2..N is the cue X4LAN_CoverCooldownSlots, which checks only while one of them runs (player 1's stays the
+     manager's own).
+     The scripted cover (md.Cover's TriggerCover and CoverInstance: what stories and the envoy ships' VisitStations order
+     put on a ship, the diplomacy intro's lockbox ship among them) puts the cover on the player aboard a player-owned
+     covered ship and takes it off again; its lines named player 1 only, so a player 2..N aboard kept no cover when it
+     came and kept it after the ship lost it, and the "Cover activated" and "Cover deactivated" lines of a player 2..N
+     entering or leaving were said on player 1's PC. Here every other player aboard (global.$X4LAN_Players, kept by the
+     player groups) gets what the stock lines give player 1, its lines said by its own script as above.
+     Our own lines only; the stock script is patched in memory by X4's own diff loading, never on disk. -->
+<diff>
+ <!-- whose ship: the player who controls it (player 1's without the gate) -->
+ <add sel="//cue[@name='CoverAbilityManager_LoseCover']/actions" pos="prepend">
+  <set_value name="$X4LAN_P" exact="if @player.entity.$X4LAN_Pilots.{event.object}.exists then player.entity.$X4LAN_Pilots.{event.object} else player.entity"/>
+ </add>
+ <replace sel="//cue[@name='CoverAbilityManager_LoseCover']/conditions/check_value/@value">event.object.coverowner or (event.object == $LastExposedObject) or (event.object == @player.entity.$X4LAN_Pilots.{event.object}.$X4LAN_LastExposedObject)</replace>
+ <replace sel="//cue[@name='CoverAbilityManager_LoseCover']/actions/set_value[@name='$extendcooldown']/@exact">not $X4LAN_P.$x4ep1_player_cover_ability.{event.object}? or @$X4LAN_P.$x4ep1_player_cover_ability.{event.object}.$hascooldown</replace>
+ <replace sel="//cue[@name='CoverAbilityManager_LoseCover']/actions/do_if/set_cover_owner[@object='player.entity']/@object">$X4LAN_P</replace>
+ <add sel="//cue[@name='CoverAbilityManager_LoseCover']/actions/do_if/speak[@line='1506']" type="@chance">if $X4LAN_P == player.entity then 100 else 0</add>
+ <add sel="//cue[@name='CoverAbilityManager_LoseCover']/actions/do_if/speak[@line='1506']" pos="after">
+  <do_if value="$X4LAN_P != player.entity">
+   <set_value name="$X4LAN_Say" exact="[1506, null]"/>
+   <include_actions ref="X4LAN_CoverSay"/>
+   <remove_value name="$X4LAN_Say"/>
+  </do_if>
+ </add>
+ <add sel="//cue[@name='CoverAbilityManager_LoseCover']/actions/do_if/set_value[@name='$LastExposedObject']" type="@chance">if $X4LAN_P == player.entity then 100 else 0</add>
+ <add sel="//cue[@name='CoverAbilityManager_LoseCover']/actions/do_if/set_value[@name='$LastExposedObject']" pos="after">
+  <set_value name="$X4LAN_P.$X4LAN_LastExposedObject" exact="event.object" chance="if $X4LAN_P == player.entity then 0 else 100"/>
+ </add>
+ <replace sel="//cue[@name='CoverAbilityManager_LoseCover']/actions/do_if/do_if/set_value[@name='player.entity.$x4ep1_player_cover_ability_cooldown']/@name">$X4LAN_P.$x4ep1_player_cover_ability_cooldown</replace>
+ <replace sel="//cue[@name='CoverAbilityManager_LoseCover']/actions/do_elseif/@value">(event.object == $LastExposedObject) or (event.object == @$X4LAN_P.$X4LAN_LastExposedObject)</replace>
+ <replace sel="//cue[@name='CoverAbilityManager_LoseCover']/actions/do_elseif/do_if/set_value[@name='player.entity.$x4ep1_player_cover_ability_cooldown']/@name">$X4LAN_P.$x4ep1_player_cover_ability_cooldown</replace>
+ <add sel="//cue[@name='CoverAbilityManager_LoseCover']/actions/do_if">
+  <debug_text text="'[X4LAN] COVER_EXPOSED player=%s first=%s ship=%s event=%s cooldown=%s time=%s'.[$X4LAN_P, $X4LAN_P == player.entity, event.object.idcode, event.name, @$X4LAN_P.$x4ep1_player_cover_ability_cooldown, player.age]"/>
+ </add>
+ <!-- a player 2..N's cooldown, set or extended (after the cooldown's line, the last of its do_if): the cue
+      X4LAN_CoverCooldownSlots ends it -->
+ <add sel="//cue[@name='CoverAbilityManager_LoseCover']/actions/do_if/do_if[@value='$extendcooldown']">
+  <do_if value="$X4LAN_P != player.entity">
+   <include_actions ref="X4LAN_CoverDue"/>
+  </do_if>
+ </add>
+ <add sel="//cue[@name='CoverAbilityManager_LoseCover']/actions/do_elseif/do_if[@value='$extendcooldown']">
+  <do_if value="$X4LAN_P != player.entity">
+   <include_actions ref="X4LAN_CoverDue"/>
+  </do_if>
+ </add>
+ <add sel="//cue[@name='CoverAbilityManager_LoseCover']/actions/remove_value[@name='$extendcooldown']" pos="after">
+  <remove_value name="$X4LAN_P"/>
+ </add>
+ <!-- The scripted cover: every other player aboard as player 1 aboard (the stock block just before each addition). -->
+ <add sel="//cue[@name='SetCover']/actions/do_if/do_if[@value='$Object.isplayerowned and player.entity.object == $Object']" pos="after">
+  <do_if value="$Object.isplayerowned and global.$X4LAN_Players?">
+   <do_for_each name="$X4LAN_P" in="global.$X4LAN_Players">
+    <do_if value="$X4LAN_P != player.entity and @$X4LAN_P.object == $Object">
+     <set_value name="$X4LAN_Say" exact="[1501, $Faction]"/>
+     <include_actions ref="X4LAN_CoverSay"/>
+     <remove_value name="$X4LAN_Say"/>
+     <set_cover_owner object="$X4LAN_P" faction="$Faction"/>
+     <debug_text text="'[X4LAN] COVER_SCRIPTED on player=%s ship=%s faction=%s time=%s'.[$X4LAN_P, $Object.idcode, $Faction, player.age]"/>
+    </do_if>
+   </do_for_each>
+   <remove_value name="$X4LAN_P"/>
+  </do_if>
+ </add>
+ <add sel="//cue[@name='LoseCover']/actions/do_else/do_if[@value='player.entity.coverowner']" pos="after">
+  <do_if value="global.$X4LAN_Players? and not (event.param == 'LoseCover' and event.param3)">
+   <do_for_each name="$X4LAN_P" in="global.$X4LAN_Players">
+    <do_if value="$X4LAN_P != player.entity and $X4LAN_P.coverowner and @$X4LAN_P.object == $Object">
+     <do_if value="$Object.isplayerowned or (event.name == 'event_object_changed_true_owner' and event.param2 == faction.player)">
+      <set_value name="$X4LAN_Say" exact="[1505, null]"/>
+      <include_actions ref="X4LAN_CoverSay"/>
+      <remove_value name="$X4LAN_Say"/>
+      <set_cover_owner object="$X4LAN_P"/>
+      <debug_text text="'[X4LAN] COVER_SCRIPTED off player=%s ship=%s event=%s time=%s'.[$X4LAN_P, $Object.idcode, event.name, player.age]"/>
+     </do_if>
+    </do_if>
+   </do_for_each>
+   <remove_value name="$X4LAN_P"/>
+  </do_if>
+ </add>
+ <!-- a player entering or leaving a covered ship: its own line (the stock speak for player 1, that player's script else) -->
+ <add sel="//cue[@name='EntityEntered']/actions/do_if/speak" type="@chance">if event.param == player.entity then 100 else 0</add>
+ <add sel="//cue[@name='EntityEntered']/actions/do_if/speak" pos="after">
+  <do_if value="event.param != player.entity">
+   <set_value name="$X4LAN_P" exact="event.param"/>
+   <set_value name="$X4LAN_Say" exact="[1501, $Faction]"/>
+   <include_actions ref="X4LAN_CoverSay"/>
+   <remove_value name="$X4LAN_Say"/>
+   <remove_value name="$X4LAN_P"/>
+  </do_if>
+ </add>
+ <add sel="//cue[@name='EntityLeft']/actions/do_if/speak" type="@chance">if event.param == player.entity then 100 else 0</add>
+ <add sel="//cue[@name='EntityLeft']/actions/do_if/speak" pos="after">
+  <do_if value="event.param != player.entity">
+   <set_value name="$X4LAN_P" exact="event.param"/>
+   <set_value name="$X4LAN_Say" exact="[1505, null]"/>
+   <include_actions ref="X4LAN_CoverSay"/>
+   <remove_value name="$X4LAN_Say"/>
+   <remove_value name="$X4LAN_P"/>
+  </do_if>
+ </add>
+ <add sel="/mdscript/cues">
+  <!-- The players 2..N whose cooldown runs (global.$X4LAN_CoverDue) and the earliest end among them
+       (global.$X4LAN_CoverDueNext): both exist only while one runs. -->
+  <library name="X4LAN_CoverDue" purpose="include_actions">
+   <actions>
+    <do_if value="not global.$X4LAN_CoverDue?">
+     <set_value name="global.$X4LAN_CoverDue" exact="[]"/>
+    </do_if>
+    <do_if value="not global.$X4LAN_CoverDue.indexof.{$X4LAN_P}">
+     <append_to_list name="global.$X4LAN_CoverDue" exact="$X4LAN_P"/>
+    </do_if>
+    <do_if value="not global.$X4LAN_CoverDueNext? or global.$X4LAN_CoverDueNext gt $X4LAN_P.$x4ep1_player_cover_ability_cooldown">
+     <set_value name="global.$X4LAN_CoverDueNext" exact="$X4LAN_P.$x4ep1_player_cover_ability_cooldown"/>
+    </do_if>
+   </actions>
+  </library>
+  <!-- Players 2..N's cooldowns, checked every second as the manager checks player 1's: at its end the cue below says
+       "Cover available" in that player's scope; the player's own variables go as the manager's go for player 1. -->
+  <cue name="X4LAN_CoverCooldownSlots" instantiate="true" checkinterval="1s">
+   <conditions>
+    <check_value value="global.$X4LAN_CoverDueNext? and global.$X4LAN_CoverDueNext le player.age"/>
+   </conditions>
+   <actions>
+    <set_value name="$Next" exact="null"/>
+    <do_for_each name="$E" in="global.$X4LAN_CoverDue.clone">
+     <do_if value="not @$E.exists or not $E.$x4ep1_player_cover_ability_cooldown?">
+      <remove_from_list name="global.$X4LAN_CoverDue" exact="$E"/>
+     </do_if>
+     <do_elseif value="$E.$x4ep1_player_cover_ability_cooldown le player.age">
+      <debug_text text="'[X4LAN] COVER_COOLDOWN_END player=%s exposed=%s time=%s'.[$E, @$E.$X4LAN_LastExposedObject.idcode, player.age]"/>
+      <set_value name="$X4LAN_P" exact="$E"/>
+      <set_value name="$X4LAN_Say" exact="[1507, @$E.$X4LAN_LastExposedObject]"/>
+      <include_actions ref="X4LAN_CoverSay"/>
+      <remove_value name="$X4LAN_Say"/>
+      <remove_value name="$X4LAN_P"/>
+      <remove_value name="$E.$X4LAN_LastExposedObject"/>
+      <remove_value name="$E.$x4ep1_player_cover_ability_cooldown"/>
+      <remove_from_list name="global.$X4LAN_CoverDue" exact="$E"/>
+     </do_elseif>
+     <do_elseif value="not $Next or $E.$x4ep1_player_cover_ability_cooldown lt $Next">
+      <set_value name="$Next" exact="$E.$x4ep1_player_cover_ability_cooldown"/>
+     </do_elseif>
+    </do_for_each>
+    <do_if value="$Next">
+     <set_value name="global.$X4LAN_CoverDueNext" exact="$Next"/>
+    </do_if>
+    <do_else>
+     <remove_value name="global.$X4LAN_CoverDueNext"/>
+     <remove_value name="global.$X4LAN_CoverDue"/>
+    </do_else>
+   </actions>
+  </cue>
+  <!-- A line of the manager's for a player 2..N ($X4LAN_P; $X4LAN_Say: the line, the exposed ship): said by that player's
+       own script X4LAN_CoverP<k> (md/x4lan_cover_p<k>.xml, the session's own; slot k's by its name, so its frame runs in
+       slot k's scope and the line is voiced on client k): each of them hears it, the player's own says it. -->
+  <library name="X4LAN_CoverSay" purpose="include_actions">
+   <actions>
+    <signal_cue_instantly cue="md.X4LAN_CoverP2.Say" param="[$X4LAN_P, $X4LAN_Say.{1}, $X4LAN_Say.{2}]"/>
+    <signal_cue_instantly cue="md.X4LAN_CoverP3.Say" param="[$X4LAN_P, $X4LAN_Say.{1}, $X4LAN_Say.{2}]"/>
+    <signal_cue_instantly cue="md.X4LAN_CoverP4.Say" param="[$X4LAN_P, $X4LAN_Say.{1}, $X4LAN_Say.{2}]"/>
+    <signal_cue_instantly cue="md.X4LAN_CoverP5.Say" param="[$X4LAN_P, $X4LAN_Say.{1}, $X4LAN_Say.{2}]"/>
+    <signal_cue_instantly cue="md.X4LAN_CoverP6.Say" param="[$X4LAN_P, $X4LAN_Say.{1}, $X4LAN_Say.{2}]"/>
+    <signal_cue_instantly cue="md.X4LAN_CoverP7.Say" param="[$X4LAN_P, $X4LAN_Say.{1}, $X4LAN_Say.{2}]"/>
+    <signal_cue_instantly cue="md.X4LAN_CoverP8.Say" param="[$X4LAN_P, $X4LAN_Say.{1}, $X4LAN_Say.{2}]"/>
+   </actions>
+  </library>
+ </add>
+</diff>

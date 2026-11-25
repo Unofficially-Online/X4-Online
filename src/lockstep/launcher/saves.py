@@ -36,7 +36,8 @@ MILESTONE_SAVED = re.compile(r'NATIVE_GATE MILESTONE_SAVE saved name=([a-z][a-z0
 PLAYER_SAVED = re.compile(r'NATIVE_GATE PLAYER_SAVE saved name=([A-Za-z0-9_-]{1,40}-t\d+) tick=(\d+) file=(\S+) '
                           r'bytes=(\d+) sha256=([0-9a-f]{64}) ms=(\d+) slot=([1-8]) save=([A-Za-z0-9_]{1,32})')
 SAVE_SLOT = re.compile(r'NATIVE_GATE SAVE_SLOT name=(\S+) tick=(\d+) slot=([1-8]) player=(\S+) ship=(\S+) walking=([01]) '
-                       r'inventory=(\S+) research=(\S+)')
+                       r'inventory=(\S+) research=(\S+)(?: active=(\S+))?')
+ACTIVE = re.compile(r'([1-9]\d{0,4}):([A-Za-z0-9_]{1,40}|-)')   # slot k's active mission: its place in the list and its type
 MILESTONE_REACHED = re.compile(r'NATIVE_GATE MILESTONE reached name=(\S+) age=(\S+) due=(\d+) save=(\S+)')
 MILESTONE_NAME = re.compile(r'([a-z][a-z0-9_]{0,31})-M(\d{1,3})-slot([1-8])')
 MILESTONES = 'milestones'
@@ -132,10 +133,12 @@ class Collector:
         """A milestone or person's save row of a client's log, or a save's slot row (see the module text); True when it was one."""
         match = SAVE_SLOT.search(line)
         if match:
-            name, tick, slot, player, ship, walking, inventory, research = match.groups()
+            name, tick, slot, player, ship, walking, inventory, research, active = match.groups()
+            place = ACTIVE.fullmatch(active or '')
             self.slot_rows.setdefault((client, name, int(tick)), {})[int(slot)] = {
                 'player': hex_id(player), 'ship': hex_id(ship), 'walking': walking == '1',
-                'inventory': None if inventory == '-' else wares(inventory), 'research': wares(research, amounts=False)}
+                'inventory': None if inventory == '-' else wares(inventory), 'research': wares(research, amounts=False),
+                'active': [int(place.group(1)), place.group(2)] if place else None}
             return True
         match = MILESTONE_REACHED.search(line)
         if match:

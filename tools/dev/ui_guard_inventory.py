@@ -61,7 +61,10 @@ for part in (
     _ffi('flight', '''SetAllowedWeaponSystems
         DropInventory TeleportPlayerTo TransportPlayerToTarget
         PerformCompSlotPlayerAction StartControlPanelHack TriggerCompSlotAnimation SetDockingBayReservation
-        RemoveDockingBayReservation SetObjectCoverFaction SetPlayerLastCoverFaction'''),
+        RemoveDockingBayReservation'''),
+    # The docked menu's cover button or dropdown and the player's last chosen cover: the flight family replays them in the
+    # slot's scope (lockstep_cover_slots.h), as it replays the ship's stance (SetShipStance, group fleet below).
+    _ffi('flight', 'SetObjectCoverFaction SetPlayerLastCoverFaction', FLIGHT),
     # The docked menu's Get Up (menu_docked.lua buttonGetUp): X4 posts a GetUpEvent to the player. Refused like the rest;
     # native_gate_pilot_foot claims it for slot 1 (lockstep_pilot_foot_guard.h: the GET_UP key in the stock record).
     _ffi('flight', 'GetUp'),
@@ -85,8 +88,9 @@ for part in (
         SetSubordinateGroupProtectedLocation SetSubordinateGroupReinforceFleet SetSubordinateGroupRespondToDistressCalls
         SetSubordinateGroupResupplyAtFleet SetFormationShape SetFleetUnitCommander SetFleetUnitSubordinateGroupAssignment
         SetFleetUnitLoadout AddFleetUnitSubordinate RemoveFleetUnit ReassignControllableToFleetUnit ReleaseDetachedSubordinateGroup
-        SetFleetManagement SetFleetName SetFleetLogo SetShipStance SetControllableFightRule SetControllableBlacklist
+        SetFleetManagement SetFleetName SetFleetLogo SetControllableFightRule SetControllableBlacklist
         SetDefaultResponseToSignalForControllable ResetResponseToSignalForControllable SetDefensibleLoadoutLevel SetEntityToPost'''),
+    _ffi('fleet', 'SetShipStance', FLIGHT),   # the docked menu's stance (an Envoy's cloak): the flight family's
     # P2, economy and assets.
     # The trade family replays these (reports/LOCKSTEP-UI-TRADE-20261101.txt): the Lua globals wrapped in the Lua core, the FFI
     # setters hooked natively at their entries (lockstep_ui_trade.h takes their prefixes and pins from this table).

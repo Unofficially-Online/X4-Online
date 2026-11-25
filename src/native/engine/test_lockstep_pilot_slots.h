@@ -623,11 +623,14 @@ static void test_pilot_slots_post(void) {
     pslot_post_swaps=pslot_post_same=pslot_post_taken=pslot_post_unreadable=pslot_post_lost=0;
     unsigned char **cell=&table[2*5+1];
     assert((unsigned char**)pslot_post_cell_of(s)==cell);
-    /* off, not seated, walking, no controller: untouched */
+    /* off, not seated, walking, no controller (and not docked): untouched */
     pslot_post_on=0;pslot_post_enter(2,s);assert(!*cell && !pslot_post_cell[2]);
     pslot_post_on=1;s->seated=0;pslot_post_enter(2,s);assert(!*cell);s->seated=1;
     s->walking=1;pslot_post_enter(2,s);assert(!*cell);s->walking=0;
-    s->controller=NULL;pslot_post_enter(2,s);assert(!*cell && !pslot_post_swaps && !pslot_post_unreadable);s->controller=controller;
+    s->controller=NULL;pslot_post_enter(2,s);assert(!*cell && !pslot_post_swaps && !pslot_post_unreadable);
+    /* in its seat of a docked ship (no controller): written, as X4's own player stays at its docked ship's pilot post */
+    s->docked=1;pslot_post_enter(2,s);assert(*cell==player && pslot_post_swaps==1);pslot_post_leave(2,s);assert(!*cell);
+    s->docked=0;pslot_post_swaps=0;s->controller=controller;
     /* the seat: written at the entry, back at the leave; the other entries never */
     table[2*4+1]=other;
     pslot_post_enter(2,s);assert(*cell==player && pslot_post_swaps==1 && table[2*4+1]==other && !table[2*5]);
@@ -651,7 +654,7 @@ static void test_pilot_slots_post(void) {
     {char row[1024];pslot_stage=pslot_stage?pslot_stage:"off";assert(pslot_status(row,sizeof(row)) && strstr(row," post=1:4:1:1:3:3"));}
     pslot_post_on=on;pslot_post_cell[2]=NULL;
     pslot_post_swaps=pslot_post_same=pslot_post_taken=pslot_post_unreadable=pslot_post_lost=0;
-    printf("pilot slots post: the pilot post's entry inside the scope (written, put back, off, unseated, walking, taken, unreadable, lost) PASS\n");
+    printf("pilot slots post: the pilot post's entry inside the scope (written, put back, off, unseated, walking, docked, taken, unreadable, lost) PASS\n");
 }
 /* The HUD's flight control events (phud_*): X4's two dispatch functions and the UI listeners' typed handlers as far as
  * the module sees them. */

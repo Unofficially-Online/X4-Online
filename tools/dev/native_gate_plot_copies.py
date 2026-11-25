@@ -84,8 +84,11 @@ PLOTS = {
              # the stock script's own step that activates the story (what the cadet story's end signals there), for a
              # diagnosis without playing the cadet story through: its offer comes at the player's next Terran sector;
              # then its own wingmate setup (the wingmate made or brought to the player's ship, protecting it), for the
-             # wingmate's tests (native_gate_player_escort.xml; script ops escort_look, escort_target, escort_colour)
-             'debug': ('Activate_Story', 'DEBUG_Setup_Wingmate')},
+             # wingmate's tests (native_gate_player_escort.xml; script ops escort_look, escort_target, escort_colour); then
+             # its own cover ability step (the cover ability for player.ship, the Yaki's, as the story's Ch22 gives it:
+             # md.Cover.RegisterCoverAbility on the player's entity), for the cover's tests (lockstep_cover_slots.h;
+             # script ops cover_look, cover_ui, cover_button, cover_key, cover_blow)
+             'debug': ('Activate_Story', 'DEBUG_Setup_Wingmate', 'DEBUG_New_Cover_Ability')},
 }
 STORY = 'story'   # the plot id of a start's own story played as a slot's copy (the catalog's start script)
 STORY_FILE = re.compile(r'gs_[a-z0-9_]+\.xml')

@@ -479,12 +479,23 @@ pilots). Switches: `--window`, `--play-mode`, `--no-pace`, `--long`, `--world-sc
     of every slot's row (player 1's too): the movement's velocity and acceleration are emptied, and in the player
     movement the autopilot's path (`<targetpoints>`, the ship computer flying to a target). The engine's
     `<travel active="1" .../>` and the travel drive's two effect objects (exhaust, bubble) are left out, `<boost start=.../>`
-    becomes `<boost/>` and `<sound travel="1"/>` goes. X4's own player's `<autopilot target=.../>` loses the target. Throttle is
+    becomes `<boost/>` and `<sound travel="1"/>` goes. X4's own player's `<autopilot target=.../>` (the autopilot
+    engaged: a save with it on had the target and the path, one with it off has neither) loses the target. The
+    destination stays: the missions, the active mission and the map's course (the Guidance script) are in the save
+    as they were. Throttle is
     not saved (X4 takes it from the speed). Orders in a ship's queue stay (X4's AI scripts refer to them by ID): a player's
     ship runs them only on the autopilot, which is off. It is the same file on every client, so the same world at the load.
     The console says `flight: N player ship(s) at rest (...)`, and `continued-from.json` keeps the counts (`flight`). A kit
     keeps a hosted session per form (`sessions/continue-r-...` at rest, `continue-f-...` flying), so one made before this
     is not taken again.
+  - **Every player's active mission comes back** (25 Nov; live rk15: player 2 had no course and Shift+A did nothing
+    until the player chose the mission again). The save holds the mission manager's active mission, which is slot 1's;
+    slot k's (2..N) is the gate's (lockstep_mission_owners.h 'active': client k's HUD course and Shift+A's target). Each
+    save's `SAVE_SLOT` row names it by its place in the mission list and its type (`active=<index>:<type>`; a mission's
+    ID is new after a load), the sidecar and the `continue` block keep it, and before the first tick every client
+    gives it back (`gate.mpp_restore`, as for a joiner): the saved one when the list still has it there and it is
+    slot k's or nobody's (a course), else the slot's one plot mission, else its one mission. Row `CONTINUE_ACTIVE
+    name=... missions=N slots=2:saved:<id>:<type>,... restored=N` (`own_plot` for a save from before this).
   - **A person's save** (25 Nov, on in every session overlay). The menu's Save game (`SaveGame`, held by the Lua guard) and
     the quick save key (refused by the gate's input layer) become a save of the session by every client: the asking
     client raises the UI event `X4LAN_Saves`/`Request` {slot, file, name} as a click (the UI replay's events family runs

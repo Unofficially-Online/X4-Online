@@ -987,11 +987,11 @@ the script, for any players 2 to 8:
   $leaderpilot" at sector changes (rk8, on both clients). Now the session's player groups also keep, on every
   player's entity, which player controls which object (`$X4LAN_Pilots`), and the patch takes that player as the
   ship's pilot and that ship as "the player's ship" where the stock order has none. Player 1's ship has its own
-  pilot, so its wingmate does what it did; without the gate the table is never set. The wingmate's colour does not
-  change: X4 colours a target green only when the player's faction owns it (`GetRelationStatus4`, "own property"),
-  and the cadet's wingmate is the Terran faction's ship in the stock game too (player 1's wingmate in the rk7 and
-  rk8 saves: `owner="terran"`), so it is blue ("Friendly") for player 1 as well. Player 1's own ship is green on
-  player 2's screen because in coop it belongs to the shared player faction.
+  pilot, so its wingmate does what it did; without the gate the table is never set. X4 colours a target green only
+  when the player's faction owns it (`GetRelationStatus4`, "own property"), and the cadet's wingmate is the Terran
+  faction's ship (player 1's wingmate in the rk7 and rk8 saves: `owner="terran"`), so X4 draws it blue
+  ("Friendly") for every player. Player 1's own ship is green on player 2's screen because in coop it belongs to the
+  shared player faction.
   Test ops (in a slot's plan, `native_gate_ui_replay_script`): `escort_look` (canonical, MD `EscortLook`) logs
   `ESCORT_LOOK slot= ship= pilot= pilots= guards= guard=<id>/<owner>/<order>/<wingman|loose>/<leader>/<distance>/<target>`
   for every slot's ship; `escort_target` puts a Xenon scout without a pilot 500 m ahead of this player's ship as
@@ -1016,8 +1016,20 @@ the script, for any players 2 to 8:
   the target monitor; `escort_colour` gives `guard:252391=3/terran/own=false/mission=false/enemy=false/hostile=false`
   with `factioncolour=-1` (relation colours). The target monitor names it "Terran Protectorate, Friendly +10". On the
   map its icon is blue beside the two players' green ones, and `escort_map` (the map's own colour functions) gives it
-  `list=255,255,255 info=255,255,255` (white) against the map's `player=77,255,77`. The stock game shows the cadet's
-  wingmate blue, so player K's blue wingmate is the stock look.
+  `list=255,255,255 info=255,255,255` (white) against the map's `player=77,255,77`. X4 itself shows the cadet's
+  wingmate blue (that run had the gate loaded, without the escort colour); the green below is the user's requirement.
+- **The wingmate in the player's colour** (25 Nov, the user's requirement: the cadet's wingman shows green, as an
+  ally; `native_gate_escort_present`, a session default, Windows gate, `lockstep_escort_present.h`). A ship that
+  protects a player's own ship is drawn as that player's own property on that player's screen only, for every
+  player (player 1 included): the HUD's target box and brackets, the target monitor ("Owned", green), the map's icon,
+  list row and info header, and the HUD radar. The ProtectShip order keeps a list of its protectors on the protected
+  player's entity (`$X4LAN_Escorts`, `native_gate_player_escort.xml`); each client's probe hands its own player's list
+  to the gate every half second (`ESCORT_PRESENT_SET slot= ships=`), and the gate answers "own property" for those
+  ships at X4's relation test of the UI (0x8c71e0, the three `GetRelationStatus` exports) and at the two calls of
+  the map's and the radar's icon colour (0xdb6770); the map's lists take the player's colour through its own two
+  colour functions. Presentation only: the ship stays the Terran faction's, its relations and orders are X4's, and
+  another player sees it in X4's colour. On another build the hooks refuse (`ESCORT_PRESENT_REFUSED`) and X4's
+  colours stay. Rows: `ESCORT_PRESENT_ARMED`, `ESCORT_PRESENT_SET`, the status `ESCORT_PRESENT armed= set= rel= map=`.
 
 ```
 # player 1 on discover, player 2 on the Terran cadet start with its story and the Terran story after it
@@ -1135,6 +1147,8 @@ written by this build):
    - ship: the plan's ship step `slot=2 ship=<the slot's ship from the sidecar>` and player 2 in its ship at its saved place;
    - stories: `PLOT_OWNED_ARMED ... scripts=GS_Terran1_P2=2,Story_Yaki_P2=2 ... owned=2` before the first tick;
      player 2's mission list shows its story's mission, player 1's does not;
+   - active missions: `CONTINUE_ACTIVE ... slots=2:saved:<id>:plot ... restored=1` before the first tick; player 2's
+     HUD shows the course of its active mission and Shift+A flies there (the autopilot itself is off at the start);
    - other missions: `SAVE_OWNERS dump ... signalled at=2`, `SAVE_OWNERS_MD dumped=N`, `SAVE_OWNERS restored
      ... heard=N of=N claimed=C refused=0 unreadable=U` at tick 32 (N = 0 from a save without a snapshot; U: the saved
      cues X4 gives Lua without an ID, open, see LAUNCHER.md);
@@ -1367,8 +1381,13 @@ player's latest aim, as it draws its own ship (`native_gate_pilot_aim_present`, 
   degrees aside at tick 700): the drawn gimbal at its 10 degree limit from tick 701, the simulated one still on the
   lead until 703 and at the limit about tick 713; in the window grabbed at tick 702 the dots already sat left of the
   target with the feature on, and still on the lead mark with it off. The dots followed each scripted cursor, the icon
-  went dim at the jump; every gun solved (no refusal), the DOF limits read as +-0.1745 rad. Not checked yet: two PCs
-  (the census), the gun models themselves (not visible from the cockpit).
+  went dim at the jump; every gun solved (no refusal), the DOF limits read as +-0.1745 rad. Not checked yet: two PCs,
+  the gun models themselves (not visible from the cockpit).
+- Two clients on one PC (24 Nov, 5,440 ticks, both players aiming and firing by script: the lock on the other ship,
+  cursor points aside, the aim assist alone; 9,285 trigger ticks, player 2 destroyed player 1's ship at tick 610 and
+  it came back at 910): 0 desync ticks, the census equal at 1800, 3600 and 5400 (`census_record_diff.py`), the
+  simulation's aim and fire counts and receipts the same on both clients, each client drawing its own guns (client 2:
+  15,201 guns drawn at its aim, 828 of them locked; client 1: 7,594).
 
 ### Boxes and targets around players 2..N (built 24 Nov, after rk9)
 
@@ -1474,8 +1493,8 @@ player's entity (`$X4LAN_Pilots`, `$X4LAN_Controlled`), set at the same ticks on
 
 Not changed (open): the Police order's halt, scan and contraband conversation with the player's ship
 (`order.move.recon.xml`), the pirate's "drop your cargo" conversation (`order.plunder.xml`), the watchdog's and
-police's voice lines to the player, the player's own ship's turrets in assist mode (they follow `player.target`,
-player 1's target), and combat music and kill notices on the player (native, presentation).
+police's voice lines to the player, and combat music and kill notices on the player (native, presentation). The
+turrets of a player 2..N's own ship: next section.
 
 Test op (in a slot's plan, `native_gate_ui_replay_script`): `hostile` (MD `Hostile`) puts armed ships of a faction
 with X4's Patrol (or Recon) order ahead of a slot's ship, optionally looking for trade ships only and with the slot's
@@ -1500,6 +1519,192 @@ player's ship first put at the same place in `cluster_101_sector001`, two Xenon 
 - Two X4 (`play` with both clients, the patched scripts on both, player 2 in the fight): 12,641 ticks, 0 desync
   ticks, the seven census records equal (`census_record_diff.py`); `HOSTILE_SETUP` on both clients named player 2
   as the one who controls player 2's ship (`pilots=2 near_player=<player 2>`, `occupied=` player 1's ship).
+
+### Turrets of players 2..N (built 25 Nov, after rk14)
+
+Asked: do turrets work for player 2? The test (two X4 on one PC, `play`, a session where both players fly a Teladi
+bomber with four turrets, `ship_tel_m_bomber_01_b_macro`): player 2's ship is put 5 km to the right of player 1's
+(`slot_near`); each ship gets two pilotless Xenon fighters, TA 700 m ahead and TB 900 m ahead and 600 m to the right
+(`friendly` with a hull floor of 20 %, so they stay), a Xenon terraformer 3.5 km ahead, and at the end two piloted
+Xenon fighters 2.5 km ahead (`hostile`). Every 20 s both players set all their turrets through the replayed UI
+(`turrets_mode`, `turrets_armed`). For "attack my current target" player 1 targets TA1, ten seconds later player 2's
+TB2 (out of player 1's reach); player 2 targets TA2. `turret_watch` counts each slot ship's hits by target and weapon
+kind (X4's `event_object_attacked_object` on the attacker: every hit is X4's own, on every client), `turret_look`
+logs the turrets' modes and the defence computer's action. Player 1 is X4's own player, so its rows are the reference.
+
+| mode (20 s each)            | player 1, before | player 2, before | player 1, after | player 2, after |
+|-----------------------------|------------------|------------------|-----------------|-----------------|
+| attack enemies              | TA1 9            | none             | TA1 9           | TA2 14, TC2 3   |
+| hold fire (turrets unarmed) | none             | none             | none            | none            |
+| defend, nobody attacking    | none             | none             | none            | none            |
+| attack capital ships        | none             | none             | none            | none            |
+| attack fighters             | TA1 8            | none             | TA1 8           | TA2 10          |
+| attack my current target    | TA1 6            | none             | TA1 6           | none (open)     |
+| missile defence             | none             | none             | none            | none            |
+| mining                      | none             | none             | none            | none            |
+| defend, two Xenon attacking | none, 16         | none             | 3, none         | 16, 14          |
+
+Hits per target in the phase, all by turrets ("before": the stock gate rk14; "after": this branch; two numbers: two
+runs). The terraformer is beyond the bombers' turrets for both players, the fixture has no missiles and nothing to
+mine, and the piloted Xenon chose player 1's ship in some runs only.
+
+Why player 2's turrets never fired: X4 runs a ship's turrets through the script of its defence computer (the
+"defence" post, `aiscripts/fight.attack.object.medium` / `capital`), which attacks only while
+`this.ship.assignedpilot` exists; it also reads `player.occupiedship` (mining, the weapons left to the player),
+`player.target`, and listens for `event_player_changed_target`. A player 2..N's own ship holds its player as its
+pilot only inside that player's scope, and the computer's frames ran outside every scope: player 2's defence
+computer stood by in every mode. Two changes, both on by default:
+
+- **The scripts aboard a player's ship run as that player** (`lockstep_mission_owners.h`, part of
+  `native_gate_missions_per_player_ai_frames`): an AI frame whose entity is within four parent steps of the ship a
+  slot 2..N player is seated in (not on foot) runs in that slot's scope, as player 1's own ship's scripts run as
+  player 1. The last field of the missions row's `ai=` counts these frames. Player 2's defence computer now attacks,
+  takes its targets as player 1's does, and in "attack my current target" hears player 2's own target changes and
+  hands player 2's target to the turrets (`set_turret_targets`), as player 1's hands player 1's.
+- **"Attack my current target" picks that player's target** (`lockstep_turret_assist.h`, `native_gate_turret_assist`,
+  stop 239): the turret's target in that mode is set by X4's native weapon-mode update (0x4ef380, mode 13), which asks
+  for X4's own player's soft target outside every scope, so player 2's turrets took player 1's target (a run with the
+  first change only: player 2's turrets hit TA2 once player 1 targeted TA2, while player 2 had TB2 targeted). That
+  call now answers slot k's soft target for a turret on slot k's seated ship (also on foot from that seat), X4's answer
+  otherwise. Status `TURRET_ASSIST` (`slots=` the answers per slot 2..8).
+
+Still open: in "attack my current target" player 2's turrets do not fire at player 2's own target. Measured in the
+after run: their shoot controllers hold that target as player 1's hold player 1's (a diagnostic build: of 62 updates
+47 held TA2, 11 none, 4 without a controller; player 1's 65: 49, 8, 4, 4 others; the same controller class, every
+turret activated), the defence computer ran the same steps for both players, and yet no shot hit. What else in X4's
+weapon code takes X4's own player there is not found yet (the shoot decision 0x816d20 asks it only about the ship
+the weapon is on).
+
+Attack credit and effects: the hits of player 2's turrets are posted on player 2 as X4 posts player 1's
+(`PILOT_FIRE_STATUS ... owner=35 slots=0/35/...`, before `0/0` and `0/1`), and the effect cull keeps the effects of player 2's
+ship (`REGION_CAMERA effect_policy=` own 1,562 before, 2,481 to 2,538 after, same layout). The sound of player 2's
+turrets was not listened to. Determinism: every run (two before, five after, two of them diagnostic builds) 6,341
+ticks, 0 desync ticks, the census at 1800, 3600 and 5400 equal on both clients (`census_record_diff.py`), no error rows.
+
+Also open: missile defence and mining not exercised (no missiles, no asteroids in the fixture); a player 2..N on
+foot aboard its ship: its turret scripts run outside its scope again (its turrets stand by); the Linux gate has no
+twin (a mixed session leaves `native_gate_turret_assist` off).
+
+Test ops (in a slot's plan, `native_gate_ui_replay_script`): `turret_watch` and `turret_look` (MD `TurretWatch`,
+`TurretLook`; rows `TURRET_WATCH`, `TURRET_LOOK`), `slot_near` (MD `SlotNear`, row `SLOT_NEAR`), and `friendly` takes
+a sideways offset as its thirteenth field.
+
+### A cover (disguise) and the Envoy's cloak for every player (built 25 Nov, after rk14)
+
+The Terran story's disguise and the Envoy's cloak are X4's cover and ship stance. A ship (and the player in its pilot
+seat) can wear another faction's identity: every relation test reads the cover faction then, so the factions at peace
+with it leave the ship alone and those at war with it attack it. X4 has two ways to put one on:
+
+- **The cover ability** (`md/cover.xml`'s RegisterCoverAbility; the Terran story's `story_yaki.xml` and
+  `story_terraforming.xml` give it to a ship): the player switches it on and off with the cover key (Toggle Cover) or
+  the docked menu's Enable Cover button (some ships may take any faction's: the menu's dropdown). The cover manager
+  blows a worn cover when the ship is attacked, attacks, or is told to lose it (an attacker that saw it, a police scan,
+  an inspection): "Cover exposed", the attacked faction hostile, a 30 s cooldown (again with every attack while
+  exposed), then "Cover available".
+- **The scripted cover** (`md/cover.xml`'s TriggerCover): what stories put on a ship, and what an envoy ship's own
+  order (VisitStations, the diplomacy's envoy ships) puts on itself in each sector it enters. The player aboard such a
+  player-owned ship wears it too ("Cover activated: <faction>"), until the ship loses it ("Cover deactivated").
+
+The Envoy (an M ship of the Envoy DLC) also has a cloak stance (radar cloak, no boost or guns), switched by the stance
+key or the docked menu's stance dropdown.
+
+Before (rk14), in every session: the cover and stance keys were refused for every player and the docked menu's cover
+button, cover dropdown and stance dropdown were refused by the UI guard, so nobody, player 1 included, could put a
+cover on or switch the cloak. For player 2 also: its docked menu and HUD read player 1's cover data; the cover manager,
+which no player owns, blew a player 2's cover with player 1's lines (player 1's cover taken off, the cooldown on
+player 1, the voice on player 1's PC); and the scripted cover's lines named player 1 only (a player 2 aboard got no
+cover and kept one after the ship lost it; its lines were said on player 1's PC).
+
+Now (`native_gate_cover_slots`, on by default; `lockstep_cover_slots.h`, `native_gate_player_cover_manager.xml`):
+
+- **The keys** ride the input record; their replay runs X4's own key handling for the player who pressed them, on
+  every PC at the same tick; the key's notice ("Cover activated", "deactivated", "unavailable") shows on that
+  player's PC only.
+- **The docked menu's** cover button and dropdown and stance dropdown are replayed calls of that player.
+- **Player 2..N's own PC** reads its own player's cover: the menu's Enable/Disable Cover button and its cooldown, the
+  HUD's "Cover active as" line, the player's name in the cover colour.
+- **The cover manager** takes the cover off the player whose ship it is, puts that player's cooldown on, makes the
+  attacked faction hostile, and says "Cover exposed" and later "Cover available" on that player's PC (each player
+  2..N has a small script of its own, `md/x4lan_cover_p<k>.xml`, whose lines run as that player).
+- **The scripted cover** gives every player aboard what player 1 aboard gets, its lines on its own PC.
+- **A player in a docked ship's seat** is the ship's pilot inside its own scope, as X4's own player is (the cover a
+  docked player 2 put on went to the ship only before).
+
+Live (25 Nov, rk10's continue at 10.2 min, one X4 per run: `play --solo 1` and `--solo 2` of the same session and
+plan, the final build; player 2 sits in its fighter docked on a pad, player 1 in its fighter in space; the Yaki cover
+ability given to both by the story's debug cue):
+
+- **Before (rk14's module set, X4's own manager), player 2:** the cover key and the stance key refused (`result=0`);
+  client 2's docked menu read no ability for its ship (`ability=- coverable=false`, player 1's table), its button
+  put nothing on; two Xenon fighters spawned 2.5 km away in Matrix #9 attacked 1.1 s after they came.
+- **Now, the same rows for both players:** a scripted Argon cover (`cover_trigger`) covers ship and player, "Cover
+  activated: Argon Federation" on that player's PC, the menu and HUD there read `cover=argon covered=true`; told to
+  lose it: both off, "Cover deactivated". The key: on (notice "Cover activated", ship and player Yaki, the HUD's
+  cover), off (notice state 0x14), on again. Among the Xenon (put in Matrix #9 with the cover on): not attacked for
+  60 s, attacked 8 to 9 s after the ship was told it was scanned (`cover_blow`); "Cover exposed" on that player's PC,
+  the menu's button refused during the cooldown (`can=false`), the cooldown extended by the hits, "Cover available"
+  at its end (player 2 at 1397.5 s, player 1 at 1398.1 s: the two cues' own 1 s checks). The docked menu's button
+  put the Yaki cover on (`last=yaki`) and took it off. The stance key on a fighter without stances: nothing, for
+  both.
+- Before the docked-seat fix, player 2 (docked) got the key's cover on its ship only (`key=0yn`: its ship's pilot was
+  nobody in its scope) and could not take it off; player 1's rows were the ones above.
+- Two X4 (`play` with both clients of the same continue: player 1 with the key where it was, player 2 with the
+  scripted cover, the key, among the Xenon, the blow and the button): 7,241 ticks, 0 desync ticks, the four census
+  records equal (`census_record_diff.py`), both clients' `cover_look` rows equal; each client's menu and HUD read its
+  own player's cover at the same tick (client 1 `cover=yaki` while client 2 read `cover=argon`); player 2's lines were
+  owned by slot 2 on both clients (`owner=2 scope=2`), player 1's by slot 1. Player 1's cover, put on where its ship
+  was, was blown by a nearby ship told of it 1.2 s later (no scan), at the same tick in every run of this session;
+  player 2, docked elsewhere, was not in that place.
+
+Script ops (in a slot's plan): `cover_look` (a slot's cover as the simulation holds it), `cover_ui` (this PC's menu
+and HUD reading), `cover_button [FACTION]`, `cover_key`, `stance_key`, `stance_set STANCE`, `cover_blow SLOT
+[SCANNED]` (MD `CoverBlow`: the ship told to lose its cover), `cover_trigger SLOT FACTION` (MD `CoverTrigger`: a
+scripted cover); `native_gate_plot_debug` code 2000 more than the yaki plot's first gives the ship the Yaki cover
+ability as the story does (`DEBUG_New_Cover_Ability`; player 1: 2101, player 2's copy: 2202 in the rk10 continue).
+
+Not covered (open): the diplomacy menu itself (agents, choosing their envoy ships, the operations) is refused by the
+UI guard for every player as before (`StartDiplomacyActionOperation`, `SetAgentDiplomacyShip`,
+`SetDiplomacyEventOperationAgent`, `SetDiplomacyEventOperationOption`, `AbortActiveDiplomacyActionOperation`): it needs
+a replay family of its own; the manager's "Cover available" hint when a player takes control of a coverable ship plays
+once per game for whoever does first (a one-time cue of the stock script); the Envoy's cloak was not run live (no Envoy
+in the test saves; the stance key and dropdown were run on a ship without stances, where nothing happens for either
+player).
+
+### The weapon panel's colours (built 25 Nov, after rk15)
+
+Player 2 reported with rk15 (a fighter, in the game continued from rk9's save) that the HUD weapon panel's selected
+weapons and their bars were grey, where stock shows them blue. X4's panel (`ui/core/lua/crosshair handling.lua`,
+`updateWeaponPanel`) colours each weapon's icon, its heat or reload bar and its clip bar by one flag of
+`GetWeaponDetails3`: active (in the ship's active weapon group) is the blue weapon colour, inactive the grey one. X4
+takes that flag from the weapon's shoot controller: yes only for its player controller classes, which it gives the
+weapons of a player's ship when they come into the active group. In a session every player's guns of the active group
+carry the gate's own controller instead (the lease that fires them from the replayed trigger on every PC,
+`lockstep_pilot_fire.h`, a default since 1 Nov), and the other weapons none: X4 answered "inactive" for every weapon of
+every player, player 1 included. None of the merges after rk9 changes this (the aim presentation, the turrets, the
+cover, the travel drive, the HUD zone, the throttle, the combat AI); the target lead mark's range (the aim's controller
+answers) does not enter the panel's colours either.
+
+Now (`native_gate_hud_weapons`, a default; stop 248): the five weapon readers of the HUD ask X4's test as before, and
+for a "no" under any controller but X4's player one they answer X4's own group rule: active when the weapon is in the
+active primary (secondary) group of the ship the HUD shows. On every PC for the player it presents (players 1 to 8);
+the simulation, the lease and the shots are unchanged. Status `HUD_WEAPONS` (`answered=` primary/secondary, `slots=`
+per slot 1..8). The script op `hud_weapons` logs what the panel reads (`p<i>=<active>/<mode>/<damage>/<heat>/<reload>`).
+
+Measured (25 Nov, one X4, `play --solo K`, the rk9 save continued by `x4ls continue`; a scripted burst from tick 400
+to 460; `hud_weapons` rows at 140, 290, 470, 515, 600):
+
+| run                              | the panel reads (each of the fighter's three guns)  | on screen                         |
+|----------------------------------|-----------------------------------------------------|-----------------------------------|
+| player 2, rk15 gate              | active 0, mode 1 (heat), 7 % heat after the burst   | icons and bars grey               |
+| player 1, rk15 gate              | active 0                                            | icons and bars grey               |
+| player 2, rk9's own session      | (rk9's probe has no look op)                        | icons and bars grey, as in rk15   |
+| player 2, this branch            | active 1 at every row; `HUD_WEAPONS ... answered=3657/0 slots=0/3657/...` | icons, bars and their dots blue |
+| player 1, this branch            | active 1 at every row; `answered=3621/0 slots=3621/...` | icons, bars and their dots blue |
+
+So the grey panel was there in rk9 too (rk9's kit session played back as player 2), and for player 1 in every
+session. The heat, the reload, the clip reload, the stance block and the shots are as before; during the burst the
+icons dim as X4 dims a weapon whose clip reloads. Not run: two PCs (the change is presentation only: nothing the census
+reads), missiles in the secondary panel (the fighter has none), a group change by key while the panel is shown.
 
 ## Mission types, tested without a person (built 16 Nov; two clients on one PC)
 

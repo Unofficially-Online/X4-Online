@@ -428,6 +428,35 @@ class SessionTests(unittest.TestCase):
         logs = values(g.logs)
         self.assertTrue(any('UI_REPLAY_SCRIPT tick=45 op=undock ok=true result=granted' in l for l in logs))
 
+    def test_the_turret_fixture_ops_name_the_slot_ship(self):
+        """turret_watch / turret_look (turrets per player, MD TurretWatch / TurretLook): the slot's ship, its slot and the
+        watch's length, for slots 2 and 3 alike; the MD counts by target and weapon kind in lists (an MD table takes
+        no free-text keys). slot_near puts a slot's ship beside another's (5 km by default), and friendly takes a
+        sideways offset (x)."""
+        lua, g = client()
+        lua.execute('''
+          sent={}
+          env.AddUITriggeredEvent=function(screen,control,v)
+            local keys={};for k,x in pairs(v) do keys[#keys+1]=k..'='..(type(x)=='userdata' and 'id:'..ids[x] or tostring(x)) end
+            table.sort(keys);sent[#sent+1]=screen..'/'..control..':'..table.concat(keys,',')
+          end
+          plan={{0,'turret_watch',2,240},{1,'turret_look',3},{2,'turret_watch',3},{3,'slot_near',2,1,4000},{4,'slot_near',3,2},
+                {5,'friendly',3,'TB3','xenon','ship_xen_s_fighter_02_a_macro',-900,0,nil,nil,nil,20,600}}
+          tools={gate=gate,C=C,env=env,own_slot=2,slot_id=function(s) return s+1000ULL end,slot_lua=function(s) return make_id(tostring(s+1000)) end}
+          S=new_session({script=X4LAN_UI_REPLAY_CORE.script(plan,40,tools)})
+          for t=40,45 do S.frame(t) end
+        ''')
+        self.assertEqual(values(g.sent), ['X4LAN_UiReplay/TurretWatch:k=2,s=id:1002,t=240', 'X4LAN_UiReplay/TurretLook:k=3,s=id:1003',
+                                          'X4LAN_UiReplay/TurretWatch:k=3,s=id:1003', 'X4LAN_UiReplay/SlotNear:d=4000,o=id:1001,s=id:1002',
+                                          'X4LAN_UiReplay/SlotNear:d=5000,o=id:1002,s=id:1003',
+                                          'X4LAN_UiReplay/Friendly:a=TB3,d=-900,f=xenon,k=20,m=ship_xen_s_fighter_02_a_macro,n=id:1003,'
+                                          'p=false,s=false,w=false,x=600'])
+        md = (ROOT / 'tools/dev/native_gate_ui_replay.xml').read_text(encoding='utf-8')
+        self.assertIn('<event_object_attacked_object object="$ship"/>', md)
+        self.assertIn("(if @$weapon.isclass.turret then 'turret' else 'gun')", md)
+        self.assertIn('<append_to_list name="$keys" exact="$key"/>', md)
+        self.assertNotIn('$counts.{$key}', md)
+
     def test_the_hostile_fixture_op_sends_short_keys_that_fit_one_replay_event(self):
         """hostile (enemy AI per player, MD Hostile): the slot's ship and the name always, every other key only when it
         differs from the MD's default and macros without 'ship_', 'cluster_' and '_macro', so the UI event fits one replay event (UIREP_EVENT_FIT,
@@ -573,17 +602,21 @@ class SessionTests(unittest.TestCase):
                                 'UI_REPLAY_SCRIPT tick=42 op=target_none ok=true result=nil scope=1',
                                 'UI_REPLAY_SCRIPT tick=43 op=target_slot ok=true result=false scope=0',
                                 'UI_REPLAY_SCRIPT tick=50 op=target_slot ok=true result=false scope=0'])
-        self.assertEqual(dict(g.X4LAN_UI_REPLAY_CORE.SCOPED), {'target_slot': True, 'target_none': True, 'target_home': True, 'dock_home': True, 'suit_home': True, 'suit_to': True, 'dock_named': True, 'guidance_slot': True, 'guidance_end': True, 'guidance_set': True, 'guidance_look': True, 'inv_read': True, 'inv_drop': True,
+        self.assertEqual(dict(g.X4LAN_UI_REPLAY_CORE.SCOPED), {'hud_weapons': True, 'target_slot': True, 'target_none': True, 'target_home': True, 'dock_home': True, 'suit_home': True, 'suit_to': True, 'dock_named': True, 'guidance_slot': True, 'guidance_end': True, 'guidance_set': True, 'guidance_look': True, 'inv_read': True, 'inv_drop': True,
                                                                   'foot_where': True, 'transport_list': True, 'transport_to': True, 'transport_named': True, 'inv_research_seen': True, 'inv_research_hqs': True,
                                                                   # the shops' and the control panels' clicks (reps, itemtrader, hack)
                                                                   'trader_pick': True, 'trader_look': True, 'itemtrader_buy': True, 'inv_total': True,
                                                                   'panel_find': True, 'hack_yes': True,
+                                                                  # the aim HUD as this client shows it (aim_look: the assist icon, the weapon range)
+                                                                  'aim_look': True,
                                                                   # the HUD's top level bar and Back (the Ship Interactions scenario)
                                                                   'toplevel_tab': True, 'menu_back': True,
                                                                   # the wingmate's test: this client's own HUD colours (escort_colour)
                                                                   'escort_colour': True, 'escort_select': True, 'escort_map': True,
                                                                   # the transit tests' reading of this client's own ship (place)
-                                                                  'place': True})
+                                                                  'place': True,
+                                                                  # the cover's reading and clicks of this client's own docked menu
+                                                                  'cover_ui': True, 'cover_button': True, 'stance_set': True})
 
     def test_the_guidance_ops_set_and_end_it_where_the_maps_click_runs(self):
         """play39p-long: client 2's map set guidance on slot 1's ship (SetGuidance) inside its presentation scope; the ops do
@@ -1067,6 +1100,70 @@ class PlotSignalTests(unittest.TestCase):
         self.assertEqual(values(g.calls), ['bypass:1', 'signal:77:x4lan_plot_ready:1', 'bypass:0',
                                            'bypass:1', 'signal:77:x4lan_plot_debug:101', 'bypass:0'])
         self.assertEqual(values(g.logs)[-2:], ['PLOT_READY tick=140 code=1 signalled', 'PLOT_DEBUG tick=600 code=101 signalled'])
+
+
+class EscortPresentTests(unittest.TestCase):
+    """The ships that protect this client's own player's ship drawn in the player's colour on this client only
+    (S.escort; native_gate_escort_present, lockstep_escort_present.h): the list on the player's entity, the ships of it
+    that exist, handed to the gate when it changes; the map's two colour functions give them the player's colour.
+    Mocked gate and exports: the calls and the rows, not the game."""
+
+    def session(self, slot=2):
+        lua, g = client()
+        lua.execute(f'''
+          calls={{}}
+          LIST={{'5005','5006','4004'}}
+          gate.escort_present_set=function(text) calls[#calls+1]='set:'..text;return 1 end
+          env.GetNPCBlackboard=function(entity,key) calls[#calls+1]='bb:'..tostring(entity)..':'..key;return LIST end
+          env.IsValidComponent=function(c) return c~='4004' end
+          env.ConvertStringTo64Bit=function(s) return s end
+          local white,green,azure={{r=255,g=255,b=255}},{{r=77,g=255,b=77}},{{r=0,g=149,b=255}}
+          MAP={{name='MapMenu',holomapcolor={{playercolor=green}},
+            getContainerNameAndColors=function(c) return 'name '..tostring(c),white,azure,'font' end,
+            getObjectColor=function(c) return white end}}
+          env.Menus={{MAP}}
+          S=X4LAN_UI_REPLAY_CORE.session({{gate=gate,C=C,env=env,log=log,mask=7,slot_ships=function() return {{}} end,own_slot={slot},
+            escort={{first=100,every=15,player=function() return 'P{slot}' end}}}})
+        ''')
+        return lua, g
+
+    def test_the_protectors_that_exist_go_to_the_gate_and_take_the_maps_player_colour(self):
+        lua, g = self.session()
+        lua.execute('S.escort(99) S.escort(101)')   # before the first tick and between two: nothing asked
+        self.assertEqual(values(g.calls), [])
+        lua.execute('S.escort(100)')
+        self.assertEqual(values(g.calls), ['bb:P2:$X4LAN_Escorts', 'set:5005,5006'])   # the gone ship left out
+        self.assertEqual(values(g.logs)[-1], 'ESCORT_PRESENT_SET tick=100 slot=2 ships=5005,5006 set=1')
+        # the map: its list row and info colour are the player's for a protector, X4's for anything else; the other
+        # values of the list function are kept
+        name, colour, background, font = lua.eval("MAP.getContainerNameAndColors('5005')")
+        self.assertEqual((name, colour.g, background.b, font), ('name 5005', 255, 255, 'font'))
+        self.assertEqual(colour.r, 77)
+        self.assertEqual(lua.eval("MAP.getContainerNameAndColors('7007')")[1].r, 255)
+        self.assertEqual(lua.eval("MAP.getObjectColor('5006').r"), 77)
+        self.assertEqual(lua.eval("MAP.getObjectColor('7007').r"), 255)
+        # the same list: no new call to the gate; a changed one replaces it; an empty one clears it
+        lua.execute('S.escort(115)')
+        self.assertEqual(values(g.calls)[-1], 'bb:P2:$X4LAN_Escorts')
+        lua.execute("LIST={'5006'} S.escort(130) LIST={} S.escort(145)")
+        self.assertEqual([c for c in values(g.calls) if c.startswith('set:')], ['set:5005,5006', 'set:5006', 'set:'])
+        self.assertEqual(lua.eval("MAP.getObjectColor('5006').r"), 255)
+        self.assertEqual(values(g.logs)[-1], 'ESCORT_PRESENT_SET tick=145 slot=2 ships=- set=1')
+        lua.execute('S.escort(160)')   # wrapped once
+        self.assertEqual(lua.eval("MAP.x4lan_escort_wrapped"), True)
+
+    def test_slot_1_and_slot_3_ask_their_own_player(self):
+        for slot in (1, 3):
+            lua, g = self.session(slot)
+            lua.execute('S.escort(100)')
+            self.assertEqual(values(g.calls), [f'bb:P{slot}:$X4LAN_Escorts', 'set:5005,5006'], slot)
+            self.assertEqual(values(g.logs)[-1], f'ESCORT_PRESENT_SET tick=100 slot={slot} ships=5005,5006 set=1')
+
+    def test_a_refused_set_is_asked_again(self):
+        lua, g = self.session()
+        lua.execute("gate.escort_present_set=function(text) calls[#calls+1]='refused:'..text;return 0 end S.escort(100) S.escort(115)")
+        self.assertEqual([c for c in values(g.calls) if c.startswith('refused:')], ['refused:5005,5006'] * 2)
+        self.assertEqual(lua.eval("MAP.getObjectColor('5005').r"), 255)   # nothing taken: X4's colour
 
 
 class UndockWatchTests(unittest.TestCase):

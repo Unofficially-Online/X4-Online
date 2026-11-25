@@ -75,7 +75,9 @@ MD_FILES = ('md/native_gate_battle.xml', 'md/native_gate_player_identity.xml', '
 # the first minute's grace (native_gate_player_targets.xml), an attacker blows its cover (native_gate_player_cover.xml),
 # traffic at war with its player attacks, evades or flees (native_gate_player_masstraffic.xml), a station's watchdog
 # prefers it and police traffic and watchdogs search that player's own inventory (native_gate_player_watchdog.xml,
-# native_gate_player_police.xml).
+# native_gate_player_police.xml). And md/cover.xml's cover ability manager blows and ends the cover of the player whose ship it
+# is, its voice lines in that player's scope (native_gate_player_cover_manager.xml, with the player groups and
+# native_gate_cover_slots).
 MD_PATCHES = {'md/playerreputation.xml': 'native_gate_quiet_playerreputation.xml',
               'md/notifications.xml': 'native_gate_quiet_notifications.xml',
               'md/tutorial_global.xml': 'native_gate_hint_timeout.xml',
@@ -88,7 +90,65 @@ MD_PATCHES = {'md/playerreputation.xml': 'native_gate_quiet_playerreputation.xml
               'aiscripts/interrupt.disengage.xml': 'native_gate_player_cover.xml',
               'aiscripts/masstraffic.generic.xml': 'native_gate_player_masstraffic.xml',
               'aiscripts/masstraffic.watchdog.xml': 'native_gate_player_watchdog.xml',
-              'aiscripts/masstraffic.police.xml': 'native_gate_player_police.xml'}
+              'aiscripts/masstraffic.police.xml': 'native_gate_player_police.xml',
+              'md/cover.xml': 'native_gate_player_cover_manager.xml'}
+
+# Per-slot MD scripts of the cover (lockstep_cover_slots.h, native_gate_cover_slots): X4LAN_CoverP<k> for slots 2..8, each
+# slot k's own by its name (the probe names it with gate.mpp_first(name, k) before the first tick), so its frames run in
+# slot k's scope: the cover manager's voice lines for player k (native_gate_player_cover_manager.xml's X4LAN_CoverSay),
+# "Cover exposed" and "Cover available", voiced on client k as the manager voices player 1's on client 1. Our own text.
+COVER_SLOTS = tuple(range(2, 9))
+
+
+def cover_slot_md(k):
+    """md/x4lan_cover_p<k>.xml: slot k's own cover lines (exposed, available, activated as a faction, deactivated). Every
+    slot's script hears each line; the one whose scope holds the named player (player.entity there is slot k's player)
+    says it, X4's conditions for "Cover available" first."""
+    return f"""<?xml version="1.0" encoding="utf-8"?>
+<!-- Slot {k}'s own cover lines (tools/dev/native_gate_defaults.py cover_slot_md; lockstep_cover_slots.h). Its frames are slot
+     {k}'s by the script's name: player.entity and player.computer are that player's, the voice is heard on its client. -->
+<mdscript name="X4LAN_CoverP{k}" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="md.xsd">
+ <cues>
+  <cue name="Say" instantiate="true">
+   <conditions><event_cue_signalled/></conditions>
+   <actions>
+    <do_if value="event.param.{{1}} == player.entity">
+     <do_if value="event.param.{{2}} == 1506">
+      <debug_text text="'[X4LAN] COVER_LINE slot={k} line=1506 player=%s time=%s'.[player.entity, player.age]"/>
+      <speak actor="player.computer" line="1506" comment="Cover exposed."/>
+     </do_if>
+     <do_elseif value="event.param.{{2}} == 1507 and @event.param.{{3}}.exists and player.entity.hascontext.{{event.param.{{3}}}} and event.param.{{3}}.canhaveplayercover">
+      <debug_text text="'[X4LAN] COVER_LINE slot={k} line=1507 player=%s time=%s'.[player.entity, player.age]"/>
+      <speak actor="player.computer" line="1507" comment="Cover available."/>
+     </do_elseif>
+     <do_elseif value="event.param.{{2}} == 1501 and @event.param.{{3}}">
+      <debug_text text="'[X4LAN] COVER_LINE slot={k} line=1501 player=%s faction=%s time=%s'.[player.entity, event.param.{{3}}, player.age]"/>
+      <speak actor="player.computer" comment="Cover activated: Factionname">
+       <text line="1501"/>
+       <name value="event.param.{{3}}"/>
+      </speak>
+     </do_elseif>
+     <do_elseif value="event.param.{{2}} == 1505">
+      <debug_text text="'[X4LAN] COVER_LINE slot={k} line=1505 player=%s time=%s'.[player.entity, player.age]"/>
+      <speak actor="player.computer" line="1505" comment="Cover deactivated"/>
+     </do_elseif>
+     <do_else>
+      <debug_text text="'[X4LAN] COVER_LINE slot={k} line=%s said=no player=%s time=%s'.[event.param.{{2}}, player.entity, player.age]"/>
+     </do_else>
+    </do_if>
+   </actions>
+  </cue>
+ </cues>
+</mdscript>
+"""
+
+
+def ship_cover_slots(out):
+    for k in COVER_SLOTS:
+        path = Path(out) / 'md' / f'x4lan_cover_p{k}.xml'
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(cover_slot_md(k), encoding='utf-8')
+
 
 TABLE = load()
 ON_KEYS = [e[0] for e in TABLE['on']]
@@ -107,6 +167,7 @@ def ship_md(out):
     for name, patch in MD_PATCHES.items():
         (out/name).parent.mkdir(parents=True, exist_ok=True)
         (out/name).write_bytes((source/patch).read_bytes())
+    ship_cover_slots(out)
 
 
 def ship_files(out, ui_files):
@@ -119,6 +180,7 @@ def ship_files(out, ui_files):
     for name, patch in MD_PATCHES.items():
         (out/name).parent.mkdir(parents=True, exist_ok=True)
         (out/name).write_bytes((source/patch).read_bytes())
+    ship_cover_slots(out)
     rest = [name for name in ui_files if name not in UI_FILES]
     return list(UI_FILES) + rest
 

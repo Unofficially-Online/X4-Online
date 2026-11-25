@@ -394,7 +394,23 @@
  * also when an exception unwinds. The words are seeded from a call counter, never the
  * simulation's, so a sound consumes no simulation draw whichever client plays it. It
  * covers what native_gate_ship_sound_rng covers (slot 1143) and everything else.
- * Status: sound=float calls/choice calls.
+ * Its two calls need no stand-in and no pass runs them, so they go in at the first join
+ * point whatever the stand-in (RC_EARLY_GROUPS): the gate tick before the first admitted
+ * frame, the MoveWorker parked. Written with the others after frame 1 (until 25 Nov),
+ * frame 1 ran them native: rk15, a two-PC continue from c3-t18300, split at tick 1 (the
+ * census motion part) on every try. The PC's client made 261 draws at frame level before
+ * the probe's update, the last one a UI sound of the load (Lua::PlaySound 0xb13210 ->
+ * 0x14e94b1 -> 0x14eed60 -> FloatState at 0x14eefdf); the laptop, whose X4 starts no
+ * sound at all (sound=0/0 for the whole session), made the first 260 alike and not that
+ * one, so every later frame-level draw of frame 1 came one step apart (its probe word
+ * was the PC's 260th). That one is the visible part: with the calls written before frame
+ * 1, 117 sound starts pass them before the probe's update of frame 1, the rest inside
+ * keyed scopes whose words they moved on the PC only. Seen in every two-PC log since rk7
+ * (tick 1: 233/234, 227/228, 276/277, 260/261), harmless from c3-t18000 and not from
+ * c3-t18300. Solo X4 of this PC from c3-t18300 with the early calls: frame 1 has 260
+ * frame-level draws and the laptop's tick-1 word, census state and tick-2 body pose.
+ * Status: sound=float calls/choice calls; sound_early=the join point's tick/the joins
+ * that found the MoveWorker running ('-' before).
  * camera_probe (diagnostic): pass-through stubs that count, by thread
  * (MoveWorker, main, other), the camera reads of the highway scene's anchor
  * walks (0x9f9da0 from HighwayScene
@@ -490,7 +506,8 @@
  * before the first admitted frame (cam-B8: busy at the first frame), so if a
  * pass is still running the install waits for a later gate tick (counted,
  * install_waits=, at most RC_INSTALL_WAITS ticks, then stop) and install_tick=
- * names the frame. Every gate tick re-checks sites, slots and pins (stop
+ * names the frame. sound_rng (RC_EARLY_GROUPS) goes in earlier, at the first
+ * gate tick that finds the MoveWorker parked (sound_early=). Every gate tick re-checks sites, slots and pins (stop
  * reason 165). Stop withdraws the stand-in at once and restores the sites if no
  * pass runs, else reports not restored. Pages are never freed. */
 #define RC_CUTSCENE 0x3d19900u
@@ -2051,12 +2068,27 @@ static int rc_frame_body(uint64_t tick,int full) {
     rc_viewpoint_id=id;rc_tick=tick;++rc_updates;
     return 1;
 }
+/* Groups whose sites read no stand-in and run in no pass (sound_rng's two calls): written at the first join point
+ * that finds the MoveWorker parked, also before any stand-in, i.e. the gate tick before the first admitted frame. */
+#define RC_EARLY_GROUPS (1u<<RC_SOUND)
+static uint64_t rc_early_tick=UINT64_MAX,rc_early_waits;
 /* Gate tick, main thread, right after mt_join: the sites of every armed group,
  * once an admitted frame has set the stand-in, while the MoveWorker is parked
- * and no armed group's pass runs; otherwise again at the next gate tick. */
+ * and no armed group's pass runs; otherwise again at the next gate tick. The
+ * early groups go in at the first such tick with the MoveWorker parked. */
 static int rc_join_point(uint64_t tick) {
     unsigned pending=rc_armed_groups&~rc_installed_groups;
-    if(!rc_installed || !pending || !rc_updates) return 1;
+    if(!rc_installed || !pending) return 1;
+    if(pending&RC_EARLY_GROUPS) {
+        if(!mt_worker_parked()) ++rc_early_waits;
+        else {
+            for(unsigned g=0;g<RC_GROUPS;g++)
+                if((pending&RC_EARLY_GROUPS&(1u<<g)) && !rc_install_group(g)) {rc_remove_patches();return rc_fail("cas");}
+            rc_early_tick=tick;pending&=~RC_EARLY_GROUPS;
+            if(!pending) {rc_install_tick=tick;rc_stage="installed";}
+        }
+    }
+    if(!pending || !rc_updates) return 1;
     if(!mt_worker_parked() || !rc_passes_idle()) {
         if(++rc_install_waits>=RC_INSTALL_WAITS) return rc_fail("busy");
         return 1;
@@ -2192,8 +2224,10 @@ static int rc_status(char *out,size_t capacity) {
         (unsigned long long)rc_stub_calls[RC_SOUND_CALL],(unsigned long long)rc_stub_calls[RC_SOUND_CALL+1u],
         (unsigned)(rc_two_sectors()?2+rc_more:rc_page && *rc_manager_camera()?1:0),rc_standins_max,(unsigned long long)rc_uncovered_ticks,rc_uncovered_now,(unsigned long long)rc_shape_unkeyed,scenes,fill,rows,pass,rc_stop);
     if(n>0 && (size_t)n<capacity) {
-        const int more=snprintf(out+n,capacity-(size_t)n," effect_policy=%llu/%llu/%llu",(unsigned long long)rc_stub_calls[RC_EFFECT_CAMERA_CALL],
-            (unsigned long long)rc_effect_policy_own,(unsigned long long)rc_effect_policy_standin);
+        char early[24]="-";
+        if(rc_early_tick!=UINT64_MAX) snprintf(early,sizeof(early),"%llu",(unsigned long long)rc_early_tick);
+        const int more=snprintf(out+n,capacity-(size_t)n," effect_policy=%llu/%llu/%llu sound_early=%s/%llu",(unsigned long long)rc_stub_calls[RC_EFFECT_CAMERA_CALL],
+            (unsigned long long)rc_effect_policy_own,(unsigned long long)rc_effect_policy_standin,early,(unsigned long long)rc_early_waits);
         n=more>0 && (size_t)(n+more)<capacity?n+more:-1;
     }
     return n>0 && (size_t)n<capacity?n:0;

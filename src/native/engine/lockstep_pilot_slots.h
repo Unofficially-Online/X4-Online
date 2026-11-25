@@ -441,9 +441,10 @@ static void pslot_set_routes(pslot_slot *s,int live) {
  * this ship" (the user's report of 11 Nov; live aif2: in slot 2's scope pilot = the NPC).
  * Here, inside slot k's scope only, ship k's pilot-post entry holds P_k: written at the scope's entry when slot k sits
  * at its controls (seated, not walking, its controller there: a slot on foot keeps P_k's vector, lockstep_pilot_foot_
- * slots.h) and the entry is empty; put back at the leave when the cell is still that ship's and still holds P_k (a ship
- * that died inside the scope or a table that moved: counted, nothing written). Outside every scope the table is as X4
- * left it: saves, the join package, destruction and the hull's NPC see no change. */
+ * slots.h) or in its seat of a docked ship (X4's own player stays at its docked ship's pilot post) and the entry is
+ * empty; put back at the leave when the cell is still that ship's and still holds P_k (a ship that died inside the
+ * scope or a table that moved: counted, nothing written). Outside every scope the table is as X4 left it: saves, the
+ * join package, destruction and the hull's NPC see no change. */
 #define PSLOT_POSTS 0x418u
 static int pslot_post_on;
 static unsigned char *volatile *pslot_post_cell[PILOT_SLOTS+1];
@@ -478,7 +479,10 @@ static void pslot_post_enter(unsigned k,pslot_slot *s) {
         pslot_post_drop(k,s);
     }
     pslot_post_cell[k]=NULL;
-    if(!pslot_post_on || !s->seated || s->walking || !s->controller) return;
+    /* at its controls, or in its seat of a docked ship (no controller: X4 gave the ship its docking controller), where X4's
+     * own player stays at the pilot post too: the ship's pilot answers the player either way (its cover goes to the
+     * player through it, lockstep_cover_slots.h; rk10's player 2 docked, 25 Nov: the ship's cover and not the player's) */
+    if(!pslot_post_on || !s->seated || s->walking || !(s->controller || s->docked)) return;
     unsigned char *volatile *cell=pslot_post_cell_of(s);
     if(!cell || !read_local((const void*)cell,&now,8)) {InterlockedIncrement64(&pslot_post_unreadable);return;}
     if(now==s->player) {InterlockedIncrement64(&pslot_post_same);return;}

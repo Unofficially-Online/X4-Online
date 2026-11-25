@@ -356,6 +356,7 @@ def config_lines(rows, save=True):
 CONTINUE_FORMAT = 'X4LAN_CONTINUE_1'
 WARE = re.compile(r'[a-z][a-z0-9_]{0,63}')
 CONTINUE_WARES = 512      # wares (or research, blueprints) per slot a continued session gives back
+ACTIVE_TYPE = re.compile(r'[A-Za-z0-9_]{1,40}|-')   # a slot's active mission: [its place in the mission list, its type]
 AMOUNT_MAX = 10 ** 9
 
 
@@ -376,6 +377,10 @@ def check_continue(block):
                 isinstance(i, dict) and WARE.fullmatch(str(i.get('ware'))) and type(i.get('amount')) is int and 1 <= i['amount'] <= AMOUNT_MAX
                 for i in items) or len({i['ware'] for i in items}) != len(items):
             raise MilestoneError(f'continue: slot {k}: inventory')
+        active = slot.get('active')
+        if active is not None and not (isinstance(active, list) and len(active) == 2 and type(active[0]) is int and
+                                       1 <= active[0] <= 99999 and isinstance(active[1], str) and ACTIVE_TYPE.fullmatch(active[1])):
+            raise MilestoneError(f'continue: slot {k}: active')
         for part in ('blueprints', 'research'):
             wares = slot.get(part) or []
             if not isinstance(wares, list) or len(wares) > CONTINUE_WARES or not all(isinstance(w, str) and WARE.fullmatch(w) for w in wares)                     or len(set(wares)) != len(wares):
@@ -394,6 +399,8 @@ def continue_lines(session):
         slot = block['slots'][k]
         inventory = ','.join(f"{{'{i['ware']}',{i['amount']}}}" for i in slot.get('inventory') or [])
         fields = [f'inventory={{{inventory}}}'] + [f"{part}={{{','.join(repr(w) for w in slot.get(part) or [])}}}" for part in ('blueprints', 'research')]
+        if slot.get('active'):
+            fields.append(f"active={{{int(slot['active'][0])},'{slot['active'][1]}'}}")
         parts.append(f'[{int(k)}]={{' + ','.join(fields) + '}')
     return [f"X4LAN_CONFIG.native_gate_continue = {{name='{block['name']}',slots={{{','.join(parts)}}}}}"]
 

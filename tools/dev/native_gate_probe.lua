@@ -979,7 +979,7 @@ end
 ticklog.watcher=X4LAN_NATIVE_GATE_DEFAULTS and X4LAN_NATIVE_GATE_DEFAULTS.watcher()
 -- Modules whose status the frame does not poll (written at the stop only): read for the watcher every 600 ticks, no row.
 ticklog.watched={{'native_gate_engine_refresh_rng','engine_refresh_rng_status','ENGINE_REFRESH_RNG'},
- {'native_gate_build_rng','build_rng_status','BUILD_RNG'},{'native_gate_highway_players','highway_players_status','HIGHWAY_PLAYERS'},{'native_gate_pilot_travel','pilot_travel_status','PILOT_TRAVEL'},{'native_gate_portable_math','portable_math_status','PORTABLE_MATH'},
+ {'native_gate_build_rng','build_rng_status','BUILD_RNG'},{'native_gate_highway_players','highway_players_status','HIGHWAY_PLAYERS'},{'native_gate_pilot_travel','pilot_travel_status','PILOT_TRAVEL'},{'native_gate_turret_assist','turret_assist_status','TURRET_ASSIST'},{'native_gate_cover_slots','cover_slots_status','COVER_SLOTS'},{'native_gate_portable_math','portable_math_status','PORTABLE_MATH'},
  {'native_gate_safe_pos_order','safe_pos_order_status','SAFE_POS_ORDER'},
  {'native_gate_exact_reciprocal','exact_reciprocal_status','EXACT_RECIPROCAL'},{'native_gate_fp_env','fp_env_status','FP_ENV'},
  {'native_gate_decimal','decimal_status','DECIMAL'},{'native_gate_macro_arena','macro_arena_status','MACRO_ARENA'},
@@ -4095,6 +4095,10 @@ function pilot_view.arm_ui_replay(slot,window)
   -- change of seat that raised no event).
   groups=cfg.native_gate_player_groups==true and gate.ui_inventory_player and
    {first=window[1]+90,every=150,player=function(k) local id=gate.ui_inventory_player(k);return id and ConvertStringToLuaID(id) or nil end} or nil,
+  -- The ships that protect this client's own player's ship, drawn in the player's colour on this client only
+  -- (native_gate_escort_present, armed below; S.escort): this client's player entity, asked every half second.
+  escort=cfg.native_gate_escort_present==true and gate.escort_present_set and gate.ui_inventory_player and
+   {first=window[1]+100,every=15,player=function() local id=gate.ui_inventory_player(slot);return id and ConvertStringToLuaID(id) or nil end} or nil,
   story=cfg.native_gate_story,   -- {[k]='<Script>.<Cue>'}: the start script's cue that begins slot k's story (S.slot_story)
   -- Players see each other on foot (native_gate_foot_avatars, a session default; false: nobody has a figure): each
   -- slot's stand-in figure is started 3 s into the window, the slots a tick apart (S.slot_avatars).
@@ -4166,6 +4170,8 @@ function pilot_view.arm_ui_replay(slot,window)
    end
    log('PLOT_OWNED_ARMED slot='..slot..' scripts='..table.concat(named,',')..' '..tostring(gate.mpp_first()))
   end
+  -- ...and its slots' active missions (after the names: the owners of the missions it picks)
+  if cfg.native_gate_continue and ticklog.continue_active then ticklog.continue_active() end
   -- The MD scheduler's own calls (a cue's delayed actions, pending states, forced cues) run in the cue's owner's scope
   -- too (lockstep_mission_owners.h). Here: after the arming above and after the MD modules that pin the scheduler
   -- routine as X4 has it (the timed checks, armed earlier in this frame). A gate that cannot (another build's bytes)
@@ -4489,7 +4495,35 @@ do
   else ticklog.loud(kind..'_GAVE_UP',row,false) end
   if q.kind=='player' and q.slot==M.own and not again then ticklog.notice('the game could not be saved ('..tostring(why)..')') end
  end
+ -- Every mission of the world in the mission manager's order: {id=<decimal>, type=<its main type or '-'>}. The stock
+ -- readers (the UI replay keeps them in X4LAN_UI_REPLAY_STOCK; the globals are wrapped to a client's own list): the same
+ -- on every client.
+ function M.missions()
+  local stock=X4LAN_UI_REPLAY_STOCK or {}
+  local num=stock.GetNumMissions or GetNumMissions
+  local get=stock.GetMissionDetails or GetMissionDetails
+  local out={}
+  if not (num and get) then return out end
+  pcall(function()
+   for i=1,tonumber(num()) or 0 do
+    local id,_,_,_,_,maintype=get(i)
+    out[i]={id=M.cue_decimal(id),type=type(maintype)=='string' and maintype:match('^[%w_]+$') and maintype or '-'}
+   end
+  end)
+  return out
+ end
+ -- Slot k's (2..N) active mission: the gate keeps it while the manager holds slot 1's (lockstep_mission_owners.h 'active';
+ -- the HUD's course and Shift+A's target on client k), and a save holds only slot 1's (the manager's own). The row
+ -- names it by its place in the mission list and its type (a mission's ID is new after a load): active=<index>:<type>.
+ function M.actives()
+  local out={}
+  local state=gate.mpp_state and gate.mpp_state()
+  local tail=type(state)=='string' and state:match('^v2|[^|]*|(.*)$') or ''
+  for k,hex in tail:gmatch('(%d+):(%x+)') do out[tonumber(k)]=string.format('%.0f',tonumber(hex,16)) end
+  return out
+ end
  function M.slot_rows(name,T,tick)
+  local actives,missions=M.actives(),nil
   for k=1,M.slots_n() do
    local player=gate.ui_inventory_player and gate.ui_inventory_player(k) or nil
    local runtime=gate.pilot_ship and gate.pilot_ship(k) or nil
@@ -4508,9 +4542,15 @@ do
     inventory=not ok and 'error' or #rows==0 and 'none' or table.concat(rows,',')
    end
    if k>=2 and gate.research_list then local has=gate.research_list(k);if type(has)=='string' and has~='' then research=has end end
+   local active='-'
+   if k>=2 and actives[k] then
+    missions=missions or M.missions()
+    active='gone'
+    for i,x in ipairs(missions) do if x.id==actives[k] then active=i..':'..x.type;break end end
+   end
    ticklog.write('SAVE_SLOT name='..name..' tick='..T..' slot='..k..' player='..tostring(player or '-')..' ship='..
     (type(runtime)=='number' and string.format('%.0f',runtime) or '-')..' walking='..(walks and 1 or 0)..' inventory='..inventory..
-    ' research='..research..' at='..tick)
+    ' research='..research..' active='..active..' at='..tick)
   end
  end
  function M.snapshot(name,T,tick)
@@ -4708,6 +4748,36 @@ do
     end
    end
   end
+ end
+ -- A continued session's slots 2..N get their active mission back before the first tick (the gate's table is empty
+ -- then: gate.mpp_restore, as a joiner's): the saved one (native_gate_continue slots[k].active = {index, type}) when
+ -- the list still has it there and it is slot k's or nobody's; else the slot's one plot mission, else its one mission.
+ -- So the HUD shows its course and Shift+A has its target again (live, rk15 25 Nov: neither until the player set the
+ -- course again). The same on every client: the same save, block and owners by name.
+ function ticklog.continue_active()
+  local cont=M.cont
+  if not cont then return end
+  local list,entries,rows=M.missions(),{},{}
+  local function owner(x) return x and x.id and gate.mpp_owner and gate.mpp_owner(x.id) or -1 end
+  for k=2,M.slots_n() do
+   local saved=((cont.slots or {})[k] or {}).active
+   local pick,how=nil,'none'
+   if type(saved)=='table' then
+    local x=list[saved[1]]
+    if x and x.type==saved[2] and (owner(x)==k or owner(x)==0) then pick,how=x,'saved' else how='saved_gone' end
+   end
+   if not pick then
+    local own,plots={},{}
+    for _,x in ipairs(list) do if owner(x)==k then own[#own+1]=x;if x.type=='plot' then plots[#plots+1]=x end end end
+    if #plots==1 then pick,how=plots[1],how=='none' and 'own_plot' or how..'>own_plot'
+    elseif #own==1 then pick,how=own[1],how=='none' and 'own' or how..'>own' end
+   end
+   if pick then entries[#entries+1]=k..':'..string.format('%x',tonumber(pick.id)) end
+   rows[#rows+1]=k..':'..how..':'..tostring(pick and pick.id or '-')..':'..tostring(pick and pick.type or '-')
+  end
+  local ok=#entries==0 or (gate.mpp_restore and gate.mpp_restore('v2||'..table.concat(entries,','))==1)
+  local row='CONTINUE_ACTIVE name='..cont.name..' missions='..#list..' slots='..table.concat(rows,',')..' restored='..(ok and #entries or 0)
+  if ok then ticklog.write(row) else ticklog.loud('CONTINUE_ACTIVE_FAILED',row,'the active missions of the continued game could not be set again') end
  end
  function M.continue_frame(tick)
   if not M.dumped and tick>=2 then
@@ -5027,6 +5097,7 @@ local function pilot_frame(s,tick)
   if tick%600==0 then ticklog.status('PILOT_FIRE_STATUS',tick,gate.pilot_fire_status) end
   if pilot_view.aim and tick%600==0 then ticklog.status('PILOT_AIM_STATUS',tick,gate.pilot_aim_status) end
   if pilot_view.aim_present and tick%600==0 then ticklog.status('PILOT_AIM_PRESENT_STATUS',tick,gate.pilot_aim_present_status) end
+  if cfg.native_gate_hud_weapons and gate.hud_weapons_status and tick%600==0 then ticklog.status('HUD_WEAPONS_STATUS',tick,gate.hud_weapons_status) end
   -- Runs without people (native_gate_pilot_aim_script = {{from,to,x,y,z,fire,mode},...}): this client's own record carries
   -- an aim between the two ticks, with the trigger when fire: a manual aim at that point of its ship's frame (x mirrored
   -- for even slots; with the aim assist bit as this client's X4 option gives it with mouse steering, so a point near the
@@ -5298,6 +5369,35 @@ if join_joiner and join_joiner.sha=='early' then
  end
 else
  X4LAN_JOIN_EARLY_READY=nil
+end
+-- The cover's presentation on this client (lockstep_cover_slots.h). Helper.isPlayerCovered asks the player entity the
+-- menus see (X4's own, player 1's, on every client): on a client of slot 2..N it asks this client's own cover, which the
+-- gate's GetPlayerCoverFaction answers for the slot's player (the player's name in the cover's colour, the map's cover
+-- toggle). A replayed cover or stance arrives some ticks after the click: the docked menu redisplays when this client's
+-- cover or its ship's stance changed, as X4 redisplays it after its own change at once.
+cover_view={last=nil}
+function cover_view.arm(own)
+ pcall(ffi.cdef,'const char* GetPlayerCoverFaction(void);')
+ cover_view.slot=own
+ if own>=2 and type(Helper)=='table' and type(Helper.isPlayerCovered)=='function' and not cover_view.wrapped then
+  Helper.isPlayerCovered=function() return ffi.string(ffi.C.GetPlayerCoverFaction())~='' end
+  cover_view.wrapped=true
+ end
+end
+function cover_view.frame(tick)
+ -- this client's slot as the simulation holds it (the probe's frame reads the canonical state): its ship's and its
+ -- player's cover, the ship's stance
+ local ok,now=pcall(function() return gate.cover_slots_look(cover_view.slot or 1) end)
+ if not ok or not now then return end
+ now=now:gsub(' can=%d',''):gsub(' notice=%x+','')
+ if now==cover_view.last then return end
+ local changed=cover_view.last~=nil
+ cover_view.last=now
+ if not changed then return end
+ log('COVER_VIEW tick='..tick..' '..now)
+ for _,menu in ipairs(type(Menus)=='table' and Menus or {}) do
+  if menu.name=='DockedMenu' and menu.shown and type(menu.onCoverAbilityChanged)=='function' then pcall(menu.onCoverAbilityChanged) end
+ end
 end
 local function frame()
  if done then return end
@@ -6625,6 +6725,20 @@ local function frame()
     'pilot travel refused '..tostring(gate.pilot_travel_status and gate.pilot_travel_status()))
    log('PILOT_TRAVEL_ARMED')
   end
+  -- The turrets of a players 2..N's ship in "attack my current target" take that player's target, on every client alike
+  -- (lockstep_turret_assist.h). Armed before the load.
+  if cfg.native_gate_turret_assist then
+   assert(cfg.native_gate_turret_assist==true and gate.turret_assist and gate.turret_assist_status and gate.turret_assist()==1,
+    'turret assist refused '..tostring(gate.turret_assist_status and gate.turret_assist_status()))
+   log('TURRET_ASSIST_ARMED')
+  end
+  -- The HUD weapon panel of every player as X4 shows player 1's: the weapons of the presented ship's active groups read
+  -- active though the lease's controller is none of X4's player classes (lockstep_hud_weapons.h; presentation only).
+  if cfg.native_gate_hud_weapons then
+   assert(cfg.native_gate_hud_weapons==true and gate.hud_weapons and gate.hud_weapons_status and gate.hud_weapons()==1,
+    'hud weapons refused '..tostring(gate.hud_weapons_status and gate.hud_weapons_status()))
+   log('HUD_WEAPONS_ARMED')
+  end
   if cfg.native_gate_build_rng then
    assert(cfg.native_gate_build_rng==true and cfg.native_gate_world_identities and gate.build_rng and
     gate.build_rng_status and gate.build_rng()==1,
@@ -7698,6 +7812,14 @@ local function frame()
       'faction present refused '..tostring(gate.faction_present_status and gate.faction_present_status()))
      log('FACTION_PRESENT_ARMED '..tostring(gate.faction_present_status()))
     end
+    -- A ship that protects a player's own ship (a story wingman: the Terran cadet's) is drawn in the player's own colour
+    -- on that player's own client (lockstep_escort_present.h; a session default, Windows gate; presentation only): X4
+    -- colours green only what the player faction owns, and the wingmate is a Terran ship (user, 25 Nov: it should show
+    -- green, as an ally). Refused on another build: then the wingmate keeps X4's colour, nothing else changes.
+    if cfg.native_gate_escort_present and gate.escort_present then
+     assert(cfg.native_gate_escort_present==true,'escort present refused: native_gate_escort_present must be true')
+     log((gate.escort_present(1)==1 and 'ESCORT_PRESENT_ARMED ' or 'ESCORT_PRESENT_REFUSED ')..tostring(gate.escort_present_status and gate.escort_present_status()))
+    end
     if cfg.native_gate_swarm_seed and gate.swarm_seed then
      assert(cfg.native_gate_swarm_seed==true and gate.swarm_seed(1)==1,
       'swarm seed refused '..tostring(gate.swarm_seed_status and gate.swarm_seed_status()))
@@ -7794,6 +7916,18 @@ local function frame()
     assert(cfg.native_gate_scan_mode==true and gate.scan_mode(1)==1,'scan mode refused '..tostring(gate.scan_mode_status and gate.scan_mode_status()))
     log('SCAN_MODE_ARMED '..tostring(gate.scan_mode_status()))
    end
+   -- Every player's cover (disguise) and ship stance (lockstep_cover_slots.h): the cover and stance keys ride the record,
+   -- X4's handler runs for the slot's player on every client (its notice on that player's PC), the docked menu's cover
+   -- and stance are flight family calls, and client k's menus and HUD read its own player's cover. Needs the flight family.
+   if cfg.native_gate_cover_slots then
+    assert(cfg.native_gate_cover_slots==true and gate.cover_slots and gate.cover_slots()==1,
+     'cover slots refused '..tostring(gate.cover_slots_status and gate.cover_slots_status()))
+    cover_view.arm(slot)
+    -- Each player 2..N's own cover lines (md/x4lan_cover_p<k>.xml): slot k's by the script's name, before the first tick.
+    local named={}
+    for k=2,8 do named[#named+1]=k..'='..tostring(gate.mpp_first and gate.mpp_first('X4LAN_CoverP'..k,k)) end
+    log('COVER_SLOTS_ARMED slot='..slot..' scripts='..table.concat(named,',')..' '..tostring(gate.cover_slots_status()))
+   end
    -- Camera follow: this client watches its own slot ship through the stock
    -- target view unless that ship is the occupied one. Differing cameras need
    -- the render RNG split (slot 10 draws stay off the simulation word).
@@ -7850,6 +7984,13 @@ local function frame()
      gate.pilot_fire and gate.pilot_fire_frame and gate.pilot_fire(fire,X4LAN_PILOT_FIRE_MASK(cfg.native_gate_pilot_fire_slots,fire,#cfg.native_gate_pilot_slots))==1,'pilot fire refused')
     pilot_view.fire=fire
     log('PILOT_FIRE_ARMED mode='..fire)
+    -- Test: slots whose guns keep X4's own controllers (a stock reference in a --solo run; never in a session).
+    if cfg.native_gate_pilot_fire_stock~=nil then
+     local mask=0
+     for _,s in ipairs(cfg.native_gate_pilot_fire_stock) do mask=mask+2^(s-1) end
+     assert(gate.pilot_fire_stock and gate.pilot_fire_stock(mask)==1,'pilot fire stock refused')
+     log('PILOT_FIRE_STOCK mask='..mask)
+    end
     -- Gun aim per player (lockstep_pilot_aim.h; native_gate_pilot_aim, on by default with 'record'): every slot's own
     -- client records where its player aims, every client turns that slot's guns there. Every client or none.
     if cfg.native_gate_pilot_aim then
@@ -8154,6 +8295,8 @@ local function frame()
   if cfg.native_gate_build_rng then log('BUILD_RNG_STOP '..tostring(gate.build_rng_status())) end
   if cfg.native_gate_highway_players and gate.highway_players_status then log('HIGHWAY_PLAYERS_STOP '..tostring(gate.highway_players_status())) end
   if cfg.native_gate_pilot_travel and gate.pilot_travel_status then log('PILOT_TRAVEL_STOP '..tostring(gate.pilot_travel_status())) end
+  if cfg.native_gate_turret_assist and gate.turret_assist_status then log('TURRET_ASSIST_STOP '..tostring(gate.turret_assist_status())) end
+  if cfg.native_gate_hud_weapons and gate.hud_weapons_status then log('HUD_WEAPONS_STOP '..tostring(gate.hud_weapons_status())) end
   if cfg.native_gate_ui_cargo then log('UI_CARGO_STOP '..tostring(gate.ui_cargo_status())) end
   if cfg.native_gate_supply_rows then log('SUPPLY_ROWS_STOP '..tostring(gate.supply_rows_status())) end
   if cfg.native_gate_ui_lazy then log('UI_LAZY_STOP '..tostring(gate.ui_lazy_status())) end
@@ -8386,6 +8529,7 @@ local function frame()
   if cfg.native_gate_anim_listeners and gate.anim_listeners_status then ticklog.status('ANIM_LISTENERS',tick,gate.anim_listeners_status,'anim listeners status unavailable') end
   if cfg.native_gate_undock_screen and gate.undock_screen_status then ticklog.status('UNDOCK_SCREEN',tick,gate.undock_screen_status,'undock screen status unavailable') end
   if cfg.native_gate_faction_present and gate.faction_present_status then ticklog.status('FACTION_PRESENT',tick,gate.faction_present_status,'faction present status unavailable') end
+  if cfg.native_gate_escort_present and gate.escort_present_status then ticklog.status('ESCORT_PRESENT',tick,gate.escort_present_status,'escort present status unavailable') end
   if cfg.native_gate_view_cameras and gate.view_cameras_status then ticklog.status('VIEW_CAMERAS',tick,gate.view_cameras_status,'view cameras status unavailable') end
   if (cfg.native_gate_pilot_present_sound or cfg.native_gate_sound_source or cfg.native_gate_computer_forward or cfg.native_gate_sound_play_scope or
       cfg.native_gate_ship_sound_context) and gate.player_sound_status then
@@ -8596,6 +8740,7 @@ local function frame()
   local row=gate.pilot_travel_status()
   if row and row~=ticklog.pilot_travel_last then ticklog.pilot_travel_last=row;log('PILOT_TRAVEL tick='..tick..' '..row) end
  end
+ if cfg.native_gate_cover_slots then cover_view.frame(tick) end
  if cfg.native_gate_gravidar_digest then
   log('GRAVIDAR_DIGEST tick='..tick..' '..assert(gate.gravidar_digest_frame(),'Gravidar digest unavailable'))
   if cfg.native_gate_gravidar_digest_rows then drain_gravidar_digest() end
@@ -9477,6 +9622,8 @@ SetScript('onUpdate',function()
    if cfg.native_gate_build_rng then ticklog.try(function() log('BUILD_RNG_STOP '..tostring(gate.build_rng_status())) end) end
    if cfg.native_gate_highway_players and gate.highway_players_status then ticklog.try(function() log('HIGHWAY_PLAYERS_STOP '..tostring(gate.highway_players_status())) end) end
    if cfg.native_gate_pilot_travel and gate.pilot_travel_status then ticklog.try(function() log('PILOT_TRAVEL_STOP '..tostring(gate.pilot_travel_status())) end) end
+   if cfg.native_gate_turret_assist and gate.turret_assist_status then ticklog.try(function() log('TURRET_ASSIST_STOP '..tostring(gate.turret_assist_status())) end) end
+   if cfg.native_gate_hud_weapons and gate.hud_weapons_status then ticklog.try(function() log('HUD_WEAPONS_STOP '..tostring(gate.hud_weapons_status())) end) end
    if cfg.native_gate_economy_load_rng then ticklog.try(function() log('ECONOMY_LOAD_RNG_STOP '..tostring(gate.economy_load_rng_status())) end) end
    if cfg.native_gate_ui_cargo then ticklog.try(function() log('UI_CARGO_STOP '..tostring(gate.ui_cargo_status())) end) end
    if cfg.native_gate_supply_rows then ticklog.try(function() log('SUPPLY_ROWS_STOP '..tostring(gate.supply_rows_status())) end) end

@@ -561,6 +561,35 @@ class MissionsPerPlayerProbeTests(ProbeTests):
         c = self.mpp(prelude=shows, native_gate_missions_per_player=False)
         self.assertFalse(any(call.startswith('presentation') for call in c.values('mpp_calls')))
 
+    def test_a_continued_session_gives_each_slot_its_active_mission_back(self):
+        # x4ls continue: a save holds the manager's active mission only (slot 1's); slot 2's comes back before the first
+        # tick (live rk15, 25 Nov: no course and no Shift+A target until the player chose one again). Missions 11 (slot
+        # 1's), 12 (slot 2's plot), 13 (nobody's), 14 (slot 2's other one), each with its main type (GetMissionDetails' 6th).
+        active = PROBE_MPP + r'''
+          gate.mpp_first=function(name,k) if name==nil then return 'first=2/0 owned=2' end mpp_calls[#mpp_calls+1]='first:'..name..':'..tostring(k);return 1 end
+          gate.mpp_owner=function(text) return ({['11']=1,['12']=2,['14']=2})[text] or 0 end
+          GetNumMissions=function() return 4 end
+          GetMissionDetails=function(i) local t=({'plot','plot','guidance','upkeep'})[i];if t then return 10+i,'mission '..(10+i),'',0,'',t end end
+        '''
+        cont = dict(native_gate_missions_per_player=True, native_gate_script_rng='key', native_gate_plot_owned=[['Story_Yaki_P2', 2]])
+        # the saved one: the 4th of the list, an upkeep mission
+        c = self.client(2, prelude=active, native_gate_continue={'name': 'c1-t3600', 'slots': {2: {'active': [4, 'upkeep']}}}, **cont)
+        self.assertEqual(c.errors(), [], c.values('logs')[-3:])
+        calls = c.values('mpp_calls')
+        self.assertLess(calls.index('first:Story_Yaki_P2:2'), calls.index('restore:v2||2:e'))   # after the names, 14 = 0xe
+        self.assertTrue(any('CONTINUE_ACTIVE name=c1-t3600 missions=4 slots=2:saved:14:upkeep restored=1' in line for line in c.values('logs')))
+        # a save without the row (or the list changed): the slot's one plot mission
+        for slots in ({}, {2: {'active': [3, 'upkeep']}}):
+            c = self.client(2, prelude=active, native_gate_continue={'name': 'c1-t3600', 'slots': slots}, **cont)
+            self.assertIn('restore:v2||2:c', c.values('mpp_calls'))
+            self.assertTrue(any(('slots=2:own_plot:12:plot' if not slots else 'slots=2:saved_gone>own_plot:12:plot') in line
+                                for line in c.values('logs')), c.values('logs')[-3:])
+        # another slot's mission is never taken; nothing of its own: none, nothing restored
+        c = self.client(2, prelude=active + "gate.mpp_owner=function(text) return text=='11' and 1 or 0 end",
+                        native_gate_continue={'name': 'c1-t3600', 'slots': {2: {'active': [1, 'plot']}}}, **cont)
+        self.assertFalse(any(call.startswith('restore') for call in c.values('mpp_calls')))
+        self.assertTrue(any('slots=2:saved_gone:-:- restored=0' in line for line in c.values('logs')), c.values('logs')[-3:])
+
     def test_a_client_lists_its_own_missions(self):
         # Missions 11 (slot 1's), 12 (slot 2's), 13 (nobody's: e.g. a client's own guidance) in X4's list; the menus' two
         # readers answer the own slot's and nobody's, by index among those.

@@ -125,6 +125,10 @@ static pfire_shoot_at_fn pfire_shoot_at_override; /* tests */
 static pfire_slot pfire_slots[PILOT_SLOTS];
 static int pfire_mode,pfire_armed,pfire_pins_checked,pfire_released;
 static unsigned pfire_script_mask;   /* PFIRE_SCRIPT: bit s-1 = slot s fires; 0 = every slot */
+/* Test (native_gate_pilot_fire_stock, gate.pilot_fire_stock): bit s-1 = slot s is never leased, its guns keep X4's own
+ * controllers: X4's own player in slot 1 then shoots, aims and draws its HUD as in single player, a stock reference for a
+ * --solo 1 run. Not for sessions: that slot's trigger is no record's. */
+static unsigned pfire_stock_mask;
 static uint64_t pfire_frames,pfire_tick,pfire_triggered,pfire_lease_waits,pfire_installs,pfire_replaced_at_lease,pfire_cleared,
     pfire_receipt_tick,pfire_receipt,pfire_replaced_by_sim,pfire_retaken,pfire_retake_waits,pfire_trigger_restored,pfire_guns_lost,
     pfire_let_go,pfire_relets;
@@ -349,6 +353,7 @@ static int pfire_before_release(void) {
     for(unsigned i=0;i<pilot_slot_count;i++) {
         pilot_slot *s=&pilot_slots[i];pfire_slot *f=&pfire_slots[i];
         if(tick<pilot_start || !s->resolved || !pilot_slot_enrolled(i+1,tick)) continue;   /* absent: its guns stay its AI's */
+        if(pfire_stock_mask>>i&1u) continue;   /* test: a stock reference, X4's own controllers */
         if(uirep_families&UIREP_FAMILY_MISSILES) pfire_missiles_tick(s,i+1,tick,tick>pilot_stop);
         if(tick>pilot_stop) {if(!pfire_end(s,f,i+1)) return 0;continue;}
         if(!f->leased && !pfire_lease(f,s->object)) {pfire_stage="lease";return 0;}

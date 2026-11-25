@@ -87,7 +87,35 @@ static void test_mission_owners(void) {
          pstk_scope_slot=0;pslots[2].length=0;                                                                    /* no store to enter: as before, counted */
          assert(!mpp_ai_frame_enter((uintptr_t)contexts[0]) && mpp_ai_refused==1 && !mpp_ai_entered && !pstk_scope_slot && mpp_depth==depth);}
         assert(!mpp_ai_frame_enter((uintptr_t)contexts[2]) && mpp_ai_frames==3);                               /* slot 1's computer */
-        {char text[1024];assert(mpp_status(text,sizeof(text))>0 && strstr(text," ai=1/3/0/1/1/1"));}
+        {char text[1024];assert(mpp_status(text,sizeof(text))>0 && strstr(text," ai=1/3/0/1/1/1/0"));}
+        /* aboard the ship a slot 2..N sits in (its defence computer: the turret script): that slot's, through the
+           entity's room or straight from the ship, for slots 2 and 3; not while that slot walks or is not seated;
+           not beyond MPP_AI_ABOARD_DEPTH; player 1's ship (no slot seat) never */
+        {   _Alignas(16) static unsigned char ships[3][0x100],rooms[3][0x100],crew[4][0x100],deep[6][0x100],ctx[4][0x200],p3[0x100];
+            unsigned char *const ship2=pslots[2].ship,*const ship3=pslots[3].ship,*const player3=pslots[3].player;
+            const int seated2=pslots[2].seated,walking2=pslots[2].walking,seated3=pslots[3].seated,walking3=pslots[3].walking;
+            v=(uintptr_t)ships[0];memcpy(rooms[0]+MPP_AI_PARENT,&v,8);
+            v=(uintptr_t)rooms[0];memcpy(crew[0]+MPP_AI_PARENT,&v,8);      /* slot 2's defence computer, in a room of its ship */
+            v=(uintptr_t)ships[1];memcpy(crew[1]+MPP_AI_PARENT,&v,8);      /* slot 3's, straight under the ship */
+            v=(uintptr_t)ships[2];memcpy(crew[2]+MPP_AI_PARENT,&v,8);      /* player 1's ship's */
+            for(unsigned i=0;i<5;i++) {v=(uintptr_t)deep[i+1];memcpy(deep[i]+MPP_AI_PARENT,&v,8);}
+            v=(uintptr_t)ships[0];memcpy(deep[5]+MPP_AI_PARENT,&v,8);
+            v=(uintptr_t)deep[0];memcpy(crew[3]+MPP_AI_PARENT,&v,8);       /* six steps below slot 2's ship: too deep */
+            for(unsigned i=0;i<4;i++) {memcpy(ctx[i],&avt,8);v=(uintptr_t)crew[i];memcpy(ctx[i]+MPP_AI_ENTITY,&v,8);}
+            pslots[2].ship=ships[0];pslots[2].seated=1;pslots[2].walking=0;
+            pslots[3].player=p3;pslots[3].ship=ships[1];pslots[3].seated=1;pslots[3].walking=0;
+            assert(mpp_ai_slot_of((uintptr_t)ctx[0])==2 && mpp_ai_slot_of((uintptr_t)ctx[1])==3 && mpp_ai_aboard==2);
+            assert(!mpp_ai_slot_of((uintptr_t)ctx[2]) && !mpp_ai_slot_of((uintptr_t)ctx[3]));
+            pslots[2].walking=1;assert(!mpp_ai_slot_of((uintptr_t)ctx[0]));pslots[2].walking=0;
+            pslots[3].seated=0;assert(!mpp_ai_slot_of((uintptr_t)ctx[1]));pslots[3].seated=1;
+            {const unsigned depth=mpp_depth;mpp_ai_frames=mpp_ai_entered=mpp_ai_inside=mpp_ai_conflicts=mpp_ai_refused=0;
+             pstk_scope_slot=3;{unsigned c=mpp_ai_frame_enter((uintptr_t)ctx[1]);assert(!c && mpp_ai_inside==1 && mpp_depth==depth);mpp_frame_leave(c);}
+             pstk_scope_slot=2;assert(!mpp_ai_frame_enter((uintptr_t)ctx[1]) && mpp_ai_conflicts==1);   /* slot 3's crew inside slot 2's scope */
+             pstk_scope_slot=0;}
+            pslots[2].ship=ship2;pslots[2].seated=seated2;pslots[2].walking=walking2;
+            pslots[3].player=player3;pslots[3].ship=ship3;pslots[3].seated=seated3;pslots[3].walking=walking3;
+            mpp_ai_aboard=0;
+        }
         pslots[2].length=length;pslots[2].player=NULL;mpp_ai_on=0;
         mpp_ai_frames=mpp_ai_entered=mpp_ai_inside=mpp_ai_conflicts=mpp_ai_refused=0;
     }

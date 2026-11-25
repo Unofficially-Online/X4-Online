@@ -175,7 +175,7 @@ static void test_rc_reset(void) {
     memset(rc_site_done,0,sizeof(rc_site_done));memset(rc_call_done,0,sizeof(rc_call_done));
     rc_next=0;rc_updates=rc_native_frames=rc_viewpoint_id=rc_viewpoint_key=rc_install_tick=rc_install_waits=0;rc_tick=UINT64_MAX;rc_failures=0;rc_stage="idle";
     rc_view_zone=rc_view_sector=NULL;for(unsigned i=0;i<RC_CALLS;i++) rc_stub_calls[i]=0;
-    rc_context_skipped=0;rc_context_native=NULL;
+    rc_context_skipped=0;rc_context_native=NULL;rc_early_tick=UINT64_MAX;rc_early_waits=0;
 }
 /* A fresh page and stub page as rc_arm prepares them (the plain image has no pinned code). */
 static void test_rc_pages(void) {
@@ -963,6 +963,32 @@ static void test_region_camera(void) {
         assert(rc_join_install(17) && !rc_installed_groups && rc_join_busy==busy+1);
         mt_worker_waits=mt_worker_wakes;assert(rc_join_install(17) && !rc_installed_groups && rc_join_not_parked==parked+1);
         mt_worker_waits=mt_worker_wakes+1;}
+    assert(rc_remove_patches());rc_patched=0;
+    /* sound_rng before the first admitted frame (rk15: frame 1 ran the sound calls native, and a UI sound of the load drew
+     * from the frame's word on the client that plays sound only): the join point before any stand-in writes the early
+     * group's calls and nothing else, whatever the passes do; the MoveWorker not parked: counted, the next join point. */
+    test_rc_reset();test_rc_pages();rc_installed=1;rc_mode=RC_VIEW;rc_armed_groups=(1u<<RC_TRAFFIC)|(1u<<RC_SOUND);task[MT_READY]=0;
+    {   char status[3072];
+        mt_worker_waits=mt_worker_wakes;
+        assert(rc_join_point(0) && !rc_installed_groups && rc_early_waits==1 && rc_early_tick==UINT64_MAX && !rc_install_waits && !rc_patched);
+        assert(rc_status(status,sizeof(status))>0 && strstr(status," sound_early=-/1"));
+        mt_worker_waits=mt_worker_wakes+1;
+        assert(rc_join_point(0) && rc_installed_groups==1u<<RC_SOUND && rc_early_tick==0 && rc_patched && !rc_install_waits);
+        assert(strcmp(rc_stage,"installed") && !rc_failures);   /* traffic is still to come */
+        for(unsigned i=0;i<RC_SITES;i++) assert(rc_site_state(i)==0);
+        for(unsigned i=0;i<RC_CALLS;i++) assert(rc_call_state(i)==(rc_calls[i].group==RC_SOUND?1:0));
+        assert(rc_owned() && rc_status(status,sizeof(status))>0 && strstr(status," sound_early=0/1") && strstr(status," patched=sound_rng "));
+        stats.issued=1;assert(rc_frame(1) && rc_join_point(1) && rc_install_waits==1 && rc_installed_groups==1u<<RC_SOUND); /* traffic: its pass runs */
+        task[MT_READY]=1;assert(rc_join_point(1) && rc_installed_groups==((1u<<RC_TRAFFIC)|(1u<<RC_SOUND)) && rc_install_tick==1 &&
+                                !strcmp(rc_stage,"installed") && rc_early_tick==0);
+        for(unsigned i=0;i<RC_CALLS;i++) assert(rc_call_state(i)==(rc_calls[i].group==RC_SOUND || rc_calls[i].group==RC_TRAFFIC?1:0));
+        assert(rc_remove_patches());rc_patched=0;
+        for(unsigned i=0;i<RC_CALLS;i++) assert(rc_call_state(i)==0);
+        /* Only the early group armed: in at the first join point, the stage too. */
+        test_rc_reset();test_rc_pages();rc_installed=1;rc_mode=RC_VIEW;rc_armed_groups=1u<<RC_SOUND;
+        assert(rc_join_point(0) && rc_installed_groups==1u<<RC_SOUND && !strcmp(rc_stage,"installed") && rc_install_tick==0 && rc_early_tick==0);
+        assert(rc_join_point(1) && rc_installed_groups==1u<<RC_SOUND && !rc_install_waits);
+        assert(rc_remove_patches());rc_patched=0;}
     *(void**)(image+MT_TASK)=saved_task;DeleteCriticalSection((CRITICAL_SECTION*)(task+MT_TASK_LOCK));
     VirtualFree(world_identities,0,MEM_RELEASE);world_identities=prior_identities;world_identity_count=prior_identity_count;world_identity_sealed=prior_sealed;
     *(void**)(image+RC_UNIVERSE)=saved_universe;
