@@ -1136,17 +1136,25 @@ static int pvehk_computer_status(char *out,size_t capacity) {
  * Eight of the routine's posts are answered (each call lies in one 16-byte block; the self cluster post at 0x6ced3f
  * crosses one, and no stock script listens for a player's cluster change): the entities' three (0x6cf155, 0x6cf200,
  * 0x6cf29a), the objects' three (0x6cef55, 0x6cf000, 0x6cf09a) and the moved object's sector and zone (0x6cedf6,
- * 0x6ceea7). On the frame thread, before X4's post (which may free the event):
- *   own    an entity post on P_k (k = 2..N): inside slot k's scope (opened when no scope is open and P_k is where its
- *          seat or walk says, as the scope's end checks), the event goes to the listeners of player 1's object that no
+ * 0x6ceea7). On the frame thread:
+ *   own    an entity post on P_k (k = 2..N): X4's post runs first, unchanged (it frees the event: a copy of its 0x28
+ *          bytes is taken before); then, inside slot k's scope (opened when no scope is open and P_k is where its
+ *          seat or walk says, as the scope's end checks), the copy goes to the listeners of player 1's object that no
  *          slot owns, in the object form (pvehk_forward_from), in place mode: the scripts of one player space are not
  *          handed it, and what it starts is slot k's (lockstep_mission_owners.h 'a place event's first player');
  *   body   a post on the object P_k is in (the first object above P_k's parent pointers: its ship, its suit, the
- *          station it walks in) while P_k is in no children table: an event with X4's fields is posted on P_k
- *          (immediate, as X4 posts its own player's), inside slot k's scope, after the same forward. X4's post on that
- *          object comes first in its routine and P_k is not among the entities, so the event comes once.
- * X4's post then runs unchanged. The same on every client: the parent change is the simulation's, the scope is opened
- * by the same rules. Another slot's scope open, a scope that cannot open: nothing forwarded (counted); a body event is
+ *          station it walks in) while P_k is in no children table, before X4's post on that object: an event with
+ *          X4's fields is posted on P_k (immediate, as X4 posts its own player's), then a copy of it goes through the
+ *          same forward, inside slot k's scope. X4's post on that object comes first in its routine and P_k is not
+ *          among the entities, so the event comes once.
+ * The forward comes after the post on P_k. A cue the forward starts can wait for the same event on P_k: X4's
+ * md/notifications.xml ChangedSpace (the computer's "Entering <sector>" two seconds after a sector change) makes an
+ * instance whose sub-cue cancels it at the player's next sector change, and its condition names the player, P_k in
+ * slot k's scope. With the forward first, X4's post on P_k then handed that sub-cue the very event that had started
+ * it, and slot k's line was cancelled at once, at every sector change (25 Nov, an audit cue of the same shape: start
+ * and cancel at one time for player 2, start and the line 2 s later for player 1). X4's delivery to its own player
+ * does not reach a listener added while it runs. The same on every client: the parent change is the simulation's,
+ * the scope is opened by the same rules. Another slot's scope open, a scope that cannot open: nothing forwarded (counted); a body event is
  * still posted on P_k for its own listeners. Pinned (the routine's posting part, 0x6cecb9..0x6cf2ad); another build
  * keeps X4's posts. Stub 0xee0 on the slots' near page (free there now: 0xaa0..0xbff, 0xcc0..0xcff, 0xea0..0xedf).
  * Status place=installed/seen/own/body/forwarded/unscoped/denied. */
@@ -1203,7 +1211,7 @@ static void pvehk_place_forward(unsigned k,unsigned char *event,double now) {
     pvehk_place_mode=1;pvehk_forward_from(k,pslot_p1,NULL,event,now);pvehk_place_mode=0;
     InterlockedIncrement64(&pvehk_place_forwarded);
 }
-/* own: X4's post on P_k itself. */
+/* own: X4's post on P_k itself, done already (pvehk_place_post); `event` is the copy of X4's event taken before it. */
 static void pvehk_place_own_note(unsigned k,unsigned char *event,double now) {
     InterlockedIncrement64(&pvehk_place_own);
     const int entered=pvehk_place_enter(k);
@@ -1220,30 +1228,38 @@ static void pvehk_place_tell(unsigned k,const unsigned char *model,double now) {
         unsigned char *event=pvehk_place_tell_test?(unsigned char*)calloc(1,PVEHK_EVENT_SIZE):
             ((unsigned char*(*)(size_t,uintptr_t,uintptr_t,uintptr_t,unsigned))(void*)(pnat_base+PVEHK_EVENT_ALLOCATE))(PVEHK_EVENT_SIZE,0,0,0,0x10);
         if(event) {
+            _Alignas(16) unsigned char copy[PVEHK_EVENT_SIZE];
             memset(event,0,PVEHK_EVENT_SIZE);memcpy(event,&vt,8);memcpy(event+0x18,&was,8);memcpy(event+0x20,&is,8);
-            if(pstk_scope_slot==k) pvehk_place_forward(k,event,now);else InterlockedIncrement64(&pvehk_place_unscoped);
+            memcpy(copy,event,PVEHK_EVENT_SIZE);
             if(pvehk_place_tell_test) {pvehk_place_tell_test(player,event);free(event);}
             else ((void(*)(void*,void*,double,unsigned char))(void*)(pnat_base+PVEHK_EVENT_POST_NOW))(player,event,now,1);
+            if(pstk_scope_slot==k) pvehk_place_forward(k,copy,now);else InterlockedIncrement64(&pvehk_place_unscoped);
         }
     }
     __except(GetExceptionCode()==EXCEPTION_ACCESS_VIOLATION?EXCEPTION_EXECUTE_HANDLER:EXCEPTION_CONTINUE_SEARCH) {pvehk_events_more=0;}
     if(entered) (void)pslot_leave(k);
 }
-static void pvehk_place_note(unsigned char *source,unsigned char *event,double now) {
-    if(!pvehk_place_installed || !pvehk_forward_on || !source || !pslot_p1 || GetCurrentThreadId()!=ui_thread || !pvehk_place_kind(event)) return;
+/* Before X4's post: the body tells; an own post answers its slot with a copy of the event in `copy` (forwarded after
+ * X4's post, pvehk_place_post), else 0. */
+static unsigned pvehk_place_note(unsigned char *source,unsigned char *event,double now,unsigned char *copy) {
+    if(!pvehk_place_installed || !pvehk_forward_on || !source || !pslot_p1 || GetCurrentThreadId()!=ui_thread || !pvehk_place_kind(event)) return 0;
     InterlockedIncrement64(&pvehk_place_seen);
-    for(unsigned k=2;k<=PILOT_SLOTS;k++) if(pslots[k].player==source) {pvehk_place_own_note(k,event,now);return;}
+    for(unsigned k=2;k<=PILOT_SLOTS;k++) if(pslots[k].player==source) return read_local(event,copy,PVEHK_EVENT_SIZE)?k:0u;
     for(unsigned k=2;k<=PILOT_SLOTS;k++) {
         unsigned char *const player=pslots[k].player;
         if(!player || (!pvehk_events_more && !pvehk_place_tell_test) || pvehk_place_carrier(player)!=source) continue;
         if(pvehk_place_listed_test?pvehk_place_listed_test(player):pslot_listed(player)) continue;   /* X4 posts on it itself */
         pvehk_place_tell(k,event,now);
     }
+    return 0;
 }
 static uintptr_t pvehk_place_post(unsigned char *source,unsigned char *event,double time,unsigned char immediate) {
-    pvehk_place_note(source,event,time);
-    if(pvehk_place_post_test) return pvehk_place_post_test(source,event,time,immediate);
-    return ((uintptr_t(*)(void*,void*,double,unsigned char))(void*)(pnat_base+PVEHK_EVENT_POST_NOW))(source,event,time,immediate);
+    _Alignas(16) unsigned char copy[PVEHK_EVENT_SIZE];
+    const unsigned k=pvehk_place_note(source,event,time,copy);
+    const uintptr_t answer=pvehk_place_post_test?pvehk_place_post_test(source,event,time,immediate):
+        ((uintptr_t(*)(void*,void*,double,unsigned char))(void*)(pnat_base+PVEHK_EVENT_POST_NOW))(source,event,time,immediate);
+    if(k) pvehk_place_own_note(k,copy,time);
+    return answer;
 }
 /* With the forward armed (pvehk_forward_arm): all eight sites or none. */
 static void pvehk_place_install(void) {

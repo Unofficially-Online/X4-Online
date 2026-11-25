@@ -213,6 +213,7 @@ static void pres_rng_back(uint64_t *rng,uint64_t word) {
 #include "lockstep_pilot_eye.h"
 #include "lockstep_pilot_walk_camera.h"   /* a walking slot's camera without slot 1's seated chain */
 #include "lockstep_pilot_hud_zone.h"      /* the HUD's objects around this client's own slot (its zone's scanners) */
+#include "lockstep_pilot_transit.h"       /* this client's own slot through a gate: X4's cockpit effect of the player */
 /* A walking slot's on-foot interaction state. [F, 9.00] What a walking player can use is offered through UI messages whose
  * actions test the player themselves. U::ActivateTransporterRoomAction (vtable 0x2b45a38: the terminal of a ship's
  * transporter room, "Use Transporter Room", whose menu holds "Use Spacesuit") is possible (its vtable +8, 35d140) only if
@@ -560,6 +561,7 @@ static void pres_ui_move(void *self) {
     }
     InterlockedIncrement64(&pres_ui);
     phz_scope_pass();   /* the HUD's zone scanners on this slot's zone, before X4's UI move (lockstep_pilot_hud_zone.h) */
+    ptran_scope_pass(); /* a gate this slot's ship passed: X4's cockpit effect of the player (lockstep_pilot_transit.h) */
     __try {pres_fn.ui_move(self);pres_leave();pres_paused=0;}
     __except(pres_fault_filter(GetExceptionInformation(),"ui")) {
         pres_fault_stop();
@@ -1116,10 +1118,11 @@ static void pres_diff_build(const pslot_slot *s) {
 }
 /* The UI entry and the re-pointed calls back (compare-and-swap, from any thread once no scope is open). */
 static void pres_unhook(void) {
-    pres_refill_uninstall();pres_pick_uninstall();pres_sound_uninstall();pres_source_uninstall();pres_play_uninstall();
+    pres_refill_uninstall();pres_pick_uninstall();pres_sound_uninstall();pres_source_uninstall();pres_play_uninstall();ptran_uninstall();
     psctx_installed=0;psctx_ship_id=0;   /* pres_stop ended the own ship's set on the frame thread first */
     if(pres_ui_installed && pres_entry_swap((void*)pres_ui_move,(void*)pres_fn.ui_move)) pres_ui_installed=0;
-    pres_restored=!pres_ui_installed && !pres_refill_installed && !pres_pick_installed && !pres_sound_installed && !pres_source_installed && !pres_play_installed;
+    pres_restored=!pres_ui_installed && !pres_refill_installed && !pres_pick_installed && !pres_sound_installed && !pres_source_installed && !pres_play_installed &&
+        !ptran_installed;
 }
 static int pres_start(uint64_t tick) {
     pslot_slot *s=&pslots[pres_slot];unsigned char *universe=NULL;uint64_t want=0;
@@ -1134,6 +1137,7 @@ static int pres_start(uint64_t tick) {
     if(pres_sound && !pres_sound_install()) return pres_fail("sound_entry");     /* the sound update in the scope (the sound, above) */
     if(pres_source && !pres_source_install()) return pres_fail("sound_source");  /* this slot's own sounds at X4's player (the sound's source) */
     if(pres_play && !pres_play_install()) return pres_fail("sound_play");        /* a voice started outside the scope plays in it (a sound's first play) */
+    if(ptran_on && !ptran_install()) return pres_fail("transit_site");          /* a gate this slot passed: the player's cockpit effect */
     psctx_installed=psctx;psctx_ship_id=0;psctx_why="-";                          /* the own ship's sound set (followed by pres_pass) */
     pres_diff_build(s);
     peye_update(s);
@@ -1269,6 +1273,9 @@ static int pres_status(char *out,size_t capacity) {
     const int hud_zone=phz_status(out+n,capacity-(size_t)n);
     if(!hud_zone) return 0;
     n+=hud_zone;
+    const int transit=ptran_status(out+n,capacity-(size_t)n);
+    if(!transit) return 0;
+    n+=transit;
     int eye=peye_status(out+n,capacity-(size_t)n);
     if(!eye) return 0;
     n+=eye;

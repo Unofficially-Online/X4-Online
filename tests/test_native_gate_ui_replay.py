@@ -546,7 +546,9 @@ class SessionTests(unittest.TestCase):
                                                                   # the HUD's top level bar and Back (the Ship Interactions scenario)
                                                                   'toplevel_tab': True, 'menu_back': True,
                                                                   # the wingmate's test: this client's own HUD colours (escort_colour)
-                                                                  'escort_colour': True, 'escort_select': True, 'escort_map': True})
+                                                                  'escort_colour': True, 'escort_select': True, 'escort_map': True,
+                                                                  # the transit tests' reading of this client's own ship (place)
+                                                                  'place': True})
 
     def test_the_guidance_ops_set_and_end_it_where_the_maps_click_runs(self):
         """play39p-long: client 2's map set guidance on slot 1's ship (SetGuidance) inside its presentation scope; the ops do

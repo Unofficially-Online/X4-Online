@@ -1159,7 +1159,7 @@ end
 -- ship the player controls (ui/core/messageconfigurationgraph.xml: untargetableconditions is_playercontrolled), and in
 -- the probe's canonical frame that is slot 1's ship on every client, so slot k could not target it. The other ops keep
 -- the canonical frame their live runs (U5, U7) passed with. Guidance is set and ended where the map's click runs too.
-K.SCOPED={suit_to=true,dock_named=true,panel_find=true,hack_yes=true,inv_total=true,trader_pick=true,trader_look=true,itemtrader_buy=true,foot_where=true,transport_list=true,transport_to=true,transport_named=true,target_slot=true,target_none=true,target_home=true,dock_home=true,suit_home=true,guidance_slot=true,guidance_end=true,guidance_set=true,guidance_look=true,inv_read=true,inv_drop=true,inv_research_seen=true,inv_research_hqs=true,toplevel_tab=true,menu_back=true,escort_colour=true,escort_select=true,escort_map=true}
+K.SCOPED={place=true,suit_to=true,dock_named=true,panel_find=true,hack_yes=true,inv_total=true,trader_pick=true,trader_look=true,itemtrader_buy=true,foot_where=true,transport_list=true,transport_to=true,transport_named=true,target_slot=true,target_none=true,target_home=true,dock_home=true,suit_home=true,guidance_slot=true,guidance_end=true,guidance_set=true,guidance_look=true,inv_read=true,inv_drop=true,inv_research_seen=true,inv_research_hqs=true,toplevel_tab=true,menu_back=true,escort_colour=true,escort_select=true,escort_map=true}
 -- The stock calls of the station overview and the station menu's trade settings, by what their names hold.
 function K.station_call(what)
  local name=tostring(what):match('^[%w_]+') or ''
@@ -3220,6 +3220,25 @@ function K.script(plan,start,tools)
   elseif op=='goto_slot' then call=function()
     tools.env.SignalObject(tools.env.ConvertStringTo64Bit(tostring(tools.C.GetPlayerGalaxyID())),'x4lan_goto',tools.slot_lua(e[3]),tonumber(e[4]) or 300)
     return 'goto slot '..tostring(e[3]) end
+  -- Test only: {tick,'goto_obj',SAVED,metres}: the same for a saved object (a gate, a highway's entry gate), so a test
+  -- starts in front of a transition without the flight; {tick,'goto_obj',SAVED,{x,y,z}}: at that spot in the object's own
+  -- frame (metres), looking at it (mis_goto_at's form: a gate's front is along its own axis, not the zone's).
+  elseif op=='goto_obj' then call=function()
+    local at=type(e[4])=='table' and {tonumber(e[4][1]) or 0,tonumber(e[4][2]) or 0,tonumber(e[4][3]) or 0} or (tonumber(e[4]) or 300)
+    tools.env.SignalObject(tools.env.ConvertStringTo64Bit(tostring(tools.C.GetPlayerGalaxyID())),'x4lan_goto',tools.saved_lua(e[3]),at)
+    return 'goto '..tostring(e[3]) end
+  -- Test only, read only (scoped: this client's own player): {tick,'place'}: the sector and zone its ship is in now (the
+  -- zone may be a highway), the position in the sector and the speed; under 'every', the course of a transition.
+  elseif op=='place' then call=function()
+    local env=tools.env
+    local ship=env.ConvertStringToLuaID(tostring(tools.C.GetPlayerOccupiedShipID()))
+    if not ship or tostring(ship)=='ID: 0' then return 'ship=none' end
+    local sector,zone=env.GetContextByClass(ship,'sector',false),env.GetContextByClass(ship,'zone',false)
+    local highway=env.GetContextByClass(ship,'highway',false)
+    local p=tools.C.GetObjectPositionInSector(env.ConvertIDTo64Bit(ship))
+    return string.format('sector=%s zone=%s highway=%s pos=%.0f,%.0f,%.0f speed=%s',tostring(sector and env.GetComponentData(sector,'macro')),
+      tostring(zone and env.GetComponentData(zone,'macro')),tostring(highway and env.GetComponentData(highway,'macro')),p.x,p.y,p.z,
+      tostring(math.floor(tonumber(env.GetComponentData(ship,'speed')) or -1))) end
   elseif op=='mis_goto' or op=='mis_target' or op=='mis_goto_at' then call=function()
     for i=1,tonumber(tools.env.GetNumMissions()) or 0 do
      local id,name=tools.env.GetMissionDetails(i)

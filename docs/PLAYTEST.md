@@ -1397,6 +1397,45 @@ them. With rk8, in a fresh session, player 2 targeted ships fine.
   the ships around player 2 had boxes at the start with and without the fix (the two players' zones are neighbours
   there); far from player 1 the solo run's ship crossed empty space, so the boxes there are still to be seen in play.
 
+### Gates, accelerators and superhighways for players 2..N (built 25 Nov, after rk11)
+
+Player 2 reported in a two-PC game (24 Nov) that the effects of moving between sectors did not seem to work. Measured
+first as X4's own player and then as player 2, one X4 each (`x4ls play --solo 1` / `--solo 2` of rk9's continued save
+`c3-t18000`, the same script for both: Mars' accelerator to Venus, the Moon's superhighway, Neptune's jump gate), then
+with both players in one game.
+
+- **Accelerators and jump gates.** Both players see the gate's vortex, the white jump flash and the new sector.
+  X4 also gives its own player the cockpit gate effect (`cpfx_gate_01`, on the cockpit) when its ship passes a gate
+  or an accelerator; that test reads X4's own player, player 1, on every PC, so player 2..8 never had it. **Now**
+  (`native_gate_pilot_present_transit`, on by default, `lockstep_pilot_transit.h`) each PC of player 2..8 gives its
+  own player that effect, with X4's own routine, in the next frame of its own view; nothing in the game world changes
+  (the effect is that PC's own, as X4 makes it for its one player). Player 1's PC is not patched.
+- **Superhighways.** X4's own player rides the tube (blue walls, the highway HUD, its speed) and leaves it at the far
+  gate 3.5 s later. Player 2's ship entered the highway and then sat at 0 m/s with no tube and no highway HUD, until a
+  script moved it away (80 and 90 s). The highway's scene (its tube, lanes and traffic) follows "the player", which is
+  player 1 on every PC, so player 2's ship was handed to it as traffic and placed relative to player 1. **Now**
+  (`native_gate_highway_players`, on by default, `lockstep_highway_players.h`) each highway's scene follows the
+  player in it: player 1 as before, a player 2..8 in its own highway, the same on every PC. Live, alone and with
+  player 1 in the game: player 2 enters at the tick player 1 did, rides the tube and comes out at the far gate at the
+  same tick as player 1 (1765 to 1870). Two players in one highway: the scene is the first one's (player 1 whenever
+  it is there), the other rides as its traffic, as X4 treats every other ship near its player.
+- **"Entering <sector>".** The ship computer says and shows "Entering <sector>" ("Entering system" between systems)
+  two seconds after each sector change; player 2 never had it. X4's script waits those two seconds in a copy that the
+  player's next sector change cancels, and for player 2 the gate handed the change to the shared scripts before X4's
+  own post on player 2, which then cancelled the new copy at once. **Now** X4's post comes first. Live: player 2's
+  line at every change, at the ticks player 1 has it (832 Venus, 1605 the Moon, 1924 Earth, 4305 Neptune), and
+  "Entering system" after Neptune's jump gate (the vortex, the flash, the new system, as player 1), on player 2's PC
+  only.
+- **Other players' ships.** A player's ship passing a gate looks on the other PCs as an NPC ship's does (the gate's
+  jump effect, the same on every PC); the cockpit effect stays its owner's (nothing on player 2's PC while player 1
+  passed the accelerator).
+- **The same world on both PCs:** two two-client runs of 7,241 ticks, in sync, the census equal at 1800, 3600, 5400
+  and 7200.
+- **Open:** at a superhighway's entry X4 disrupts its own player's travel mode ("Travel Mode disrupted"; player 1
+  leaves the highway at 157 m/s); player 2's travel mode runs on (it leaves the highway and goes on at 2.2 km/s):
+  X4's travel stop tells its own player only. And a pending "Entering" line of player 1 can still be cancelled by
+  another player's sector change within its two seconds.
+
 ## Mission types, tested without a person (built 16 Nov; two clients on one PC)
 
 `tools/dev/mission_matrix.py` runs X4's own mission libraries (`md/rml_*.xml`) once per player, one after the

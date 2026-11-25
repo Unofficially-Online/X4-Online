@@ -12,14 +12,17 @@
 static unsigned char tpp_entry[0x30];
 static unsigned char *tpp_listeners[4];
 static unsigned tpp_calls,tpp_call_scope[8],tpp_call_place[8],tpp_call_shown[8];static void *tpp_call_cue[8],*tpp_call_source[8];
+/* the order of X4's post, our post on P_k and the forward's calls, and the event each call was handed */
+static unsigned tpp_seq,tpp_call_seq[8],tpp_post_seq,tpp_tell_seq;static void *tpp_call_event[8];static unsigned char tpp_call_bytes[8][0x28];
 static unsigned char *tpp_fire;          /* the cue the listener makes fire (state 1 -> 3) */
 static unsigned char *tpp_instance;      /* ...or a root instance it makes */
 static unsigned char *tpp_lookup(void *source,unsigned type) {(void)source;(void)type;return tpp_entry;}
 static unsigned tpp_type(void *event) {(void)event;return 0x55u;}
 static void tpp_listener(void *cue,void *source,double now,unsigned type,void *event) {
-    (void)now;(void)type;(void)event;
+    (void)now;(void)type;
     const unsigned code=mpp_frame_enter(cue);   /* the script RNG's frame of the cue's event check */
     if(tpp_calls<8) {
+        tpp_call_seq[tpp_calls]=++tpp_seq;tpp_call_event[tpp_calls]=event;if(event) memcpy(tpp_call_bytes[tpp_calls],event,0x28);
         tpp_call_cue[tpp_calls]=cue;tpp_call_source[tpp_calls]=source;tpp_call_scope[tpp_calls]=pstk_scope_slot;
         tpp_call_place[tpp_calls]=mpp_place_slot;tpp_call_shown[tpp_calls]=mpp_show_slot();
     }
@@ -33,10 +36,10 @@ static int tpp_is_object(const unsigned char *c) {for(unsigned i=0;i<tpp_object_
 static int tpp_listed_answer;static int tpp_listed(const unsigned char *player) {(void)player;return tpp_listed_answer;}
 static unsigned tpp_posts;static void *tpp_post_source;
 static uintptr_t tpp_post(void *source,void *event,double time,unsigned char immediate) {
-    (void)event;assert(time==4.5 && immediate==1);tpp_post_source=source;++tpp_posts;return 0x77;
+    (void)event;assert(time==4.5 && immediate==1);tpp_post_source=source;++tpp_posts;tpp_post_seq=++tpp_seq;return 0x77;
 }
 static unsigned tpp_tells;static unsigned char *tpp_told_player;static unsigned char tpp_told[0x28];
-static void tpp_tell(unsigned char *player,const unsigned char *event) {tpp_told_player=player;memcpy(tpp_told,event,0x28);++tpp_tells;}
+static void tpp_tell(unsigned char *player,const unsigned char *event) {tpp_told_player=player;memcpy(tpp_told,event,0x28);++tpp_tells;tpp_tell_seq=++tpp_seq;}
 /* A static cue (its definition is itself) of a script with this name, waiting. */
 static unsigned char *tpp_cue(unsigned char *at,uint64_t id,unsigned char *script) {
     const uintptr_t vt=(uintptr_t)image+SCRIPT_RNG_CUE_VT,self=(uintptr_t)at;const uint32_t waiting=MPP_STATE_WAITING;
@@ -82,6 +85,10 @@ static void test_pilot_place(void) {
     assert(pvehk_place_post(players[2],event,4.5,1)==0x77 && tpp_posts==1 && tpp_post_source==players[2]);
     assert(tpp_calls==2 && tpp_call_cue[0]==plot && tpp_call_cue[1]==instancing && tpp_call_source[0]==players[TPP_P1] && tpp_call_source[1]==players[TPP_P1]);
     assert(tpp_call_scope[0]==2 && tpp_call_place[0]==2 && tpp_call_shown[0]==2 && tpp_call_shown[1]==2);   /* slot 2's frame: shown on client 2 */
+    /* X4's post on P_2 first, then the forward with a copy of X4's event (X4's post frees it): a cue the forward
+     * starts that waits for the same event on P_2 (ChangedSpace's cancel) is not handed the event that started it */
+    assert(tpp_post_seq<tpp_call_seq[0] && tpp_call_seq[0]<tpp_call_seq[1]);
+    assert(tpp_call_event[0]!=event && !memcmp(tpp_call_bytes[0],event,0x28) && !memcmp(tpp_call_bytes[1],event,0x28));
     assert(!mpp_place_slot && !mpp_place_cue && !mpp_depth && !pvehk_place_mode && pstk_scope_slot==2);
     assert(pvehk_place_seen==1 && pvehk_place_own==1 && pvehk_place_forwarded==1 && pvehk_place_denied==1 && mpp_place_frames==2);
     /* the plot's cue fired: slot 2's until it waits again, with the mark; the one that heard and did not fire stays nobody's */
@@ -90,11 +97,11 @@ static void test_pilot_place(void) {
     /* ...so the next one skips it (owned), and a root instance made in slot 3's call is slot 3's */
     tpp_calls=0;tpp_fire=NULL;tpp_instance=made;pstk_scope_slot=3;
     pvehk_place_post(players[3],event,4.5,1);
-    assert(tpp_calls==1 && tpp_call_cue[0]==instancing && tpp_call_scope[0]==3 && mpp_owner_of(0x7200)==3 && mpp_owner_of(0x7100)==2);
+    assert(tpp_calls==1 && tpp_call_cue[0]==instancing && tpp_call_scope[0]==3 && tpp_post_seq<tpp_call_seq[0] && mpp_owner_of(0x7200)==3 && mpp_owner_of(0x7100)==2);
     {const uint64_t made_id=0x7200;for(unsigned i=0;i<mpp_count;i++) if(mpp_owners[i].cue==made_id) assert(mpp_owners[i].slot==3u);}   /* an instance: a plain claim */
     tpp_instance=NULL;
     /* slot 8 (its scope open), the same rule */
-    tpp_calls=0;pstk_scope_slot=8;pvehk_place_post(players[8],event,4.5,1);assert(tpp_calls==1 && tpp_call_scope[0]==8 && tpp_call_place[0]==8);
+    tpp_calls=0;pstk_scope_slot=8;pvehk_place_post(players[8],event,4.5,1);assert(tpp_calls==1 && tpp_call_scope[0]==8 && tpp_call_place[0]==8 && tpp_post_seq<tpp_call_seq[0]);
     /* another slot's scope open: nothing forwarded, X4's post as ever */
     tpp_calls=0;tpp_posts=0;pstk_scope_slot=3;pvehk_place_post(players[2],event,4.5,1);
     assert(!tpp_calls && tpp_posts==1 && pvehk_place_unscoped==1);
@@ -115,6 +122,8 @@ static void test_pilot_place(void) {
     pvehk_place_post(ships[1],event,4.5,1);
     assert(tpp_tells==1 && tpp_told_player==players[3] && !memcmp(tpp_told,event,8) && !memcmp(tpp_told+0x18,event+0x18,16));
     assert(tpp_calls==1 && tpp_call_scope[0]==3 && tpp_call_source[0]==players[TPP_P1] && tpp_posts==1 && tpp_post_source==ships[1] && pvehk_place_body==1);
+    /* our post on P_3, then the forward with a copy of it, then X4's post on the ship */
+    assert(tpp_tell_seq<tpp_call_seq[0] && tpp_call_seq[0]<tpp_post_seq && !memcmp(tpp_call_bytes[0],tpp_told,0x28));
     pvehk_place_post(ships[0],event,4.5,1);assert(tpp_tells==1);                                            /* the carrier above: X4's post on ship 1 tells it */
     tpp_listed_answer=1;pvehk_place_post(ships[1],event,4.5,1);assert(tpp_tells==1);tpp_listed_answer=0;    /* in the tree: X4 posts on P_3 itself */
     pstk_scope_slot=2;tpp_calls=0;pvehk_place_post(ships[1],event,4.5,1);                                  /* another scope: told, not forwarded */

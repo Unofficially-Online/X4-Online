@@ -231,6 +231,26 @@ function's entry, must agree with its owner first)
                                                                                                    the entry
   0x2c0abc0  Scripts::PlaySoundAction's vtable slot +0x18       lockstep_md_presentation.h       8 bytes (the slot): not run inside
              (0xc1d8e0), the twelfth of that module's slots     mdp_ (missions per player)       another player's own cue's frame
+  0x5cefd4   the gate pass 0x5ce690: call 0x9f7b30 (X4's        lockstep_pilot_transit.h ptran_  call re-pointed (own page near
+             player's ship) for the cockpit gate effect's       gate_test (native_gate_pilot_    the image, mov r8,rdi then
+             player test                                        present_transit, slots 2..N)     ptran_gate_test): X4's answer
+                                                                                                   unchanged; slot k's ship noted
+                                                                                                   for its own client's scope
+  0x5edf47   a superhighway's player through the camera         lockstep_highway_players.h hwp_  call re-pointed (own page near
+  0x5ee8ce   anchor's controllable 0x9f9da0: HighwayScene       rule_* (native_gate_highway_     the image, the context's
+  0x5ec5cc   slots 674 / 684, HighwayBooster slot 870, the      players, every client)           registers into r8 / r9 / rdx):
+  0x5ef31d   speed scale 0x5ef2c0, the boosters 0x5f1110,                                         the highway's player (X4's,
+  0x5f155f   HighwaySceneController and HighwayShipController                                     else the slot 2..N ship it
+  0xda0a6d   slots 6 / 7; X4's player's ship 0x9f7780: the                                         recorded, else the first seated
+  0xda0cf6   traffic density 0x5efab4, Highway slots 129 /                                         slot ship in it); X4's answer
+  0xda0ff1   130 / 701; the player's controllable's ID                                             when none. The camera probe
+  0xda161b   0x9f9800: the highway flight model's slot 8 /                                         (native_gate_camera_probe) is
+  0x5efab4   slot 14                                                                               refused beside it; the region
+  0x5ff984                                                                                         camera's flight model pins read
+  0x5ffa49                                                                                         these sites as X4's
+  0x5ffc70
+  0xeb09a4
+  0xeb1048
   Called, not patched: 0xaea500 (the UI message manager's player setter; lockstep_pilot_foot.h puts X4's own player back
   when a slot's scope left another one there), 0x730f30 / 0x1252850 (the GET_UP context's request and withdrawal, same file),
   0x703ac0 (a player's speaker entity among its children; lockstep_speech_local.h), 0xb3be20 / 0xb3be90 (the UI's game plan
@@ -242,7 +262,10 @@ function's entry, must agree with its owner first)
   0x151dc0 / 0x157860 (a notification by its ID; its removal): lockstep_md_media.h, the start of a mission's picture on
   the target monitor in the UI's place and the end of its timeout,
   0xad8dc0 (UI::ICom::AdjacentZoneScanner's slot 570: the HUD's zone scanners rescanned in a client of slot 2..N's own
-  presentation scope, so its target elements come from that slot's zone; lockstep_pilot_hud_zone.h).
+  presentation scope, so its target elements come from that slot's zone; lockstep_pilot_hud_zone.h),
+  0x3ca1b0 / 0x55b150 / 0x7cf7c0 / 0x9fc0e0 (the cockpit gate effect, the player's controlled ship, a ship's cockpit, the
+  external view test: X4's player branch of the gate pass run in a client of slot 2..N's own presentation scope for a gate
+  its slot's ship passed; lockstep_pilot_transit.h).
 
 4. STOP REASONS (gate finish(reason); stats.reason, the probe's STOP line)
 Codes 1..99 belong to the gate core (lockstep_gate.c, linux/gate_linux.c);
@@ -490,11 +513,17 @@ Modules (define, owner):
                                 into X4's radar bank is counted, not a stop)
   231 RSHOT_STOP_REASON         lockstep_render_shots.h (native_gate_render_shots, a default: bullets drawn moving
                                 between the steps inside slot 10; whys pins, bullet_move, block_foreign, nested)
+  236 PTRAN_STOP_REASON         lockstep_pilot_transit.h (native_gate_pilot_present_transit, a default: the gate pass's
+                                player test call 0x5cefd4 no longer ours; why gate_site_lost. The pins refuse the arming;
+                                a fault in X4's cockpit effect ends the module on that client, why gate_fault, no stop)
+  237 HWP_STOP_REASON           lockstep_highway_players.h (native_gate_highway_players, a default: one of its 15 call sites
+                                no longer ours; why site_lost. The pins refuse the arming: pins; a page or CAS failure: page,
+                                site; status HIGHWAY_PLAYERS)
   240 PATK_STOP_REASON          lockstep_pilot_attack.h (armed with native_gate_pilot_fire, a default: slot k's attacks
                                 posted on slot k's player as X4 posts the player's; the decision's jump at 0x520172, the post
                                 call at 0x5201ba or their page no longer ours; whys site_changed, page_changed; status
                                 attacks= in PILOT_FIRE_STATUS)
-  free: 109, 114-119, 122-129, 147-149, 225, 227-229, 232-239, 241-255.
+  free: 109, 114-119, 122-129, 147-149, 225, 227-229, 232-235, 238-239, 241-255.
 Not stop reasons although named *_STOP*: PSLOT_STOP_WAIT (a wait count),
 PFIRE_STOP, PNAT_STOP_IN_MENU, PNAT_FULL_STOP (flags, 0).
 Renumbered on 1 November 2026 (integration): region camera 130 -> 165, speak

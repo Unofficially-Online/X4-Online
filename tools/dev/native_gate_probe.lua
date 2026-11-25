@@ -979,7 +979,7 @@ end
 ticklog.watcher=X4LAN_NATIVE_GATE_DEFAULTS and X4LAN_NATIVE_GATE_DEFAULTS.watcher()
 -- Modules whose status the frame does not poll (written at the stop only): read for the watcher every 600 ticks, no row.
 ticklog.watched={{'native_gate_engine_refresh_rng','engine_refresh_rng_status','ENGINE_REFRESH_RNG'},
- {'native_gate_build_rng','build_rng_status','BUILD_RNG'},{'native_gate_portable_math','portable_math_status','PORTABLE_MATH'},
+ {'native_gate_build_rng','build_rng_status','BUILD_RNG'},{'native_gate_highway_players','highway_players_status','HIGHWAY_PLAYERS'},{'native_gate_portable_math','portable_math_status','PORTABLE_MATH'},
  {'native_gate_safe_pos_order','safe_pos_order_status','SAFE_POS_ORDER'},
  {'native_gate_exact_reciprocal','exact_reciprocal_status','EXACT_RECIPROCAL'},{'native_gate_fp_env','fp_env_status','FP_ENV'},
  {'native_gate_decimal','decimal_status','DECIMAL'},{'native_gate_macro_arena','macro_arena_status','MACRO_ARENA'},
@@ -6610,6 +6610,14 @@ local function frame()
   -- Build storage updates rescheduled from (storage portable key, game time) instead of the
   -- thread's word: the snapshot load reschedules nearly every build storage at now + 60 +
   -- [0, 10) s per client. Armed before the load. Needs the world identities. Default off.
+  -- Every player in a superhighway is its highway's player (the scene, its traffic and the flight model follow it), on
+  -- every client alike (lockstep_highway_players.h). Armed before the load. Excludes the camera probe (nine shared sites).
+  if cfg.native_gate_highway_players then
+   assert(cfg.native_gate_highway_players==true and not cfg.native_gate_camera_probe and gate.highway_players and
+    gate.highway_players_status and gate.highway_players()==1,
+    'highway players refused '..tostring(gate.highway_players_status and gate.highway_players_status()))
+   log('HIGHWAY_PLAYERS_ARMED')
+  end
   if cfg.native_gate_build_rng then
    assert(cfg.native_gate_build_rng==true and cfg.native_gate_world_identities and gate.build_rng and
     gate.build_rng_status and gate.build_rng()==1,
@@ -7519,6 +7527,12 @@ local function frame()
      assert(cfg.native_gate_pilot_present_hud_zone==true and gate.pilot_present_hud_zone and gate.pilot_present_hud_zone(1)==1,
       'native_gate_pilot_present_hud_zone must be true and needs a gate that has it (pins)')
     end
+    -- A gate or accelerator a player 2+ passes: X4's cockpit effect of the player on that player's own client
+    -- (lockstep_pilot_transit.h: the effect's test reads X4's own player, slot 1's).
+    if cfg.native_gate_pilot_present_transit~=nil and cfg.native_gate_pilot_present_transit~=false then
+     assert(cfg.native_gate_pilot_present_transit==true and gate.pilot_present_transit and gate.pilot_present_transit(1)==1,
+      'native_gate_pilot_present_transit must be true and needs a gate that has it (pins)')
+    end
     -- Player sound (lockstep_pilot_present.h, stop reason 221; session defaults, Windows gate): on client k X4's sound
     -- update runs in the presentation scope (native_gate_pilot_present_sound: every sound around slot k's ship was
     -- parked 173 km away), and a sound whose emitter is slot k's own player starts at X4's player there
@@ -8131,6 +8145,7 @@ local function frame()
   if cfg.native_gate_event_order then drain_event_rows();log('EVENT_ORDER_STOP '..tostring(gate.event_order_status())) end
   if cfg.native_gate_event_rng then log('EVENT_RNG_STOP '..tostring(gate.event_rng_status())) end
   if cfg.native_gate_build_rng then log('BUILD_RNG_STOP '..tostring(gate.build_rng_status())) end
+  if cfg.native_gate_highway_players and gate.highway_players_status then log('HIGHWAY_PLAYERS_STOP '..tostring(gate.highway_players_status())) end
   if cfg.native_gate_ui_cargo then log('UI_CARGO_STOP '..tostring(gate.ui_cargo_status())) end
   if cfg.native_gate_supply_rows then log('SUPPLY_ROWS_STOP '..tostring(gate.supply_rows_status())) end
   if cfg.native_gate_ui_lazy then log('UI_LAZY_STOP '..tostring(gate.ui_lazy_status())) end
@@ -9448,6 +9463,7 @@ SetScript('onUpdate',function()
    if cfg.native_gate_decimal then ticklog.try(function() log('DECIMAL_STOP '..tostring(gate.decimal_status())) end) end
    if cfg.native_gate_event_rng then ticklog.try(function() log('EVENT_RNG_STOP '..tostring(gate.event_rng_status())) end) end
    if cfg.native_gate_build_rng then ticklog.try(function() log('BUILD_RNG_STOP '..tostring(gate.build_rng_status())) end) end
+   if cfg.native_gate_highway_players and gate.highway_players_status then ticklog.try(function() log('HIGHWAY_PLAYERS_STOP '..tostring(gate.highway_players_status())) end) end
    if cfg.native_gate_economy_load_rng then ticklog.try(function() log('ECONOMY_LOAD_RNG_STOP '..tostring(gate.economy_load_rng_status())) end) end
    if cfg.native_gate_ui_cargo then ticklog.try(function() log('UI_CARGO_STOP '..tostring(gate.ui_cargo_status())) end) end
    if cfg.native_gate_supply_rows then ticklog.try(function() log('SUPPLY_ROWS_STOP '..tostring(gate.supply_rows_status())) end) end

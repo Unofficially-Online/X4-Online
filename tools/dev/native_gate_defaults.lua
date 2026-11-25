@@ -169,6 +169,9 @@ D.ON={
  {'native_gate_effect_camera','view','native_gate_view_points','effects from the view points'},
  {'native_gate_highway_camera','view','native_gate_view_points','highways from the view points'},
  {'native_gate_highway_speed','key','native_gate_view_points native_gate_world_identities','highway speeds keyed'},
+ -- A superhighway's scene (its tube, lanes and traffic) follows the player in it: slot 1 by X4's own answer, a player 2+
+ -- in its own highway by this module, on every client alike (25 Nov: player 2 sat in a superhighway at 0 m/s as its traffic).
+ {'native_gate_highway_players',true,'native_gate_view_points','every player in a superhighway is that highway player: its tube, its speed and its lanes'},
  {'native_gate_physics_scenes','viewpoints','native_gate_view_points','physics scenes per view point'},
  {'native_gate_view_scenes',true,'native_gate_physics_scenes','a physics scene per sector'},
  {'native_gate_camera_context','view','native_gate_view_points','camera context from the view points'},
@@ -240,6 +243,9 @@ D.ON={
  -- X4's HUD lists the objects of ONE zone and its neighbours, the zone of the UI's player (X4's own, slot 1's on every
  -- client): player 2 in another zone had no box and no target on the ships around it (rk9, 24 Nov, a continued game).
  {'native_gate_pilot_present_hud_zone',true,'native_gate_pilot_present','the HUD of a player 2+ marks and targets the ships around that player: its target elements come from that player zone, not player 1 zone'},
+ -- X4 gives its own player's cockpit the gate effect (a flash and a rumble) when its ship passes a gate or an accelerator:
+ -- the test reads X4's player, slot 1's on every client, so a player 2+ passed every gate without it (25 Nov).
+ {'native_gate_pilot_present_transit',true,'native_gate_pilot_present','a player 2+ passing a jump gate or an accelerator gets the cockpit gate effect on its own screen, as player 1 does'},
  {'native_gate_pilot_slots_post',true,'native_gate_pilot_stock_slots','a player 2+ own ship answers that player as its pilot while the game runs as that player (the autopilot check)'},
  {'native_gate_pilot_slots_room_attention',true,'native_gate_pilot_stock_slots','a player 2+ room in its own ship (or where it walks) is at the attention the game gives its own player room, so that player ship computer runs its autopilot through every zone change as player 1 does (it ended unheard when the cockpit dipped below visible for one tick: the autopilot stayed on and missed its arrival)'},
  {'native_gate_missions_per_player_ai_frames',true,'native_gate_missions_per_player','the autopilot and other scripts of a player 2+ own ship computer run as that player'},

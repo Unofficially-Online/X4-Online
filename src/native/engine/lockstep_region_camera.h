@@ -843,6 +843,7 @@ static int rc_pins_ok(unsigned groups) {
         if(!(groups&(1u<<rc_pins[p].group))) continue;
         unsigned rva=rc_pins[p].rva,size=rc_pins[p].size;
         if(size>sizeof(copy) || !read_local(image+rva,copy,size) || !rc_read_original(rva,copy,size)) return 0;
+        hwp_original_view(rva,copy,size);   /* lockstep_highway_players.h: its sites inside the flight model's pins read as X4's */
         if(!hash_ok(copy,size,rc_pins[p].sha)) return 0;
     }
     return 1;

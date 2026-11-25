@@ -1847,6 +1847,32 @@
     <debug_text text="'[X4LAN] MPP_AUDIT_SHARED event=%s player=%s ship=%s sector=%s time=%s%s'.[event.name, player.entity, player.ship, @player.sector.knownname, player.age, if event.name == 'event_player_owned_attacked_object' then ' attacker=%s target=%s occupied=%s own=%s'.[@event.param, @event.param2, @player.occupiedship, event.param == player.occupiedship] else '']"/>
    </actions>
   </cue>
+  <!-- The audit's delayed listener, shaped as md/notifications.xml's ChangedSpace (the ship computer's "Entering ..."): an
+       instance per sector change of the universe's player, a row at once, a row two seconds later from the instance (whose
+       player and computer it names then), and the instance's own cancel when another change comes first. -->
+  <cue name="AuditSharedDelayed" instantiate="true" namespace="this">
+   <conditions>
+    <event_object_changed_sector object="player.entity"/>
+    <check_value value="event.param != null"/>
+   </conditions>
+   <actions>
+    <set_value name="$Sector" exact="event.param"/>
+    <debug_text text="'[X4LAN] MPP_AUDIT_DELAYED step=start player=%s computer=%s sector=%s time=%s'.[player.entity, @player.computer, @event.param.knownname, player.age]"/>
+   </actions>
+   <delay exact="2s"/>
+   <actions>
+    <debug_text text="'[X4LAN] MPP_AUDIT_DELAYED step=later player=%s computer=%s sector=%s exists=%s time=%s'.[player.entity, @player.computer, @$Sector.knownname, @event.param.exists, player.age]"/>
+   </actions>
+   <cues>
+    <cue name="AuditSharedDelayedCancel">
+     <conditions><event_object_changed_sector object="player.entity"/></conditions>
+     <actions>
+      <debug_text text="'[X4LAN] MPP_AUDIT_DELAYED step=cancel player=%s time=%s'.[player.entity, player.age]"/>
+      <cancel_cue cue="AuditSharedDelayed"/>
+     </actions>
+    </cue>
+   </cues>
+  </cue>
   <cue name="SlotOffers" instantiate="true">
    <conditions><event_object_signalled object="player.galaxy" param="'x4lan_slot_offers'"/></conditions>
    <actions>
