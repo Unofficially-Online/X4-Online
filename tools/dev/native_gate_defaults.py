@@ -65,14 +65,18 @@ MD_FILES = ('md/native_gate_battle.xml', 'md/native_gate_player_identity.xml', '
 # a start's standings arrive quietly (native_gate_player_identity.xml's relation steps); the new-game hint box leaves
 # after its 15 s instead of staying on the crosshair of every player in every session (a fresh profile each time);
 # the stock lists of "the player's" objects hold every player's (native_gate_player_groups.xml, native_gate_player_groups);
-# every player's own Plot course (native_gate_player_guidance.xml, with the player groups); and one stock AI script: a
-# wharf refits every player's own ship, not only player 1's (native_gate_player_refit.xml, with the player groups).
+# every player's own Plot course (native_gate_player_guidance.xml, with the player groups); and two stock AI scripts: a
+# wharf refits every player's own ship, not only player 1's (native_gate_player_refit.xml, with the player groups), and a
+# ship that protects a player's own ship (the Terran cadet's wingmate) takes that player as the ship's pilot, as it takes
+# player 1: it flies in formation, answers that player's shots and keeps the stock rule for enemies it sees
+# (native_gate_player_escort.xml, with the player groups).
 MD_PATCHES = {'md/playerreputation.xml': 'native_gate_quiet_playerreputation.xml',
               'md/notifications.xml': 'native_gate_quiet_notifications.xml',
               'md/tutorial_global.xml': 'native_gate_hint_timeout.xml',
               'md/setup.xml': 'native_gate_player_groups.xml',
               'md/guidance.xml': 'native_gate_player_guidance.xml',
-              'aiscripts/build.shiptrader.xml': 'native_gate_player_refit.xml'}
+              'aiscripts/build.shiptrader.xml': 'native_gate_player_refit.xml',
+              'aiscripts/order.fight.protect.ship.xml': 'native_gate_player_escort.xml'}
 
 TABLE = load()
 ON_KEYS = [e[0] for e in TABLE['on']]

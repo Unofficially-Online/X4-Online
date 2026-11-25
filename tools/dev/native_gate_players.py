@@ -80,6 +80,7 @@ import native_gate_defaults as session_defaults   # noqa: E402  (the session def
 MAX_PLAYERS = 8   # the pilot modules' slots (PILOT_SLOTS, lockstep_pilot_inputs.h; the wire carries 8 clients)
 import check_gate_options as gate_options          # noqa: E402
 import native_gate_session_start as session_start  # noqa: E402  (a session from a stock start, per-player starts)
+import native_gate_milestones as milestones        # noqa: E402  (story milestones: their saves, a continued session)
 
 ROOT = Path(__file__).resolve().parents[2]
 HEADER = '-- Lockstep players (tools/dev/native_gate_players.py); reports/LOCKSTEP-PLAYER-IDENTITY-20261029.txt'
@@ -139,7 +140,7 @@ UI_REPLAY_MPP_DEMO = {1: ((60, 'mis_fixture', 1), (90, 'mis_fixture', 1), (150, 
 UI_REPLAY_OP_FAMILY = {'missile': 'missiles', 'travel': 'travel', 'travel_stop': 'travel', 'travel_key': 'travel', 'scan_mode': 'travel', 'scan_key': 'travel', 'scan_start': 'flight', 'scan_diag': 'flight', 'scan_trace': 'flight', 'target_slot': 'target', 'target_none': 'target',
                        'match': 'target', 'input': 'target', 'ap_to': 'autopilot', 'ap_obj': 'autopilot', 'ap_stop': 'autopilot', 'ap_toggle': 'autopilot',
                        'quickdock': 'dock', 'dock_at': 'dock', 'undock': 'dock', 'wgroup': 'weapons', 'wkey': 'weapons', 'aim_fire': 'weapons',
-                       'flight_assist': 'flight', 'turret_mode': 'flight', 'turret_missile': 'flight', 'drones': 'flight', 'drone_mode': 'flight', 'launch': 'flight', 'launch_stock': 'flight', 'probe_far': 'flight', 'groups_look': 'flight', 'turrets_mode': 'flight', 'turrets_armed': 'flight', 'drones_armed': 'flight',
+                       'flight_assist': 'flight', 'turret_mode': 'flight', 'turret_missile': 'flight', 'drones': 'flight', 'drone_mode': 'flight', 'launch': 'flight', 'launch_stock': 'flight', 'probe_far': 'flight', 'groups_look': 'flight', 'escort_look': 'flight', 'escort_target': 'target', 'escort_colour': 'target', 'escort_front': 'flight', 'escort_select': 'target', 'escort_map': 'target', 'turrets_mode': 'flight', 'turrets_armed': 'flight', 'drones_armed': 'flight',
                        'drop_cargo': 'flight',
                        'mis_fixture': 'missions', 'mt_offer': 'missions', 'mt_accept': 'events', 'offers_list': 'missions', 'offer_accept_n': 'events', 'offer_accept_next': 'events', 'mis_new': 'missions', 'mis_look': 'missions', 'offer_accept_named': 'events', 'mis_goto': 'events', 'goto_slot': 'events', 'ui_ping': 'events', 'mis_target': 'target', 'account': 'missions', 'mis_list': 'missions', 'mis_abort_new': 'missions', 'gm_limit': 'missions', 'slot_kill': 'events', 'slot_airlock': 'events', 'ui_reload': 'events', 'briefing': 'missions', 'briefing_stop': 'missions', 'briefing_button': 'missions',
                        'offer_accept': 'events', 'mis_active': 'missions', 'mis_none': 'missions', 'mis_abort': 'missions',
@@ -296,6 +297,12 @@ def ship_sectors(args):
     return out
 
 
+def no_fixture(args):
+    """Whether the session has no fixture (session.json fixture_form 'none', x4ls new-session since 24 Nov)."""
+    world = getattr(args, 'session_data', None)
+    return bool(world) and world.get('fixture_form') == 'none'
+
+
 def apply_session(args):
     """--session (native_gate_session_start.py register): the session save's player ship, fixture and per-player start
     hulls replace the snapshot-005 defaults; the per-player starts (kits) go into the plan by default."""
@@ -307,6 +314,10 @@ def apply_session(args):
     if args.occupied_ship not in (identity.PLAYER_SHIP, world['player_ship']):
         raise ValueError(f"--session: the occupied ship is the session save's player ship {world['player_ship']}")
     args.occupied_ship = world['player_ship']
+    if world.get('continue') and args.mode == 'factions':
+        args.reputation = 'keep'   # the pool factions' standings are the save's: no mirror of the player faction's again
+    if no_fixture(args):
+        args.battle = 'calm'   # no fixture to send into battle
     if world['hulls'] and args.source in ('script', 'wire'):
         raise ValueError('--session with per-player start hulls needs --source stock or none: a hull waits in its Wait order without the '
                          'Steering solver that wire/script piloting drives')
@@ -319,6 +330,9 @@ def apply_session(args):
             raise ValueError(f'--ships: slots {wrong} have per-player starts; their ships are the session hulls {[hulls[k] for k in wrong]}')
     else:
         # Slot 1: the save's player ship; slot k: its hull, else fixture actor k+1 (as the snapshot-005 defaults).
+        missing = [k for k in range(2, args.players + 1) if k not in hulls and len(world['fixture']) <= k]
+        if missing:
+            raise ValueError(f'--session: slots {missing} have no hull and the session no fixture ship for them')
         args.ships = [world['player_ship']] + [hulls.get(k) or world['fixture'][k] for k in range(2, args.players + 1)]
     return args
 
@@ -368,7 +382,9 @@ def plan_of(args):
     starts = starts_of(args, [None if k + 1 in creates else s for k, s in enumerate(ships)])
     args.sector_warnings = sector_warnings(args, ships, starts, creates)
     world = getattr(args, 'session_data', None)
-    kits = [world['slots'][k]['kit'] for k in sorted(world['slots'], key=int)] if world else None
+    # A continued session (x4ls continue) has no kits: what a start gives is in its save already (the slot's own player's
+    # inventory and library come back through native_gate_continue instead).
+    kits = [world['slots'][k]['kit'] for k in sorted(world['slots'], key=int) if world['slots'][k].get('kit')] if world else None
     return identity.build_plan(args.players, args.mode, ships, args.relations, dict(args.relation or []), args.occupied_ship,
                                args.occupied, args.reputation, args.setup_tick, creates, starts, kits)
 
@@ -754,6 +770,35 @@ def session_block(lines, base_text, defaults_only=False):
     return kept, dropped, off
 
 
+def story_config(session):
+    """(config lines, stories, plots, ready) of a session's stories and plot copies (session.json; None: none)."""
+    lines = []
+    # A session's start stories (native_gate_session_start.py story_files): slot k's start script runs for slot k.
+    stories = session_start.story_slots((session or {}).get('slots'))
+    # ...and its own copies of stock plots (native_gate_plot_copies.py): {[k]={<story or false>, '<Copy>.<Cue>', ...}}.
+    plots = session_start.plot_copies.slot_plots((session or {}).get('slots'))
+    ready = session_start.plot_copies.first_plots(session)
+    if ready:   # player 1's plots begun with their result: the story MD's PlotReady, signalled once by the probe
+        lines.append('X4LAN_CONFIG.native_gate_plot_ready = {' + ','.join(str(j) for j in range(1, len(ready) + 1)) + '}')
+    if (stories or plots) and not (session or {}).get('continue'):   # a continued session's stories run on from the save
+        def story_value(k):
+            story = f"'{stories[k]['script']}.{stories[k]['cue']}'" if k in stories else 'false'
+            if k not in plots:
+                return story
+            return '{' + ','.join([story] + [f"'{e['copy']}.{e['cue']}'" for e in plots[k]]) + '}'
+        lines.append('X4LAN_CONFIG.native_gate_story = {' + ','.join(f'[{k}]={story_value(k)}' for k in sorted(set(stories) | set(plots))) + '}')
+    # The stock script of a plot that slots run as copies is player 1's own (lockstep_mission_owners.h mpp_first):
+    # the scripts nobody owns hear every player, and without this player 2's steps would also advance player 1's plot.
+    # So is the stock script of a start's story another slot plays as its copy (the base start's runs for slot 1), unless
+    # a slot claims the stock script itself (its claim makes it that slot's).
+    first = sorted({e['script'] for entries in plots.values() for e in entries} - {s['script'] for s in stories.values()})
+    if len(first) > 8:   # lockstep_mission_owners.h MPP_FIRST: the probe would stop the session at its start
+        raise ValueError(f'{len(first)} stock scripts run as copies ({", ".join(first)}); the gate keeps 8')
+    if first:
+        lines.append('X4LAN_CONFIG.native_gate_plot_first = {' + ','.join(f"'{name}'" for name in first) + '}')
+    return lines, stories, plots, ready
+
+
 def build_overlay(args):
     base, out = Path(args.base), Path(args.out)
     if out.exists():
@@ -763,25 +808,15 @@ def build_overlay(args):
     if 'ui/native_gate_probe.lua' not in files or not config.is_file() or not (base/'native/x4lan_gate_64.dll').is_file():
         raise ValueError('base is not a native gate overlay (probe, config or gate DLL missing)')
     lines, plan, orders = config_block(args)
-    # A session's start stories (native_gate_session_start.py story_files): slot k's start script runs for slot k.
-    stories = session_start.story_slots((getattr(args, 'session_data', None) or {}).get('slots'))
-    # ...and its own copies of stock plots (native_gate_plot_copies.py): {[k]={<story or false>, '<Copy>.<Cue>', ...}}.
-    plots = session_start.plot_copies.slot_plots((getattr(args, 'session_data', None) or {}).get('slots'))
-    ready = session_start.plot_copies.first_plots(getattr(args, 'session_data', None))
-    if ready:   # player 1's plots begun with their result: the story MD's PlotReady, signalled once by the probe
-        lines.append('X4LAN_CONFIG.native_gate_plot_ready = {' + ','.join(str(j) for j in range(1, len(ready) + 1)) + '}')
-    if stories or plots:
-        def story_value(k):
-            story = f"'{stories[k]['script']}.{stories[k]['cue']}'" if k in stories else 'false'
-            if k not in plots:
-                return story
-            return '{' + ','.join([story] + [f"'{e['copy']}.{e['cue']}'" for e in plots[k]]) + '}'
-        lines.append('X4LAN_CONFIG.native_gate_story = {' + ','.join(f'[{k}]={story_value(k)}' for k in sorted(set(stories) | set(plots))) + '}')
-    if plots:
-        # The stock script of a plot that slots run as copies is player 1's own (lockstep_mission_owners.h mpp_first):
-        # the scripts nobody owns hear every player, and without this player 2's steps would also advance player 1's plot.
-        first = sorted({session_start.plot_copies.PLOTS[e['id']]['script'] for entries in plots.values() for e in entries})
-        lines.append('X4LAN_CONFIG.native_gate_plot_first = {' + ','.join(f"'{name}'" for name in first) + '}')
+    story_lines, stories, plots, ready = story_config(getattr(args, 'session_data', None))
+    lines += story_lines
+    # Story milestones (tools/dev/native_gate_milestones.py): the listener MD of a session's stories and, unless
+    # --milestone-saves off, a save of the world at each; a continued session's restore (native_gate_continue).
+    milestone_session = getattr(args, 'session_data', None)
+    milestone_rows = milestones.watches(milestone_session) if milestone_session else []
+    if milestone_session:   # every session overlay: its saves (milestones, a person's, the periodic ones) can be continued
+        lines += (milestones.config_lines(milestone_rows, args.milestone_saves == 'on') + milestones.continue_lines(milestone_session)
+                  + milestones.owned_lines(milestone_session))
     stripped = strip_own(config.read_text())
     # A session base (native_gate_test, slot, port, token) runs the session defaults (native_gate_defaults.lua): its checks
     # read the effective base, and the overlay writes only the lines that differ from the defaults.
@@ -829,6 +864,10 @@ def build_overlay(args):
         raise ValueError(f'{probe} has no player identity hook; pass --probe tools/dev/native_gate_probe.lua')
     shutil.copytree(base, out, ignore=shutil.ignore_patterns('x4lane-manifest.json'))
     session_start.write_story_files(out, stories, plots, ready)
+    if milestone_session:
+        (out/milestones.MD_FILE).parent.mkdir(parents=True, exist_ok=True)
+        (out/milestones.MD_FILE).write_text(milestones.milestones_md(milestone_rows, milestones.story_roots(milestone_session),
+                                                                     milestone_session['players']), encoding='utf-8')
     if args.gate_dll:
         shutil.copy2(args.gate_dll, out/'native/x4lan_gate_64.dll')
     if args.probe:
@@ -972,6 +1011,9 @@ def build_parser():
     common.add_argument('--occupied-ship', type=sandbox.saved_id, default=identity.PLAYER_SHIP)
     common.add_argument('--reputation', choices=identity.REPUTATION, default='mirror')
     common.add_argument('--setup-tick', type=int, default=20)
+    common.add_argument('--milestone-saves', choices=('on', 'off'), default='on',
+                        help="with --session: every client saves the world at each story milestone (tools/dev/native_gate_milestones.py); "
+                             'off: the milestones are only logged (a session with Linux clients or open slots)')
     common.add_argument('--orders', choices=('demo', 'none'), help='scripted ownership check over the input wire, also with --source wire (default: demo for script)')
     common.add_argument('--no-block-orders', dest='block_orders', action='store_false', default=None,
                         help='wire sessions: leave the stock order/travel menus active (they act on one client only)')

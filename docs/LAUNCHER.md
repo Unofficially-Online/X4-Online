@@ -13,6 +13,7 @@ disposable profile.
 | `session --clients N --overlay DIR [--snapshot FILE] [--ticks T] [--observe] [--lookahead 1] [--fast] [--steam-fix]` | Starts the relay and N clients, tiles their windows, waits for the relay to finish, collects logs into `.local/runs/<time>/` and cleans up |
 | `play --overlay DIR --snapshot FILE [--stall-drop 15] [--timeout 0]` | A session for people (docs/PLAYTEST.md): desyncs are silent (relay `--observe --keep-going`), error rows go to `errors.log` instead of ending the session, a client that stops or exits is dropped after `--stall-drop` seconds and the others play on; lookahead, tick rate and length come from the overlay (`tools/build_play_overlay.py`) |
 | `play ... --remote-slots K --bind IP --allow-from IP --port P` | The same with slot K on another PC: the relay listens on this PC's address, and the launcher prints the `join` line for the other PC (docs/PLAYTEST.md "Two PCs"); `--close-when-over` ends an unattended run with its session |
+| `play --solo K --overlay DIR --snapshot FILE [--clients N]` | One X4 only, for player K of the overlay's N-player session: the relay stands in for every other slot from the start, so what player K sees and hears can be tested without more X4 windows (see "One X4 for one player" below) |
 | `join --relay HOST:PORT --token T --slot K --clients N --arm-at UTC --overlay DIR --snapshot FILE` | One client on this PC for slot K of that session (the same overlay and snapshot as the host), logged as `play` does |
 | `lobby --overlay DIR --snapshot FILE [--port 47000] [--bind IP] [--lane 1]` | This PC's X4 opens in its main menu with a **Multiplayer** entry (Host a game, Join a game). The same command on every PC; see "Lobby" below |
 | `lobby ... --server-file server.json` | The same with a kit's server: the page has **Join** only, the relay runs on the server, and the run folder is sent there when the game is over |
@@ -25,6 +26,9 @@ disposable profile.
 | `session ... --checkpoint-at T` | Every client saves the world right after tick T (`clientK/save_001.xml.gz`); the session ends there (outcome `checkpointed`) |
 | `play ... [--keep-saves 3]` | With an overlay that saves periodically (`tools/build_play_overlay.py --save-every MINUTES`, default 10): every client's saves are collected in `RUN/saves/c<K>-t<TICK>.xml.gz` (see Periodic saves below) |
 | `resume --save RUN/saves/c1-t<TICK>.xml.gz --spec SESSION/spec.json --overlay PLAY_OVERLAY --gate-dll DLL --out NEW [--minutes M] [--display N] [--no-focus]` | A new session from the world of a periodic save: prepares the save (one client), registers it and builds its play overlay in `NEW`; then `play --overlay NEW/overlay --snapshot NEW/session-save.xml.gz` |
+| `continue --save SAVE --gate-dll DLL --out NEW [--overlay FIRST] [--minutes M]` | A new session from any save of a session, every player as saved (see "Milestones" below): a periodic save `RUN/saves/c<K>-t<T>.xml.gz`, a person's save `RUN/saves/player/<name>-t<T>.xml.gz` or a milestone save `RUN/saves/milestones/<story>-M<n>-slot<k>.xml.gz` (`--milestone` is the same), with its `.json` beside it; no X4 runs, the save is used as it is; then `play --overlay NEW/overlay --snapshot NEW/session-save.xml.gz`. `resume --continue --save FILE` is the same |
+| `continue --save SAVE --session SESSION.json --overlay FIRST ...` | The same for a save without a sidecar (a periodic save of a build before 25 Nov): the session.json and a folder with the play recipe stand in for it; slots 2..N from their saved player objects, the stories claimed again by their scripts' names |
+| `host --milestone SAVE [--name NAME] [--public]` | Netplay: host the game continued from that save (any kind with its sidecar; `continue` makes the session once, kept in the kit's `sessions/continue-r-<save>-<gate>`); joiners download it as any hosted session. A save without a sidecar: `--session SESSION.json --overlay-recipe DIR` as for `continue`. Every player's ship starts at rest; `--keep-flight` keeps the saved travel, speed and autopilot (also for `continue`) |
 | `triage RUN [--steam-fix]` | Reruns a diverged session with diagnostic windows over the 300 ticks before its first mismatch and writes `RUN-triage.txt`; `--report-only RERUN` only reports |
 | `clean` | Stops processes and removes views left behind by a crashed session |
 | `steam-fix [--restore]` | See "Steam" below |
@@ -59,6 +63,50 @@ is chosen in X4's main menu.
   when the master reaches it, else the master's), or to the LAN lobby without one. Joining downloads the host's
   session, checks it against this release and builds the overlay here with this kit's own gate DLL; X4 starts again
   with it before the player counts as ready.
+
+## One X4 for one player (`play --solo K`)
+
+`x4ls play --solo 2 --overlay SESSION/overlay --snapshot SESSION/session-save.xml.gz` starts the relay and client 2
+only. Use it for what one player sees and hears: player 2's sound, call video, HUD, gun gimbals, the stand-up. The
+overlay and snapshot are the session's own (`x4ls new-session` or `tools/build_play_overlay.py`); nothing is rebuilt.
+`--clients` defaults to the overlay's player count. K may be any slot, 1 included.
+
+- **What the relay does.** It runs with `--stand-in` for every other slot (`DropBarrier` in
+  `tools/dev/native_gate_relay.py`). From tick 0 each of those slots gets a stand-in row: client K's game time, real
+  time and digest, and an empty input blob. From the first permit that carries proposals (tick k+1, proposal tick 0)
+  every permit names those slots in its drop mask, `k/<mask>`. This is the protocol 4 drop. In live sessions it is
+  used for a player whose X4 stopped. Here it starts at proposal tick 0, before anyone has played.
+- **What client K's gate does.** It treats the drop as it treats any drop (`lockstep_lookahead.h`,
+  `lockstep_pilot_inputs.h` `pilot_drop_note`). Each stood-in slot counts as dropped from proposal tick 0. From tick
+  `pilot_delay` on it needs no record, which is long before the pilot window starts at 40. The seat stays and is
+  neutral: no input, no view, no trigger, its hits native, its ship still watched for death. Slot 1 is X4's own player
+  (MD's player). It sits idle in its ship, and the stock path replays nothing for it. Slots 2..N other than K are
+  built and seated at the take as in every session, and then idle.
+- **No gate or probe change.** The slot is per client (`@X4LANE_SLOT@`). The overlay does not say who else plays.
+  Client K's pilot window, presentation scope (`lockstep_pilot_present.h`, client local) and per-player missions are
+  the same as in an N-client session. The other slots' players exist in the world, so other players' ships and figures
+  can be seen too.
+- **Why not the hot join's absent slots.** An absent slot's player is built and seated at its handover. Slot 1's
+  player is the save's own, so an absent slot 1 is refused by the overlay builder (`--join-absent`: 2..8), the probe
+  (`native_gate_join.absent`) and the gate (`pilot_absent_arm2` refuses bit 0). The drop path covers slot 1. It was run
+  live mid-session on 4 Nov (d3drop1, protocol 5), not yet from tick 0.
+- **Refused** (before anything starts):
+  - A protocol 3 or 5 overlay: the drop mask is protocol 4's, and the defaults' lookahead 1 is protocol 4.
+  - An overlay with open slots (`--open`): its absent slots belong to the hot join's relay, which never stands in for
+    slot 1.
+  - `--remote-slots`.
+  - `--clients` other than the overlay's players.
+  - A slot outside 1..N.
+- **What it cannot show:**
+  - Desyncs. The stand-ins copy client K's digest, so the relay compares K with itself.
+  - Anything that needs another person: a trade between players, player 1 hailing player 2, two players at one
+    console.
+  - Client 1's own fixes (`pres_plan_canon` runs on client 1 only).
+- **Look for** these rows in `client<K>/x4ls-c<K>.log` (here for `--solo 2` of 3). At the end:
+  `LOOKAHEAD_STOP ... dropped=05`. In the `PILOT_INPUTS` and `PILOT_INPUTS_STOP` rows:
+  `dropped=5 drop_skips=<n> drop1=0 drop3=0`. Both mean the gate took slots 1 and 3 as dropped at proposal tick 0.
+  `relay.log` starts with `NATIVE_GATE RELAY STAND_IN slots=1,3 from=0 played=2`. `summary.json` has `solo` and
+  `stand_in`.
 
 ## How a client is isolated
 
@@ -138,7 +186,10 @@ Overlays are frozen: a builder refuses to write into an existing directory, and
 relay-failed, or timeout; `played` for `x4ls play`). `x4ls play` adds `errors.log`
 (every row a test session fails on, with its client), `desyncs.log` (the relay's
 DESYNC, RESYNC, CLOCK_SPLIT, STALL and DROP notices) and `clientK/x4lan-crash.txt`
-after a crash.
+after a crash. Every session client also keeps the census record of its last eight
+world captures, `clientK/x4lan-census-<k>.txt` (`native_gate_world_record`): after a
+world split, `python tools/dev/census_record_diff.py RUN/client1 RUN/client2 --x4 X4.exe`
+names the objects that differ at the first differing capture and in which domains.
 
 ## Soak profile and determinism findings (1 November 2026)
 
@@ -344,6 +395,98 @@ pilots). Switches: `--window`, `--play-mode`, `--no-pace`, `--long`, `--world-sc
   start places with their kits applied again, and the prepare step runs the world a few seconds without the
   gate. Live, 16 Nov: a save of minute 8.5 of a two-player session, prepared in about three minutes, then a
   two-client session from it: 9,500 ticks in sync, no error row, its own periodic saves written (then stopped by hand).
+- **Milestones.** A play session from a session with a story (`x4ls new-session`, `--session`) saves the world at every
+  completed mission chapter of it, so a playthrough goes on from its last chapter instead of from its start (user
+  request, 24 Nov). The catalogue is `tools/dev/native_gate_milestones.py` (`list`, `check --gamedata`): per story its
+  chapters in order, each the stock chapter cue that its own clean-up cancels (where X4 also completes the chapter's
+  mission); the Terran cadet start's story is `terran_cadet`, M1 and M2 the cadet's own two chapters (`GS_Terran1`
+  `Ch1_Maintenance`: Ch2_Distress begins; `Ch2_Distress`: the cadet mission complete), M3..M25 `Story_Yaki` Ch1_Escort
+  .. Ch23_Yaki_Trade (`check` reads every one in the game data: 25 milestones, 0 wrong on 9.00). A player 2..N plays it
+  in its own copies (`GS_Terran1_P<k>`, `Story_Yaki_P<k>`) or a stock script it claims; player 1 in the stock scripts.
+  - **In the game.** The overlay's `md/x4lan_milestones.xml` has a root cue per (slot, milestone): `event_cue_cancelled`
+    of that slot's chapter cue. Its frame runs at the same tick on every client; it records the milestone in
+    `md.$X4LAN_Milestones` and raises `X4LAN_Milestones.Reached<i>` with `player.age`. The probe (native_gate_milestones)
+    turns that game time into one save tick T on every client (the first tick 5 s later, counted from the client's
+    first tick and its game time, plus 60 ticks) and saves through the periodic save's gate routine
+    (`lockstep_periodic_save.h`, no C change). At T-25 a player on foot postpones T by 300 ticks (player 1 until it sits:
+    a session starts it in its ship; players 2..N at most 20 times); then one `SAVE_SLOT` row per slot (player and
+    ship IDs, on foot, and for 2..N their inventory and research), then the gate's mission owner table into the MD (see
+    below). X4's refusals (a call of the simulation) retry 300 ticks on, 90 times. A periodic save within 90 ticks of a
+    milestone save is left out. Not with `--mixed-platform` or `--open` (`--milestone-saves off`: logged only), as the
+    periodic saves; on otherwise, also with `--save-every 0`.
+  - **Collected** by `x4ls play` (`saves.py`): `RUN/saves/milestones/<story>-M<n>-slot<k>.xml.gz` (the lowest local
+    client's file; the others are hashed and deleted) and `<name>.json`: the milestone and its tick, every local
+    client's SHA-256, the slots' rows, the session.json, spec.json and play recipe of the session. Never pruned. A
+    remote PC's clients are not seen.
+  - **Mission owners in the save.** The gate's owner table (lockstep_mission_owners.h) is keyed by cue runtime IDs,
+    which a load gives anew (a save writes a cue's ordinal). So at T-25 the probe signals `x4lan_owners_reset` and one
+    `x4lan_owner_<k>` per claimed cue on the galaxy (X4's own SignalObject, the cue as its Lua ID); the MD keeps them as
+    cue values in `md.$X4LAN_Owners` / `$X4LAN_OwnerSlots`, which X4 saves and loads like any script's cue reference.
+    Chosen over an MD table updated at each claim: the gate claims in C (a story's first frame, every root instance a
+    slot's frame makes), where no MD runs, and only a save needs the table. **Open:** X4 hands a cue to Lua as nil and
+    formats one as its bare name (live continue of a periodic save, 24 Nov: `first=2:string:Avatar:nil:0,...`), so the
+    probe cannot name a saved cue to the gate. Those entries are counted (`SAVE_OWNERS restored ... unreadable=N`) and
+    stay nobody's: a mission a player had taken from a shared script (a generic mission) is in every player's list
+    after a continue. The stories do not depend on it (below).
+  - **The stories are their slots' by name.** A continued session's overlay names each script of slot k's own (its plot
+    copies `GS_Terran1_P<k>`/`Story_Yaki_P<k>`, a stock script it claimed) for slot k before the first tick
+    (`native_gate_plot_owned = {{'<Script>',k},...}`, `gate.mpp_first(script, k)`, lockstep_mission_owners.h
+    `mpp_first_add_slot`): every cue of it is slot k's, as the claim of its root cue at the story's begin made them.
+    The script's name is the same in every save, so this needs no snapshot. Row `PLOT_OWNED_ARMED slot=<own>
+    scripts=GS_Terran1_P2=2,Story_Yaki_P2=2 first=N/... owned=N`. A gate without this (`owned=` missing from
+    `gate.mpp_first()`) is refused at load: an older one would make the copies player 1's.
+  - **Continue** (`x4ls continue`, `src/lockstep/launcher/milestone.py`). X4 loads a save with one player object only,
+    so the copy keeps X4's own (player 1, everything as saved) and takes the others out, reading their inventory,
+    blueprints and research first. session.json: the first session's with this save, no fixture, player 1's ship from
+    the save, slot k's ship from its `SAVE_SLOT` row (else the ship its saved player object sat in), no kits
+    (money, standing and the shared library are in the save) and a `continue` block (their inventory; in factions
+    mode their research and blueprints). The overlay is the first session's recipe; the story files and copies are
+    there as before, but no story begins again (no `native_gate_story`). The probe (`native_gate_continue`): at tick 2
+    the MD dumps its saved owner table (`x4lan_owners_dump`; the story roots' state as debug rows), at tick 32 every
+    client claims them (`gate.mpp_claim`), at the window's tick 8 slots 2..N get their inventory back, at tick 10
+    (factions) their research and blueprints. Rows: `SAVE_OWNERS restored ... heard=N of=N claimed=N refused=0`,
+    `CONTINUE_INVENTORY ... applied=1`.
+  - **Every save of a session can be continued** (25 Nov). The periodic save is prepared the same way when it arms
+    (`SAVE_SLOT name=periodic-t<T>` rows, the owner snapshot), and `x4ls play` writes `RUN/saves/c<K>-t<T>.json` beside
+    each kept file (pruned with it). A save of an older build has no sidecar and no snapshot: `--session` and `--overlay`
+    stand in; slot k's ship and inventory come from its saved player object (one per slot 2..N that sat in a ship), and
+    the stories are their slots' by name (above); missions of other scripts a player had taken stay nobody's.
+  - **What the copy leaves out besides players 2..N** (found in the first live continue, rk8, 24 Nov): the identity
+    setup's MD state (`X4LAN_PlayerIdentity`: its step counter was the first session's, the continued session's step 1 was
+    refused and both probes stopped at tick 20), and the player movement (`<movement ... class="player">`, X4's
+    PlayerController) of every ship but player 1's: the gate makes slot k's controller at the take and refuses a ship that
+    has one (stop 161 `ship_controlled` at tick 35). Those ships start at rest at their saved place.
+  - **Every player's ship starts at rest** (24 Nov, default; `continue --keep-flight` and `host --milestone ...
+    --keep-flight` keep the saved flight). Found in release rk9, continued from rk8's c3-t18000: player 2's ship was saved
+    in travel mode at full speed on the way to a sector border, the continued game went on with it at once, and the ship
+    flew far into the void before the player saw it. In the copy, for the ship every player object sits in and the ship
+    of every slot's row (player 1's too): the movement's velocity and acceleration are emptied, and in the player
+    movement the autopilot's path (`<targetpoints>`, the ship computer flying to a target). The engine's
+    `<travel active="1" .../>` and the travel drive's two effect objects (exhaust, bubble) are left out, `<boost start=.../>`
+    becomes `<boost/>` and `<sound travel="1"/>` goes. X4's own player's `<autopilot target=.../>` loses the target. Throttle is
+    not saved (X4 takes it from the speed). Orders in a ship's queue stay (X4's AI scripts refer to them by ID): a player's
+    ship runs them only on the autopilot, which is off. It is the same file on every client, so the same world at the load.
+    The console says `flight: N player ship(s) at rest (...)`, and `continued-from.json` keeps the counts (`flight`). A kit
+    keeps a hosted session per form (`sessions/continue-r-...` at rest, `continue-f-...` flying), so one made before this
+    is not taken again.
+  - **A person's save** (25 Nov, on in every session overlay). The menu's Save game (`SaveGame`, held by the Lua guard) and
+    the quick save key (refused by the gate's input layer) become a save of the session by every client: the asking
+    client raises the UI event `X4LAN_Saves`/`Request` {slot, file, name} as a click (the UI replay's events family runs
+    it on every client at its apply tick; a call outside a click is refused, never run on one client alone); the MD
+    (`SaveRequest`) answers with `X4LAN_Saves.Request` and `X4LAN_Saves.RequestTime` (player.age), and the probe makes
+    the save as a milestone's (2 s after that time plus 60 ticks; waits while player 1 walks; one person's save at a
+    time). Rows `PLAYER_SAVE asked / reached / armed / saved / postponed / dropped`, `ERROR PLAYER_SAVE_FAILED`; the asking
+    player sees "saving the game for every player..." and "game saved (<name>)" on their own screen only. Collected as
+    `RUN/saves/player/<name>-t<T>.xml.gz` and `.json` (`asked_by`, `save_name`, `save_file`). The save menu key opens the
+    menu's save page. Load stays off in a session: `LoadGame` is held by the Lua guard too (play overlays since 25 Nov)
+    and the load keys are refused, each said once ("loading a saved game is off during a session"). With `save=false`
+    (Linux clients, open slots) a person who asks is told that saving is off in this game.
+  - **What is not kept** (the gate's own state): players 2..N's player objects (new ones at the take, in their saved
+    ships; a player on foot sits again; their encyclopedia, map knowledge and blackboard values of their own are not
+    carried, the Terran stories keep none on the player), the active mission each player 2..N chose, owned frames
+    before tick 32 (they run as no one's), factions' relations between the players' factions (set again), and every
+    per-tick gate state (a new session from tick 0). Refused: a save whose player 1 walks or flies the suit, a ship of
+    another faction, two players in one ship, a sidecar whose hash is not the save's, sessions with open slots.
 - **Checkpoints.** `--checkpoint-at T` makes every client save after tick T; 150 ticks before,
   the MD cue `Respawn` creates a fresh 12-ship fixture beside the player (the battle leaves
   wrecks, and a snapshot needs twelve live ships). X4 pauses while saving, so the gate stops

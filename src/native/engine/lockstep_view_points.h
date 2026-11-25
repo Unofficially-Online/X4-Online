@@ -183,6 +183,31 @@ static int view_pins(void) {
     }
     return 1;
 }
+/* lockstep_pilot_room_attention.h: X4's bytes of [rva, rva+size) at base into copy, with each of this module's sites in
+ * the range read as its original (the original, or exactly this module's patch); 0 when a site holds anything else. The
+ * displacements are image-relative, the same for any base holding X4's bytes. */
+static int view_as_original(const unsigned char *base,unsigned rva,unsigned size,unsigned char *copy) {
+    if(!base || !read_local(base+rva,copy,size)) return 0;
+    for(unsigned i=0;i<VIEW_SITES;i++) {
+        const unsigned at=view_sites[i].rva;
+        unsigned char orig[4],mine[4];
+        if(at<rva || at+7>rva+size) continue;
+        view_site_bytes(i,0,orig);
+        if(!memcmp(copy+(at-rva)+3,orig,4)) continue;
+        if(!view_page) return 0;
+        view_site_bytes(i,1,mine);
+        if(memcmp(copy+(at-rva)+3,mine,4)) return 0;
+        memcpy(copy+(at-rva)+3,orig,4);
+    }
+    if(VIEW_CALL>=rva && VIEW_CALL+6<=rva+size && memcmp(copy+(VIEW_CALL-rva),view_call_original,6)) {
+        unsigned char mine[6];
+        if(!view_page) return 0;
+        view_call_bytes(1,mine);
+        if(memcmp(copy+(VIEW_CALL-rva),mine,6)) return 0;
+        memcpy(copy+(VIEW_CALL-rva),view_call_original,6);
+    }
+    return 1;
+}
 static unsigned char *view_page_near(void) {
     uintptr_t at=(uintptr_t)(image+VIEW_SET_ATTENTION)&~(uintptr_t)65535;
     for(uintptr_t distance=65536;distance<0x70000000;distance+=65536)

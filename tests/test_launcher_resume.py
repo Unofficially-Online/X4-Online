@@ -134,6 +134,10 @@ class RecipeTests(unittest.TestCase):
         del old['save_every']   # an overlay from before periodic saves
         cmd = resume.overlay_command(old, 's.xml.gz', 'session.json', 'gate.dll', 'out')
         self.assertEqual(cmd[cmd.index('--save-every') + 1], '0')
+        # a recipe from before a name was held gets this build's held names added, its own kept in its order
+        cmd = resume.overlay_command(dict(self.RECIPE, lua_block='Pause,Unpause,SaveGame'), 's.xml.gz', 'session.json', 'gate.dll',
+                                     'out', held=('Pause', 'Unpause', 'SaveGame', 'LoadGame'))
+        self.assertEqual(cmd[cmd.index('--lua-block') + 1], 'Pause,Unpause,SaveGame,LoadGame')
 
 
 if __name__ == '__main__':

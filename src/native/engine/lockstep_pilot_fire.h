@@ -59,7 +59,10 @@
  * GetSecondaryWeapon, GetWeaponDetails*) as well as from the simulation, and with --present each client's
  * HUD reads another ship's guns (live fire-S: digest mismatch from a few ticks after a burst until the next
  * one). So the receipt step calls it for every leased gun, on every client, at the frame's game time,
- * before it reads them: the state no longer depends on who asked. */
+ * before it reads them: the state no longer depends on who asked.
+ * Whose shot it is (24 Nov, friendly fire): the arm also installs lockstep_pilot_attack.h, so an attack by slot k's ship
+ * is posted on slot k's player as X4 posts the player's (event_player_attacked_object: the relation loss, the warning, the
+ * police), not handed to the attacked object as an NPC's; its status follows this one (attacks=). */
 #define PFIRE_WEAPON_VTABLE 0x2b68278u
 #define PFIRE_MINDLESS_VTABLE 0x2b7cf68u
 #define PFIRE_PLAYER_VTABLE 0x2b7d1a8u      /* U::PlayerShootController */
@@ -194,10 +197,25 @@ static unsigned char pfire_wanted(const pilot_slot *s,unsigned slot,uint64_t tic
     if(pnat_mode==PNAT_MODE_STOCK && (pstk_slot_mask>>(slot-1)&1u)) return pstk_fire_tick[slot-1]==tick && pstk_fire_on[slot-1];
     return s->driving && (s->record.buttons&1) && !(s->record.mode&PILOT_MODE_TRAVEL);
 }
+/* Why a slot's ship had no gun to lease, for the status (e<k>=groups/active/ids in the active group/first id's vtable RVA,
+ * found, under the ship): the last empty lease's look at the ship's groups. */
+static struct {uint32_t groups,active,ids,vtable;unsigned char found,under;} pfire_why[PILOT_SLOTS];
+static void pfire_look(unsigned slot,unsigned char *ship) {
+    unsigned char *groups[2]={NULL,NULL},*ids[2]={NULL,NULL},*gun=NULL;uint32_t active=0;uint64_t runtime=0;uintptr_t vtable=0;
+    if(slot<1 || slot>PILOT_SLOTS) return;
+    memset(&pfire_why[slot-1],0,sizeof(pfire_why[slot-1]));
+    if(!ship || !read_local(ship+PFIRE_GROUPS,groups,16) || !read_local(ship+PFIRE_ACTIVE,&active,4) || !groups[0] || groups[1]<groups[0]) return;
+    pfire_why[slot-1].groups=(uint32_t)((size_t)(groups[1]-groups[0])/0x18);pfire_why[slot-1].active=active;
+    if(active>=pfire_why[slot-1].groups || !read_local(groups[0]+(size_t)active*0x18,ids,16) || !ids[0] || ids[1]<ids[0]) return;
+    pfire_why[slot-1].ids=(uint32_t)((size_t)(ids[1]-ids[0])/8);
+    if(!pfire_why[slot-1].ids || !read_local(ids[0],&runtime,8) || !(gun=pfire_find(runtime))) return;
+    pfire_why[slot-1].found=1;pfire_why[slot-1].under=(unsigned char)pfire_under(gun,ship);
+    if(read_local(gun,&vtable,8) && vtable) pfire_why[slot-1].vtable=(uint32_t)(vtable-(uintptr_t)image);
+}
 /* Lease one slot's guns; a gun that is firing waits (identical on every client). */
 static int pfire_lease(pfire_slot *f,unsigned char *ship) {
     pfire_gun found[PFIRE_GUNS];unsigned n=pfire_collect(ship,found);
-    if(!n) {++f->empty;return 1;}
+    if(!n) {if(f>=pfire_slots && f<pfire_slots+PILOT_SLOTS) pfire_look((unsigned)(f-pfire_slots)+1u,ship);++f->empty;return 1;}
     if(!read_local(ship+PFIRE_ACTIVE,&f->group,4)) return 0;
     for(unsigned i=0;i<n;i++) {
         unsigned char firing=0;
@@ -415,10 +433,12 @@ static void pfire_restore(void) {
     pfire_released=1;
 }
 static int pfire_check(void) {return !pfire_armed || !InterlockedCompareExchange64(&pfire_failures,0,0);}
+static int patk_arm(void);static int patk_status(char *,size_t);   /* lockstep_pilot_attack.h: slot k's shots are its player's */
 static int pfire_arm(int mode) {
     if(pfire_armed) return mode==pfire_mode && stats.active;
     if((mode!=PFIRE_RECORD && mode!=PFIRE_SCRIPT) || !pilot_armed || !stats.active || stats.issued || GetCurrentThreadId()!=ui_thread ||
        !world_identity_installed || !pfire_pins()) {pfire_stage="refused";return 0;}
+    if(!patk_arm()) {pfire_stage="attacks";return 0;}
     memset(pfire_slots,0,sizeof(pfire_slots));memset(pfire_missiles,0,sizeof(pfire_missiles));pfire_mode=mode;pfire_armed=1;pfire_released=0;pfire_stage="armed";return 1;
 }
 static int pfire_status(char *out,size_t capacity) {
@@ -436,5 +456,10 @@ static int pfire_status(char *out,size_t capacity) {
         (unsigned long long)pfire_cleared,pfire_frame_firing,(unsigned long long)pfire_receipt,pfire_stage,(long long)pfire_failures);
     for(unsigned i=0;n>0 && (size_t)n<capacity && i<pilot_slot_count;i++)
         n+=snprintf(out+n,capacity-(size_t)n," s%u=%u/%u/%u",i+1,pfire_slots[i].leased,pfire_slots[i].count,pfire_slots[i].empty);
+    for(unsigned i=0;n>0 && (size_t)n<capacity && i<pilot_slot_count;i++)
+        if(pfire_slots[i].empty && !pfire_slots[i].count)
+            n+=snprintf(out+n,capacity-(size_t)n," e%u=%u/%u/%u/%x/%u/%u",i+1,pfire_why[i].groups,pfire_why[i].active,pfire_why[i].ids,pfire_why[i].vtable,
+                        pfire_why[i].found,pfire_why[i].under);
+    if(n>0 && (size_t)n+1<capacity) {out[n++]=' ';int more=patk_status(out+n,capacity-(size_t)n);n=more?n+more:0;}
     return n>0 && (size_t)n<capacity?n:0;
 }

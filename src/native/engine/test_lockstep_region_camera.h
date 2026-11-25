@@ -18,6 +18,15 @@ static char test_rcp_class(void *o,int klass) {
     if(klass==0xf) return o==test_rcp_cluster;
     return 0;
 }
+/* The effect creation's camera (rc_effect_camera): GetOffset and X4's 0x9fcb90 stand-ins. */
+static void *test_rcp_offset_camera;static unsigned test_rcp_offset_calls,test_rcp_effect_calls;
+static void test_rcp_offset(void *camera,void *posrot) {
+    const float t[4]={7,8,9,0};assert(((uintptr_t)posrot&15u)==0);
+    test_rcp_offset_camera=camera;++test_rcp_offset_calls;memcpy(posrot,t,16);
+}
+static void *test_rcp_effect_native(void *unused,void *out,void *frame,void *owner) {
+    (void)unused;(void)frame;(void)owner;const float t[4]={-1,-2,-3,0};memcpy(out,t,16);++test_rcp_effect_calls;return out;
+}
 static void test_rcp_world(void) {
     unsigned char *all[]={test_rcp_ship_a,test_rcp_ship_b,test_rcp_zone_a,test_rcp_zone_b,test_rcp_sector_a,test_rcp_sector_b,test_rcp_cluster,test_rcp_part_a,test_rcp_part_b};
     test_rcp_vtable[0x11e8/8]=(void*)test_rcp_class;void *vt=test_rcp_vtable;
@@ -480,6 +489,53 @@ static void test_region_camera(void) {
         void *out=NULL;assert(rc_camera_sector(NULL,&out,test_rcp_part_b)==&out && out==test_rcp_cluster);
         out=NULL;assert(rc_camera_sector(NULL,&out,test_rcp_part_a)==&out && out==rc_view_sector);
         assert(rc_active_camera(test_rcp_traffic)==camera2 && rc_active_camera(test_rcp_part_a)==*rc_manager_camera());
+        /* EffectObject creation's camera: an owner in view point 2's sector answers view point 2's stand-in (its
+         * GetOffset translation), view point 1's sector X4's (view point 1's stand-in); an owner in a seated player
+         * 2..N's ship answers the effect's own position (frame-0x80), in any sector, for slots 2, 3 and 8. */
+        {
+            pslot_slot kept[PILOT_SLOTS+1];memcpy(kept,pslots,sizeof(kept));
+            __declspec(align(16)) float pos[4],fx[36];for(unsigned i=0;i<36;i++) fx[i]=100.0f+(float)i;
+            unsigned char *const frame=(unsigned char*)fx+0x80;
+            rc_get_offset_native=test_rcp_offset;rc_effect_native=test_rcp_effect_native;
+            test_rcp_offset_calls=test_rcp_effect_calls=0;rc_effect_policy_own=rc_effect_policy_standin=0;
+            for(unsigned k=2;k<=PILOT_SLOTS;k++) pslots[k].seated=0;
+            const LONG64 calls_before=rc_stub_calls[RC_EFFECT_CAMERA_CALL];
+            memset(pos,0,sizeof(pos));assert(rc_effect_camera(NULL,pos,frame,test_rcp_part_b)==pos && pos[0]==7 && pos[1]==8 && pos[2]==9 &&
+                                             test_rcp_offset_camera==camera2 && test_rcp_offset_calls==1 && !test_rcp_effect_calls);
+            memset(pos,0,sizeof(pos));assert(rc_effect_camera(NULL,pos,frame,test_rcp_part_a)==pos && pos[0]==-1 && test_rcp_effect_calls==1 && test_rcp_offset_calls==1);
+            static const unsigned own_slots[3]={2,3,8};
+            for(unsigned i=0;i<3;i++) {
+                const unsigned k=own_slots[i];pslots[k].seated=1;pslots[k].ship=test_rcp_ship_a;   /* part_a lies in slot k's ship */
+                memcpy(test_rcp_part_a+0x70,&pslots[k].ship,8);
+                memset(pos,0,sizeof(pos));assert(rc_effect_camera(NULL,pos,frame,test_rcp_part_a)==pos && pos[0]==100 && pos[1]==101 && pos[2]==102 && pos[3]==103);
+                pslots[k].seated=0;
+                {void *zone=test_rcp_zone_a;memcpy(test_rcp_part_a+0x70,&zone,8);}
+            }
+            assert(rc_effect_policy_own==3 && rc_effect_policy_standin==1 && test_rcp_effect_calls==1);
+            /* a seated slot's ship that is not the owner's: as before */
+            pslots[3].seated=1;pslots[3].ship=test_rcp_ship_b;memset(pos,0,sizeof(pos));
+            assert(rc_effect_camera(NULL,pos,frame,test_rcp_part_a)==pos && pos[0]==-1 && test_rcp_effect_calls==2);pslots[3].seated=0;
+            /* the policy off, no owner, no frame (the own-ship answer needs it): X4's */
+            rc_policy=0;assert(rc_effect_camera(NULL,pos,frame,test_rcp_part_b)==pos && pos[0]==-1 && test_rcp_effect_calls==3);rc_policy=1;
+            assert(rc_effect_camera(NULL,pos,frame,NULL)==pos && test_rcp_effect_calls==4);
+            pslots[2].seated=1;pslots[2].ship=test_rcp_ship_a;{void *s=test_rcp_ship_a;memcpy(test_rcp_part_a+0x70,&s,8);}
+            assert(rc_effect_camera(NULL,pos,NULL,test_rcp_part_a)==pos && test_rcp_effect_calls==5);
+            /* through the executable stub, as the patched call reaches it: mov r8, rbp first (part_a in slot 2's ship) */
+            {   unsigned char *code=VirtualAlloc(NULL,0x1000,MEM_COMMIT|MEM_RESERVE,PAGE_EXECUTE_READWRITE);assert(code);unsigned n=0;uint64_t v;
+                /* push rbp; mov rbp, rcx (the frame); mov rcx, 0; mov r9, rdx (the owner); mov rdx, r8 (out); mov rax, stub; call rax; pop rbp; ret */
+                static const unsigned char head[]={0x55,0x48,0x89,0xcd,0x48,0x83,0xec,0x20,0x31,0xc9,0x49,0x89,0xd1,0x4c,0x89,0xc2,0x48,0xb8};
+                memcpy(code,head,sizeof(head));n=sizeof(head);v=(uint64_t)(uintptr_t)rc_stub(RC_EFFECT_CAMERA_CALL);memcpy(code+n,&v,8);n+=8;
+                static const unsigned char tail[]={0xff,0xd0,0x48,0x83,0xc4,0x20,0x5d,0xc3};memcpy(code+n,tail,sizeof(tail));
+                FlushInstructionCache(GetCurrentProcess(),code,0x1000);
+                memset(pos,0,sizeof(pos));((void *(*)(void *,void *,void *))(void *)code)(frame,test_rcp_part_a,pos);
+                assert(pos[0]==100 && pos[3]==103 && rc_effect_policy_own==4);
+                memset(pos,0,sizeof(pos));((void *(*)(void *,void *,void *))(void *)code)(frame,test_rcp_part_b,pos);
+                assert(pos[0]==7 && rc_effect_policy_standin==2);
+                VirtualFree(code,0,MEM_RELEASE);}
+            {void *zone=test_rcp_zone_a;memcpy(test_rcp_part_a+0x70,&zone,8);}
+            assert(rc_stub_calls[RC_EFFECT_CAMERA_CALL]==calls_before+11);
+            memcpy(pslots,kept,sizeof(kept));rc_get_offset_native=NULL;rc_effect_native=NULL;rc_effect_policy_own=rc_effect_policy_standin=0;
+        }
         /* UniverseFrameUpdate's controllable: view point 2 on odd ticks. */
         rc_alternations=0;void *found;
         rc_tick=21;found=(void*)1;rc_controllable_a(NULL,&found);assert(rc_alternations==1);
@@ -596,6 +652,23 @@ static void test_region_camera(void) {
                test_shape_update_calls==2 && test_shape_update_args[2]==(void*)1 && rc_shape_aligned==1);
         memcpy(&due,test_shape_holder+0x28,8);assert(due==1e9);
         *(uint64_t*)(test_rcp_part_b+8)=0;rc_shape_update(test_shape_holder,test_rcp_part_b,0);assert(rc_shape_unmapped==1 && rc_shape_aligned==1);
+        /* Per body record: an object with holders at its +0x260 and +0x268 records and a third (a sensor) aligns each
+         * once (build module 0x3f4bd's sensor kept its loading-time due time when only the first record was). */
+        {
+            static __attribute__((aligned(16))) unsigned char owner3[0x300],records3[2][0x40],holders3[3][0x40];memset((void *)rc_shape_keys,0,sizeof(rc_shape_keys));
+            memset(owner3,0,sizeof(owner3));memset(records3,0,sizeof(records3));memset(holders3,0,sizeof(holders3));
+            memcpy(owner3+8,test_rcp_part_b+8,8);*(uint64_t*)(owner3+8)=0x5ca73;  /* key 0x176a99 */
+            for(unsigned i=0;i<2;i++) {void *r=records3[i],*h=holders3[i];memcpy(owner3+0x260+8*i,&r,8);memcpy(records3[i]+0x20,&h,8);}
+            assert(rc_shape_record_key(0x176a99,owner3,holders3[0])!=rc_shape_record_key(0x176a99,owner3,holders3[1]) &&
+                   rc_shape_record_key(0x176a99,owner3,holders3[1])!=rc_shape_record_key(0x176a99,owner3,holders3[2]) &&
+                   rc_shape_record_key(0x176a99,owner3,holders3[2])==rc_shape_record_key(0x176a99,NULL,holders3[2]));
+            const LONG64 aligned_before=rc_shape_aligned;
+            for(unsigned pass=0;pass<2;pass++) for(unsigned i=0;i<3;i++) {
+                double d3=1e9;memcpy(holders3[i]+0x28,&d3,8);rc_shape_update(holders3[i],owner3,0);memcpy(&d3,holders3[i]+0x28,8);
+                assert(pass?d3==1e9:d3==now);
+            }
+            assert(rc_shape_aligned==aligned_before+3);rc_shape_aligned=aligned_before;
+        }
         *(uint64_t*)(test_rcp_part_b+8)=0x5ca73;memset((void *)rc_shape_keys,0,sizeof(rc_shape_keys));rc_shape_count=-1;
         rc_shape_update(test_shape_holder,test_rcp_part_b,0);memcpy(&due,test_shape_holder+0x28,8);assert(due==1e9 && rc_shape_aligned==1); /* not latched */
         rc_shape_count=latched;*(uint64_t*)(test_rcp_part_b+8)=0;

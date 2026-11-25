@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A ship that protects a player's own ship flies and fights with that player as with player 1: X4's ProtectShip order
+     (aiscripts/order.fight.protect.ship.xml) for every player's ship (native_gate_player_groups, a session default:
+     this patch ships with md/setup.xml's, tools/dev/native_gate_player_groups.xml).
+
+     The Terran cadet's wingmate protects its player's ship with this order (md.Story_Yaki Setup_Wingmate, in a player
+     2..N's copy Story_Yaki_P<k>: the target is that player's ship). The order reads the protected ship's pilot: with one
+     the wingmate joins a formation behind the ship and keeps an escort group on the pilot, and it answers when the
+     ship's pilot attacks; and it attacks what "the player's ship" attacks ($target == player.occupiedship). A stock
+     player's ship holds its player in its pilot post at all times. A player 2..N's own ship holds its player only
+     inside that player's scope (native_gate_pilot_slots_post), and this script is the wingmate pilot's, outside every
+     scope, where `player` is player 1: for a player 2..N the ship had no pilot and was never "the player's ship". So
+     the wingmate of player 2 never took its formation (it flew loosely after the ship), never answered player 2's
+     shots, attacked every armed enemy it saw (the rule for a ship without a pilot), and logged
+     "Property lookup failed: $leaderpilot" at every sector change (24 Nov playtest, rk8).
+     Here the protected ship's pilot is also the player who controls it (the player groups keep that on every
+     player's entity at the same ticks on every client: $X4LAN_Pilots, a table from each player's controlled object to
+     that player's entity; X4 keeps no script variables on a ship, and AI scripts read no MD globals), and the ship that
+     player controls is also "the player's ship". Player 1's own ship has its pilot, so the stock lines decide as
+     before; without the gate nothing sets the table and every line is the stock one. The colour of the wingmate is
+     not changed: the HUD colours by owner only (X4 9.00 GetRelationStatus4: own property = the true owner is the
+     player faction), and the cadet's wingmate is the Terran faction's in the stock game too.
+     Our own clauses only; the stock script is patched in memory by X4's own diff loading, never on disk. -->
+<diff>
+ <replace sel="//do_if[@value='@$target.pilot']/@value">@$target.pilot or @player.entity.$X4LAN_Pilots.{$target}</replace>
+ <replace sel="//set_value[@name='$leaderpilot'][@exact='$target.pilot']/@exact">if @$target.pilot then $target.pilot else player.entity.$X4LAN_Pilots.{$target}</replace>
+ <replace sel="/aiscript/attention[@min='visible']//do_if[create_formation]/@value">(not this.assignedcontrolled.isformationwingman or (this.assignedcontrolled.formationleader != $target)) and $target.isoperational and (@$target.pilot or @player.entity.$X4LAN_Pilots.{$target}) and (not this.assignedcontrolled.iscapitalship or $target.iscapitalship) and not $target.dock and not $target.zone.isclass.highway and not this.assignedcontrolled.zone.isclass.highway</replace>
+ <replace sel="/aiscript/attention[@min='unknown']//do_if[create_formation]/@value">(not this.assignedcontrolled.isformationwingman or (this.assignedcontrolled.formationleader != $target)) and $target.isoperational and (@$target.pilot or @player.entity.$X4LAN_Pilots.{$target}) and (not this.assignedcontrolled.iscapitalship or $target.iscapitalship) and not $target.dock and not $target.zone.isclass.highway and not this.assignedcontrolled.zone.isclass.highway</replace>
+ <replace sel="//check_all[event_object_signalled]/check_value/@value">$target.isoperational and (@$target.pilot or @player.entity.$X4LAN_Pilots.{$target}) and event.param.isoperational and $target.mayattack.{event.param}</replace>
+ <replace sel="//check_all[event_object_enemy_found]/check_value[1]/@value">not (@$target.pilot or @player.entity.$X4LAN_Pilots.{$target}) or (@$target.pilot.command.value == command.attackenemies) or (@$target.pilot.command.value == command.attackobject) or (@$target.pilot.command.value == command.patrol) or (@$target.pilot.command.value == command.protect) or ($target.primarypurpose != purpose.fight)</replace>
+ <replace sel="//check_all[event_object_attacked_object]/check_value/@value">$target == player.occupiedship or @player.entity.$X4LAN_Pilots.{$target}</replace>
+ <add sel="/aiscript/on_abort" pos="prepend">
+  <set_value name="$X4LAN_LeaderPilot" exact="if @$target.pilot then $target.pilot else @player.entity.$X4LAN_Pilots.{$target}"/>
+ </add>
+ <replace sel="/aiscript/on_abort/do_if[@value='$target.pilot.$escortgroup?']/@value">$X4LAN_LeaderPilot.$escortgroup?</replace>
+ <replace sel="/aiscript/on_abort/do_if/remove_from_group/@group">$X4LAN_LeaderPilot.$escortgroup</replace>
+</diff>

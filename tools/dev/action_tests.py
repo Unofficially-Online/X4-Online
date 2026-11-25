@@ -59,6 +59,9 @@ Scenarios (the snapshot is the two-player one: both ships side by side in a sect
   dockpair both players dock at one station and watch their dock menus every 10 ticks while the other player docks and
           undocks: does one player's dock or undock close the other's dock menu; after its own undock, is each player's
           dock menu closed and the HUD's top level menu open (--swap: the other player leaves first).
+  interact each player opens Ship Interactions in flight from the HUD's top level bar (the button's own handler),
+          presses its Flight Assist, opens it from the map's tabs, goes to Ship Information and Back to it, presses
+          Flight Assist again; player 1 first, then player 2, the other client's dock menu watched to stay closed.
   mapopen a diagnostic: one player's client opens the map and keeps it open for 100 seconds; nothing else happens.
   reps    each player comms the Argon representative (one conversation at a time: player 1 first), chooses "I would
           like to buy a blueprint", picks the cheapest blueprint it lacks and presses Confirm, then "Show me your
@@ -2989,6 +2992,78 @@ class Guidance:
             check('removed', bool(removed), 'player %d: Remove course %s' % (k, 'cleared it at tick %d' % removed['tick'] if removed else 'left it (%s)' % shown(c, 'removed')))
 
 
+# ---- the HUD's Ship Interactions -----------------------------------------------------------------------------------
+class Interact:
+    """Each player opens Ship Interactions in flight from the HUD's top level bar, presses its Flight Assist button, opens
+    it again from the map's tabs, goes to Ship Information and Back to it, and presses Flight Assist again. Player 1
+    first, then player 2; meanwhile the other client's dock menu must stay closed (each player's menu is its own)."""
+    name = 'interact'
+    minutes = 3
+    sets = ()
+    marks = ('open', 'open2', 'open3')
+    OPEN = r'^shown=true mode=cockpit .* own=true'
+    LIMIT = 4000
+    QUIET = 1200          # ticks the other player's client watches its own dock menu stay closed
+
+    @staticmethod
+    def options(s):
+        pass
+
+    @staticmethod
+    def chain(k, a):
+        uses = [
+            ('top', 'op', 'menu_open', 'TopLevelMenu'),                             # the HUD's bar (open in flight anyway)
+            ('top_up', 'poll', '^shown=true', 5, 150, 'menu_look', 'TopLevelMenu'),
+            ('assist_start', 'op', 'pilot_look'),
+            ('tab', 'op', 'toplevel_tab', 'cockpit'),                              # click: Ship Interactions
+            ('open', 'poll', Interact.OPEN, 5, 300, 'menu_look', 'DockedMenu'),
+            ('assist', 'op', 'menu_call', 'DockedMenu', 'buttonFlightAssist'),     # its Flight Assist (the menu closes)
+            ('assist_off', 'try', 'assist=false', 10, 300, 'pilot_look'),
+            ('closed', 'poll', '^shown=false', 5, 300, 'menu_look', 'DockedMenu'),
+            ('map', 'op', 'menu_open', 'MapMenu'),
+            ('map_up', 'poll', '^shown=true', 5, 300, 'menu_look', 'MapMenu'),
+            ('maptab', 'op', 'toplevel_tab', 'cockpit', 'MapMenu', True),         # the map's tabs: Ship Interactions
+            ('open2', 'poll', Interact.OPEN, 5, 300, 'menu_look', 'DockedMenu'),
+            ('info', 'op', 'menu_call', 'DockedMenu', 'buttonShipInfo'),          # Ship Information: the map on the own ship
+            ('info_up', 'poll', '^shown=true', 5, 300, 'menu_look', 'MapMenu'),
+            ('back', 'op', 'menu_back', 'MapMenu'),                                # Back: to Ship Interactions
+            ('open3', 'poll', Interact.OPEN, 5, 300, 'menu_look', 'DockedMenu'),
+            ('assist_back', 'op', 'menu_call', 'DockedMenu', 'buttonFlightAssist'),
+            ('assist_on', 'try', 'assist=true', 10, 300, 'pilot_look'),
+            ('end', 'poll', '^shown=false', 5, 300, 'menu_look', 'DockedMenu'),
+        ]
+        quiet = ('other', 'try', '^shown=true', 10, Interact.QUIET, 'menu_look', 'DockedMenu')   # must give up
+        return [('before', 'wait', 300)] + (uses + [quiet] if k == 1 else [quiet] + uses)
+
+    @staticmethod
+    def watch(a):
+        return [('ship_look', 1), ('ship_look', 2)]
+
+    @staticmethod
+    def plan(a):
+        return [[(60 + 30 * (k - 1), 'chain', Interact.LIMIT, Interact.chain(k, a))] for k in PLAYERS]
+
+    @staticmethod
+    def report(check, clients, a):
+        for k in PLAYERS:
+            c = clients[k]
+            for step, want in (('tab', 'pressed opens=DockedMenu'), ('maptab', 'pressed opens=DockedMenu'), ('back', 'back to=DockedMenu')):
+                row = last_answer(c, step)
+                check(step, bool(row) and row['text'] == want, 'player %d: %s answered %s' % (k, step, row['text'] if row else shown(c, step)))
+            for step, how in (('open', "the HUD's top level bar"), ('open2', "the map's tabs"), ('open3', 'Back from Ship Information')):
+                row = held(c, step, Interact.OPEN)
+                check('opened', bool(row), "player %d: Ship Interactions for its own ship from %s: %s" % (k, how, row['text'] if row else shown(c, step)))
+            for step, pattern, did in (('assist_off', 'assist=false', 'its Flight Assist button turned flight assist off'),
+                                       ('assist_on', 'assist=true', 'and on again')):
+                row = held(c, step, pattern)
+                check('assist', bool(row), 'player %d: %s' % (k, '%s at tick %d' % (did, row['tick']) if row else 'not done: %s (%s)' % (did, shown(c, step))))
+            other = answers(c, 'other')
+            seen = [r for r in other if r['ok'] and r['text'].startswith('shown=true')]
+            quiet = bool(other) and not seen and other[-1]['text'] == 'gave_up'
+            check('own', quiet, "player %d's client kept its dock menu closed while the other player used its own (%s)" % (
+                k, 'watched %d ticks' % Interact.QUIET if quiet else seen[0]['text'] if seen else 'not watched: ' + shown(c, 'other')))
+
+
 # ---- a faction representative's blueprints and licences ---------------------------------------------------------------
 class Reps:
     """Each player docks at a faction's headquarters, comms the faction's representative, buys a blueprint and then a
@@ -3305,7 +3380,7 @@ class Hack:
                   "player %d's decryption systems read in its scope: first %s, last %s" % (k, first[-60:], last[-60:]))
 
 
-SCENARIOS = {s.name: s for s in (Trade, Orders, Orders2, Crew, ShipBuy, Refit, RefitOrder, Repair, Wing, ShipSell, CrewMove, FleetTrade, Deploy, Rules, Systems, Settings, Storage, Exchange, Hostile, TradeLoop, Claim, Mining, WingSet, Routines, DockPair, MapOpen, Guidance, Reps, ItemTrader, Hack, Rooms)}
+SCENARIOS = {s.name: s for s in (Trade, Orders, Orders2, Crew, ShipBuy, Refit, RefitOrder, Repair, Wing, ShipSell, CrewMove, FleetTrade, Deploy, Rules, Systems, Settings, Storage, Exchange, Hostile, TradeLoop, Claim, Mining, WingSet, Routines, DockPair, MapOpen, Guidance, Interact, Reps, ItemTrader, Hack, Rooms)}
 
 
 def ai_docks(plan):
@@ -3402,6 +3477,8 @@ def report(scenario, logs, run_dir, args):
         md_note(check, logs, 'FOOT_AVATAR_GUIDE', 'guide_md')
         md_note(check, logs, 'FOOT_AVATAR_HELD', 'held_md')
         md_note(check, logs, 'FOOT_AVATAR_GUIDE_TRY', 'guide_try_md')
+    if scenario is Interact:   # each client's dock menu opens: a person's (via=tab|back) and the automatic ones it kept out
+        md_note(check, logs, 'UI_DOCKED_MENU', 'dock_menu')
     if scenario in (Reps, ItemTrader, Crew):   # the conversation's picture on its owner's monitor only (lockstep_md_media.h talk)
         media_note(check, logs)
     watch_check(check, clients, scenario.watch(args))

@@ -443,15 +443,26 @@ class DropBarrier(Barrier):
     after a slot's first stand-in names that slot in its window field, k/<mask> (two hex digits, bit s-1), so every client
     sees the drop with the same permit and its records stop with the same proposal tick (lockstep_lookahead.h). Without a
     drop the wire is the protocol 4 wire byte for byte. With --wire-crypto a stand-in record carries a zero signature
-    (native_gate_crypto.py). Not with --join, --live-inputs or --peer-window."""
-    def __init__(self, *args, stall_report_ms=1000.0, stall_drop_ms=0.0, **kw):
+    (native_gate_crypto.py). Not with --join, --live-inputs or --peer-window.
+    stand_in (--stand-in, x4ls play --solo): slots nobody plays, dropped from tick 0 before any client reports. Their rows are
+    stand-ins from tick 0 (no real clock offset: they have no tick 0 of their own) and every permit from the first that
+    carries proposals (tick k+1, proposal tick 0) names them in its mask, so every client's gate notes them dropped at
+    proposal tick 0 (pilot_drop_note c=0): seated and neutral, silent from tick pilot_delay on, long before the pilot window.
+    Slot 1 may be one (the gate's drop path covers MD's player: lockstep_pilot_inputs.h), unlike an absent hot-join slot. A
+    report from a stand-in slot is never admitted. With stand-ins the stall drop bound may be 0 (never drop a played slot)."""
+    def __init__(self, *args, stall_report_ms=1000.0, stall_drop_ms=0.0, stand_in=(), **kw):
         super().__init__(*args, **kw)
         if not self.lookahead or self.peer_window is not None or self.live_inputs:
             raise ValueError('--stall-drop-ms without --adaptive covers protocol 4 (--lookahead K) without peer links or live inputs')
-        if not stall_drop_ms > 0 or stall_drop_ms < stall_report_ms:
+        stand_in = sorted(set(stand_in))
+        if stand_in and (not set(stand_in) <= set(self.slots) or len(stand_in) >= self.clients):
+            raise ValueError('stand-in slots must be slots of the session and leave at least one slot that is played')
+        if (stall_drop_ms or not stand_in) and (not stall_drop_ms > 0 or stall_drop_ms < stall_report_ms):
             raise ValueError('the stall drop bound must be positive and not below the stall report bound')
-        self.stall_report, self.stall_drop = stall_report_ms/1000.0, stall_drop_ms/1000.0
-        self.dropped = {}          # slot -> its first stand-in tick
+        # No drop bound (stand-ins only): a played slot is reported when the others wait for it, never dropped.
+        self.stall_report, self.stall_drop = stall_report_ms/1000.0, stall_drop_ms/1000.0 if stall_drop_ms else math.inf
+        self.stand_in = tuple(stand_in)
+        self.dropped = {s: 0 for s in stand_in}   # slot -> its first stand-in tick
         self.stall_seen = set()
         self.stalls, self.drops = [], []
 
@@ -546,10 +557,17 @@ class DropBarrier(Barrier):
                 out.append((self.peers[s], self.packet('NGDROP', s, tick)))
         return out+self.advance(now)
 
+    def status(self, now):
+        out = super().status(now)
+        if self.stand_in:
+            out['stand_in'] = list(self.stand_in)
+        return out
+
     def summary(self):
         out = super().summary()
-        out['drop'] = {'stall_report_ms': 1000*self.stall_report, 'stall_drop_ms': 1000*self.stall_drop,
-                       'stalls': self.stalls, 'drops': self.drops}
+        out['drop'] = {'stall_report_ms': 1000*self.stall_report,
+                       'stall_drop_ms': 1000*self.stall_drop if math.isfinite(self.stall_drop) else 0,
+                       'stalls': self.stalls, 'drops': self.drops, **({'stand_in': list(self.stand_in)} if self.stand_in else {})}
         return out
 
 class LinkDelay:
@@ -684,6 +702,11 @@ def main():
                                'it is stopped (0, the default: never); protocol 5, and protocol 4 (--lookahead K) without '
                                '--peer-window (DropBarrier); its ship goes neutral (roadmap D15). With --join: --rejoin slots and '
                                'joined slots, a later join takes the slot again (roadmap 15)')
+    p.add_argument('--stand-in', default='', metavar='K[,K...]',
+                   help='protocol 4 (--lookahead K): the relay stands in for these slots from tick 0, nobody plays them (x4ls play '
+                        '--solo): every client sees them dropped at proposal tick 0, seated and neutral (DropBarrier). Slot 1 may be '
+                        'one; at least one slot stays played. Not with --join, --adaptive, --peer-window, --live-inputs or '
+                        '--wire-crypto; --stall-drop-ms may be 0 (never drop a played slot)')
     p.add_argument('--status-file', type=Path, help='observe mode: small live JSON status (desync flag, first/last mismatch), '
                    'rewritten atomically on every notice and at most once a second otherwise')
     p.add_argument('--rendezvous-port', type=int, default=0, metavar='P',
@@ -778,6 +801,17 @@ def main():
     # stand-ins: a drop there is an ABORT record in the slot's stand-in row (JoinBarrier, protocols 3 and 4).
     if args.stall_drop_ms and not args.adaptive and not args.join and (args.live_inputs or args.peer_window is not None or not args.lookahead):
         p.error('--stall-drop-ms without --adaptive or --join needs --lookahead K and no --live-inputs or --peer-window')
+    # Stand-ins from tick 0 (x4ls play --solo) ride protocol 4's drop mask (DropBarrier); the join path's absent slots never
+    # include slot 1, and protocol 5 measures every client's round trip at tick 0.
+    stand_in = []
+    if args.stand_in:
+        try: stand_in = [int(v) for v in args.stand_in.split(',') if v.strip()]
+        except ValueError: p.error('--stand-in takes slot numbers K[,K...]')
+        if not stand_in or len(set(stand_in)) != len(stand_in) or not all(1 <= k <= args.clients for k in stand_in) \
+                or len(stand_in) >= args.clients:
+            p.error('--stand-in: slots 1..--clients, each once, at least one slot played')
+        if not args.lookahead or args.join or args.adaptive or args.peer_window is not None or args.live_inputs or args.wire_crypto:
+            p.error('--stand-in needs --lookahead K (protocol 4) and no --join, --adaptive, --peer-window, --live-inputs or --wire-crypto')
     # Every client builds the absent slot's player at H-2 (lockstep_pilot_inputs.h PILOT_HANDOVER_LEAD): the record must be
     # applied at least 3 ticks before H, and it is applied handover-lead ticks before it.
     if args.join and args.join_handover_lead < 3: p.error('--join-handover-lead must be at least 3 (the slot is built at H-2)')
@@ -826,13 +860,17 @@ def main():
         print(f'NATIVE_GATE RELAY JOIN absent={",".join(map(str, sorted(barrier.absent))) or "none"}'
               + (f' rejoin={",".join(map(str, sorted(barrier.rejoin))) or "none"} stall_drop_ms={args.stall_drop_ms:g}'
                  if args.stall_drop_ms else '')+(' join_observe=1 diagnostic=join_observe' if args.join_observe else ''), flush=True)
-    elif args.stall_drop_ms:
+    elif args.stall_drop_ms or stand_in:
         try:
             barrier = DropBarrier(args.token, args.ticks, args.hold_tick, args.hold_seconds, relative_real=args.relative_real,
                                   observe=args.observe, clients=args.clients, remote=bool(allowed), lookahead=args.lookahead,
-                                  tick_hz=args.tick_hz, stall_report_ms=args.stall_report_ms, stall_drop_ms=args.stall_drop_ms)
+                                  tick_hz=args.tick_hz, stall_report_ms=args.stall_report_ms, stall_drop_ms=args.stall_drop_ms,
+                                  stand_in=stand_in)
         except ValueError as error: p.error(f'--stall-drop-ms: {error}')
         print(f'NATIVE_GATE RELAY DROP stall_drop_ms={args.stall_drop_ms:g}', flush=True)
+        if stand_in:
+            print(f'NATIVE_GATE RELAY STAND_IN slots={",".join(map(str, barrier.stand_in))} from=0 '
+                  f'played={",".join(str(s) for s in barrier.live())}', flush=True)
     else:
         barrier = Barrier(args.token, args.ticks, args.hold_tick, args.hold_seconds, relative_real=args.relative_real, live_inputs=args.live_inputs,
                           observe=args.observe, clients=args.clients, remote=bool(allowed), lookahead=args.lookahead, tick_hz=args.tick_hz,

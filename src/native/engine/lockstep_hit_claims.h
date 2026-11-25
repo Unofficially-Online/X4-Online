@@ -62,7 +62,7 @@
 #define INPUT_OCTREE_BYTES 20u
 #define INPUT_KIND_ORDERS 0x50u
 #define INPUT_KIND_STOCK 0x53u
-#define INPUT_STOCK_VERSION 3u
+#define INPUT_STOCK_VERSION 4u   /* lockstep_pilot_stock.h PSTK_VERSION */
 #define INPUT_KIND_UI 0x55u
 #define INPUT_UI_VERSION 1u
 #define INPUT_KIND_FFI 0x58u   /* relayed UI FFI calls (lockstep_ui_exports.h) */

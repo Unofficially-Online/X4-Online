@@ -96,7 +96,7 @@ static int lua_ui_replay_frame(lua_State *L) {
     if(n) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);return 1;
 }
 static int lua_ui_replay_status(lua_State *L) {
-    char out[640];int n=accept_ui() && uirep_armed?uirep_status(out,sizeof(out)):0;
+    char out[1024];int n=accept_ui() && uirep_armed?uirep_status(out,sizeof(out)):0;
     if(n) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);return 1;
 }
 /* gate.ui_replay_refusals(): "tick:what:why,..." since the last call, nil when none. */

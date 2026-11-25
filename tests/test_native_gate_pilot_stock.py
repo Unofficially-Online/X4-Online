@@ -129,12 +129,12 @@ class StockClient:
               calls[#calls+1]='stock_pins'
               if STOCK_PINS_REFUSAL then return 0,STOCK_PINS_REFUSAL end
               return 1 end,
-            -- Mock record v3: version, flags, capture tick (le16), no cursor, aim or view, then the injected events.
+            -- Mock record v4: version, flags, capture tick (le16), no cursor, aim or view, then the injected events.
             pilot_stock_capture=function()
               if state.issued<WINDOW_START-1 then return nil,'not_live' end
               local events=''
               for _,e in ipairs(pending) do events=events..le16(KIND[e[1]]*16384+e[2])..le32(math.floor(e[3]*1000)%4294967296) end
-              local record='0301'..le16(state.issued)..string.rep('00',38)..string.format('%02x',#pending)..events
+              local record='0401'..le16(state.issued)..string.rep('00',38)..string.format('%02x',#pending)..events
               pending={}
               return record
             end,
@@ -221,7 +221,7 @@ class StockProbeTests(unittest.TestCase):
         self.assertEqual(blobs[2][0], '')     # before the window: nothing to propose
         # The scripted events of tick 8 ride that tick's record: range 1 = 0.5 and action 0x12f.
         stock8 = ref.decode(blobs[8][0])['stock']
-        self.assertEqual(stock8[:8], '03010800')
+        self.assertEqual(stock8[:8], '04010800')
         self.assertEqual(stock8[84:86], '02')
         self.assertEqual(stock8[86:], '0180' + 'f4010000' + '2f01' + '00000000')
         self.assertEqual(clients[0].values('injected'), ['6/state/13/1', '8/range/1/0.5', '8/action/303/0', '12/state/13/0'])
@@ -466,7 +466,7 @@ class StockProbeTests(unittest.TestCase):
     def test_a_stock_record_from_a_slot_outside_the_stock_slots_stops_the_session(self):
         clients = [StockClient(1), StockClient(2)]
         run(clients, 6)
-        forged = ref.encode({'pilot': '01'+'00'+'0102'+'ff7f'*7+'0000'+'00'*8, 'stock': '03'+'01'+'0700'+'00'*38+'00'})
+        forged = ref.encode({'pilot': '01'+'00'+'0102'+'ff7f'*7+'0000'+'00'*8, 'stock': '04'+'01'+'0700'+'00'*38+'00'})
         clients[1].lua.execute(f'state.issued=7;state.inputs={lua_value(["", forged])};update()')
         self.assertTrue(any('stock record from slot 2' in line for line in clients[1].values('logs')))
 

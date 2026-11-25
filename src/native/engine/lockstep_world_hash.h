@@ -421,18 +421,40 @@ static void *world_hash_find_live(void *map,uint64_t id,unsigned mode) {
     if(object && world_hash_reader(object+0xd3,&life,1) && life==2) {++world_hash_dead_skipped;return NULL;}
     return object;
 }
-static int world_hash_capture_with(uint64_t tick,unsigned schema,world_hash_find_fn find) {
-    world_hash_find_raw=find;find=world_hash_find_live;
+/* A capture runs in three phases: world_capture_open (the checks, the created rows taken up, the counters), world_capture_run
+ * (items [next, end) at one tick: the bank phase, the guarded reads, the per-item hashes, the roots' input) and
+ * world_capture_close (the watches, the bank phase after, the roots, the state). world_hash_capture_with runs the three at one
+ * tick and gives the bytes it always gave. The spread census (below) opens at its first tick and reads a part of the items at
+ * every tick up to its publish tick: the same items in the same order into the same roots. */
+static world_hash_find_fn world_capture_find;   /* the open capture's find (world_hash_find_live over world_hash_find_raw) */
+static unsigned world_capture_total,world_capture_next,world_capture_watch;
+static uint64_t world_capture_last;             /* the tick of the open capture's latest part */
+static int world_capture_is_open;
+static int world_capture_shield_time(void) {
+    if(!shield_canonical) return 1;
+    world_hash_stage="shield_time";
+    void **tls=*(void***)((unsigned char*)NtCurrentTeb()+0x58);
+    return tls && tls[0] && read_local((unsigned char*)tls[0]+0x300,&shield_canonical_now,8) && isfinite(shield_canonical_now);
+}
+/* Discards an open capture: its roots start empty again (a reusable hash resets at its finish); the items keep the hashes of the
+ * parts already read, which only the next capture's changed= count sees. */
+static void world_capture_discard(void) {
+    if(!world_capture_is_open) return;
+    unsigned char scratch[32];
+    for(unsigned d=0;d<WORLD_HASH_DOMAINS;d++) if(world_sha_roots[d]) BCryptFinishHash(world_sha_roots[d],scratch,32,0);
+    world_capture_is_open=0;
+}
+static int world_capture_open(uint64_t tick,unsigned schema,world_hash_find_fn find,int spread) {
+    world_capture_discard();
+    world_hash_find_raw=find;world_capture_find=world_hash_find_live;
     world_hash_stage="schema";
     if((schema!=1 && schema!=2) || (world_hash_scans && schema!=world_hash_schema)) return 0;
     world_static_now=0;world_static_used=0;world_static_tick=tick;
     for(unsigned i=0;i<world_static_nticks;i++) if(world_static_ticks[i]==tick) world_static_now=1;
+    /* The per-item observers (motion watch zones, hybrid census) and WORLD_STATIC rows describe one tick: no spread with them. */
+    if(spread && (world_static_nticks || world_hash_member_note || world_hash_after_item)) {world_hash_stage="spread_observers";return 0;}
     world_hash_schema=schema;
-    if(shield_canonical) {
-        world_hash_stage="shield_time";
-        void **tls=*(void***)((unsigned char*)NtCurrentTeb()+0x58);
-        if(!tls || !tls[0] || !read_local((unsigned char*)tls[0]+0x300,&shield_canonical_now,8) || !isfinite(shield_canonical_now)) return 0;
-    }
+    if(!world_capture_shield_time()) return 0;
     world_hash_stage="nav_layout_pins";
     if(schema==2 && !world_nav_layout_pins()) return 0;
     world_hash_stage="initialization";
@@ -440,15 +462,29 @@ static int world_hash_capture_with(uint64_t tick,unsigned schema,world_hash_find
     void *map=*(void**)(image+0x6cf1500);if(!map || world_hash_failures || (world_hash_scans && tick<=world_hash_tick)) return 0;
     if(world_hash_created) {
         world_hash_stage="created_rows";
-        if(!created_capture_rows(find,map,world_hash_created,&world_hash_created_count,WORLD_HASH_CREATED_MAX)) return 0;
+        if(!created_capture_rows(world_capture_find,map,world_hash_created,&world_hash_created_count,WORLD_HASH_CREATED_MAX)) return 0;
     }
-    const unsigned total=world_hash_count+world_hash_created_count;
+    world_capture_total=world_hash_count+world_hash_created_count;world_capture_next=world_capture_watch=0;world_capture_last=tick;
+    world_hash_changes=world_hash_alive=world_hash_class_unknown=world_hash_motion_unknown=world_hash_parent_unknown=0;
+    world_capture_is_open=1;
+    return 1;
+}
+/* Items [next, end) at tick. A part that is not the last checks the bank phase after itself; the last part's is close's. */
+static int world_capture_run(uint64_t tick,unsigned end) {
+    const world_hash_find_fn find=world_capture_find;const unsigned total=world_capture_total;
+    world_hash_stage="capture_order";
+    if(!world_capture_is_open || end<world_capture_next || end>total || tick<world_capture_last) return 0;
+    if(tick!=world_capture_last) {   /* a later part: the shield clock of its own tick */
+        if(!world_capture_shield_time()) return 0;
+        world_capture_last=tick;
+    }
+    world_hash_stage="initialization";
+    void *map=*(void**)(image+0x6cf1500);if(!map) return 0;
     world_hash_stage="bank_phase_before";
     if(!world_banks_read(&world_banks_before)) return 0;
-    world_hash_changes=world_hash_alive=world_hash_class_unknown=world_hash_motion_unknown=world_hash_parent_unknown=0;
     /* Aggregate buffers contain only savedID + per-domain SHA, little endian. */
-    unsigned char aggregate[WORLD_HASH_DOMAINS][40960];unsigned used=0,watch=0;
-    for(unsigned i=0;i<total;i++) {
+    unsigned char aggregate[WORLD_HASH_DOMAINS][40960];unsigned used=0,watch=world_capture_watch;
+    for(unsigned i=world_capture_next;i<end;i++) {
         world_hash_item *item=world_hash_item_at(i);unsigned char previous[WORLD_HASH_DOMAINS][32];
         unsigned char previous_raw[WORLD_NAV_RAW_BYTES],previous_raw_length=item->nav_raw_length;
         memcpy(previous_raw,item->nav_raw,sizeof(previous_raw));
@@ -474,12 +510,24 @@ static int world_hash_capture_with(uint64_t tick,unsigned schema,world_hash_find
         used+=40;
         if(!world_hash_scans || memcmp(previous,item->hash,sizeof(previous)) || previous_raw_length!=item->nav_raw_length ||
            memcmp(previous_raw,item->nav_raw,item->nav_raw_length)) world_hash_changed[world_hash_changes++]=i;
-        if(used==sizeof(aggregate[0]) || i+1==total) {
+        if(used==sizeof(aggregate[0]) || i+1==end) {
             for(unsigned d=0;d<WORLD_HASH_DOMAINS;d++) if(BCryptHashData(world_sha_roots[d],aggregate[d],used,0)<0) return 0;
             used=0;
         }
     }
-    if(watch!=world_hash_watch_count) {world_hash_failure_id=world_hash_watches[watch].saved;world_hash_stage="watch_identity_missing";return 0;}
+    world_capture_watch=watch;world_capture_next=end;
+    if(end<total) {
+        world_hash_stage="bank_phase_after";
+        if(!world_banks_read(&world_banks_after) || memcmp(&world_banks_before,&world_banks_after,sizeof(world_banks_before))) return 0;
+    }
+    return 1;
+}
+static int world_capture_close(uint64_t tick) {
+    const unsigned total=world_capture_total,schema=world_hash_schema;
+    world_hash_stage="capture_order";
+    if(!world_capture_is_open || world_capture_next!=total) return 0;
+    world_capture_is_open=0;
+    if(world_capture_watch!=world_hash_watch_count) {world_hash_failure_id=world_hash_watches[world_capture_watch].saved;world_hash_stage="watch_identity_missing";return 0;}
     world_hash_stage="bank_phase_after";
     if(!world_banks_read(&world_banks_after) || memcmp(&world_banks_before,&world_banks_after,sizeof(world_banks_before))) return 0;
     char roots[WORLD_HASH_DOMAINS][65];unsigned char raw[32];
@@ -496,8 +544,149 @@ static int world_hash_capture_with(uint64_t tick,unsigned schema,world_hash_find
         (unsigned long long)tick,total,world_hash_alive,world_hash_changes,world_hash_class_unknown,world_hash_motion_unknown,world_hash_parent_unknown,created,world_hash_state);
     return 1;
 }
+static uint64_t world_spread_cancels;   /* spread cycles dropped by a full capture or a new cycle (none in a session) */
+static int world_hash_capture_with(uint64_t tick,unsigned schema,world_hash_find_fn find) {
+    if(world_capture_is_open) ++world_spread_cancels;
+    const int ok=world_capture_open(tick,schema,find,0) && world_capture_run(tick,world_capture_total) && world_capture_close(tick);
+    if(!ok) world_capture_discard();
+    return ok;
+}
 static int world_hash_capture(uint64_t tick,unsigned schema) {
     return world_hash_capture_with(tick,schema,(world_hash_find_fn)(image+0xced70));
+}
+/* Spread census, ON BY DEFAULT in sessions (native_gate_world_hash_spread = K ticks; tools/dev/native_gate_defaults.lua; the probe's
+ * world hash block). A stride capture reads ~553,000 objects in one step, 0.75-0.9 s on the development PC (full-G6,
+ * reports/LOCKSTEP-CENSUS-20261028.txt): every client stalls every 1800 ticks (60 s), as long as the slowest PC does. With K the
+ * capture published at stride tick P is read in parts over the ticks first = max(2, P-K+1) .. P: at tick t up to item
+ * total*(t-first+1)/(P-first+1), in the capture's order, into the same four roots; the state (WORLD_IMPORTED_n:P:total:roots) is
+ * published at P. The item list is the one the cycle opened with (created rows are taken up at first, as a full capture takes them
+ * up at its tick). Each object is read at its part's tick, the same tick on every client, so every client publishes the same state;
+ * it is not an instantaneous snapshot of P: a change after an object's part shows in the next cycle. Tick 1 stays a full capture.
+ * finish (the probe: a hot join's save tick T, which every client of the session knows from the SAVE_AT it applied) reads the rest
+ * at once and publishes at T, so the state the join package takes at T is complete; the joiner, whose first frame comes after
+ * first, opens no cycle until the next one, like the session. A spread cycle refuses the per-item observers and WORLD_STATIC. */
+static uint64_t world_spread_first,world_spread_publish,world_spread_cycles,world_spread_early,world_spread_parts;
+static uint64_t world_spread_part_us,world_spread_part_max_us,world_spread_cycle_max_us,world_spread_sum_us,world_spread_cycle_us;
+static int world_spread_step(uint64_t tick,uint64_t first,uint64_t publish,int finish,unsigned schema,world_hash_find_fn find,int *published) {
+    *published=0;
+    LARGE_INTEGER start;QueryPerformanceCounter(&start);
+    world_hash_stage="spread_cycle";
+    if(first<2 || publish<first || tick<first || tick>publish) return 0;
+    if(tick==first) {
+        if(world_capture_is_open) ++world_spread_cancels;
+        if(!world_capture_open(tick,schema,find,1)) {world_capture_discard();return 0;}
+        world_spread_first=first;world_spread_publish=publish;world_spread_sum_us=0;
+    } else if(!world_capture_is_open || world_spread_first!=first || world_spread_publish!=publish || schema!=world_hash_schema) return 0;
+    const uint64_t total=world_capture_total,span=publish-first+1;
+    const unsigned end=finish || tick==publish?(unsigned)total:(unsigned)(total*(tick-first+1)/span);
+    if(!world_capture_run(tick,end)) {world_capture_discard();return 0;}
+    if(end==total) {
+        if(!world_capture_close(tick)) return 0;
+        *published=1;++world_spread_cycles;if(tick!=publish) ++world_spread_early;
+    }
+    LARGE_INTEGER stop,frequency;QueryPerformanceCounter(&stop);QueryPerformanceFrequency(&frequency);
+    const uint64_t us=frequency.QuadPart?(uint64_t)((stop.QuadPart-start.QuadPart)*1000000/frequency.QuadPart):0;
+    ++world_spread_parts;world_spread_part_us=us;if(us>world_spread_part_max_us) world_spread_part_max_us=us;
+    world_spread_sum_us+=us;
+    if(*published) {world_spread_cycle_us=world_spread_sum_us;if(world_spread_sum_us>world_spread_cycle_max_us) world_spread_cycle_max_us=world_spread_sum_us;}
+    return 1;
+}
+/* WORLD_HASH_SPREAD: cycles published (early: at a join's save tick), parts read, the last part's and the longest part's time, the
+ * last cycle's and the longest cycle's summed time (what one full capture costs this PC), the open cycle. */
+static int world_spread_status(char *out,size_t capacity) {
+    return snprintf(out,capacity,"cycles=%llu early=%llu cancels=%llu parts=%llu part_us=%llu max_part_us=%llu cycle_us=%llu max_cycle_us=%llu "
+        "open=%d first=%llu publish=%llu next=%u/%u",
+        (unsigned long long)world_spread_cycles,(unsigned long long)world_spread_early,(unsigned long long)world_spread_cancels,
+        (unsigned long long)world_spread_parts,(unsigned long long)world_spread_part_us,(unsigned long long)world_spread_part_max_us,
+        (unsigned long long)world_spread_cycle_us,(unsigned long long)world_spread_cycle_max_us,world_capture_is_open,
+        (unsigned long long)world_spread_first,(unsigned long long)world_spread_publish,world_capture_next,world_capture_total);
+}
+/* Census record, ON BY DEFAULT in sessions (native_gate_world_record = N files, 1..16, default 8; tools/dev/native_gate_defaults.lua; the
+ * probe's world hash block). Live game rk8 (24 Nov 2026, two PCs, two players in two sectors): the census's motion root alone
+ * differed at the publications of 19800 and 21600 and agreed again at 23400, every other part of every digest equal; a play
+ * session logs the four roots only, so the object could not be named, and the session could not be run again (a rerun from
+ * its input journal is not the same game: the people's own UIs took shared IDs that unattended clients do not). So every
+ * client writes, after each published capture but the first, the rows of the objects whose hashes changed since the capture
+ * before (world_hash_changed; about 17,000 of 541,000 in that game) into one of N files beside its log,
+ * <profile>/x4lan-census-<k>.txt with k = the capture's number mod N (the last N captures are kept): the header
+ * "WORLD_RECORD_1 tick=T objects=O changed=C rows=R state=S", then one fixed-width row per object: saved key, type (vtable
+ * RVA), flags, parent key and the first 8 bytes of each domain hash (topology, health, motion, timing), as the world pages
+ * print them. x4ls collects the files with the log; tools/dev/census_record_diff.py names, at the first capture two clients
+ * disagree on, every object that differs and in which domains (one that changed on one client only differs as well: the
+ * capture before agreed). Read-only: written from the hashes the capture holds, nothing of the world is read again, no draw;
+ * about 2 MB and a few milliseconds once per stride (one write per 1800 ticks). A failure is counted and logged, never a stop. */
+#define WORLD_RECORD_KEEP_MAX 16u
+#define WORLD_RECORD_ROW 120u          /* 16+1+8+1+8+1+16+4*(1+16)+1 */
+#define WORLD_RECORD_ROWS_MAX 131072u  /* a capture with more changed objects (tick 1: all of them) keeps the first rows */
+static WCHAR world_record_prefix[MAX_PATH];
+static unsigned world_record_keep,world_record_prefix_length;
+static uint64_t world_record_writes,world_record_failures,world_record_last_rows,world_record_last_bytes,world_record_last_us,world_record_max_us;
+static const char *world_record_stage="off";
+static void world_record_hex(char *out,uint64_t value,unsigned digits) {
+    static const char h[]="0123456789abcdef";
+    for(unsigned i=0;i<digits;i++) out[i]=h[(value>>(4*(digits-1-i)))&15u];
+}
+/* One object's row (WORLD_RECORD_ROW bytes, newline included). */
+static void world_record_row(const world_hash_item *item,char *out) {
+    static const char h[]="0123456789abcdef";
+    world_record_hex(out,item->saved,16);out[16]=' ';world_record_hex(out+17,item->type,8);out[25]=' ';
+    world_record_hex(out+26,item->flags,8);out[34]=' ';world_record_hex(out+35,item->parent,16);
+    char *p=out+51;
+    for(unsigned d=0;d<WORLD_HASH_DOMAINS;d++) {
+        *p++=' ';
+        for(unsigned j=0;j<8u;j++) {*p++=h[item->hash[d][j]>>4];*p++=h[item->hash[d][j]&15u];}
+    }
+    *p='\n';
+}
+/* The record of the last published capture into buffer: its length, 0 when it does not fit (rows: the rows written). */
+static size_t world_record_text(char *buffer,size_t capacity,unsigned *rows) {
+    const unsigned total=world_hash_count+world_hash_created_count,n=world_hash_changes<WORLD_RECORD_ROWS_MAX?world_hash_changes:WORLD_RECORD_ROWS_MAX;
+    int head=snprintf(buffer,capacity,"WORLD_RECORD_1 tick=%llu objects=%u changed=%u rows=%u state=%s\n",(unsigned long long)world_hash_tick,
+        total,world_hash_changes,n,world_hash_state);
+    if(head<=0 || (size_t)head+(size_t)n*WORLD_RECORD_ROW>capacity) return 0;
+    for(unsigned i=0;i<n;i++) world_record_row(world_hash_item_at(world_hash_changed[i]),buffer+head+(size_t)i*WORLD_RECORD_ROW);
+    *rows=n;return (size_t)head+(size_t)n*WORLD_RECORD_ROW;
+}
+/* gate.world_record(prefix, N): the files' path prefix (UTF-8; <prefix><k>.txt) and how many to keep. */
+static int world_record_arm(const char *prefix,unsigned keep) {
+    if(!prefix || !*prefix || keep<1 || keep>WORLD_RECORD_KEEP_MAX) return 0;
+    int n=MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS,prefix,-1,world_record_prefix,MAX_PATH-8);
+    if(n<=1) {world_record_prefix[0]=0;return 0;}
+    world_record_prefix_length=(unsigned)n-1;world_record_keep=keep;world_record_stage="armed";return 1;
+}
+/* After the capture published at tick (not the first: its rows are every object): the file of this capture's slot. */
+static int world_record_write(uint64_t tick) {
+    if(!world_record_keep || !world_record_prefix[0]) {world_record_stage="not_armed";return 0;}
+    if(!world_hash_scans || world_hash_failures || world_capture_is_open || world_hash_tick!=tick || world_hash_scans<2) {world_record_stage="no_capture";return 0;}
+    LARGE_INTEGER start,stop,frequency;QueryPerformanceCounter(&start);
+    const unsigned n=world_hash_changes<WORLD_RECORD_ROWS_MAX?world_hash_changes:WORLD_RECORD_ROWS_MAX;
+    const size_t capacity=1024+(size_t)n*WORLD_RECORD_ROW;
+    char *buffer=malloc(capacity);unsigned rows=0;
+    size_t length=buffer?world_record_text(buffer,capacity,&rows):0;
+    WCHAR path[MAX_PATH];const unsigned slot=(unsigned)((world_hash_scans-2)%world_record_keep);unsigned at=world_record_prefix_length;
+    memcpy(path,world_record_prefix,sizeof(WCHAR)*at);   /* arm keeps 8 characters free: two digits and ".txt" */
+    if(slot>=10) path[at++]=L'1';
+    path[at++]=(WCHAR)(L'0'+slot%10);path[at++]=L'.';path[at++]=L't';path[at++]=L'x';path[at++]=L't';path[at]=0;
+    int ok=0;
+    if(length) {
+        HANDLE file=CreateFileW(path,GENERIC_WRITE,FILE_SHARE_READ|FILE_SHARE_DELETE,NULL,CREATE_ALWAYS,FILE_ATTRIBUTE_NORMAL,NULL);
+        if(file!=INVALID_HANDLE_VALUE) {
+            DWORD done=0;ok=WriteFile(file,buffer,(DWORD)length,&done,NULL) && done==(DWORD)length;
+            CloseHandle(file);
+        }
+        world_record_stage=ok?"written":"file";
+    } else world_record_stage="memory";
+    free(buffer);
+    QueryPerformanceCounter(&stop);QueryPerformanceFrequency(&frequency);
+    world_record_last_us=frequency.QuadPart?(uint64_t)((stop.QuadPart-start.QuadPart)*1000000/frequency.QuadPart):0;
+    if(world_record_last_us>world_record_max_us) world_record_max_us=world_record_last_us;
+    if(ok) {++world_record_writes;world_record_last_rows=rows;world_record_last_bytes=length;} else ++world_record_failures;
+    return ok;
+}
+static int world_record_status(char *out,size_t capacity) {
+    return snprintf(out,capacity,"keep=%u writes=%llu failures=%llu rows=%llu bytes=%llu us=%llu max_us=%llu stage=%s",world_record_keep,
+        (unsigned long long)world_record_writes,(unsigned long long)world_record_failures,(unsigned long long)world_record_last_rows,
+        (unsigned long long)world_record_last_bytes,(unsigned long long)world_record_last_us,(unsigned long long)world_record_max_us,world_record_stage);
 }
 static int world_nav_index_rebuild(unsigned total) {
     world_hash_stage="nav_index";

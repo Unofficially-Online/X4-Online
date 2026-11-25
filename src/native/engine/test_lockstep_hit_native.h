@@ -5,7 +5,7 @@
  * injected OnHit/cancel/kill, the keyed RNG word, an unwinding injection, the
  * stop check and restoration. Native image: pins, Kill slot, call site. */
 typedef struct {unsigned char *component;float position[3];} test_hitn_body;
-static test_hitn_body test_hitn_bodies[4];
+static test_hitn_body test_hitn_bodies[8];
 static unsigned test_hitn_body_count,test_hitn_casts,test_hitn_onhits,test_hitn_cancels,test_hitn_kills,test_hitn_throw;
 static float test_hitn_last_origin[4];
 static float test_hitn_info[16],test_hitn_normal[4];
@@ -15,7 +15,7 @@ static double test_hitn_onhit_time,test_hitn_kill_time;
 static uint64_t test_hitn_word_seen;
 static volatile uint64_t test_hitn_word;
 static unsigned char test_hitn_defaults[0x500];
-static struct {uint64_t runtime;void *object;} test_hitn_objects[16];
+static struct {uint64_t runtime;void *object;} test_hitn_objects[32];
 static unsigned test_hitn_object_count;
 /* The stack slots a5..a15 the caller passes (UpdateFlight's shape: an object,
  * 0, 0, byte 0, an unset slot, a qword, byte 1, dword, 7, dword, byte 1). Every
@@ -154,6 +154,7 @@ static void test_hit_native(void) {
     test_hitn_bodies[test_hitn_body_count++]=(test_hitn_body){own.object,{0,0,0}};
     test_hitn_bodies[test_hitn_body_count++]=(test_hitn_body){npc.object,{0,0,1000}};
     test_hitn_bodies[test_hitn_body_count++]=(test_hitn_body){station,{2000,0,0}};
+    test_hitn_bodies[test_hitn_body_count++]=(test_hitn_body){other.object,{500,0,0}};
     /* Arming: refused without the pins (fake image), then armed with the seam. */
     hitn_pins_checked=0;assert(!hitn_arm(HIT_POLICY_SHOOTER) && hitn_pins_checked==-1 && !hitn_installed);
     hitn_pins_checked=1;assert(!hitn_arm(0) && hitn_arm(HIT_POLICY_SHOOTER) && hitn_installed && hitn_live && hitn_owned() && hitn_check());
@@ -189,18 +190,31 @@ static void test_hit_native(void) {
     memset(result,0,sizeof(result));*(float*)(result+0x20)=-1.0f;casts=test_hitn_casts;
     call=test_hitn_caller(image+0x1000,b1.object,zone,stub_target);call((void*)0x5157,result,origin,ray);
     assert(test_hitn_casts==casts+1 && hitn_suppressed_in==2 && hitn_claims_in==1 && hitn_queue_count==1);
-    /* The own ship's bullet 80 m short of the NPC ship: no native hit, but the
-     * owner's cast shifted by 3 ticks of flight (60 m) hits: an outgoing claim. */
-    test_hitn_bullet_make(&b3,0xb003,zone,weapon_own,(const float[3]){0,0,920},1200.0f,100.0);
+    /* The own ship's bullet 80 m short of the NPC ship: no native hit; the owner's cast shifted by 3 ticks of flight
+     * (60 m) hits it, but an NPC ship takes X4's own hit (friendly fire, 24 Nov): no claim. */
+    static test_hitn_bullet b3n,b3m;
+    test_hitn_bullet_make(&b3n,0xb013,zone,weapon_own,(const float[3]){0,0,920},1200.0f,100.0);
     float origin3[4]={0,0,920,1},ray3[4]={0,0,25,0};memset(result,0,sizeof(result));*(float*)(result+0x20)=-1.0f;
-    call=test_hitn_caller(image+0x1000,b3.object,zone,stub_target);call((void*)0x5157,result,origin3,ray3);
-    assert(*(float*)(result+0x20)==-1.0f && fabsf(test_hitn_last_origin[2]-980.0f)<1e-3f && hitn_claims_out==1 && hitn_queue_count==2);
-    assert(hitn_queue[1].claim.kind==HIT_OUTGOING && hitn_queue[1].claim.target==0x5003 && hitn_queue[1].claim.point[2]==-40);
+    call=test_hitn_caller(image+0x1000,b3n.object,zone,stub_target);call((void*)0x5157,result,origin3,ray3);
+    assert(*(float*)(result+0x20)==-1.0f && fabsf(test_hitn_last_origin[2]-980.0f)<1e-3f && !hitn_claims_out && hitn_queue_count==1);
+    /* The own ship's bullet on the NPC ship (a friendly in the report): X4's hit, not blanked, on every client. */
+    test_hitn_bullet_make(&b3m,0xb014,zone,weapon_own,(const float[3]){0,0,990},1200.0f,100.0);
+    float origin3m[4]={0,0,990,1};memset(result,0,sizeof(result));*(float*)(result+0x20)=-1.0f;
+    call=test_hitn_caller(image+0x1000,b3m.object,zone,stub_target);call((void*)0x5157,result,origin3m,ray3);
+    assert(*(float*)(result+0x20)==0.5f && *(void**)(result+0x28)==npc.object && hitn_native_out==1);
+    assert(!hitn_claims_out && hitn_queue_count==1);
+    /* The own ship's bullet 80 m short of slot 2's ship: the shifted cast hits a slot ship: an outgoing claim (player
+     * versus player, the policy decides). */
+    test_hitn_bullet_make(&b3,0xb003,zone,weapon_own,(const float[3]){500,0,-80},1200.0f,100.0);
+    float origin3p[4]={500,0,-80,1};memset(result,0,sizeof(result));*(float*)(result+0x20)=-1.0f;
+    call=test_hitn_caller(image+0x1000,b3.object,zone,stub_target);call((void*)0x5157,result,origin3p,ray3);
+    assert(*(float*)(result+0x20)==-1.0f && fabsf(test_hitn_last_origin[2]+20.0f)<1e-3f && hitn_claims_out==1 && hitn_queue_count==2);
+    assert(hitn_queue[1].claim.kind==HIT_OUTGOING && hitn_queue[1].claim.target==0x5002 && hitn_queue[1].claim.point[2]==-40);
     /* The own ship's bullet hitting a station part natively: not claimable, stays native. */
     test_hitn_bullet_make(&b4,0xb004,zone,weapon_own,(const float[3]){2000,0,10},1200.0f,100.0);
     float origin4[4]={2000,0,10,1};memset(result,0,sizeof(result));*(float*)(result+0x20)=-1.0f;
     call=test_hitn_caller(image+0x1000,b4.object,zone,stub_target);call((void*)0x5157,result,origin4,ray3);
-    assert(*(void**)(result+0x28)==station && hitn_suppressed_out==0);
+    assert(*(void**)(result+0x28)==station && hitn_native_out==1);
     /* Proposal, then admission on the next tick: incoming applies at 11, outgoing at 13. */
     unsigned char payload[INPUT_MUX_MAX];size_t length=0;
     assert(hitn_proposal(10,payload,sizeof(payload),&length) && length==1+2*HIT_CLAIM_BYTES && payload[0]==2 && !hitn_queue_count);
@@ -234,7 +248,7 @@ static void test_hit_native(void) {
     /* Tick 13: the outgoing claim; the bullet has flown 3 ticks (60 m) to the claimed point. */
     stats.issued=13;hitn_now_override=100.0+3.0/60.0;
     assert(hitn_resolve(13,receipt,sizeof(receipt)) && strstr(receipt,"HITS_1:13:1:") && strstr(receipt,"/applied"));
-    assert(test_hitn_hit_bullet==b3.object && test_hitn_hit_target==npc.object && hitn_applied==2);
+    assert(test_hitn_hit_bullet==b3.object && test_hitn_hit_target==other.object && hitn_applied==2);
     /* A claim for a projectile the engine no longer finds is refused; nothing is applied. */
     hit_claim stale=decoded[0];stale.observe16=14;stale.projectile=hit_projectile_key(10,0x7001,0,1);
     test_hitn_objects[4].runtime=0; /* b2 gone */
@@ -251,6 +265,33 @@ static void test_hit_native(void) {
     call=test_hitn_caller(image+0x1000,b5.object,zone,stub_target);call((void*)0x5157,result,origin5,ray);
     assert(*(float*)(result+0x20)==-1.0f && fabsf(test_hitn_last_origin[0])<1e-3f && hitn_claims_in==2 && hitn_queue_count==1);
     predict_armed=0;memset(predict_slots,0,sizeof(predict_slots));hitn_queue_count=0;
+    /* Slots 3 and 8 (every slot, not only 2): a slot's bullet on an NPC ship keeps X4's hit; on another slot's ship it is
+     * blanked for the claims. */
+    {   static test_hitn_ship s3,s8;static unsigned char weapon3[0x100],weapon8[0x100];static test_hitn_bullet b7,b8,b9,b10;
+        test_hitn_ship_make(&s3,0xa013,zone,-500,0);test_hitn_ship_make(&s8,0xa018,zone,-900,0);
+        assert(world_identity_record(0xa013,0x5013) && world_identity_record(0xa018,0x5018) && world_identity_record(0xc013,0x7013) &&
+               world_identity_record(0xc018,0x7018));
+        unsigned char *o3=s3.object,*o8=s8.object;
+        memcpy(weapon3+8,&(uint64_t){0xc013},8);memcpy(weapon3+0x70,&o3,8);memcpy(weapon8+8,&(uint64_t){0xc018},8);memcpy(weapon8+0x70,&o8,8);
+        pilot_slot_count=8;
+        pilot_slots[2]=(pilot_slot){.saved=0x5013,.runtime=0xa013,.object=s3.object,.resolved=1};
+        pilot_slots[7]=(pilot_slot){.saved=0x5018,.runtime=0xa018,.object=s8.object,.resolved=1};
+        stats.issued=25;hitn_now_override=101.5;
+        unsigned char *weapons[2]={weapon3,weapon8};test_hitn_bullet *npc_shots[2]={&b7,&b8},*p1_shots[2]={&b9,&b10};
+        for(unsigned i=0;i<2;i++) {
+            const uint64_t native=hitn_native_out,blanked=hitn_suppressed_in;
+            test_hitn_bullet_make(npc_shots[i],0xb017+i,zone,weapons[i],(const float[3]){0,0,990},1200.0f,101.5);
+            float o[4]={0,0,990,1};memset(result,0,sizeof(result));*(float*)(result+0x20)=-1.0f;
+            call=test_hitn_caller(image+0x1000,npc_shots[i]->object,zone,stub_target);call((void*)0x5157,result,o,ray3);
+            assert(*(float*)(result+0x20)==0.5f && *(void**)(result+0x28)==npc.object && hitn_native_out==native+1);
+            assert(hitn_by_key(hit_projectile_key(25,i?0x7018:0x7013,0,0))->shooter_slot==(i?8u:3u));
+            test_hitn_bullet_make(p1_shots[i],0xb019+i,zone,weapons[i],(const float[3]){0,0,20},-1200.0f,101.5);
+            float o1[4]={0,0,20,1};memset(result,0,sizeof(result));*(float*)(result+0x20)=-1.0f;
+            call=test_hitn_caller(image+0x1000,p1_shots[i]->object,zone,stub_target);call((void*)0x5157,result,o1,ray);
+            assert(*(float*)(result+0x20)==-1.0f && !*(void**)(result+0x28) && hitn_suppressed_in==blanked+1);
+        }
+        pilot_slot_count=2;memset(&pilot_slots[2],0,sizeof(pilot_slots[2])*6);hitn_queue_count=0;
+    }
     /* An injection that unwinds restores the word and stops the gate (reason 111). */
     static test_hitn_bullet b6;stats.issued=30;hitn_now_override=102.0;
     test_hitn_bullet_make(&b6,0xb006,zone,weapon_npc,(const float[3]){0,0,20},-1200.0f,102.0);
@@ -271,7 +312,7 @@ static void test_hit_native(void) {
     call((void*)0x5157,result,origin,ray);assert(hitn_casts==casts && hitn_foreign>0); /* a late call through the stub passes through */
     /* Reset to default off. */
     hitn_armed=0;hitn_policy=0;hitn_pins_checked=0;hitn_stage="off";hit_reset();memset(hitn_table,0,sizeof(hitn_table));
-    hitn_casts=hitn_foreign=hitn_keyed=hitn_unkeyed=hitn_full=hitn_suppressed_in=hitn_suppressed_out=hitn_eval_in=hitn_eval_out=0;
+    hitn_casts=hitn_foreign=hitn_keyed=hitn_unkeyed=hitn_full=hitn_suppressed_in=hitn_native_out=hitn_eval_in=hitn_eval_out=0;
     hitn_claims_in=hitn_claims_out=hitn_candidates_dropped=hitn_proposals=hitn_admitted=hitn_admit_refused=hitn_resolved=hitn_applied=0;
     hitn_frames=hitn_receipt=hitn_last_tick=hitn_queue_expired=0;hitn_queue_count=0;hitn_find_override=NULL;hitn_now_override=0;hitn_word_override=NULL;
     memset(pilot_slots,0,sizeof(pilot_slots));pilot_slot_count=pilot_source=pilot_delay=0;pilot_armed=0;

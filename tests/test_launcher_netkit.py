@@ -178,7 +178,7 @@ class HostSessions(unittest.TestCase):
     def tearDown(self):
         self.folder.cleanup()
 
-    def popen(self, calls, code=0):
+    def popen(self, calls, code=0, form='none'):
         kit = self.kit
 
         class Proc:
@@ -189,7 +189,8 @@ class HostSessions(unittest.TestCase):
                 opened = [int(k) for k in command[command.index('--open') + 1].split(',')] if '--open' in command else []
                 if code == 0:
                     made = fakes.make_session(out, players, dll=kit.gate_dll.read_bytes(), open_slots=opened)
-                    (out / 'session.json').write_text(json.dumps(made.recipe['session']))
+                    # x4ls new-session's own session.json names the fixture's form (none since 24 Nov)
+                    (out / 'session.json').write_text(json.dumps(dict(made.recipe['session'], fixture_form=form)))
                 self.stdout = io.StringIO('slot 2: start x\ncapture client pid 4: starting x\nsaved: out\n'
                                           'session out: base start x, 2 players (coop); play it with:\n')
                 self.returncode = code
@@ -222,6 +223,14 @@ class HostSessions(unittest.TestCase):
         self.assertIsNone(netkit.cached_session(self.kit, 2))
         self.kit.gate_dll.write_bytes(b'MZ-newer')                     # another gate: the old session is not this release's
         self.assertIsNone(netkit.cached_session(self.kit, 3))
+
+    def test_a_session_of_the_old_form_is_made_again(self):
+        """A hosted session made before 24 Nov (players 2..N in fixture fighters, the battle fixture): not reused."""
+        netkit.make_session(self.kit, 2, log=lambda text: None, popen=self.popen([], form=None))
+        self.assertTrue(netkit.host_session_key(self.kit, 2, 'coop', netkit.HOST_SESSION_START).endswith('-n'))
+        self.assertIsNone(netkit.cached_session(self.kit, 2))
+        netkit.make_session(self.kit, 3, log=lambda text: None, popen=self.popen([]))
+        self.assertIsNotNone(netkit.cached_session(self.kit, 3))
 
     def test_a_drop_in_session_has_its_own_key_and_open_slots(self):
         calls = []

@@ -285,11 +285,35 @@ static void pslot_use_image(void) {
 }
 
 /* ---- the slot scope ---- */
+/* Which check the last pslot_leave failed (NULL: it passed): scope, singleton, parent, vector, reentry, store, bank,
+ * hash; for the parent check the parent's runtime ID and the one the seat expects (pslot_at). A why that ends in "_leave"
+ * is named with it ("drive_leave:parent"): live rk7 (24 Nov) stopped with 'drive_leave' alone, and which of the six tests
+ * failed had to be read out of the decompiled game. The texts are kept for the session (the whys point at them). */
+static const char *pslot_leave_last;
+static uint64_t pslot_leave_parent_id,pslot_leave_at_id;
+static unsigned pslot_leave_slot;
+static volatile LONG64 pslot_leave_fails;
+#define PSLOT_LEAVE_NAMES 24u
+static struct {const char *why,*check;char text[64];} pslot_leave_names[PSLOT_LEAVE_NAMES];
+static void (*pslot_moved_note)(unsigned k);   /* lockstep_pilot_teleport.h: the parent check failed, did X4 take P_k? */
+static const char *pslot_leave_named(const char *why) {
+    const size_t n=why?strlen(why):0;
+    if(!pslot_leave_last || n<6 || strcmp(why+n-6,"_leave")) return why;
+    for(unsigned i=0;i<PSLOT_LEAVE_NAMES;i++) {
+        if(pslot_leave_names[i].why==why && pslot_leave_names[i].check==pslot_leave_last) return pslot_leave_names[i].text;
+        if(pslot_leave_names[i].why) continue;
+        snprintf(pslot_leave_names[i].text,sizeof(pslot_leave_names[i].text),"%s:%s",why,pslot_leave_last);
+        pslot_leave_names[i].check=pslot_leave_last;pslot_leave_names[i].why=why;
+        return pslot_leave_names[i].text;
+    }
+    return why;
+}
 static void pslot_async(const char *why) {
+    why=pslot_leave_named(why);
     if(!strcmp(pslot_why,"-")) pslot_why=why;
     pslot_failed=1;pnat_async_fail(why);
 }
-static int pslot_fail(const char *why) {pslot_stage="failed";if(!strcmp(pslot_why,"-")) pslot_why=why;pslot_failed=1;return 0;}
+static int pslot_fail(const char *why) {why=pslot_leave_named(why);pslot_stage="failed";if(!strcmp(pslot_why,"-")) pslot_why=why;pslot_failed=1;return 0;}
 static int pslot_frame_thread(void) {return GetCurrentThreadId()==ui_thread;}
 static uintptr_t pslot_canonical_vtable(uintptr_t vtable) {
     for(unsigned k=2;k<=PILOT_SLOTS;k++) if(vtable==(uintptr_t)&pslots[k].vt.slots[0]) return (uintptr_t)(pnat_base?pnat_base:image)+PSLOT_VTABLE;
@@ -500,21 +524,33 @@ static int pslot_enter(unsigned k) {
     return 1;
 }
 static int pslot_leave(unsigned k) {
-    pslot_slot *s=&pslots[k];unsigned char *universe=NULL,*now=NULL,*parent=NULL;void *vector[3];int ok=1;
-    if(k<2 || k>PILOT_SLOTS || pstk_scope_slot!=k || !pslot_frame_thread()) return 0;
-    if(!read_local(pnat_base+VPL_UNIVERSE,&universe,8) || !universe || !read_local(universe+VPS_SINGLETON,&now,8) || now!=s->player) ok=0;
+    pslot_slot *s=&pslots[k];unsigned char *universe=NULL,*now=NULL,*parent=NULL;void *vector[3];int ok=1;const char *bad=NULL;
+    if(k<2 || k>PILOT_SLOTS || pstk_scope_slot!=k || !pslot_frame_thread()) {pslot_leave_last="scope";InterlockedIncrement64(&pslot_leave_fails);return 0;}
+    if(!read_local(pnat_base+VPL_UNIVERSE,&universe,8) || !universe || !read_local(universe+VPS_SINGLETON,&now,8) || now!=s->player) {ok=0;bad="singleton";}
     memcpy(&parent,s->player+0x70,8);memcpy(vector,s->player+0x308,sizeof(vector));
-    if(parent!=pslot_at(s) || vector[0]!=(void*)&s->vector[0] || vector[1]!=(void*)&s->vector[s->post+1] || !vpl_reentry_clear(pnat_base)) ok=0;
+    if(parent!=pslot_at(s)) {
+        ok=0;if(!bad) bad="parent";
+        pslot_leave_parent_id=pslot_leave_at_id=0;
+        if(parent) (void)read_local(parent+8,&pslot_leave_parent_id,8);
+        if(pslot_at(s)) (void)read_local(pslot_at(s)+8,&pslot_leave_at_id,8);
+    }
+    if(vector[0]!=(void*)&s->vector[0] || vector[1]!=(void*)&s->vector[s->post+1]) {ok=0;if(!bad) bad="vector";}
+    if(!vpl_reentry_clear(pnat_base)) {ok=0;if(!bad) bad="reentry";}
     if(s->controller) {s->authority=pslot_global_part(s->controller);s->auth_parts=pslot_global_parts(s->controller);pslot_take_answers(s);
                        pslot_set_routes(s,0);}
     pslot_post_leave(k,s);
     mpp_active_leave(k,1);
     rsch_slot_leave(k);
     if(universe) *(unsigned char *volatile*)(universe+VPS_SINGLETON)=pslot_p1;
-    if(pslot_exchange(s->store,s->length)<0) ok=0;
-    if(pfslot_armed) {pfslot_bank_exchange(k);if(pfslot_bank_hash_live()!=pslot_bank_hash) ok=0;}   /* the canonical walking bank back */
+    if(pslot_exchange(s->store,s->length)<0) {ok=0;if(!bad) bad="store";}
+    if(pfslot_armed) {pfslot_bank_exchange(k);if(pfslot_bank_hash_live()!=pslot_bank_hash) {ok=0;if(!bad) bad="bank";}}   /* the canonical walking bank back */
     pstk_scope_slot=0;InterlockedExchange(&pslot_in_scope,0);
-    if(pslot_hash()!=pslot_scope_hash) ok=0; /* the canonical bytes came back unchanged */
+    if(pslot_hash()!=pslot_scope_hash) {ok=0;if(!bad) bad="hash";} /* the canonical bytes came back unchanged */
+    pslot_leave_last=ok?NULL:bad;
+    if(!ok) {
+        InterlockedIncrement64(&pslot_leave_fails);pslot_leave_slot=k;
+        if(bad && !strcmp(bad,"parent") && pslot_moved_note) pslot_moved_note(k);   /* X4 connected P_k? named there (stop 222) */
+    }
     return ok;
 }
 
@@ -775,20 +811,56 @@ static void pslot_seat_player(pslot_slot *s) {
     *(unsigned char *volatile*)(s->player+0x70)=s->room;
 }
 static void (*pslot_unplace)(unsigned char *player);   /* lockstep_pilot_foot_body.h: a parked body's mark off with its seat */
+static void pfslot_chair_seat(unsigned k);   /* lockstep_pilot_foot_slots.h: the chair X4's seat activates (native_gate_pilot_chair) */
+/* X4 holds this component in its parent's child table (+0xa8: {_, buckets begin +8, end +0x10}, buckets of 0x20 bytes
+ * {begin, end, ..} of child pointers, filled by the parent change 3d7010 -> 9979f0 and walked by KillRecursive): it is in
+ * the world tree, not seated by an upward pointer of ours. Bounded reads; 0 also when nothing can be read. */
+#define PSLOT_KIDS_TABLE 0xa8u
+#define PSLOT_KIDS_BUCKETS 256u
+#define PSLOT_KIDS_PER_BUCKET 4096u
+static int pslot_listed(const unsigned char *component) {
+    unsigned char *parent=NULL,*table=NULL,*begin=NULL,*end=NULL;
+    if(!component || !read_local(component+0x70,&parent,8) || !parent || !read_local(parent+PSLOT_KIDS_TABLE,&table,8) || !table ||
+       !read_local(table+8,&begin,8) || !read_local(table+0x10,&end,8) || !begin || end<begin || (size_t)(end-begin)%0x20u ||
+       (size_t)(end-begin)/0x20u>PSLOT_KIDS_BUCKETS) return 0;
+    for(unsigned char *b=begin;b<end;b+=0x20) {
+        unsigned char *at=NULL,*last=NULL;
+        if(!read_local(b,&at,8) || !read_local(b+8,&last,8) || !at || last<at || (size_t)(last-at)%8u || (size_t)(last-at)/8u>PSLOT_KIDS_PER_BUCKET) continue;
+        for(unsigned char *p=at;p<last;p+=8u*64u) {
+            const unsigned char *kids[64];const size_t n=(size_t)(last-p)/8u<64u?(size_t)(last-p)/8u:64u;
+            if(!read_local(p,kids,8u*n)) break;
+            for(size_t i=0;i<n;i++) if(kids[i]==component) return 1;
+        }
+    }
+    return 0;
+}
+/* The seat's end. A P_k that X4 holds in its parent's child table (X4 connected it: its own teleport, a body the bodies
+ * could not take off) keeps its parent: writing +0x70 = NULL behind X4's back left a Player in a child list with no
+ * parent, under X4's camera, and both clients crashed 30 s later in the camera code (crash rk7, 24 Nov: 3de6aa).
+ * lockstep_pilot_teleport.h takes such a P_k off with X4's own call first where it can. Counted kept. */
+static volatile LONG64 pslot_unseat_kept;
 static void pslot_unseat_player(pslot_slot *s) {
     if(pslot_unplace) pslot_unplace(s->player);
     if(pview_slot_player==s->player) pview_slot_player=NULL;
-    *(unsigned char *volatile*)(s->player+0x70)=NULL;s->walk_room=NULL;
+    if(pslot_listed(s->player)) InterlockedIncrement64(&pslot_unseat_kept);
+    else *(unsigned char *volatile*)(s->player+0x70)=NULL;
+    s->walk_room=NULL;
     memcpy(s->player+0x308,s->saved_vector,sizeof(s->saved_vector));
 }
+/* The next seat without a take (set by its caller, cleared here): a seat without a controller, as the docked seat
+ * (lockstep_pilot_foot_slots.h) has it. The suit's way into a ship (lockstep_pilot_teleport.h, the board) seats a slot
+ * so in the ship it left and stands it up at once: X4 puts its own player on foot there, never at the controls. */
+static int pslot_seat_untaken;
+static volatile LONG64 pslot_untaken_seats;
 static int pslot_seat_ship(unsigned k,unsigned char *ship) {
     pslot_slot *s=&pslots[k];
     unsigned char *room=NULL,*parent=(unsigned char*)1,*post=NULL;void **vtable=NULL,*take=NULL,*release=NULL;
     int64_t index=0;int position=0;
+    const int untaken=pslot_seat_untaken;pslot_seat_untaken=0;
     if(!read_local(ship,&vtable,8) || !vtable || !read_local(vtable+PSLOT_TAKE,&take,8) || take!=(void*)pslot_fn.take ||
        !read_local(vtable+PSLOT_RELEASE,&release,8) || release!=(void*)pslot_fn.release) return pslot_fail("ship_vtable");
     int adopt=0;
-    if(pslot_controller_has(ship,PSLOT_CONTROLLER_CLASS,NULL)!=0) {if(!pslot_adopt) return pslot_fail("ship_controlled");adopt=1;}
+    if(!untaken && pslot_controller_has(ship,PSLOT_CONTROLLER_CLASS,NULL)!=0) {if(!pslot_adopt) return pslot_fail("ship_controlled");adopt=1;}
     s->roomless=!read_local(ship+PSLOT_ROOM,&room,8) || !room || !pslot_is(room,PSLOT_ROOM_CLASS);
     if(s->roomless) room=ship;
     if(!read_local(s->player+0x70,&parent,8) || parent) return pslot_fail("player_parented");
@@ -818,7 +890,7 @@ static int pslot_seat_ship(unsigned k,unsigned char *ship) {
      * lockstep_pilot_foot.h K1): a suit's seat, the way home and a sit-down gave the new controller this client's
      * flight control, 1 on one client and 0 on another (live 12 Nov, run 044015: slot 2 sat down at 1044, its ship
      * crept on client 2 only from 1050, controller slots 12/57 asked a different number of times). */
-    if((pslot_first_stores || again) && !adopt) {   /* the take's flight control from the slot's store, not this client's input */
+    if((pslot_first_stores || again) && !adopt && !untaken) {   /* the take's flight control from the slot's store, not this client's input */
         unsigned char *object=NULL;
         if(read_local(pnat_base+PSLOT_TAKE_INPUT,&object,8) && object && read_local(object+PSLOT_TAKE_FLIGHT_FLAG,&flag_was,1)) {
             const unsigned char want=*PNAT_U8(PNAT_FLIGHT)?1u:0u;
@@ -826,21 +898,25 @@ static int pslot_seat_ship(unsigned k,unsigned char *ship) {
             if((flag_was!=0)!=(want!=0)) {*flag_at=want;flag_held=1;InterlockedIncrement64(&pslot_take_flags);}
         }
     }
-    __try {if(!adopt) ((void(*)(void*))take)(ship);controller=pnat_fn.controller(pnat_base+PNAT_CONTROLLER_KEY);}
-    __except(GetExceptionCode()==EXCEPTION_ACCESS_VIOLATION?EXCEPTION_EXECUTE_HANDLER:EXCEPTION_CONTINUE_SEARCH) {fault=1;}
+    if(!untaken) {
+        __try {if(!adopt) ((void(*)(void*))take)(ship);controller=pnat_fn.controller(pnat_base+PNAT_CONTROLLER_KEY);}
+        __except(GetExceptionCode()==EXCEPTION_ACCESS_VIOLATION?EXCEPTION_EXECUTE_HANDLER:EXCEPTION_CONTINUE_SEARCH) {fault=1;}
+    }
     if(flag_held) *flag_at=flag_was;
     void *back=NULL,*cvt=NULL;
-    int ok=!fault && controller && read_local(controller,&cvt,8) && cvt==(void*)(pnat_base+PSLOT_VTABLE) &&
-        read_local((unsigned char*)controller+0x28,&back,8) && back==ship && pslot_controller_has(ship,0,controller)==1;
-    if(ok) s->controller=controller;
+    int ok=untaken || (!fault && controller && read_local(controller,&cvt,8) && cvt==(void*)(pnat_base+PSLOT_VTABLE) &&
+        read_local((unsigned char*)controller+0x28,&back,8) && back==ship && pslot_controller_has(ship,0,controller)==1);
+    if(ok && !untaken) s->controller=controller;
     if(ok && adopt) pjoin_adopted|=1u<<(k-1);
     if(ok && k==stats.slot) pview_slot_player=s->player;
+    if(ok && !untaken) pfslot_chair_seat(k);   /* 716670's tail: the seat's chair activated in this scope (native_gate_pilot_chair) */
     int left=pslot_leave(k);
     if(!ok) pslot_unseat_player(s);
     if(!left) return pslot_fail("seat_leave");
     if(fault) return pslot_fail("take_fault");
     if(!ok) return pslot_fail("take_controller");
-    /* C_k's own vtable: counting thunks, the routes, the scoped entries. */
+    /* C_k's own vtable: counting thunks, the routes, the scoped entries. A seat without a take has it too: the take at
+     * its undocking (lockstep_pilot_foot_slots.h pfslot_undocked) puts it on the controller it makes. */
     void **stock=(void**)(pnat_base+PSLOT_VTABLE);
     s->vt.col=stock[-1];s->vt.spare=NULL;
     for(unsigned i=0;i<PSLOT_VT_SLOTS;i++) {
@@ -852,15 +928,28 @@ static int pslot_seat_ship(unsigned k,unsigned char *ship) {
     s->vt.slots[49]=(void*)pslot_vf49;s->vt.slots[50]=(void*)pslot_vf50;s->vt.slots[14]=(void*)pslot_vf14;s->vt.slots[23]=(void*)pslot_vf23;
     s->vt.slots[51]=(void*)pslot_vf51;s->vt.slots[52]=(void*)pslot_vf52;s->vt.slots[53]=(void*)pslot_vf53;   /* the docking's questions */
     pslot_set_routes(s,0);
+    if(untaken) {   /* no controller: the seat as the docked seat leaves it */
+        s->seated=1;s->released=0;s->docked=1;s->dock_checked=1;InterlockedIncrement64(&pslot_untaken_seats);
+        return 1;
+    }
     if(InterlockedCompareExchangePointer((void*volatile*)controller,&s->vt.slots[0],pnat_base+PSLOT_VTABLE)!=(void*)(pnat_base+PSLOT_VTABLE))
         return pslot_fail("controller_vtable");
     s->seated=1;s->released=0;s->docked=0;s->dock_checked=0;
     return 1;
 }
+/* Every seat of a slot in a ship that is docked or stored (lockstep_pilot_foot_slots.h pfslot_seat_docked: by X4's own
+ * answers only) is the docked seat: no take, the controls taken at its undocking (pfslot_undocked), as the sit-down and
+ * the suit's board have it. rk10 (25 Nov): a continue of rk9's save of 10.2 min, player 2's fighter docked on the S pad
+ * of an NPC transport, stopped both clients at the window's first seat (take-1, 35) with 161 take_controller: X4 makes
+ * no controller for a docked ship's take. Any session start from a save made at a dock (a periodic or milestone save, a
+ * continue) seats so; X4's own player sits in its docked ship in such a save. Status docked_seats=. */
+static int pfslot_armed;static int pfslot_seat_docked(unsigned char *ship);   /* lockstep_pilot_foot_slots.h */
+static volatile LONG64 pslot_docked_seats;
 static int pslot_seat(unsigned k) {
     pslot_slot *s=&pslots[k];pilot_slot *ps=&pilot_slots[k-1];
     if(!s->player) return pslot_fail("no_player");
     if(!ps->resolved || !ps->object || ps->player) return pslot_fail("ship_unresolved");
+    if(!pslot_seat_untaken && pfslot_armed && pfslot_seat_docked(ps->object)) {pslot_seat_untaken=1;InterlockedIncrement64(&pslot_docked_seats);}
     pjoin_mark(k,PJOIN_SEAT,0);
     const int ok=pslot_seat_ship(k,ps->object);
     pjoin_mark(k,PJOIN_SEAT,1);
@@ -1040,6 +1129,14 @@ static int pslot_ctl_end_restore(void) {
     if(pslot_ctl_end_installed && pview_cas(PSLOT_CTL_END,pslot_ctl_end_patched,pslot_ctl_end_head,5)) pslot_ctl_end_installed=0;
     return !pslot_ctl_end_installed;
 }
+/* lockstep_pilot_room_attention.h (native_gate_pilot_slots_room_attention): a seated slot 2..N's player's room is inroom,
+ * as X4's own player's; its hooks go in and out with the slots' hooks, its pass runs in the live pass. */
+static void prat_install(void);
+static int prat_restore(void);
+static int prat_intact(void);
+static void prat_reset(void);
+static void prat_pass(void);
+static int prat_status(char *out,size_t capacity,int n);
 static int pslot_hook_install(void) {
     if(pslot_hook_installed) return 1;
     int32_t rel=(int32_t)((intptr_t)(pnat_base+PSLOT_UPDATE_RVA)-(intptr_t)(pnat_base+PSLOT_CALL_SITE+5));
@@ -1064,10 +1161,13 @@ static int pslot_hook_install(void) {
     if(pslot_lookup_installed) (void)phud_install();
     /* A slot's docking ship (header above pslot_ctl_end): this image only, pinned. */
     if(pslot_lookup_installed) pslot_ctl_end_install();
+    /* A slot's player's room at inroom (lockstep_pilot_room_attention.h): with its option, pinned. */
+    prat_install();
     return 1;
 }
 static int pslot_hook_uninstall(void) {
     if(!pslot_hook_installed) return 1;
+    if(!prat_restore()) return 0;
     if(!pslot_ctl_end_restore()) return 0;
     if(!phud_uninstall()) return 0;
     if(pslot_flag_installed) {
@@ -1087,6 +1187,7 @@ static int pslot_hook_intact(void) {
     if(pslot_lookup_installed && memcmp(pnat_base+PSLOT_LOOKUP_SITE,pslot_lookup_patched,5)) return 0;
     if(pslot_flag_installed && memcmp(pnat_base+PSLOT_FLAG_SITE,pslot_flag_patched,2)) return 0;
     if(pslot_ctl_end_installed && memcmp(pnat_base+PSLOT_CTL_END,pslot_ctl_end_patched,5)) return 0;
+    if(!prat_intact()) return 0;
     if(phud_installed && (*(void*volatile*)(pnat_base+PHUD_STARTED_EVENT+PHUD_DISPATCH_SLOT)!=(void*)phud_started ||
                           *(void*volatile*)(pnat_base+PHUD_STOPPED_EVENT+PHUD_DISPATCH_SLOT)!=(void*)phud_stopped)) return 0;
     pview_abs_jump(jump,(void*)pslot_update);return !memcmp(pslot_page,jump,14);
@@ -1254,7 +1355,9 @@ static int pslot_pass(uint64_t tick) {
     if(tick+1==take) return pslot_seat_all(take) && pslot_enroll_late(tick,take);   /* one enrolled at take+1: its player now */
     if(tick>=take && tick<=pilot_stop) {
         if(!pslot_enroll_late(tick,take)) return 0;
-        pslot_callers_drain();if(!pslot_check(tick)) return 0;pslot_stage="live";return 1;
+        pslot_callers_drain();if(!pslot_check(tick)) return 0;
+        prat_pass();   /* a seated slot's room below inroom: X4 recomputes it (lockstep_pilot_room_attention.h) */
+        pslot_stage="live";return 1;
     }
     if(tick==pilot_stop+1) return pslot_release_all();
     return 1;
@@ -1296,6 +1399,8 @@ static int pslot_arm_using(unsigned mask) {
     memset(pslots,0,sizeof(pslots));memset(pslot_getter_orig,0,sizeof(pslot_getter_orig));
     pslot_mask=mask&~1u;pslot_failed=0;pslot_stage="armed";pslot_why="-";pslot_p1=NULL;pslot_update_tick=0;pslot_hook_installed=0;
     pslot_callers=0;pslot_caller_tail=(unsigned)pslot_caller_head;pslot_caller_dropped=0;pslot_stop_waits=0;pslot_canonical_gone=0;
+    pslot_leave_last=NULL;pslot_leave_fails=0;pslot_leave_slot=0;pslot_leave_parent_id=pslot_leave_at_id=0;pslot_unseat_kept=0;
+    prat_reset();
     pslot_armed=1;return 1;
 }
 /* An abnormal stop: release on the frame thread outside any scope, else leave the
@@ -1361,6 +1466,14 @@ static int pslot_status(char *out,size_t capacity) {
             (long long)pslot_dockq_scoped,(long long)pslot_dockq_plain,(long long)pslot_ctl_ends_inside):-1;
         if(more<0) return 0;
         n+=more;}
+    {   /* failed leaves / the last one's check ('-' passed) / its slot / for a parent check: the parent's ID and the seat's; seats
+         * that ended with P_k kept under the parent X4 holds it in */
+        int more=n>0 && (size_t)n<capacity?snprintf(out+n,capacity-(size_t)n," leave=%lld/%s/%u/%llx/%llx unseat_kept=%lld",(long long)pslot_leave_fails,
+            pslot_leave_last?pslot_leave_last:"-",pslot_leave_slot,(unsigned long long)pslot_leave_parent_id,(unsigned long long)pslot_leave_at_id,
+            (long long)pslot_unseat_kept):-1;
+        if(more<0) return 0;
+        n+=more;}
+    n=prat_status(out,capacity,n);
     for(unsigned i=0,first=1;n>0 && (size_t)n<capacity && i<PSLOT_VT_SLOTS;i++) {
         if(!pslot_getter_out[i]) continue;
         int more=snprintf(out+n,capacity-(size_t)n,"%s%u:%lld",first?" getters_out=":",",i,(long long)pslot_getter_out[i]);

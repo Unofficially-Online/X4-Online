@@ -310,6 +310,84 @@ function K.unblocked(mask)
  return out
 end
 
+-- Ship Interactions (DockedMenu) on a client of slot 2..N: the probe arms it (pilot_view.arm_ui_replay).
+-- X4 opens DockedMenu by itself from three places (menu_docked.lua's first game plan change and its checkActivation after
+-- a conversation or a cinematic camera, the menu helper's closeMenu after another menu closed), each asking first "is
+-- the player's ship docked, or does the player sit at a post that is not the pilot's". When such a handler runs outside
+-- this client's own view of the player, "the player" is player 1: when player 1 docked, the menu opened on every other
+-- client too, as that client's Ship Interactions, held its flight controls and stopped its ship (X4's stop in menus; two
+-- scripted clients, 16 Nov). So an automatic open is asked again inside this client's presentation scope (p.own) and
+-- left out when the answer is no.
+-- A person opens the same menu without that question: the HUD's top level bar ("Ship Interactions", in the HUD's own
+-- top level menu and in the tabs of the map, the player information and the other top level menus; their tab scroll keys)
+-- goes Helper.scrollTopLevelInternal -> Helper.closeMenuAndOpenNewMenu -> OpenMenu('DockedMenu',{0,0},...), and Back from
+-- a menu opened out of it (its "Ship Information" map) goes Helper.closeMenu(menu,'back') -> OpenMenu(its return record).
+-- Until 24 Nov the automatic opens' question was asked of these too; in flight its answer is no, so player 2's click on
+-- Ship Interactions closed the bar or the map and opened nothing (live games rk7 and rk8: UI_DOCKED_MENU kept=N right
+-- after each click, scope=false). Now the two Helper routes mark their call as a person's navigation and the open
+-- passes as in stock (row UI_DOCKED_MENU ... person=N via=tab|back). The Enter key (INPUT_ACTION_OPEN_COCKPIT_MENU,
+-- action 0x13d) opens the menu natively (X4's 0x8c7a70 -> MenuHandler::OpenMenu 0x8c82f0), not through OpenMenu.
+-- What the menu then does for slot k (flight assist, modes, deployables, autopilot, dock, Get Up, weapons) goes through
+-- the stock calls the replay families and the guard already take, as player 1's does.
+-- p: present(on) (the probe's: true opens the scope from the probe's canonical frame and answers whether it did, false
+-- closes it again), own() (the question, in whatever scope is open; may raise), log(text). Once per Lua state (a re-arm
+-- finds the wrappers in env.X4LAN_OPEN_MENU_STOCK); returns the state {kept, passed, person, helper} or nil, why.
+function K.docked_menu(env,p)
+ if type(env.OpenMenu)~='function' then return nil,'no_open_menu' end
+ if env.X4LAN_OPEN_MENU_STOCK then return nil,'armed' end
+ local D={kept=0,passed=0,person=0,helper=false}
+ local stock_open=env.OpenMenu
+ env.X4LAN_OPEN_MENU_STOCK=stock_open
+ local nav,via   -- the menu a person's navigation is opening right now, and its route
+ local function counts() return 'kept='..D.kept..' passed='..D.passed..' person='..D.person end
+ env.OpenMenu=function(name,...)
+  if name~='DockedMenu' then return stock_open(name,...) end
+  if nav=='DockedMenu' then
+   D.person=D.person+1
+   p.log('UI_DOCKED_MENU '..counts()..' via='..tostring(via))
+   return stock_open(name,...)
+  end
+  local opened=p.present(true)
+  local ok,own=pcall(p.own)
+  if opened then p.present(false) end
+  if ok and not own then
+   D.kept=D.kept+1
+   p.log('UI_DOCKED_MENU '..counts()..' scope='..tostring(opened))
+   return
+  end
+  D.passed=D.passed+1
+  return stock_open(name,...)
+ end
+ local H=env.Helper
+ if type(H)=='table' and type(H.closeMenuAndOpenNewMenu)=='function' and type(H.closeMenu)=='function' then
+  local stock={closeMenuAndOpenNewMenu=H.closeMenuAndOpenNewMenu,closeMenu=H.closeMenu}
+  env.X4LAN_DOCKED_NAV_STOCK=stock
+  -- the mark holds for the stock call only, also when it raises (the error goes on unchanged)
+  local function finish(before,before_via,ok,...)
+   nav,via=before,before_via
+   if not ok then error((...),0) end
+   return ...
+  end
+  local function marked(name,route,f,...)
+   local before,before_via=nav,via
+   nav,via=name,route
+   return finish(before,before_via,pcall(f,...))
+  end
+  H.closeMenuAndOpenNewMenu=function(menu,newname,...)
+   return marked(newname,'tab',stock.closeMenuAndOpenNewMenu,menu,newname,...)
+  end
+  -- Back with a return record (no conversation menu: that one returns to its conversation); without one it only closes
+  H.closeMenu=function(menu,due,...)
+   if due=='back' and type(menu)=='table' and not menu.conversationMenu and type(menu.param2)=='table' and type(menu.param2[1])=='string' then
+    return marked(menu.param2[1],'back',stock.closeMenu,menu,due,...)
+   end
+   return stock.closeMenu(menu,due,...)
+  end
+  D.helper=true
+ end
+ return D
+end
+
 -- p: gate, C (ffi.C), env (the Lua globals), log, mask, slot_ships() -> {decimal=slot}, script (by absolute tick).
 function K.session(p)
  local gate,C,env,log,mask=p.gate,p.C,p.env,p.log,p.mask
@@ -786,6 +864,30 @@ function K.session(p)
  function S.plot_debug(tick,code) return plot_signal(tick,'x4lan_plot_debug','PLOT_DEBUG',code) end
  -- Player 1's plot begun with its result (native_gate_plot_ready; the story MD's PlotReady): the same way, once.
  function S.plot_ready(tick,code) return plot_signal(tick,'x4lan_plot_ready','PLOT_READY',code) end
+ -- Milestones (the probe's native_gate_milestones and native_gate_continue; MD x4lan_milestones.xml): a signal of ours on
+ -- the galaxy with any value (a cue as a Lua ID: X4 gives MD the cue it names), every client the same tick, outside every
+ -- slot's scope, X4's own SignalObject (not the capture's). The caller writes the rows (one snapshot is many signals).
+ -- A call of the probe's frame as a person's click (a person's quick save, native_gate_milestones): this client's slot's
+ -- event, captured and run on every client at the apply tick like a menu's. Refused when the call would not be captured
+ -- (it would run on this client alone): (ok, result) of the call, or false and why.
+ function S.click(fn)
+  if not p.local_mark then return false,'no_local_mark' end
+  p.local_mark(0)
+  local scoped=p.present and p.present(true) or false   -- where a person's click runs (the console's and scripted ops' form)
+  local ok,result
+  if gate.ui_replay_local()==1 then ok,result=pcall(fn) else ok,result=false,'not_local' end
+  if scoped then p.present(false) end
+  p.local_mark(1)
+  return ok,result
+ end
+ function S.galaxy_signal(signal,value)
+  local galaxy=p.galaxy or (p.offers and p.offers.galaxy)
+  if not galaxy then return 'no_galaxy' end
+  S.replaying=true;gate.ui_replay_bypass(1)
+  local ok,why_not=pcall(function() stock.SignalObject(galaxy(),signal,value) end)
+  gate.ui_replay_bypass(0);S.replaying=false
+  return ok and 'signalled' or 'error:'..tostring(why_not)
+ end
  -- A start's blueprints and research for a slot with a faction of its own (factions mode; the gate's library per faction,
  -- lockstep_research_owner.h): every client, the same tick, inside slot k's scope, where the universe's player is slot k's
  -- with its own library, X4's own LearnBlueprint and AddResearch add to it (as an add_blueprints of its own mission would).
@@ -1057,7 +1159,7 @@ end
 -- ship the player controls (ui/core/messageconfigurationgraph.xml: untargetableconditions is_playercontrolled), and in
 -- the probe's canonical frame that is slot 1's ship on every client, so slot k could not target it. The other ops keep
 -- the canonical frame their live runs (U5, U7) passed with. Guidance is set and ended where the map's click runs too.
-K.SCOPED={panel_find=true,hack_yes=true,inv_total=true,trader_pick=true,trader_look=true,itemtrader_buy=true,foot_where=true,transport_list=true,transport_to=true,transport_named=true,target_slot=true,target_none=true,target_home=true,dock_home=true,suit_home=true,guidance_slot=true,guidance_end=true,guidance_set=true,guidance_look=true,inv_read=true,inv_drop=true,inv_research_seen=true,inv_research_hqs=true}
+K.SCOPED={suit_to=true,dock_named=true,panel_find=true,hack_yes=true,inv_total=true,trader_pick=true,trader_look=true,itemtrader_buy=true,foot_where=true,transport_list=true,transport_to=true,transport_named=true,target_slot=true,target_none=true,target_home=true,dock_home=true,suit_home=true,guidance_slot=true,guidance_end=true,guidance_set=true,guidance_look=true,inv_read=true,inv_drop=true,inv_research_seen=true,inv_research_hqs=true,toplevel_tab=true,menu_back=true,escort_colour=true,escort_select=true,escort_map=true}
 -- The stock calls of the station overview and the station menu's trade settings, by what their names hold.
 function K.station_call(what)
  local name=tostring(what):match('^[%w_]+') or ''
@@ -1068,7 +1170,7 @@ function K.station_call(what)
 end
 -- A canonical op is the probe's own call, not a person's click: a test fixture that every client's plan holds at the same
 -- tick (MD runs it on every client alike, nothing is captured).
-K.CANONICAL={panel_look=true,refit_why=true,station_blueprints=true,mis_fixture=true,mt_offer=true,gm_limit=true,slot_kill=true,slot_airlock=true,launch_stock=true,hold_stock=true,hull_set=true,marines_stock=true,abandon=true,dock_kit=true,wallet=true,probe_far=true,groups_look=true,inv_seed=true,inv_look=true,inv_join_state=true,inv_join_give=true,transporter_find=true}
+K.CANONICAL={panel_look=true,refit_why=true,station_blueprints=true,mis_fixture=true,mt_offer=true,gm_limit=true,slot_kill=true,slot_airlock=true,launch_stock=true,hold_stock=true,hull_set=true,marines_stock=true,abandon=true,dock_kit=true,wallet=true,probe_far=true,groups_look=true,escort_look=true,escort_front=true,inv_seed=true,inv_look=true,inv_join_state=true,inv_join_give=true,transporter_find=true}
 -- Refused entries the stock HUD calls by itself, not on a person's action: logged, no info line. AddKnownItem: the
 -- encyclopedia entry the HUD adds for whatever comes into view (45 refusals and their info lines in a playtest of 9 Nov).
 K.GUARD_QUIET={AddKnownItem=true}
@@ -1137,19 +1239,20 @@ end
 -- client's own record (strafe 6..9, throttle 13/14), chosen every tick from where the ship is in the suit's frame
 -- (tools.suit_delta: right, up, ahead in metres; nil once the player is no longer in a suit). The throttle is a set
 -- point: its key ticks are counted so it comes back to zero. All keys are released at the arrival or the limit.
-function K.suit_fly(tools,limit)
+function K.suit_fly(tools,limit,find)   -- find(): another ship (its 64-bit ID) to fly to and ask to dock at, at the start; else home
  local F={throttle=0,held={},done=false}
  local function set(id,on)
   on=on and 1 or 0
   if (F.held[id] or 0)~=on then F.held[id]=on;tools.gate.pilot_stock_inject('state',id,on) end
  end
  function F.start()
-  local home=tools.home_id()
+  if find then F.target=find();if not F.target then F.done=true;return 'no_ship' end end
+  local home=F.target or tools.home_id()
   return tostring(home)..'='..tostring(tools.C.RequestDockAt(home,false))
  end
  function F.step(i)
   if F.done then return nil end
-  local d=tools.suit_delta()
+  local d=tools.suit_delta(F.target)
   if not d or i>=limit then
    for _,id in ipairs({6,7,8,9,13,14}) do set(id,false) end
    F.done=true;return (d and 'limit' or 'home')..' after='..i
@@ -1986,9 +2089,12 @@ function K.script(plan,start,tools)
   -- This client's guns without a person: {tick,'aim_fire',1} aims with the aim assist at its player's target and holds
   -- the primary trigger, {tick,'aim_fire',0} lets go (gate.pilot_aim_script). A trigger injected as an input state
   -- (state 24) is a key press: it counts only in the window that has the focus (two windows on one PC), so a plan
-  -- cannot rely on it.
+  -- cannot rely on it. {tick,'aim_fire',1,X,Y,Z}: a manual aim at that point of the ship's frame instead (metres right, up,
+  -- ahead), as a person's crosshair on it: a window without the focus captures no aim (lockstep_pilot_aim.h), and a gun at
+  -- rest shoots along its mount, past a small thing close by (a suit's repair laser at a claim signal 4 m ahead, live c2c).
   elseif op=='aim_fire' then call=function()
     local on=e[3]==1 or e[3]==true
+    if on and e[6] then return tools.gate.pilot_aim_script(1,e[4],e[5],e[6],1) end
     return tools.gate.pilot_aim_script(on and 2 or 0,0,0,1000,on and 1 or 0) end
   -- The flight families: autopilot by Lua (no guidance needed) and by the FFI toggle, dock, undock, weapon groups.
   elseif op=='ap_to' then call=function() return tools.env.StartAutoPilot(tools.slot_lua(e[3])) end
@@ -2026,6 +2132,21 @@ function K.script(plan,start,tools)
     local target,zone=tools.suit_target();tools.C.TransportPlayerToTarget(target);return 'zone='..tostring(zone) end
   elseif op=='dock_home' then call=function() local home=tools.home_id();return tostring(home)..'='..tostring(tools.C.RequestDockAt(home,false)) end
   elseif op=='target_home' then call=function() return tools.C.SetSofttarget(tools.home_id(),'') end
+  -- {tick,'suit_to',NAME,OWNER[,limit]}: as suit_home, to the ship of that name and owner (a claimed ship: 'player'), or
+  -- of that saved ID (16 hex digits; OWNER then unused),
+  -- looked up at the op's tick. Live (24 Nov, c1 and c2: player 1 as much as player 2) the flight keys took a suit 47 m
+  -- in front of a corvette AWAY from it at 1.7 m/s: the request is what counts here, suit_dock stands in for the flight.
+  elseif op=='suit_to' then
+    local fly=K.suit_fly(tools,e[5] or 900,function()
+     if type(e[3])=='string' and e[3]:match('^%x+$') and #e[3]==16 then return tonumber(tools.gate.ui_replay_saved(e[3])) end   -- a saved ID
+     for _,object in ipairs(tools.env.GetContainedObjectsByOwner(e[4] or 'player') or {}) do
+      if tools.env.GetComponentData(object,'name')==e[3] then return tools.env.ConvertIDTo64Bit(object) end
+     end
+    end)
+    call=fly.start
+    for i=1,e[5] or 900 do
+     by[at+i]=by[at+i] or {};by[at+i][#by[at+i]+1]={op='suit_fly',call=function() return fly.step(i) end,quiet=true}
+    end
   elseif op=='suit_home' then
     local fly=K.suit_fly(tools,e[3] or 900)
     call=fly.start
@@ -2371,11 +2492,43 @@ function K.script(plan,start,tools)
     tools.env.Helper.closeMenu(menu,'close')
     if type(menu.cleanup)=='function' then menu.cleanup() end
     return 'closed' end
+  -- {tick,'menu_back',MENU}: Back out of that stock menu as its last Back does (Helper.closeMenu 'back': to the menu it
+  --   was opened from, when it has that return record). Answers 'back to=NAME' or 'back to=-'.
+  elseif op=='menu_back' then call=function()
+    local menu=tools.menu(e[3])
+    if not menu then return 'no_menu' end
+    local to=type(menu.param2)=='table' and type(menu.param2[1])=='string' and menu.param2[1] or '-'
+    tools.env.Helper.closeMenu(menu,'back')
+    if type(menu.cleanup)=='function' then menu.cleanup() end
+    return 'back to='..to end
+  -- {tick,'toplevel_tab',ID[,MENU[,NORETURN]]}: a click on entry ID of the HUD's top level bar ('cockpit' = Ship
+  --   Interactions, 'docked', 'map', 'playerinfo', ...) in that open menu (default the HUD's own TopLevelMenu): the
+  --   button's onClick, Helper.scrollTopLevelInternal(menu, index, nil, NORETURN) (the map's tabs pass true), when the
+  --   bar offers the entry (Helper.checkTopLevelConditions). Answers 'pressed opens=MENU', 'not_offered', 'no_entry',
+  --   'not_shown'. Runs in the presentation scope, as a click.
+  elseif op=='toplevel_tab' then call=function()
+    local H=tools.env.Helper
+    local menu=tools.menu(e[4] or 'TopLevelMenu')
+    if not menu or not menu.shown then return 'not_shown' end
+    for i,entry in ipairs(H.topLevelMenus or {}) do
+     if entry.id==e[3] then
+      if not H.checkTopLevelConditions(entry) then return 'not_offered' end
+      H.scrollTopLevelInternal(menu,i,nil,e[5] or nil)
+      return 'pressed opens='..tostring(entry.menu)
+     end
+    end
+    return 'no_entry' end
   elseif op=='menu_look' then call=function()
     local menu=tools.menu(e[3])
     if not menu then return 'no_menu' end
     local c=type(menu.contextMenuData)=='table' and menu.contextMenuData or {}
     local parts={'shown='..tostring(menu.shown and true or false),'mode='..tostring(menu.mode),'context='..tostring(menu.contextMenuMode)}
+    -- the dock menu's ship (Ship Interactions: the occupied ship it was opened for) and whether it is this client's slot's
+    if menu.name=='DockedMenu' and menu.shown and menu.currentplayership~=nil then
+     local ship=(tostring(menu.currentplayership):gsub('ULL$',''))
+     local own=tools.gate and tools.gate.pilot_ship and tools.gate.pilot_ship(tools.own_slot or 1)
+     parts[#parts+1]='ship='..ship..' own='..tostring(own~=nil and ship==string.format('%.0f',own))
+    end
     if menu.contextMenuMode=='trade' then
      local orders={}
      for id,amount in pairs(type(c.orders)=='table' and c.orders or {}) do if amount~=0 then orders[#orders+1]=tostring(amount) end end
@@ -2643,6 +2796,51 @@ function K.script(plan,start,tools)
   elseif op=='hull_set' then call=function()
     local lua=type(e[3])=='number' and tools.slot_lua(e[3]) or tools.saved_lua(e[3])
     tools.env.AddUITriggeredEvent('X4LAN_UiReplay','Hull',{ship=lua,percent=e[4]});return 'lua' end
+  -- Test only (MD Friendly, canonical: in every client's plan at the same tick; friendly fire, 24 Nov):
+  -- {tick,'friendly',SLOT,NAME[,FACTION[,MACRO[,METRES[,PILOT[,SHIELD[,HULL[,HOLD[,FLOOR]]]]]]]]}: a ship of FACTION (terran)
+  -- with its pilot (PILOT 0: none, it stays put; SHIELD 0: its shield down at the start; HULL: its hull percentage; HOLD 1: its
+  -- pilot waits where it is; FLOOR: its minimum hull percentage), called NAME, METRES (400) straight ahead of slot SLOT's ship
+  -- (MACRO: ship_ter_m_corvette_01_a_macro).
+  -- {tick,'target_named',NAME[,FACTION]}: this
+  -- client's player targets the ship of that name and owner (the soft target, as a click on it).
+  elseif op=='friendly' then call=function()
+    -- short keys, defaults left out: a UI event must fit one replay event (UIREP_EVENT_FIT, 160 bytes)
+    local t={n=tools.slot_lua(e[3]),a=e[4],d=e[7] or 400,p=e[8]~=0,s=e[9]==0,w=e[11]==1}
+    if e[5] and e[5]~='terran' then t.f=e[5] end
+    if e[6] and e[6]~='ship_ter_m_corvette_01_a_macro' then t.m=e[6] end
+    if e[10] then t.h=e[10] end
+    if e[12] then t.k=e[12] end
+    tools.env.AddUITriggeredEvent('X4LAN_UiReplay','Friendly',t);return 'lua' end
+  -- {tick,'leak_goto',NAME[,OWNER[,METRES]]}: test fixture (canonical by its UI event): this player's ship (its spacesuit)
+  -- METRES (4) in front of the claim signal of the ship of that name and owner (ownerless: abandoned), looking at it (MD
+  -- LeakGoto). {tick,'dock_named',NAME[,OWNER]}: this player asks to dock at that ship (RequestDockAt, the ship menu's
+  -- "Request docking"; in the presentation scope, as suit_to).
+  -- {tick,'suit_dock',NAME[,OWNER[,METRES]]}: test fixture (canonical by its UI event): this player's suit METRES (3) out
+  -- from that ship's spacesuit dock, as if flown there (MD SuitDock; after its dock request, suit_to or dock_named).
+  elseif op=='leak_goto' or op=='dock_named' or op=='suit_dock' then call=function()
+    -- NAME may be a saved ID (16 hex digits): that ship, whoever owns it
+    local saved=type(e[3])=='string' and #e[3]==16 and e[3]:match('^%x+$')
+    for _,object in ipairs(saved and {tools.saved_lua(e[3])} or tools.env.GetContainedObjectsByOwner(e[4] or 'ownerless') or {}) do
+     if saved or tools.env.GetComponentData(object,'name')==e[3] then
+      local id=tools.env.ConvertIDTo64Bit(object)
+      if op=='dock_named' then return tostring(tools.C.RequestDockAt(id,false))..' ship='..(tostring(id):gsub('ULL$','')) end
+      if op=='suit_dock' then
+       tools.env.AddUITriggeredEvent('X4LAN_UiReplay','SuitDock',{s=tools.slot_lua(tools.own_slot),t=object,d=tonumber(e[5]) or 3})
+       return 'suit_dock ship='..(tostring(id):gsub('ULL$',''))
+      end
+      tools.env.AddUITriggeredEvent('X4LAN_UiReplay','LeakGoto',{s=tools.slot_lua(tools.own_slot),t=object,d=tonumber(e[5]) or 4})
+      return 'leak_goto ship='..(tostring(id):gsub('ULL$',''))
+     end
+    end
+    return 'no_ship' end
+  elseif op=='target_named' then call=function()
+    for _,object in ipairs(tools.env.GetContainedObjectsByOwner(e[4] or 'terran') or {}) do
+     if tools.env.GetComponentData(object,'name')==e[3] then
+      local id=tools.env.ConvertIDTo64Bit(object)
+      return tostring(tools.C.SetSofttarget(id,''))..' ship='..(tostring(id):gsub('ULL$',''))
+     end
+    end
+    return 'no_ship' end
   -- Test only (MD Hold, canonical: in every client's plan at the same tick): a slot's ship gets wares in its hold, so a
   -- scripted run has something to drop.
   elseif op=='hold_stock' then call=function()          -- (the ship: a slot or a saved ID)
@@ -2820,6 +3018,83 @@ function K.script(plan,start,tools)
     local ships={}
     for k=1,tools.slots or 0 do ships[k]=tools.slot_lua(k) end
     tools.env.AddUITriggeredEvent('X4LAN_UiReplay','GroupsLook',ships);return 'lua' end
+  -- Test only (MD EscortLook, canonical): the ships that protect each slot's ship (the Terran cadet's wingmate), their
+  -- formation, distance and target, and the pilot a protector sees on the ship (native_gate_player_escort.xml).
+  elseif op=='escort_look' then call=function()
+    local ships={}
+    for k=1,tools.slots or 0 do ships[k]=tools.slot_lua(k) end
+    tools.env.AddUITriggeredEvent('X4LAN_UiReplay','EscortLook',ships);return 'lua' end
+  -- Test only (MD EscortTarget): {tick,'escort_target'[,macro][,metres]} as a person's click: a Xenon ship without a pilot
+  -- that far ahead of this player's ship (default a scout at 500 m) becomes this player's target (the galaxy signal
+  -- runs in this player's scope on every client, as goto_slot's).
+  elseif op=='escort_target' then call=function()
+    tools.env.SignalObject(tools.env.ConvertStringTo64Bit(tostring(tools.C.GetPlayerGalaxyID())),'x4lan_escort_target',
+      tostring(e[3] or 'ship_xen_s_scout_01_a_macro'),tonumber(e[4]) or 500)
+    return 'escort target' end
+  -- Test only, read only (scoped: the colours of this client's own HUD): X4's relation status of each slot's ship and of
+  -- the protectors the last escort_look found ($X4LAN_EscortGuards on the slot's player entity), as the target system
+  -- reads it (GetRelationStatus4: 5 own property = green, 4 allied, 3 friendly, 2 neutral = blue, 1 enemy, 0 hostile).
+  elseif op=='escort_colour' then call=function()
+    pcall(ffi.cdef,'typedef struct { int relationStatus; int relationValue; int relationLEDValue; bool isBoostedValue; const char* owningFactionID; } RelationDetails2;')
+    pcall(ffi.cdef,'RelationDetails2 GetRelationStatus4(const UniverseID componentid, const char*const connectionname);')
+    local function status(id)
+     local ok,r=pcall(tools.C.GetRelationStatus4,id,'')
+     return ok and (tostring(r.relationStatus)..'/'..ffi.string(r.owningFactionID)) or '?'
+    end
+    -- the map's list and info colours read these (menu_map getContainerNameAndColors / getObjectColor: a mission
+    -- target amber, the player's own green, hostile or enemy red, else white), the HUD's its faction colour option
+    local function flags(lua)
+     local ok,own,mission,enemy,hostile=pcall(tools.env.GetComponentData,lua,'isplayerowned','ismissiontarget','isenemy','ishostile')
+     if not ok then return '' end
+     return '/own='..tostring(own)..'/mission='..tostring(mission)..'/enemy='..tostring(enemy)..'/hostile='..tostring(hostile)
+    end
+    local parts={}
+    pcall(ffi.cdef,'int GetConfigSetting(const char*const setting);')
+    local okf,factioncolour=pcall(function() return tools.C.GetConfigSetting('factioncolortargetsystem') end)
+    parts[1]='factioncolour='..(okf and tostring(factioncolour) or '?')
+    for k=1,tools.slots or 0 do
+     local ship=tools.slot_id(k)
+     local text='slot'..k..'='..(ship and status(ship) or 'none')
+     local player=tools.gate.ui_inventory_player and tools.gate.ui_inventory_player(k)
+     local ok,guards=pcall(function() return player and tools.env.GetNPCBlackboard(tools.env.ConvertStringToLuaID(player),'$X4LAN_EscortGuards') end)
+     if ok and type(guards)=='table' then
+      for _,g in ipairs(guards) do
+       local id=tools.env.ConvertStringTo64Bit(tostring(g))
+       text=text..',guard:'..(tostring(id):gsub('ULL$',''))..'='..status(id)..flags(g)
+      end
+     else text=text..',guards=?' end
+     parts[#parts+1]=text
+    end
+    return table.concat(parts,' ') end
+  -- Test only (MD EscortFront, canonical): the protectors of slot K's ship (default this client's) are put 150 m ahead
+  -- of it, looking its way, so its player's camera sees them (their order brings them back into the formation).
+  elseif op=='escort_front' then call=function()
+    tools.env.AddUITriggeredEvent('X4LAN_UiReplay','EscortFront',tools.slot_lua(e[3] or tools.own_slot));return 'lua' end
+  -- Test only (scoped, as a click on it): the first protector the last escort_look found for this client's own ship
+  -- becomes this player's target (the target box and the target monitor show it).
+  elseif op=='escort_select' then call=function()
+    local player=tools.gate.ui_inventory_player and tools.gate.ui_inventory_player(tools.own_slot)
+    local guards=player and tools.env.GetNPCBlackboard(tools.env.ConvertStringToLuaID(player),'$X4LAN_EscortGuards')
+    if type(guards)~='table' or not guards[1] then return 'no_guard' end
+    local id=tools.env.ConvertStringTo64Bit(tostring(guards[1]))
+    return tostring(tools.C.SetSofttarget(id,''))..' '..(tostring(id):gsub('ULL$','')) end
+  -- Test only (this client's open map, as a look at it): the colour the map's lists and its info header give this
+  -- player's first protector (menu_map getContainerNameAndColors / getObjectColor) against the map's player colour; a
+  -- question the map opened with (its first-open hint) is closed first, so a picture shows the map.
+  elseif op=='escort_map' then call=function()
+    local menu=tools.menu('MapMenu')
+    if not menu then return 'no_map' end
+    if menu.contextMenuMode and menu.closeContextMenu then pcall(menu.closeContextMenu) end
+    local player=tools.gate.ui_inventory_player and tools.gate.ui_inventory_player(tools.own_slot)
+    local guards=player and tools.env.GetNPCBlackboard(tools.env.ConvertStringToLuaID(player),'$X4LAN_EscortGuards')
+    if type(guards)~='table' or not guards[1] then return 'no_guard' end
+    local function rgb(c) return type(c)=='table' and string.format('%d,%d,%d',c.r or -1,c.g or -1,c.b or -1) or tostring(c) end
+    local id=tools.env.ConvertStringTo64Bit(tostring(guards[1]))
+    local okl,_,listcolour=pcall(menu.getContainerNameAndColors,guards[1],0,false,false)
+    local oko,infocolour=pcall(menu.getObjectColor,id)
+    local colours=menu.holomapcolor or {}
+    return 'list='..(okl and rgb(listcolour) or '?')..' info='..(oko and rgb(infocolour) or '?')..' player='..rgb(colours.playercolor)..
+      ' friend='..rgb(colours.friendcolor)..' mission='..rgb(colours.missioncolor) end
   elseif op=='comm' then call=function() return tools.env.StartConversationFromMenu('default',tools.slot_lua(e[3])) end
   -- Missions and conversations (lockstep_ui_missions.h). mis_fixture: the test offer (MD native_gate_ui_replay.xml), canonical;
   -- the rest as the briefing menu, the map's mission list and the dialog call the stock entries.

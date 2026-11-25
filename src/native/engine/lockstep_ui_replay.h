@@ -189,7 +189,7 @@ static uint64_t uirep_frame_tick,uirep_frame_hash,uirep_results_hash,uirep_resul
 static unsigned uirep_frame_events;
 static volatile LONG64 uirep_captured,uirep_refused,uirep_taken,uirep_staged_count,uirep_applied_native,uirep_applied_lua,uirep_stale,
     uirep_passed,uirep_scope_start,uirep_scope_stop,uirep_scope_refused,uirep_scope_nested,uirep_unavailable,uirep_guard_refused,uirep_target_passed,uirep_lua_errors,
-    uirep_waits,uirep_calls_applied;
+    uirep_waits,uirep_calls_applied,uirep_travel_left;
 
 /* ---- pins and sites (build 9.00) ---- */
 static void uirep_ui_move(void *self);
@@ -589,10 +589,24 @@ static void uirep_adapter_start(pslot_slot *s,int activity) {
         InterlockedIncrement64(&uirep_scope_start);++scm_starts;return;
     }
     if(activity!=UIREP_ACTIVITY_TRAVEL) {InterlockedIncrement64(&uirep_scope_refused);return;}
-    if(!uirep_fn.can_travel(s->ship) && !uirep_drive_active(s->ship)) {InterlockedIncrement64(&uirep_unavailable);return;}
-    uint64_t id=0;
+    const int driving=uirep_drive_active(s->ship);
+    if(!uirep_fn.can_travel(s->ship) && !driving) {InterlockedIncrement64(&uirep_unavailable);return;}
+    uint64_t id=0,autopilot=0;
     if(read_local(s->ship+UIREP_ID,&id,8)) memcpy(s->player+UIREP_PLAYER_LAST_SHIP,&id,8);
     uirep_set_activity(s,activity);
+    /* A travel drive left running by an autopilot that has been stopped: the player's key ends it. Callers here are the
+     * player's own (the key's record through d86c80, which only posts the start, and the UI's StartPlayerActivity); X4's
+     * key starts no charge itself, so a drive charging or active while the player has no activity and no autopilot is
+     * the autopilot's leftover. X4's StopPlayerAutoPilot (0x72bb10) leaves the drive to the autopilot script's own end,
+     * which a player 2..N's ship computer may never run (its AI frames, x4mods-06's PILOT_AI rows). Two-PC game of 24
+     * Nov, client 2: player 2 stopped the autopilot at tick 20314 while it charged, the drive took the ship to 1420 m/s
+     * with no autopilot, and the key only started the travel the drive already had (scope start 3 at ~20998): the
+     * player saw nothing happen. Here the start takes the drive over (the setter, as above) and the stop ends it at
+     * once, the setter's teardown on the ship just noted (travel_left=). */
+    if(driving && !current && read_local(pnat_base+UIREP_AUTOPILOT,&autopilot,8) && !autopilot) {
+        uirep_set_activity(s,0);
+        InterlockedIncrement64(&uirep_travel_left);return;
+    }
     InterlockedIncrement64(&uirep_scope_start);
 }
 static void uirep_adapter_stop(pslot_slot *s,int activity) {
@@ -1454,10 +1468,10 @@ static int uirep_refusals_text(char *out,size_t capacity) {
 }
 static int uirep_status(char *out,size_t capacity) {
     int n=snprintf(out,capacity,"ui_replay=%s why=%s families=%x installed=%d restored=%d captured=%lld refused=%lld guard=%lld taken=%lld waits=%lld queued=%u staged=%lld "
-        "native=%lld calls=%lld lua=%lld lua_errors=%lld stale=%lld passed=%lld target_passed=%lld scope=%lld/%lld/%lld nested=%lld unavailable=%lld",uirep_stage_name,uirep_why,uirep_families,uirep_installed,uirep_restored,
+        "native=%lld calls=%lld lua=%lld lua_errors=%lld stale=%lld passed=%lld target_passed=%lld scope=%lld/%lld/%lld nested=%lld unavailable=%lld travel_left=%lld",uirep_stage_name,uirep_why,uirep_families,uirep_installed,uirep_restored,
         (long long)uirep_captured,(long long)uirep_refused,(long long)uirep_guard_refused,(long long)uirep_taken,(long long)uirep_waits,uirep_queue_count,(long long)uirep_staged_count,
         (long long)uirep_applied_native,(long long)uirep_calls_applied,(long long)uirep_applied_lua,(long long)uirep_lua_errors,(long long)uirep_stale,(long long)uirep_passed,(long long)uirep_target_passed,
-        (long long)uirep_scope_start,(long long)uirep_scope_stop,(long long)uirep_scope_refused,(long long)uirep_scope_nested,(long long)uirep_unavailable);
+        (long long)uirep_scope_start,(long long)uirep_scope_stop,(long long)uirep_scope_refused,(long long)uirep_scope_nested,(long long)uirep_unavailable,(long long)uirep_travel_left);
     if(n>0 && (size_t)n<capacity && (uirep_families&UIREP_FAMILY_QUEUE))
         n+=snprintf(out+n,capacity-(size_t)n," queue=%lld/%lld/%lld creates=%lld mapped=%lld moved=%lld",(long long)uirep_q_captured,(long long)uirep_q_calls,
             (long long)uirep_q_skipped,(long long)uirep_q_creates,(long long)uirep_q_mapped,(long long)uirep_q_moved);
@@ -1480,6 +1494,7 @@ static int uirep_status(char *out,size_t capacity) {
 #include "lockstep_ui_build.h"
 /* Missions and conversations of slot 1 (families missions, conversation; captured in the guard's hook). */
 #include "lockstep_ui_missions.h"
+#include "lockstep_pilot_room_attention.h"   /* a slot's player's room is inroom, as X4's own player's */
 #include "lockstep_mission_owners.h"   /* personal missions per player: slot k's calls and owned cue trees in slot k's scope */
 #include "lockstep_md_presentation.h"   /* what an owned cue shows (help, notifications, menus, music): on its owner's client only */
 #include "lockstep_md_media.h"          /* a mission's picture on the target monitor: started by the simulation, shown by its owner */

@@ -1,6 +1,7 @@
 """x4ls's netplay commands for scripts and tests (docs/NETPLAY.md; docs/LAUNCHER.md "Netplay"):
 
   x4ls host --players N [--name NAME] [--public] [lobby options]   host a game (x4ls lobby with HOST|... chosen)
+  x4ls host --milestone RUN/saves/milestones/<name>.xml.gz          host the game continued from a milestone save
   x4ls join --code CODE | --address HOST[:PORT][,...] | --game-id ID [lobby options]   join one
   x4ls games [--lan] [--json]                                       the public games (and the LAN's), no X4
 
@@ -48,7 +49,17 @@ def add_lobby_options(parser):
 
 def add_parsers(sub):
     host = sub.add_parser('host', help='host a netplay game: x4ls lobby with Host chosen (the master server, else the LAN)')
-    host.add_argument('--players', type=int, default=2, help='the players who load the game together: 2..8 (1..7 with --drop-in)')
+    host.add_argument('--players', type=int, help='the players who load the game together: 2..8 (1..7 with --drop-in); default 2, '
+                                                 "with --milestone the milestone's")
+    host.add_argument('--session', type=Path, metavar='SESSION_JSON', dest='milestone_session',
+                      help="with --milestone, a save without a sidecar (an older build's): that session's session.json")
+    host.add_argument('--overlay-recipe', type=Path, metavar='DIR', dest='milestone_overlay',
+                      help='with --session: a folder with that session\'s play-recipe.json (its play overlay)')
+    host.add_argument('--milestone', type=Path, metavar='FILE',
+                      help='the game continues from this milestone save (RUN/saves/milestones/<story>-M<n>-slot<k>.xml.gz, its .json '
+                           'beside it): x4ls continue makes the session to host, joiners download it as any hosted session')
+    host.add_argument('--keep-flight', action='store_true', dest='milestone_keep_flight',
+                      help="with --milestone: the players' ships fly on as saved (travel drive, speed, autopilot); default: at rest")
     host.add_argument('--drop-in', type=int, default=0, metavar='M',
                       help="M more slots, joined while the game runs (on the master server's relay; players + M <= 8)")
     host.add_argument('--name', default='', help='the game\'s name in the public list (at most 40 bytes)')
@@ -91,6 +102,9 @@ def join_request(args):
 
 def host_request(args):
     extra = getattr(args, 'drop_in', 0) or 0
+    if getattr(args, 'players', None) is None:
+        args.players = (netkit.milestone_players(args.milestone, getattr(args, 'milestone_session', None))
+                        if getattr(args, 'milestone', None) else 2)
     if not netplay.host_counts_valid(args.players, extra):
         if extra:
             raise SystemExit(f'--players and --drop-in: at least 1 player and 1 drop-in slot, {netplay.PLAYERS_MAX} together at most')
@@ -109,7 +123,10 @@ def lobby_options(args, width, height, request):
                               bind=getattr(args, 'bind', ''), lane=args.lane, load_wait=getattr(args, 'load_wait', 30),
                               lobby_timeout=args.lobby_timeout, stall_drop=args.stall_drop, show=args.show, width=width,
                               height=height, timeout=args.timeout, close_when_over=args.close_when_over, game=args.game,
-                              lanes=args.lanes, steam_fix=args.steam_fix, request=request)
+                              lanes=args.lanes, steam_fix=args.steam_fix, request=request, milestone=getattr(args, 'milestone', None),
+                              milestone_session=getattr(args, 'milestone_session', None),
+                              milestone_overlay=getattr(args, 'milestone_overlay', None),
+                              milestone_keep_flight=getattr(args, 'milestone_keep_flight', False))
 
 
 def run_lobby(options):

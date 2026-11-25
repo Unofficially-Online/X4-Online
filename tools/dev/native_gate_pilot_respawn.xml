@@ -95,7 +95,11 @@
      <!-- Its equipment. X4's eject creates its player's suit from a loadout of the player's suit wares; a suit made here
           has its macro's engine and no weapon (live sx1, sx2). Standard issue: the repair laser on its mount (the suit's
           mounts: con_primaryweapon_01 repair, _002 bomb launcher, _003 laser), added as stock adds a weapon to the
-          player's ship (scenario_tutorials), then the default weapon groups with group 1 active. -->
+          player's ship (scenario_tutorials), then the default weapon groups with the first primary group active: the
+          group index is 0-based (Scripts::ActivateWeaponGroupAction 0xbc8020 hands it to 4e4a70 as it is), and
+          reset_weapongroups puts the repair laser into the first group. Until 24 Nov this said 1: the second group, empty,
+          was active, so a slot 2..N's suit had nothing to fire and its repair laser never claimed a ship (live c2b: the
+          suit at the claim signal, the trigger held 10 s, PILOT_FIRE s2=0/0/n, no repair). -->
      <create_loadout result="$loadout">
       <macros>
        <weapon macro="spacesuit_gen_repairweapon_01_macro" path="../con_primaryweapon_01" optional="1"/>
@@ -103,8 +107,9 @@
      </create_loadout>
      <apply_loadout object="$suit" loadout="$loadout" flags="add weapons"/>
      <reset_weapongroups object="$suit"/>
-     <activate_weapongroup object="$suit" weapongroup="1" primary="true"/>
-     <debug_text text="'[X4LAN] PILOT_RESPAWN_SUIT_EQUIP slot=%s range=%s time=%s'.[$a.$slotname, @$suit.maxcombatrange.all, player.age]"/>
+     <activate_weapongroup object="$suit" weapongroup="0" primary="true"/>
+     <find_object_component name="$weapons" object="$suit" class="class.weapon" multiple="true"/>
+     <debug_text text="'[X4LAN] PILOT_RESPAWN_SUIT_EQUIP slot=%s range=%s weapons=%s first=%s time=%s'.[$a.$slotname, @$suit.maxcombatrange.all, $weapons.count, @$weapons.{1}.macro.id, player.age]"/>
     </do_if>
     <do_else>
      <debug_text text="'[X4LAN] PILOT_RESPAWN_SUIT slot=%s refused=create_failed'.[$a.$slotname]"/>

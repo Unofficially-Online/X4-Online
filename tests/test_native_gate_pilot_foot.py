@@ -30,6 +30,7 @@ PROBE_FOOT = missions.PROBE_MISSIONS + r'''
   gate.pilot_foot=function() calls[#calls+1]='foot';if FOOT_REFUSAL then return 0,FOOT_REFUSAL end;return 1 end
   gate.pilot_foot_bodies=function() calls[#calls+1]='bodies';if BODIES_REFUSAL then return 0,BODIES_REFUSAL end;return 1 end
   gate.pilot_foot_slots=function() calls[#calls+1]='foot_slots';if SLOTS_REFUSAL then return 0,SLOTS_REFUSAL end;return 1 end
+  gate.pilot_chair=function() calls[#calls+1]='chair';if CHAIR_REFUSAL then return 0,CHAIR_REFUSAL end;return 1 end
 '''
 BODY_H = (ENGINE/'lockstep_pilot_foot_body.h').read_text(encoding='utf-8')
 SLOTS_H = (ENGINE/'lockstep_pilot_foot_slots.h').read_text(encoding='utf-8')
@@ -111,6 +112,31 @@ class ProbeTests(unittest.TestCase):
                 (dict(native_gate_pilot_foot_slots=True), PROBE_FOOT + "SLOTS_REFUSAL='pins_foot_slots:d7f8d0'",
                  'pilot foot slots refused: pins_foot_slots:d7f8d0'),
                 (dict(native_gate_pilot_foot_slots=True), PROBE_FOOT + 'gate.pilot_foot_slots=nil', 'pilot foot slots refused: gate without pilot_foot_slots')):
+            with self.subTest(why):
+                errors = foot_client(1, prelude=prelude, **extra).errors()
+                self.assertTrue(any(why in line for line in errors), errors[-2:])
+
+    def test_the_chair_arms_after_the_foot_slots_on_every_client(self):
+        # The pilot chair of slots 2..N (lockstep_pilot_foot_slots.h pfslot_chair, stop reason 226): armed after the foot
+        # slots, whose seat lookup it uses, on every client; never without them.
+        clients = [foot_client(k, native_gate_pilot_foot_slots=True, native_gate_pilot_chair=True) for k in (1, 2)]
+        stock.run(clients, 12)
+        for c in clients:
+            self.assertEqual(c.errors(), [], c.values('logs')[-3:])
+            calls = c.values('calls')
+            self.assertLess(calls.index('foot_slots'), calls.index('chair'))
+            self.assertTrue(any(f'PILOT_CHAIR_ARMED slot={c.slot}' in line for line in c.values('logs')))
+        self.assertNotIn('chair', foot_client(1, native_gate_pilot_foot_slots=True).values('calls'))
+
+    def test_chair_refusals_name_themselves(self):
+        for extra, prelude, why in (
+                (dict(native_gate_pilot_chair='yes', native_gate_pilot_foot_slots=True), PROBE_FOOT,
+                 'pilot chair refused: native_gate_pilot_chair must be true'),
+                (dict(native_gate_pilot_chair=True), PROBE_FOOT, 'pilot chair refused: needs native_gate_pilot_foot_slots'),
+                (dict(native_gate_pilot_chair=True, native_gate_pilot_foot_slots=True), PROBE_FOOT + "CHAIR_REFUSAL='pins_chair:9a1830'",
+                 'pilot chair refused: pins_chair:9a1830'),
+                (dict(native_gate_pilot_chair=True, native_gate_pilot_foot_slots=True), PROBE_FOOT + 'gate.pilot_chair=nil',
+                 'pilot chair refused: gate without pilot_chair')):
             with self.subTest(why):
                 errors = foot_client(1, prelude=prelude, **extra).errors()
                 self.assertTrue(any(why in line for line in errors), errors[-2:])
@@ -426,6 +452,35 @@ class MirrorTests(unittest.TestCase):
         section = REGISTRY.split('lockstep_pilot_foot_slots.h (native_gate_pilot_foot_slots', 1)[1].split('190 ADAPT_STOP_PLAN', 1)[0]
         self.assertEqual(sorted(w for w in whys if w not in section), [])
         self.assertIn('with native_gate_pilot_foot_slots also of slot k on client k', REGISTRY)
+
+    def test_the_chair_is_posted_where_x4_posts_it(self):
+        # pfslot_chair at both sit-down branches (played) and at every seat in its scope after the take (the first one
+        # instant); a joiner's rebuild holds it; its own stop reason, registered, and its whys; a default.
+        sit = SLOTS_H.split('static int pfslot_sit_down(unsigned k) {', 1)[1].split('\n}', 1)[0]
+        self.assertEqual(sit.count('pfslot_chair(k,0)'), 2)
+        self.assertLess(sit.index('pvehk_control(k,1)'), sit.rindex('pfslot_chair(k,0)'))   # after the control events, as 716670
+        slots = (ENGINE/'lockstep_pilot_slots.h').read_text(encoding='utf-8')
+        seat = slots.split('static int pslot_seat_ship(unsigned k,unsigned char *ship) {', 1)[1].split('\n}', 1)[0]
+        # (a seat without a take, the board's, has no chair to post: lockstep_pilot_teleport.h)
+        self.assertLess(seat.index('((void(*)(void*))take)(ship)'), seat.index('if(ok && !untaken) pfslot_chair_seat(k);'))
+        self.assertLess(seat.index('if(ok && !untaken) pfslot_chair_seat(k);'), seat.index('int left=pslot_leave(k);'))
+        self.assertIn('const unsigned char instant=c->seats==0;', SLOTS_H)
+        join = (ENGINE/'lockstep_pilot_join.h').read_text(encoding='utf-8')
+        rebuild = join.split('static int pjoin_rebuild_slot(unsigned k) {', 1)[1].split('\n}', 1)[0]
+        self.assertRegex(rebuild, r'pchair_hold=1;[^\n]*\n\s*const int built=pslot_construct\(k\) && pslot_seat\(k\);\n\s*pslot_adopt=0;pchair_hold=0;')
+        self.assertIn('#define PCHAIR_STOP_REASON 226u', SLOTS_H)
+        self.assertRegex(REGISTRY, r'\n  226 PCHAIR_STOP_REASON +lockstep_pilot_foot_slots\.h \(native_gate_pilot_chair')
+        section = REGISTRY.split('226 PCHAIR_STOP_REASON', 1)[1].split('  free:', 1)[0]
+        whys = set(re.findall(r'pchair_fail\((?:fault==2\?)?"(chair_\w+)"(?::"(chair_\w+)")?\)', SLOTS_H))
+        names = {w for pair in whys for w in pair if w}
+        self.assertEqual(names, {'chair_scope', 'chair_time', 'chair_fault', 'chair_allocate'})
+        self.assertEqual(sorted(w for w in names if w not in section), [])
+        inputs = (ENGINE/'lockstep_pilot_inputs.h').read_text(encoding='utf-8')
+        self.assertIn('pchair_failed?226u:', inputs)
+        defaults = (ROOT/'tools/dev/native_gate_defaults.lua').read_text(encoding='utf-8')
+        self.assertIn("{'native_gate_pilot_chair',true,'native_gate_pilot_foot_slots',", defaults)
+        self.assertIn("[226]='pilot chair'", defaults)
+        self.assertLess(defaults.index("{'native_gate_pilot_foot_slots',"), defaults.index("{'native_gate_pilot_chair',"))
 
     def test_the_bodies_park_around_every_get_up(self):
         # Live footlook: bodies + slot 1's get-up ended both X4s; every body leaves the tree in the pass of any get-up.

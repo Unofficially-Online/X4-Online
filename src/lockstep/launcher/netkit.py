@@ -193,11 +193,17 @@ def session_of_overlay(overlay, snapshot):
 
 
 # ---- the host's session ----
+# The form of the sessions x4ls new-session makes, in the hosted session's folder name: 'n' since 24 Nov (every player
+# in the start's own ship at its place, no capture fixture: native_gate_session_start.py); a session made before is
+# not reused (its players 2..N flew fixture fighters beside a battle, slot 1 warped off its start).
+HOST_SESSION_FORM = 'n'
+
+
 def host_session_key(kit, players, mode, base_start, open_slots=()):
     dll = kit.gate_dll
     dll_part = sha256_file(dll)[:8] if dll else 'nogate'
     opened = f'-open{"_".join(map(str, sorted(open_slots)))}' if open_slots else ''
-    return f'host-{base_start}-{players}p{opened}-{mode}-{dll_part}'
+    return f'host-{base_start}-{players}p{opened}-{mode}-{dll_part}-{HOST_SESSION_FORM}'
 
 
 def cached_session(kit, players, mode=HOST_SESSION_MODE, base_start=HOST_SESSION_START, open_slots=()):
@@ -205,6 +211,8 @@ def cached_session(kit, players, mode=HOST_SESSION_MODE, base_start=HOST_SESSION
     DLL; None if none."""
     folder = kit.sessions / host_session_key(kit, players, mode, base_start, open_slots)
     if not all((folder / name).is_file() for name in (SESSION_JSON, SESSION_SAVE)) or not (folder / 'overlay' / RECIPE).is_file():
+        return None
+    if read_json(folder / SESSION_JSON).get('fixture_form') != 'none':
         return None
     files = session_of_overlay(folder / 'overlay', folder / SESSION_SAVE)
     dll = kit.gate_dll
@@ -216,7 +224,7 @@ def cached_session(kit, players, mode=HOST_SESSION_MODE, base_start=HOST_SESSION
 
 
 def new_session_command(kit, players, mode, base_start, out, steam_fix=False, open_slots=(), game=None, lanes=None):
-    """x4ls new-session for a hosted game: every slot starts with the session's own start; open slots (drop-in) start
+    """x4ls new-session for a hosted game: every slot starts in the session start's own ship; open slots (drop-in) start
     absent and are joined while the game runs. game and lanes: the lobby's own (its capture view goes beside its lane,
     not into the default lanes, where another session's capture may be)."""
     command = [sys.executable, str(session.ROOT / 'tools' / 'x4ls.py'), 'new-session', '--base-start', base_start,
@@ -230,6 +238,63 @@ def new_session_command(kit, players, mode, base_start, out, steam_fix=False, op
     if steam_fix:
         command.append('--steam-fix')
     return command
+
+
+def milestone_key(kit, milestone, keep_flight=False):
+    """The folder name of a session continued from a milestone save: the save's and this kit's gate DLL's hashes, and the
+    form of the copy (r: the ships at rest, a session made before that is not taken again; f: their flight kept)."""
+    dll = kit.gate_dll
+    return f"continue-{'f' if keep_flight else 'r'}-{sha256_file(milestone)[:16]}-{sha256_file(dll)[:8] if dll else 'nogate'}"
+
+
+def milestone_players(milestone, session=None):
+    """The players of the session a milestone save belongs to (its sidecar), for x4ls host --milestone's default."""
+    from . import milestone as continuing
+    try:
+        return int(continuing.read_sidecar(milestone, session)['session']['players'])
+    except SystemExit as error:
+        raise KitError(str(error)) from None
+    except (KeyError, TypeError, ValueError):
+        raise KitError(f'{milestone}: its sidecar names no players') from None
+
+
+def milestone_session(kit, milestone, players, open_slots=(), progress=None, log=print, prepare=None, session=None, overlay=None,
+                      keep_flight=False):
+    """x4ls host --milestone FILE: the session to host made from a milestone save (x4ls continue: every player as saved;
+    no X4 runs, the save is used as it is) and kept in the kit's sessions/ by the save's and the gate's hash, so a second
+    game from it needs nothing new. Joiners download its three files as any hosted session's and build their overlay from
+    its recipe, the continued session's own block included (session.json 'continue', checked on their PC)."""
+    from . import milestone as continuing
+    if kit.gate_dll is None:
+        raise KitError('this kit has no gate DLL (native/x4lan_gate_64.dll): it cannot make a session')
+    if open_slots:
+        raise KitError('a game continued from a milestone has no drop-in slots (its milestones are saved without them)')
+    wanted = milestone_players(milestone, session)
+    if players != wanted:
+        raise KitError(f'the milestone is a game of {wanted} players, not {players}')
+    key = milestone_key(kit, milestone, keep_flight)
+    final = kit.sessions / key
+    if (final / 'overlay' / RECIPE).is_file() and (final / SESSION_SAVE).is_file():
+        files = session_of_overlay(final / 'overlay', final / SESSION_SAVE)
+        if files.recipe.get('gate_dll_sha') == sha256_file(kit.gate_dll) and files.players == players:
+            return files
+        shutil.rmtree(final)
+    kit.sessions.mkdir(parents=True, exist_ok=True)
+    work = kit.sessions / f'{key}.new-{int(time.time())}'
+    if progress:
+        progress(0.2)
+    try:
+        (prepare or continuing.prepare)(continuing.ContinueOptions(milestone=Path(milestone), gate_dll=kit.gate_dll, out=work,
+                                                                   session=session, overlay=overlay, keep_flight=keep_flight), log=log)
+    except SystemExit as error:
+        shutil.rmtree(work, ignore_errors=True)
+        raise KitError(f'The game could not be continued from {Path(milestone).name}: {error}') from None
+    if final.exists():
+        shutil.rmtree(final)
+    work.rename(final)
+    if progress:
+        progress(1.0)
+    return session_of_overlay(final / 'overlay', final / SESSION_SAVE)
 
 
 def make_session(kit, players, mode=HOST_SESSION_MODE, base_start=HOST_SESSION_START, progress=None, log=print,

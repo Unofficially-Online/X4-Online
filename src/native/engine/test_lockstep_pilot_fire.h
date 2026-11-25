@@ -111,7 +111,14 @@ static void test_pilot_fire(void) {
     pilot_slots[0]=(pilot_slot){.saved=0x51,.object=ship1,.resolved=1,.driving=1};pilot_slots[1]=(pilot_slot){.saved=0x52,.object=ship2,.resolved=1,.driving=1};
     /* Arming. */
     pfire_pins_checked=0;assert(!pfire_arm(PFIRE_RECORD) && pfire_pins_checked==-1);
-    pfire_pins_checked=1;assert(!pfire_arm(PFIRE_OFF) && pfire_arm(PFIRE_RECORD) && pfire_arm(PFIRE_RECORD) && !pfire_arm(PFIRE_SCRIPT));
+    /* The arm installs the player-attack decision too (lockstep_pilot_attack.h): refused with it (fail closed). */
+    DWORD site_protection;assert(VirtualProtect(image+PATK_SITE,16,PAGE_EXECUTE_READWRITE,&site_protection));
+    memcpy(image+PATK_SITE,patk_site_original,10);
+    {int32_t rel=(int32_t)(PATK_POST-(PATK_POST_SITE+5));image[PATK_POST_SITE]=0xe8;memcpy(image+PATK_POST_SITE+1,&rel,4);}
+    {int32_t rel=(int32_t)(PATK_POST-(PATK_OWNER_SITE+5));image[PATK_OWNER_SITE]=0xe8;memcpy(image+PATK_OWNER_SITE+1,&rel,4);}
+    pfire_pins_checked=1;patk_pins_checked=-1;assert(!pfire_arm(PFIRE_RECORD) && !strcmp(pfire_stage,"attacks") && !pfire_armed);
+    patk_pins_checked=1;assert(!pfire_arm(PFIRE_OFF) && pfire_arm(PFIRE_RECORD) && pfire_arm(PFIRE_RECORD) && !pfire_arm(PFIRE_SCRIPT));
+    assert(patk_installed && image[PATK_SITE]==0xe9);
     /* Before the window nothing happens. */
     stats.issued=pilot_frame_tick=9;assert(pfire_before_release() && !test_pfire_starts && !pfire_slots[0].leased);
     stats.issued=8;assert(!pfire_before_release() && !strcmp(pfire_stage,"frame"));
@@ -199,6 +206,16 @@ static void test_pilot_fire(void) {
     assert(pfire_status(text,sizeof(text)) && strstr(text,"mode=record armed=1") && strstr(text," s1=1/1/0 s2=1/1/0"));
     assert(strstr(text,"replaced_by_sim=4 retaken=3 retake_waits=1 trigger_restored=1 guns_lost=1 let_go=1") &&
            strstr(text,"last_replaced=t21/s1/g0/large_target/sim"));
+    /* An empty lease's look (status e<k>=): the ship's groups, the active index, the active group's IDs; a ship without
+     * groups: zeros. Slot 3 and slot 8 are looked at alike. */
+    {   static _Alignas(16) unsigned char ship[PFIRE_ACTIVE+8],group[0x18];unsigned char *g[2]={group,group+0x18};const uint32_t active=0;
+        memset(ship,0,sizeof(ship));memset(group,0,sizeof(group));
+        pfire_look(3,ship);assert(!pfire_why[2].groups && !pfire_why[2].ids && !pfire_why[2].found);
+        memcpy(ship+PFIRE_GROUPS,g,16);memcpy(ship+PFIRE_ACTIVE,&active,4);
+        pfire_look(8,ship);assert(pfire_why[7].groups==1 && !pfire_why[7].active && !pfire_why[7].ids && !pfire_why[7].found);
+        {const uint32_t two=2;memcpy(ship+PFIRE_ACTIVE,&two,4);pfire_look(3,ship);assert(pfire_why[2].groups==1 && pfire_why[2].active==2 && !pfire_why[2].ids);}
+        pfire_look(0,ship);pfire_look(PILOT_SLOTS+1,ship);memset(pfire_why,0,sizeof(pfire_why));
+    }
     /* Script schedule: 30 of every 120 ticks per slot, offset by slot. */
     pfire_mode=PFIRE_SCRIPT;
     assert(pfire_wanted(&pilot_slots[0],1,10+113) && !pfire_wanted(&pilot_slots[0],1,10+30) && pfire_wanted(&pilot_slots[1],2,10+106) &&
@@ -264,6 +281,8 @@ static void test_pilot_fire(void) {
         pfire_missile_starts=pfire_missile_stops=pfire_missile_empty=pfire_missile_no_target=0;pstk_fire_tick[1]=0;pstk_fire2_on[1]=0;
     }
     /* Reset to default off. */
+    patk_restore();assert(!patk_installed && !memcmp(image+PATK_SITE,patk_site_original,10));
+    memset(image+PATK_SITE,0,10);memset(image+PATK_POST_SITE,0,5);memset(image+PATK_OWNER_SITE,0,5);patk_pins_checked=0;patk_restored=0;patk_stage="off";
     pfire_armed=0;pfire_mode=PFIRE_OFF;pfire_pins_checked=0;pfire_released=0;pfire_stage="off";memset(pfire_slots,0,sizeof(pfire_slots));
     pfire_frames=pfire_tick=pfire_triggered=pfire_lease_waits=pfire_installs=pfire_replaced_at_lease=pfire_cleared=pfire_receipt_tick=pfire_receipt=0;
     pfire_replaced_by_sim=pfire_retaken=pfire_retake_waits=pfire_trigger_restored=pfire_guns_lost=pfire_let_go=pfire_last_tick=0;

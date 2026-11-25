@@ -49,6 +49,7 @@ except ImportError:
 RE = Path(os.environ.get('X4_RE', ROOT.parent / 'x4-re'))
 MD_XSD = RE / 'gamescripts/resolved/base/libraries/md.xsd'
 X4RE_SHIPTRADER = RE / 'gamescripts/resolved/base/aiscripts/build.shiptrader.xml'   # read only, when present
+X4RE_PROTECT = RE / 'gamescripts/resolved/base/aiscripts/order.fight.protect.ship.xml'   # read only, when present
 X4RE_NOTIFICATIONS = RE / 'gamescripts/resolved/base/md/notifications.xml'   # read only, when present
 L = identity.lua_literal
 
@@ -539,8 +540,8 @@ class MdScriptTests(unittest.TestCase):
         self.assertIsNone(steps["$a.$step == 'reputation'"].find('.//add_licence'))   # a pool faction: no player licences
         # The two patches: one condition each on a stock cue, nothing else, and every overlay gets them under the stock names.
         import native_gate_defaults as defaults
-        self.assertEqual(sorted(defaults.MD_PATCHES), ['aiscripts/build.shiptrader.xml', 'md/guidance.xml', 'md/notifications.xml', 'md/playerreputation.xml',
-                                                       'md/setup.xml', 'md/tutorial_global.xml'])
+        self.assertEqual(sorted(defaults.MD_PATCHES), ['aiscripts/build.shiptrader.xml', 'aiscripts/order.fight.protect.ship.xml', 'md/guidance.xml',
+                                                       'md/notifications.xml', 'md/playerreputation.xml', 'md/setup.xml', 'md/tutorial_global.xml'])
         cues = {'md/playerreputation.xml': "/mdscript/cues/cue[@name='TrackPlayerReputation']/cues/cue[@name='Base']/conditions",
                 'md/notifications.xml': "/mdscript/cues/cue[@name='Init']/cues/cue[@name='PlayerDiscountCommission']/conditions"}
         # The third: the new-game hint's timeout on (four attribute values, one per show_help of the two hint cues), nothing else.
@@ -575,6 +576,13 @@ class MdScriptTests(unittest.TestCase):
         # ...and what every player controls, on every player's entity, for the wharf's refit start (the fifth)
         self.assertIn({'name': '$X4LAN_E.$X4LAN_Controlled', 'exact': '$X4LAN_L'}, [e.attrib for e in groups[0][0].iter('set_value')])
         self.assertIn({'name': '$X4LAN_L', 'exact': '$X4LAN_E.controlled'}, [e.attrib for e in groups[0][0].iter('append_to_list')])
+        # ...and who controls each of those objects, for a ship that protects a player's own ship (the seventh): a table
+        # from the controlled object to its player's entity, built in the same loop, on every player's entity
+        sets = [e.attrib for e in groups[0][0].iter('set_value')]
+        for attrib in ({'name': '$X4LAN_T', 'exact': 'table[]'}, {'name': '$X4LAN_T.{$X4LAN_E.controlled}', 'exact': '$X4LAN_E'},
+                       {'name': '$X4LAN_E.$X4LAN_Pilots', 'exact': '$X4LAN_T'}):
+            self.assertIn(attrib, sets)
+        self.assertIn({'name': '$X4LAN_T'}, [e.attrib for e in groups[0][0].iter('remove_value')])
         # The fifth: one AI script, the wharf's refit start of a queued upgrade: the stock condition with one more way in
         # (a ship any player controls), nothing else.
         refit = ET.fromstring((DEV / defaults.MD_PATCHES['aiscripts/build.shiptrader.xml']).read_text(encoding='utf-8'))
@@ -587,6 +595,42 @@ class MdScriptTests(unittest.TestCase):
             node = [e for e in ET.fromstring(stock).iter('do_elseif') if any(c.tag == 'set_value' and c.get('name') == '$buildaborted' for c in e)]
             self.assertEqual(len(node), 1)
             self.assertEqual(' '.join(refit[0].text.replace(clause, '', 1).split()), ' '.join(node[0].get('value').split()))
+        # The seventh: one more AI script, X4's ProtectShip order (the Terran cadet's wingmate protects its player's ship
+        # with it): where the stock script reads the protected ship's pilot it also takes the player who controls the
+        # ship ($X4LAN_Pilots), and that player's ship is also "the player's ship"; nothing else.
+        escort = ET.fromstring((DEV / defaults.MD_PATCHES['aiscripts/order.fight.protect.ship.xml']).read_text(encoding='utf-8'))
+        alt = '(@$target.pilot or @player.entity.$X4LAN_Pilots.{$target})'
+        self.assertEqual([(e.tag, e.get('sel'), e.get('pos')) for e in escort],
+                         [('replace', "//do_if[@value='@$target.pilot']/@value", None),
+                          ('replace', "//set_value[@name='$leaderpilot'][@exact='$target.pilot']/@exact", None),
+                          ('replace', "/aiscript/attention[@min='visible']//do_if[create_formation]/@value", None),
+                          ('replace', "/aiscript/attention[@min='unknown']//do_if[create_formation]/@value", None),
+                          ('replace', '//check_all[event_object_signalled]/check_value/@value', None),
+                          ('replace', '//check_all[event_object_enemy_found]/check_value[1]/@value', None),
+                          ('replace', '//check_all[event_object_attacked_object]/check_value/@value', None),
+                          ('add', '/aiscript/on_abort', 'prepend'),
+                          ('replace', "/aiscript/on_abort/do_if[@value='$target.pilot.$escortgroup?']/@value", None),
+                          ('replace', '/aiscript/on_abort/do_if/remove_from_group/@group', None)])
+        self.assertEqual(escort[0].text, alt[1:-1])
+        self.assertEqual(escort[1].text, 'if @$target.pilot then $target.pilot else player.entity.$X4LAN_Pilots.{$target}')
+        self.assertEqual(escort[6].text, '$target == player.occupiedship or @player.entity.$X4LAN_Pilots.{$target}')
+        self.assertEqual([(a.tag, a.attrib) for a in escort[7]],
+                         [('set_value', {'name': '$X4LAN_LeaderPilot', 'exact': 'if @$target.pilot then $target.pilot else @player.entity.$X4LAN_Pilots.{$target}'})])
+        self.assertEqual((escort[8].text, escort[9].text), ('$X4LAN_LeaderPilot.$escortgroup?', '$X4LAN_LeaderPilot.$escortgroup'))
+        for e in escort[2:6]:
+            self.assertEqual(e.text.count(alt), 1)
+        stock = X4RE_PROTECT.read_text(encoding='utf-8') if X4RE_PROTECT.is_file() else None
+        if stock is not None and etree is not None:   # the read-only x4-re copy: each new value is the stock one with the pilot widened
+            tree = etree.fromstring(stock.encode('utf-8'))
+            for e in escort[2:6]:
+                node, = tree.xpath(e.get('sel'))
+                stock_value = ' '.join(str(node).split())
+                if e.get('sel').endswith('check_value[1]/@value'):
+                    self.assertEqual(e.text, stock_value.replace('not $target.pilot', 'not ' + alt, 1))
+                else:
+                    self.assertEqual(e.text, stock_value.replace('$target.pilot', alt, 1))
+            node, = tree.xpath(escort[6].get('sel'))
+            self.assertEqual(str(node), '$target == player.occupiedship')
         # The sixth: X4's guidance notes whose it is where it starts or moves (the player 2..N whose own entity controls
         # what "the player" controls in that frame), measures arrival from that player, and leaves the shared autopilot
         # alone in a session.
@@ -604,7 +648,8 @@ class MdScriptTests(unittest.TestCase):
         self.assertEqual(text.count('<do_if value="not global.$X4LAN_Players?">'), 2)   # guidance_updated, guidance_ended
         self.assertNotIn('player.entity.hascontext', text)
         for name, source in defaults.MD_PATCHES.items():
-            if name in ('md/tutorial_global.xml', 'md/setup.xml', 'aiscripts/build.shiptrader.xml', 'md/guidance.xml'):
+            if name in ('md/tutorial_global.xml', 'md/setup.xml', 'aiscripts/build.shiptrader.xml', 'md/guidance.xml',
+                        'aiscripts/order.fight.protect.ship.xml'):
                 continue
             diff = ET.fromstring((DEV / source).read_text(encoding='utf-8'))
             self.assertEqual(diff.tag, 'diff')

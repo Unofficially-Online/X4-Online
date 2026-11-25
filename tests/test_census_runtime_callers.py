@@ -48,6 +48,20 @@ class FirstDifferenceTests(unittest.TestCase):
         self.assertEqual((tick, agreed), (10, None))
         self.assertEqual(rows, [(-3, ('play', 'moveworker', 'shared', 'c3'), 0, 3)])
 
+    def test_delta_tables_give_the_full_tables(self):
+        """native_gate_runtime_ids_caller_rows='delta': only the stacks whose count moved, then the tick's marker row."""
+        def marker(tick, rows, written):
+            return f'[X4LAN] NATIVE_GATE RUNTIME_IDS_CALLERS tick={tick} mode=delta rows={rows} written={written}\n'
+        full = table(row(300, 5), row(300, 2, frames='c3'), row(600, 7), row(600, 2, frames='c3'), row(900, 7), row(900, 2, frames='c3'),
+                     row(1200, 8), row(1200, 3, frames='c3'), row(1200, 1, frames='e5'))
+        delta = table(row(300, 5), row(300, 2, frames='c3'), marker(300, 2, 2), row(600, 7), marker(600, 2, 1), marker(900, 2, 0),
+                      row(1200, 8), row(1200, 3, frames='c3'), row(1200, 1, frames='e5'), marker(1200, 3, 3))
+        self.assertEqual(delta, full)
+        self.assertEqual(sorted(delta), [300, 600, 900, 1200])
+        # A delta client against a full one: the first difference is found as between two full ones.
+        other = table(row(300, 5), row(300, 2, frames='c3'), row(600, 7), row(600, 2, frames='c3'), row(900, 7), row(900, 3, frames='c3'))
+        self.assertEqual(module.first_difference(delta, other), (900, 600, [(-1, ('play', 'moveworker', 'shared', 'c3'), 2, 3)]))
+
     def test_load_rows_do_not_count_and_only_common_ticks_compare(self):
         left = table(row(1, 5, phase='load'), row(20, 5), row(30, 9))
         right = table(row(1, 6, phase='load'), row(20, 5))

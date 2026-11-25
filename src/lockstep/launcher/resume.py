@@ -137,11 +137,15 @@ def capture_overlay(session_start, scenarios, spec, out):
     return overlay
 
 
-def overlay_command(recipe, save, session_json, gate_dll, out, minutes=None, sets=(), save_every=None):
-    """build_play_overlay.py's arguments: the first session's recipe on the resumed save."""
+def overlay_command(recipe, save, session_json, gate_dll, out, minutes=None, sets=(), save_every=None, held=()):
+    """build_play_overlay.py's arguments: the first session's recipe on the resumed save. Its Lua guard's names, plus any
+    of `held` (this build's play defaults, build_play_overlay.PLAY_LUA_BLOCK) it lacks: a recipe from before LoadGame was
+    held would otherwise let a player load a save into a running session."""
+    names = [n for n in recipe['lua_block'].split(',') if n]
+    names += [n for n in held if n not in names]
     cmd = ['--snapshot', str(save), '--gate-dll', str(gate_dll), '--out', str(out), '--players', str(recipe['players']),
            '--mode', recipe['mode'], '--minutes', repr(recipe['minutes'] if minutes is None else minutes),
-           '--lua-block', recipe['lua_block'], '--session', str(session_json),
+           '--lua-block', ','.join(names), '--session', str(session_json),
            '--save-every', repr(recipe.get('save_every', 0) if save_every is None else save_every)]
     if recipe['full_logs']:
         cmd.append('--full-logs')
@@ -199,7 +203,8 @@ def resume(o, log=print):
         raise SystemExit(f'the prepared save is refused: {error}') from None
     (out / 'session.json').write_text(json.dumps(registered, indent=1, sort_keys=True) + '\n', encoding='utf-8')
     cmd = [sys.executable, str(ROOT / 'tools/build_play_overlay.py')] + \
-        overlay_command(recipe, prepared, out / 'session.json', o.gate_dll, out / 'overlay', o.minutes, o.sets, o.save_every)
+        overlay_command(recipe, prepared, out / 'session.json', o.gate_dll, out / 'overlay', o.minutes, o.sets, o.save_every,
+                        build_play_overlay.PLAY_LUA_BLOCK)
     result = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True)
     if result.returncode:
         sys.stdout.write(result.stdout[-3000:])

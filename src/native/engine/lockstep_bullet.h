@@ -13,6 +13,8 @@ static int player_bullet_observe(weapon_fn original,void *self);
 typedef struct {double now,next,last;unsigned valid;} bullet_cadence_sample;
 static void bullet_cadence_enter(const void *bullet,bullet_cadence_sample *c);
 static void bullet_cadence_leave(const void *bullet,const bullet_cadence_sample *c,unsigned other);
+/* Bullets drawn moving between the steps (lockstep_render_shots.h): the bullets that move in this step; inert unless armed. */
+static void rshot_note(void *bullet);
 typedef struct {void *object;uint64_t id,spawn,tick,calls;unsigned actor,slot;} bullet_identity;
 typedef struct {
     uint64_t tick,spawn,call,before,after,check_before,check_after;
@@ -91,6 +93,7 @@ static void bullet_move(void *self) {
     weapon_fn original=(weapon_fn)(image+BULLET_MOVE);
     if(InterlockedCompareExchange(&bullet_hold,0,0)) {InterlockedIncrement64(&bullet_held);return;}
     if(!stats.active || boot_phase!=3 || GetCurrentThreadId()!=ui_thread) {original(self);return;}
+    rshot_note(self);
     bullet_identity *s=bullet_find(self,0);uint64_t id;
     bullet_cadence_sample cadence;bullet_cadence_enter(self,&cadence);
     if(!s || !read_local((unsigned char*)self+8,&id,8) || s->id!=id) {

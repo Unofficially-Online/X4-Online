@@ -51,7 +51,7 @@ static int pjoin_m5_refuse(const char *why) {pjoin_resume_why=why;return 0;}
 static unsigned pjoin_ship_adopt;   /* bit i: slot i+1's ship on the session is not the one this client resolved */
 static unsigned pjoin_ships_adopted;
 static unsigned pjoin_m5_armed(void) {
-    return (pdeath_armed?1u:0u)|(pfire_armed?2u:0u)|(pfoot_armed?4u:0u)|(pfslot_armed?8u:0u)|(uirep_armed?16u:0u)|(hitn_armed?32u:0u);
+    return (pdeath_armed?1u:0u)|(pfire_armed?2u:0u)|(pfoot_armed?4u:0u)|(pfslot_armed?8u:0u)|(uirep_armed?16u:0u)|(hitn_armed?32u:0u)|(prat_on?128u:0u);
 }
 static void pjoin_m5_pack(pjoin_m5 *m) {
     memset(m,0,sizeof(*m));

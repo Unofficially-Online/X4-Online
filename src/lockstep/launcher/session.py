@@ -86,6 +86,9 @@ class Options:
     # join and its file service hands the join files out on the relay's port number (TCP).
     open_slots: tuple = ()
     relay_hook: object = None  # monitor_play hands it every relay log line (hotjoin.HostJoins.line)
+    # One X4 for one player (x4ls play --solo K): only client K starts; the relay stands in for every other slot from tick 0
+    # (relay --stand-in, the protocol 4 drop mask), so their players sit idle and neutral in every world (solo_check).
+    solo: int | None = None
 
 
 @dataclass
@@ -236,7 +239,50 @@ def relay_command(o, port, token, run):
         from . import hotjoin
         savers = [k for k in range(1, o.clients + 1) if k not in o.open_slots and k not in o.remote_slots]
         cmd += hotjoin.relay_join_args(sorted(o.open_slots), savers, given=o.relay_args, observe=o.play)
+    if o.solo is not None:
+        cmd += ['--stand-in', ','.join(map(str, solo_stand_ins(o)))]
     return cmd + list(o.relay_args)
+
+
+def solo_stand_ins(o):
+    """x4ls play --solo K: the slots the relay stands in for (every slot but K)."""
+    return [k for k in range(1, o.clients + 1) if k != o.solo]
+
+
+# A hot-join overlay's join keys: absent slots go neutral by the join path, which never takes slot 1 (solo_check).
+JOIN_SLOTS = re.compile(r'native_gate_join\s*=\s*\{[^\n]*\b(?:absent|rejoin)\s*=')
+
+
+def solo_check(o):
+    """x4ls play --solo K: SystemExit unless one client can play slot K of this overlay's session alone.
+
+    The relay stands in for every other slot from tick 0 with the protocol 4 drop mask (relay --stand-in): every client's
+    gate then notes those slots dropped at proposal tick 0, before the pilot window, so their players are seated and
+    neutral (no record, no view, no trigger; slot 1 is X4's own player, idle in its ship) and client K plays the session's
+    own overlay unchanged: the slot is per client, nothing in the overlay knows who else plays. Not possible:
+      - slot 1 as an absent (hot-join) slot: the builder, the probe and the gate's pilot_absent refuse it (an absent slot's
+        player is built at its handover; slot 1's is the save's). The drop path covers slot 1; it needs protocol 4;
+      - an overlay with open slots (--open): their absent mask is the join path's, the relay then is the JoinBarrier, which
+        drops no slot 1 either;
+      - remote slots: nobody else plays."""
+    k = o.solo
+    if not o.play:
+        raise SystemExit('--solo is for x4ls play')
+    if type(k) is not int or not 1 <= k <= o.clients:
+        raise SystemExit(f'--solo K needs a slot 1..{o.clients} (--clients, the session\'s players)')
+    if o.remote_slots or o.open_slots:
+        raise SystemExit('--solo plays one slot alone: no --remote-slots or --open')
+    if not o.lookahead:
+        raise SystemExit('--solo needs a protocol 4 overlay (native_gate_lookahead a number of ticks, the default 1): the relay '
+                         'stands in for the other slots with the drop mask of protocol 4 permits')
+    from . import hotjoin
+    recipe = hotjoin.recipe_tools().read_recipe(o.overlay)
+    if recipe is not None and recipe['players'] != o.clients:
+        raise SystemExit(f'the overlay was built for {recipe["players"]} players: --clients {recipe["players"]}')
+    config = Path(o.overlay) / 'ui/config.lua.append'   # a missing one: extension.verify_overlay refuses the overlay later
+    if (recipe is not None and recipe['open']) or JOIN_SLOTS.search(config.read_text() if config.is_file() else ''):
+        raise SystemExit('--solo needs an overlay without open (hot-join) slots: build the session without --open '
+                         '(x4ls new-session, tools/build_play_overlay.py)')
 
 
 IPV4 = re.compile(r'(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}')
@@ -488,6 +534,8 @@ def clean(state_dir, keep_views=False):
 def run(o: Options, log=print):
     if not 2 <= o.clients <= len(profile.PROFILES):
         raise SystemExit(f'clients must be 2..{len(profile.PROFILES)}')
+    if o.solo is not None:
+        solo_check(o)
     remote = sorted(set(o.remote_slots))
     if remote and (not o.port or not all(2 <= k <= o.clients for k in remote) or not o.allow_from or not o.snapshot
                    or not IPV4.fullmatch(o.bind) or o.bind == '127.0.0.1' or not all(IPV4.fullmatch(a) for a in o.allow_from)
@@ -528,7 +576,7 @@ def run(o: Options, log=print):
     lanes = Path(o.lanes) if o.lanes else Path(os.path.splitdrive(str(install))[0] + '\\x4ls-lanes')
     run_dir = o.runs / time.strftime('%Y%m%d-%H%M%S')
     run_dir.mkdir(parents=True)
-    local = [k for k in range(1, o.clients + 1) if k not in remote and k not in opened]
+    local = [o.solo] if o.solo is not None else [k for k in range(1, o.clients + 1) if k not in remote and k not in opened]
     port, token = o.port or free_udp_port(o.bind if opened else None), secrets.token_hex(16)
     state = {'run': str(run_dir), 'views': [], 'pids': [], 'relay_pid': None}
     save_state(o, state)
@@ -544,6 +592,9 @@ def run(o: Options, log=print):
                                  stderr=subprocess.STDOUT)
         state['relay_pid'] = relay.pid
         save_state(o, state)
+        if o.solo is not None:
+            log(f'solo: client {o.solo} alone; the relay stands in for slot(s) {",".join(map(str, solo_stand_ins(o)))} from tick 0 '
+                '(their players sit idle in their ships: no inputs, no desync check that means anything)')
         for k in remote:
             log(f'slot {k} plays on another PC; there, within {o.join_wait} s, with the same overlay and snapshot:\n  '
                 + join_command(o, o.public_host or o.bind, port, token, k, arm_at))
@@ -637,6 +688,8 @@ def run(o: Options, log=print):
             steam.restore(o.state / 'steam-fix.json')
     result.update(overlay=str(o.overlay), snapshot=str(o.snapshot) if o.snapshot else None, ticks=o.ticks,
                   run_dir=str(run_dir))  # for x4ls triage
+    if o.solo is not None:
+        result.update(solo=o.solo, stand_in=solo_stand_ins(o))
     saves = result.get('checkpoints') or {}
     for client, ticks in saves.items():
         for tick, outcome in (ticks or {}).items():
@@ -877,7 +930,7 @@ def monitor_play(o, run_dir, relay, clients, log):
     counts, seen, stopped, exited, over, armed = {}, set(), {}, {}, False, set()
     # Periodic saves (the overlay's native_gate_save_every): each client's saves go from its profile to RUN/saves.
     save_folders = {k: profile.profile_dir(profile_id) / 'save' for k, profile_id, _ in clients}
-    keeper = periodic.Collector(run_dir / 'saves', o.keep_saves, tick_hz or 30, log)
+    keeper = periodic.Collector(run_dir / 'saves', o.keep_saves, tick_hz or 30, log, context=periodic.overlay_context(o.overlay))
 
     def first_desync():
         try:
@@ -962,7 +1015,7 @@ def monitor_play(o, run_dir, relay, clients, log):
                         errors.write(f'{stamp} client{k} X4 exited with {proc.returncode}\n')
                         errors.flush()
                         log(f'client {k}: X4 exited ({proc.returncode})' + ('' if over else '; the others play on'))
-                if keeper.pending or (counts.get('desync') and keeper.frozen_before is None and keeper.kept):
+                if keeper.pending or keeper.milestone_pending or (counts.get('desync') and keeper.frozen_before is None and keeper.kept):
                     keeper.poll(first_desync())
                 if len(exited) == len(clients):
                     return result('every X4 window closed')

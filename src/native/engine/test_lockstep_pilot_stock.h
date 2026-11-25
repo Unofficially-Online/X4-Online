@@ -70,13 +70,13 @@ static void test_pstk_codec(void) {
     memset(&r,0,sizeof(r));r.flags=PSTK_FLAG_ACTIVE|PSTK_FLAG_CURSOR;r.capture16=0x0102;r.cursor[0]=0.5f;r.cursor[2]=-1.0f;r.count=3;
     r.events[0]=(pstk_event){PSTK_SPACE,8,1};r.events[1]=(pstk_event){PSTK_STATE,0x11,1};r.events[2]=(pstk_event){PSTK_RANGE,4,test_pstk_bits(0.75f)};
     unsigned n=pstk_encode(&r,b);
-    assert(n==PSTK_HEAD+3*PSTK_EVENT && b[0]==3 && b[1]==3 && b[2]==2 && b[3]==1 && b[42]==3 && b[43]==8 && b[44]==0xc0 && b[45]==1);
+    assert(n==PSTK_HEAD+3*PSTK_EVENT && b[0]==4 && b[1]==3 && b[2]==2 && b[3]==1 && b[42]==3 && b[43]==8 && b[44]==0xc0 && b[45]==1);
     assert(pstk_decode(b,n,&d) && d.count==3 && d.capture16==0x0102 && d.cursor[0]==0.5f && d.cursor[2]==-1.0f &&
            d.events[1].kind==PSTK_STATE && d.events[1].id==0x11 && d.events[1].value==1 && d.events[2].value==test_pstk_bits(0.75f));
     /* The wire test vector of tests/test_native_gate_inputs.py (STOCK). */
     memset(&r,0,sizeof(r));r.flags=PSTK_FLAG_ACTIVE;r.capture16=0x0102;r.count=1;r.events[0]=(pstk_event){PSTK_STATE,0x11,1};
     n=pstk_encode(&r,b);char hex[2*PSTK_BYTES_MAX+1];pilot_hex(b,n,hex);
-    assert(!strcmp(hex,"03010201" "000000000000000000000000" "000000000000000000000000" "00" "00000000000000000000000000" "01" "1140" "01000000"));
+    assert(!strcmp(hex,"04010201" "000000000000000000000000" "000000000000000000000000" "00" "00000000000000000000000000" "01" "1140" "01000000"));
     /* Refusals: version, flags, count/length, id, values, SPACE id, non-replay id, cursor and aim bits without their flag. */
     unsigned char c[PSTK_BYTES_MAX];
     memcpy(c,b,n);c[0]=2;assert(!pstk_decode(c,n,&d));
@@ -305,9 +305,12 @@ static void test_pilot_stock(void) {
         {   const int armed=paim_armed;const LONG64 samples=paim_samples;paim_armed=1;paim_manual_override=test_paim_manual;
             test_paim_manual_value=1;steer=0;paim_assist_override=-1;assert(paim_take(1,aim,&steer)==1 && steer==PAIM_STEER_MANUAL && aim[2]==3.0f);
             test_paim_manual_value=0;steer=0;assert(paim_take(1,aim,&steer)==1 && !steer && paim_samples==samples+2);
-            paim_assist_override=1;steer=0;assert(paim_take(1,aim,&steer)==1 && steer==PAIM_STEER_ASSIST);paim_assist_override=-1;
+            paim_assist_override=1;steer=0;assert(paim_take(1,aim,&steer)==1 && steer==PAIM_STEER_ASSIST);
+            /* manual aim with the aim assist wanted: both bits (X4's mode 1 assists with mouse steering too) */
+            test_paim_manual_value=1;steer=0;assert(paim_take(1,aim,&steer)==1 && steer==(PAIM_STEER_MANUAL|PAIM_STEER_ASSIST));
+            test_paim_manual_value=0;paim_assist_override=-1;
             pstk_focus_forced=-1;assert(paim_take(1,aim,&steer)==-1);pstk_focus_forced=1;
-            paim_armed=0;assert(paim_take(1,aim,&steer)==1 && !steer && paim_samples==samples+3 && !paim_take(2,aim,&steer));
+            paim_armed=0;assert(paim_take(1,aim,&steer)==1 && !steer && paim_samples==samples+4 && !paim_take(2,aim,&steer));
             paim_armed=armed;paim_manual_override=NULL;paim_assist_override=0;}
         memset(test_pnat_player+0x6c60,0,0x40);}
     assert(pstk_capture(8,again,&length2,&why) && length2==length && !memcmp(again,rec,length) && !pstk_build.count); /* idempotent per tick */

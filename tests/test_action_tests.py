@@ -340,6 +340,34 @@ class ChainTests(unittest.TestCase):
         self.assertEqual(lua.eval("MAP.contextMenuData.orders.o1"), -20)          # the station's sell offer: the ship buys
         self.assertEqual(lua.eval("MAP.contextMenuData.orders.o2"), 5)
 
+    def test_the_top_level_bar_and_back_ops_press_the_helpers_routes(self):
+        """interact: a click on the HUD's top level bar is Helper.scrollTopLevelInternal on the open menu with the entry's
+        index (when the bar offers it); Back is Helper.closeMenu 'back'; the dock menu's reading names its ship and whether
+        that is this client's slot's (own_slot 2)."""
+        lua, g = self.client()
+        lua.execute('''
+          pressed={}
+          TOP={name='TopLevelMenu',shown=true}
+          MAP={name='MapMenu',shown=true,param2={'DockedMenu',{0,0},{'restore'}},cleanup=function() pressed[#pressed+1]='map_cleanup' end}
+          DOCK={name='DockedMenu',shown=true,mode='cockpit',currentplayership=1002ULL}
+          tools.menu=function(name) return ({TopLevelMenu=TOP,MapMenu=MAP,DockedMenu=DOCK})[name] end
+          gate.pilot_ship=function(s) return 1000+s end
+          tools.env.Helper={topLevelMenus={{id='options',menu='OptionsMenu'},{id='docked',menu='DockedMenu',needsdock=true},{id='cockpit',menu='DockedMenu',needsdock=false}},
+            checkTopLevelConditions=function(entry) return not entry.needsdock end,
+            scrollTopLevelInternal=function(menu,index,offset,noreturn) pressed[#pressed+1]=menu.name..':'..index..':'..tostring(offset)..':'..tostring(noreturn) end,
+            closeMenu=function(menu,due) pressed[#pressed+1]='close:'..menu.name..':'..due end}
+          rows=run({{0,'toplevel_tab','cockpit'},{1,'toplevel_tab','cockpit','MapMenu',true},{2,'toplevel_tab','docked'},{3,'toplevel_tab','nothing'},
+            {4,'menu_look','DockedMenu'},{5,'menu_back','MapMenu'}},6)
+          TOP.shown=false;DOCK.currentplayership=1001ULL
+          more=run({{0,'toplevel_tab','cockpit'},{1,'menu_look','DockedMenu'}},2)''')
+        self.assertEqual(values(g.rows), ['0 toplevel_tab true pressed opens=DockedMenu', '1 toplevel_tab true pressed opens=DockedMenu',
+                                          '2 toplevel_tab true not_offered', '3 toplevel_tab true no_entry',
+                                          '4 menu_look true shown=true mode=cockpit context=nil ship=1002 own=true',
+                                          '5 menu_back true back to=DockedMenu'])
+        self.assertEqual(values(g.pressed), ['TopLevelMenu:3:nil:nil', 'MapMenu:3:nil:true', 'close:MapMenu:back', 'map_cleanup'])
+        self.assertEqual(values(g.more), ['0 toplevel_tab true not_shown', '1 menu_look true shown=true mode=cockpit context=nil ship=1001 own=false'])
+        self.assertTrue(lua.eval('X4LAN_UI_REPLAY_CORE.SCOPED.toplevel_tab and X4LAN_UI_REPLAY_CORE.SCOPED.menu_back'))
+
     def test_the_ship_ops_make_the_crew_and_order_calls_of_the_menus(self):
         lua, g = self.client()
         lua.execute('''
@@ -783,6 +811,41 @@ class ReportTests(unittest.TestCase):
         self.assertEqual(n, 0, text)
         self.assertIn('the fixture paid 50000 Cr at tick 45; then -395.60 Cr at tick 2100, -395.60 Cr at tick 2130, +373.80 Cr at tick 3300, +373.80 Cr at tick 3330', text)
         self.assertIn('the 4 trade calls ran on both clients at the same ticks', text)
+
+    def test_the_interact_report_reads_each_players_own_menu(self):
+        import contextlib
+        import io
+        own = 'shown=true mode=cockpit context=nil ship=%d own=true'
+        steps = {k: [('tab', 'pressed opens=DockedMenu'), ('open', own % (1000 + k)), ('assist_off', 'assist=false'),
+                     ('maptab', 'pressed opens=DockedMenu'), ('open2', own % (1000 + k)), ('back', 'back to=DockedMenu'),
+                     ('open3', own % (1000 + k)), ('assist_on', 'assist=true'), ('other', 'gave_up')] for k in (1, 2)}
+
+        def run(change=None):
+            with tempfile.TemporaryDirectory() as tmp:
+                paths = []
+                for k in (1, 2):
+                    lines = rows_of(change(k, steps[k]) if change else steps[k], k)
+                    lines += ['[X4LAN] NATIVE_GATE DIGEST_PARTS tick=%d hash=%d world=aa records=bb inputs=cc rid=dd' % (t, t) for t in (1, 2, 1799, 1800)]
+                    lines += ['[X4LAN] NATIVE_GATE UI_DOCKED_MENU kept=0 passed=0 person=1 via=tab'] if k == 2 else []
+                    lines += ['[X4LAN] NATIVE_GATE UI_REPLAY_SCRIPT tick=%d op=ship_look ok=true result=ship=%d at=1/2/3' % (t, s) for t in (340, 640) for s in (1, 2)]
+                    path = Path(tmp)/('c%d.log' % k)
+                    path.write_text('\n'.join(lines), encoding='utf-8')
+                    paths.append(path)
+                out = io.StringIO()
+                with contextlib.redirect_stdout(out):
+                    n = action_tests.report(action_tests.Interact, paths, None, SimpleNamespace())
+                return n, out.getvalue()
+        n, text = run()
+        self.assertEqual(n, 0, text)
+        self.assertIn('client 2: UI_DOCKED_MENU kept=0 passed=0 person=1 via=tab', text)
+        # the menu was slot 1's ship on client 2, or client 1 showed a dock menu while player 2 used its own
+        n, text = run(lambda k, s: [(a, b.replace('own=true', 'own=false') if a == 'open2' and k == 2 else b) for a, b in s])
+        self.assertEqual(n, 1, text)
+        self.assertIn("opened    FAIL player 2: Ship Interactions for its own ship from the map's tabs", text)
+        n, text = run(lambda k, s: s[:-1] + [('other', 'shown=true mode=cockpit context=nil ship=1002 own=false')] if k == 1 else s)
+        self.assertEqual(n, 1, text)
+        self.assertIn("own       FAIL player 1's client kept its dock menu closed while the other player used its own (shown=true", text)
+        self.assertIn("own       ok   player 2's client kept its dock menu closed while the other player used its own (watched 1200 ticks)", text)
 
     def test_what_went_wrong_is_named(self):
         def unsold(k, lines):

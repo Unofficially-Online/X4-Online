@@ -73,6 +73,10 @@ class LobbyOptions:
     state_mirror: Path | None = None   # the state is written here too (the Steam helper answers its pipe with it)
     base_start: str = ''       # a session a release kit makes for hosting: its start and mode (netkit's defaults)
     mode: str = ''
+    milestone: Path | None = None   # hosting: the game continues from this save (x4ls host --milestone)
+    milestone_session: Path | None = None   # ...a save without a sidecar: its session's session.json (host --session)
+    milestone_overlay: Path | None = None   # ...and a folder with its play recipe (host --overlay-recipe)
+    milestone_keep_flight: bool = False     # ...its ships flying as saved (host --keep-flight; default: at rest)
 
 
 def invite(address, port, token):

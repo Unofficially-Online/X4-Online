@@ -495,8 +495,55 @@ static void test_rd_others(void) {
     gate_tick_hz=saved_hz;rf_fps=saved_fps;render_rng_mode=saved_mode;stats.issued=saved_issued;stats.active=0;
     render_rng_calls=render_rng_steps=render_rng_unknown=render_rng_ids=0;render_rng_frame=UINT64_MAX;rf_slot10_r_us=rf_slot10_step_us=rf_slot10_r_calls=0;
 }
+/* The display clock (native_gate_render_clock) and the judder counters: the steady clock on synthetic presentation times
+ * (reset, a steady 2-frame cadence at 0.25/0.75, a late permit clamped and slewed back, a jump resets), the judder of both
+ * schemes, arming; through the render wrapper a step frame of 'steady' drawn at the clock's offset. */
+static void test_rd_clock(void) {
+    const int64_t step=1000000;
+    rdisp_clock_mode=RDISP_CLOCK_STEADY;rdisp_clock_valid=0;rdisp_clock_resets=0;
+    assert(rdisp_steady(0,5,0)==0.0);
+    double s=rdisp_steady(10*step,5,step);assert(s==RDISP_CLOCK_TARGET && rdisp_clock_resets==1);
+    /* A steady cadence: two frames a step, half a step apart; the clock settles at 0.25 and 0.75, the advance exactly 0.5. */
+    int64_t p=10*step;uint64_t n=5;
+    for(unsigned k=1;k<=400;k++) {p+=step/2;if(!(k&1)) ++n;s=rdisp_steady(p,n,step);}
+    assert(fabs(s-0.25)<0.01 && rdisp_clock_resets==1);
+    p+=step/2;s=rdisp_steady(p,n,step);assert(fabs(s-0.75)<0.01);
+    /* A late permit: a third frame with the same N clamps at 1; the next step comes late too and the clock slews back. */
+    p+=step/2;s=rdisp_steady(p,n,step);assert(s==1.0);
+    p+=step/2;++n;s=rdisp_steady(p,n,step);assert(s>0.5 && s<1.0 && rdisp_clock_resets==1);
+    /* N jumped (a stall, a join): reset at the target. */
+    p+=step/2;n+=10;s=rdisp_steady(p,n,step);assert(s==RDISP_CLOCK_TARGET && rdisp_clock_resets==2);
+    /* The judder: the drawn time's advance against the presentation's. */
+    const int64_t unit=1000;
+    rdisp_judder_valid=0;rdisp_judder_n=rdisp_judder_stalls=rdisp_judder_skips=0;rdisp_judder_sum2=rdisp_judder_max=0;
+    rdisp_judder_note(1000,7,0.0,unit);rdisp_judder_note(1500,7,0.5,unit);rdisp_judder_note(2000,8,0.0,unit);
+    assert(rdisp_judder_n==2 && rdisp_judder_sum2<1e-12 && !rdisp_judder_stalls && !rdisp_judder_skips);
+    rdisp_judder_note(2500,9,0.0,unit);   /* a whole step in half a step: 0.5 too far */
+    rdisp_judder_note(3000,9,0.0,unit);   /* none in half a step: 0.5 short */
+    assert(rdisp_judder_n==4 && rdisp_judder_skips==1 && rdisp_judder_stalls==1 && fabs(rdisp_judder_max-0.5)<1e-12);
+    rdisp_judder_note(2900,9,0.5,unit);assert(rdisp_judder_n==4);   /* not after the previous presentation: not counted */
+    rdisp_judder_note(4000,20,0.0,unit);assert(rdisp_judder_n==4); /* N jumped */
+    /* Arming: 'gap' or 'steady' before the start, the same after. */
+    assert(rdisp_clock_of("gap",3)==RDISP_CLOCK_GAP && rdisp_clock_of("steady",6)==RDISP_CLOCK_STEADY && rdisp_clock_of("smooth",6)<0 && rdisp_clock_of(NULL,0)<0);
+    assert(rdisp_clock_arm(RDISP_CLOCK_GAP,0) && rdisp_clock_mode==RDISP_CLOCK_GAP && !rdisp_clock_arm(-1,0));
+    assert(rdisp_clock_arm(RDISP_CLOCK_STEADY,0) && rdisp_clock_arm(RDISP_CLOCK_STEADY,1) && !rdisp_clock_arm(RDISP_CLOCK_GAP,1));
+    /* Through the render wrapper: in 'steady' a step frame is drawn at the clock's offset too (a reset puts it at 0.5). */
+    unsigned saved_hz=gate_tick_hz,saved_fps=rf_fps;int saved_mode=render_rng_mode;uint64_t saved_issued=stats.issued;
+    gate_tick_hz=30;rf_fps=60;stats.active=1;render_rng_mode=RENDER_RNG_SPLIT;rf_ready_flag=1;rdisp_is_a_override=test_rd_is_a;
+    test_rd_engine();test_rd_reset(RDISP_OFF,RDISP_EXTRAPOLATE);
+    test_rd_step(70,1);rdisp_clock_valid=0;test_rd_step(71,2);
+    rdisp_xf o,sh,c;test_rd_poses(2.5,&c,&sh,&o);
+    assert(rdisp_step_frames==1 && fabs(rdisp_s_last-0.5)<1e-9 && test_rd_near(test_rd_seen_pose[TRD_OTHER],&o,1e-5) && test_rd_engine_blocks());
+    char text[2048];assert(rdisp_status(text,sizeof(text)) && strstr(text," clock=steady clock_resets=") && strstr(text," judder_x1000=") && strlen(text)<1990);
+    rdisp_clock_mode=RDISP_CLOCK_GAP;rdisp_clock_valid=0;rdisp_judder_valid=0;
+    rdisp_armed=0;rdisp_active=0;rdisp_camera_mode=rdisp_motion_mode=RDISP_OFF;rdisp_stage="off";rdisp_is_a_override=NULL;
+    rdisp_cam_reset();rdisp_items_reset();rf_ready_flag=0;rf_gap_first=rf_interval=rf_estimate=rf_frame_start=0;
+    *(unsigned char**)(image+RDISP_UNIVERSE)=NULL;*(uint32_t*)(image+RDISP_VIEW_INDEX)=0;
+    gate_tick_hz=saved_hz;rf_fps=saved_fps;render_rng_mode=saved_mode;stats.issued=saved_issued;stats.active=0;
+    render_rng_calls=render_rng_steps=render_rng_unknown=render_rng_ids=0;render_rng_frame=UINT64_MAX;rf_slot10_r_us=rf_slot10_step_us=rf_slot10_r_calls=0;
+}
 static void test_render_display(void) {
-    test_rd_math();test_rd_offset();test_rd_arm();test_rd_boot_point();test_rd_flow();test_rd_follow();test_rd_others();
+    test_rd_math();test_rd_offset();test_rd_arm();test_rd_boot_point();test_rd_flow();test_rd_follow();test_rd_others();test_rd_clock();
     puts("render display: pose arithmetic, display offset, arming (through the Lua binding before the start, image NULL: no engine "
          "read; pins on the first tick), the boot point (no camera, empty bank), extrapolate and interpolate on fake engine memory "
          "through the render wrapper (objects swapped and restored, the camera bank following camera and own ship, predictor swap and "

@@ -23,8 +23,20 @@
  * left untouched. A ship without a portable key (cam-L1: 63 of 36188 draws,
  * equal on both clients) draws from (tick, its class vtable) instead, the
  * same for every such ship of that class in that tick (counted fallback=); a
- * ship whose vtable is not in the image, or a loading frame, draws natively
- * (counted). Pins: the listener in two blocks around its refresh
+ * ship whose vtable is not in the image, or a frame before the session's
+ * snapshot load, draws natively (counted).
+ * The load itself (boot phase 2) is keyed too (rk10, 25 Nov, a continue of the
+ * periodic save c3-t18300): a save holds each ship's next refresh as a due event,
+ * and one due at the save's own game time (wingman 0x33617, 1225.932) is
+ * delivered in X4's boot event passes, before the first admitted frame, where
+ * the draw took the thread's word: the next refresh came at tick 249 on client 1
+ * and 286 on client 2, every later one apart as well, and the wingman's flight
+ * model took its leader's travel flag a refresh apart (the census's lone motion
+ * difference at 3600, healed or not later). Those passes run at the frozen load
+ * time with the saved identities already imported, the same on every client, so
+ * the draw is seeded from (tick 0, the ship's key) in a stream of its own
+ * (ERNG_LOAD_STREAM; the class fallback likewise), counted load=.
+ * Pins: the listener in two blocks around its refresh
  * call 0xea1d9a (the motion watch may route that one) with our displacement
  * read as the original, and Random::FloatRange 0x14ddc90. Written by CAS at
  * arm (before the first admitted frame), re-checked every gate tick (stop
@@ -42,25 +54,35 @@ typedef float (*erng_draw_fn)(uint64_t *,float);
 #endif
 static int erng_installed,erng_restored,erng_done;
 static unsigned char *erng_page;
-static uint64_t erng_keyed,erng_native,erng_unmapped,erng_fallback;
+static uint64_t erng_keyed,erng_native,erng_unmapped,erng_fallback,erng_load;
 static volatile LONG64 erng_failures;
 static const char *erng_stage="idle";
+#define ERNG_LOAD_STREAM 2u   /* the snapshot load's draws: (0, key, 2, 0, class); the fallback (0, 0, vtable, 3, none) */
+/* The frame a keyed draw belongs to (both platforms): an admitted frame, *tick its tick and *stream 0, or the session
+ * snapshot's load (boot phase 2: X4's boot event passes at the frozen load time), *tick 0 and *stream ERNG_LOAD_STREAM
+ * (counted load=); 0 for any other frame (the thread's word). */
+static int erng_frame(uint64_t *tick,uint64_t *stream) {
+    if(stats.active && boot_phase==3) {*tick=stats.issued;*stream=0;return 1;}
+    if(stats.active && boot_mode && boot_phase==2) {*tick=0;*stream=ERNG_LOAD_STREAM;++erng_load;return 1;}
+    return 0;
+}
 #ifndef ERNG_OWN_PLATFORM
 static int32_t erng_rel(const void *target) {return (int32_t)((intptr_t)target-(intptr_t)(image+ERNG_SITE+5));}
 /* The keyed draw (testable with any draw function). */
 static float erng_run(erng_draw_fn draw,uint64_t *word,float range,const void *ship) {
-    if(!(stats.active && boot_phase==3)) {++erng_native;return draw(word,range);}
+    uint64_t tick=0,stream=0;
+    if(!erng_frame(&tick,&stream)) {++erng_native;return draw(word,range);}
     uint64_t runtime=0,key=0;unsigned klass=WORLD_KEY_NONE;
     if(ship && read_local((const unsigned char*)ship+8,&runtime,8) && runtime) key=world_identity_key(runtime,&klass);
     if(!key) {
         void *vt=NULL;uintptr_t base=(uintptr_t)image;
         if(ship && read_local(ship,&vt,8) && (uintptr_t)vt>=base && (uintptr_t)vt<base+0x6fa9000) {
-            uint64_t state=lockstep_seed(ERNG_DOMAIN,stats.issued,0,(uint64_t)((uintptr_t)vt-base),1,WORLD_KEY_NONE);++erng_fallback;
+            uint64_t state=lockstep_seed(ERNG_DOMAIN,tick,0,(uint64_t)((uintptr_t)vt-base),1+stream,WORLD_KEY_NONE);++erng_fallback;
             return draw(&state,range);
         }
         ++erng_unmapped;return draw(word,range);
     }
-    uint64_t state=lockstep_seed(ERNG_DOMAIN,stats.issued,key,0,0,klass);++erng_keyed;
+    uint64_t state=lockstep_seed(ERNG_DOMAIN,tick,key,stream,0,klass);++erng_keyed;
     return draw(&state,range);
 }
 static float erng_draw(uint64_t *word,float range,void *ship) {
@@ -118,7 +140,7 @@ static int erng_arm(void) {
     erng_write_trampoline(erng_page);
     if(!VirtualProtect(erng_page,0x1000,PAGE_EXECUTE_READ,&ignored)) {erng_stage="page";return 0;}
     FlushInstructionCache(GetCurrentProcess(),erng_page,0x1000);
-    erng_keyed=erng_native=erng_unmapped=erng_fallback=0;erng_failures=0;erng_restored=0;
+    erng_keyed=erng_native=erng_unmapped=erng_fallback=erng_load=0;erng_failures=0;erng_restored=0;
     if(!erng_cas(erng_rel(image+ERNG_DRAW),erng_rel(erng_page))) {erng_stage="cas";return 0;}
     erng_done=1;erng_installed=1;erng_stage="armed";return 1;
 }
@@ -137,8 +159,9 @@ static void erng_restore(void) {
 }
 #endif
 static int erng_status(char *out,size_t capacity) {
-    int n=snprintf(out,capacity,"installed=%d frame=%llu keyed=%llu native=%llu unmapped=%llu fallback=%llu restored=%d stage=%s failures=%lld",
+    int n=snprintf(out,capacity,"installed=%d frame=%llu keyed=%llu native=%llu unmapped=%llu fallback=%llu restored=%d stage=%s failures=%lld load=%llu",
         erng_installed,(unsigned long long)stats.issued,(unsigned long long)erng_keyed,(unsigned long long)erng_native,
-        (unsigned long long)erng_unmapped,(unsigned long long)erng_fallback,erng_restored,erng_stage,(long long)erng_failures);
+        (unsigned long long)erng_unmapped,(unsigned long long)erng_fallback,erng_restored,erng_stage,(long long)erng_failures,
+        (unsigned long long)erng_load);
     return n>0 && (size_t)n<capacity?n:0;
 }

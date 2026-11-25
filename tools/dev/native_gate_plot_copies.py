@@ -23,6 +23,23 @@ The copy is Egosoft's text, so it is never in git, in an overlay or in a kit: ov
 (md-copies.json: which file, which slot, and the SHA-256 of each source file and of the result), and every PC's launcher
 makes the file from its own installed game (src/lockstep/launcher/gamedata.py's cache) when it composes a client, refusing
 sources or a result that are not the session's.
+
+A start's own story is copied the same way (plot id 'story'; the catalog names its file, native_gate_gamestarts.py
+Catalog.story): a slot whose start is another slot's or the session base start's plays that start's story as its own
+copy, e.g. GS_Terran1_P2, since the stock script is already the other player's (the base start's runs for slot 1 by
+X4's module rule). Its root cue loses the module attribute (the session may have another base start) and its other
+root cues that are tied to a start by module are left out (game-wide fixes of that start: in GS_Terran1 a relation
+patch of old saves at every load, which the stock script runs once for the game when the base start is that start).
+A copy never runs the gamestart's setup cues of md.Setup_Gamestarts (they are the game's, run once for the base start;
+their world parts are the start's 'world_omitted'): it begins at its own signal instead.
+
+Plots that continue a start's story (PLOTS[...]['follows']; follow_on) are copied for the slot that plays that start's
+story, as one set with it (story_entries): each copy of the set names the slot's own scripts of the set where the stock
+text names the stock ones ('links': the Terran cadet story GS_Terran1 reads the actors and the wingmate library of
+Story_Yaki, and Story_Yaki waits for GS_Terran1's last step), and answers 'player.module' as the slot's start
+('module'), the way 'faction.player' becomes the slot's faction: the stock Story_Yaki offers its first mission only
+when the game's start is the Terran cadet start and the player is in a Terran sector, and the game's start is the
+session base start, player 1's.
 """
 import hashlib
 import json
@@ -57,7 +74,23 @@ PLOTS = {
                  'first': {'instantly': ('Debug_Create_HQ_With_Boso',), 'signal': ('Debug_Unlock_Research',),
                            'cancel': ('Phase_SignalLeak',)},
                  'debug': ('Debug_Create_HQ', 'Debug_Unlock_Research', 'SHORTCUT_Claiming_The_HQ')},
+    # The Terran story after the Terran cadet start's story (ego_dlc_terran): the stock script begins with every game in
+    # the main galaxy and is activated by the cadet story's last step (for the cadet) or by Terran relations (for
+    # anyone else); the cadet story reads its actors and its wingmate library. A slot that plays the cadet story gets it
+    # as its own copy by default (x4ls new-session --story K; --omit K=yaki leaves it out).
+    'yaki': {'extension': 'ego_dlc_terran', 'file': 'story_yaki.xml', 'script': 'Story_Yaki', 'cue': 'Start',
+             'what': "the Terran story after the Terran cadet start's (Mission Command, the Yaki, the wingmate)",
+             'follows': 'x4ep1_gamestart_terran1',
+             # the stock script's own step that activates the story (what the cadet story's end signals there), for a
+             # diagnosis without playing the cadet story through: its offer comes at the player's next Terran sector;
+             # then its own wingmate setup (the wingmate made or brought to the player's ship, protecting it), for the
+             # wingmate's tests (native_gate_player_escort.xml; script ops escort_look, escort_target, escort_colour)
+             'debug': ('Activate_Story', 'DEBUG_Setup_Wingmate')},
 }
+STORY = 'story'   # the plot id of a start's own story played as a slot's copy (the catalog's start script)
+STORY_FILE = re.compile(r'gs_[a-z0-9_]+\.xml')
+START = re.compile(r'[a-z][a-z0-9_]*')   # a gamestart id
+MODULE = re.compile(r'(?<![A-Za-z0-9_$.])player\.module(?![A-Za-z0-9_])')
 HEADER = ("<!-- Made on this PC by tools/dev/native_gate_plot_copies.py from the installed game's own files for one session: "
           "never in git, an overlay or a kit. -->\n")
 
@@ -113,14 +146,36 @@ def stock_tree(root, plot):
 FACTION = re.compile(r'x4lan_player[0-9]+')
 
 
-def copy_text(tree, script, cue, slot, faction=None, sets=None):
+def outside_strings(value, change):
+    """value with change() applied to its parts outside MD's single-quoted string literals (a name inside a debug text
+    stays text)."""
+    parts = value.split("'")
+    return "'".join(change(part) if i % 2 == 0 else part for i, part in enumerate(parts))
+
+
+def check_links(links, script, slot):
+    """An entry's links: {stock script: the slot's copy of it}, other scripts of the slot's copy set only."""
+    if links is None:
+        return {}
+    if not (isinstance(links, dict) and all(isinstance(k, str) and NAME.fullmatch(k) and k != script and
+                                            v == copy_name(k, slot) for k, v in links.items())):
+        raise PlotError(f'{script}: links {links!r} name no copies of slot {slot}')
+    return dict(sorted(links.items()))
+
+
+def copy_text(tree, script, cue, slot, faction=None, sets=None, module=None, links=None):
     """The copy of a stock script (its patched tree; changed in place) for one slot, as text; refuses another shape.
     faction: the slot's own faction (factions mode), written where the stock script names the player faction.
-    sets: {variable: value} the copy's root cue sets instead of what the stock root cue sets them to (a plot's 'set')."""
+    sets: {variable: value} the copy's root cue sets instead of what the stock root cue sets them to (a plot's 'set').
+    module: the slot's start: the copy's 'player.module' is that start's id (a test of the game's start answered as the
+    slot's). links: {stock script: the slot's copy}: the other scripts of the slot's copy set, named so in the copy."""
     if faction is not None and not FACTION.fullmatch(faction):
         raise PlotError(f'copy for faction {faction!r}')
     if not (NAME.fullmatch(script or '') and NAME.fullmatch(cue or '') and type(slot) is int and 2 <= slot <= 8):
         raise PlotError(f'copy of {script!r}.{cue!r} for slot {slot!r}')
+    if module is not None and not (isinstance(module, str) and START.fullmatch(module)):
+        raise PlotError(f'copy answering player.module as {module!r}')
+    links = check_links(links, script, slot)
     cues = tree.find('cues')
     if tree.tag != 'mdscript' or tree.get('name') != script or cues is None:
         raise PlotError(f'not the MD script {script}')
@@ -132,11 +187,17 @@ def copy_text(tree, script, cue, slot, faction=None, sets=None):
     player_faction = re.compile(r'(?<![A-Za-z0-9_$.])faction\.player(?![A-Za-z0-9_])')
     headquarters = re.compile(r'(?<![A-Za-z0-9_$.])player\.headquarters(?![A-Za-z0-9_])')
 
+    linked = [(re.compile(r'\bmd\.' + re.escape(stock) + r'(?![A-Za-z0-9_])'), 'md.' + mine) for stock, mine in links.items()]
+
     def rewrite(value):
         value = own.sub('md.' + new, value)
+        for pattern, name in linked:
+            value = pattern.sub(name, value)
         if faction:
             value = player_faction.sub('faction.' + faction, value)
             value = headquarters.sub(f'faction.{faction}.headquarters', value)
+        if module:
+            value = outside_strings(value, lambda part: MODULE.sub(f"'{module}'", part))
         return value
     for element in tree.iter():
         for key, value in list(element.attrib.items()):
@@ -157,6 +218,13 @@ def copy_text(tree, script, cue, slot, faction=None, sets=None):
     for child in list(conditions):
         conditions.remove(child)
     ET.SubElement(conditions, 'event_cue_signalled')
+    # A start's script runs only in a game of that start (module=): the copy runs in a session of any base start, begun
+    # by its signal. The script's other root cues tied to a start are that start's game-wide work (GS_Terran1: a relation
+    # fix of old saves at every load), the stock script's when the base start is that start: the copy has none.
+    roots[0].attrib.pop('module', None)
+    for other in cues.findall('cue'):
+        if other is not roots[0] and 'module' in other.attrib:
+            cues.remove(other)
     # The script's other root cues (its patches at a game load, its listeners) take for granted that the root cue has run,
     # as it has in the stock script from the game's first frame: here they wait until the copy has begun (hq1, 16 Nov: the
     # copy's Patch_Userdata ran at the load, before its begin, and read a table the root cue had not made yet).
@@ -170,18 +238,69 @@ def copy_text(tree, script, cue, slot, faction=None, sets=None):
     return '<?xml version="1.0" encoding="utf-8"?>\n' + HEADER + ET.tostring(tree, encoding='unicode') + '\n'
 
 
-def entry(plot_id, slot, root, faction=None):
-    """The recipe entry of plot `plot_id` for `slot`, made from this PC's unpacked game data (root: gamedata's cache).
-    faction: the slot's own faction in factions mode."""
-    plot = PLOTS.get(plot_id)
-    if plot is None:
-        raise PlotError(f'unknown plot {plot_id!r} (known: {", ".join(sorted(PLOTS))})')
+def plot_of(e):
+    """The stock script an entry copies (extension, file, script, cue, and its plot's other fields), or None: a plot of
+    PLOTS, or a start's own story (id 'story'), whose start script the entry names (a gs_*.xml of a stock extension)."""
+    if not isinstance(e, dict):
+        return None
+    if e.get('id') != STORY:
+        return PLOTS.get(e.get('id'))
+    ok = ((e.get('extension') == 'base' or e.get('extension') in STOCK_EXTENSIONS) and isinstance(e.get('file'), str) and
+          STORY_FILE.fullmatch(e['file']) and isinstance(e.get('script'), str) and NAME.fullmatch(e['script']) and
+          isinstance(e.get('cue'), str) and NAME.fullmatch(e['cue']))
+    return {k: e[k] for k in ('extension', 'file', 'script', 'cue')} if ok else None
+
+
+def _entry(plot_id, plot, slot, root, faction=None, module=None, links=None):
     tree, sources = stock_tree(root, plot)
     out = {'id': plot_id, 'slot': int(slot), 'extension': plot['extension'], 'file': plot['file'], 'script': plot['script'],
            'cue': plot['cue'], 'copy': copy_name(plot['script'], slot), 'target': target(plot_id, slot), 'sources': sources,
            'faction': faction}
-    out['sha256'] = sha256_text(copy_text(tree, out['script'], out['cue'], out['slot'], faction, plot.get('set')))
+    if module is not None:   # entries without these fields (made before 24 Nov) are copied as they were
+        out['module'] = module
+    if links:
+        out['links'] = check_links(links, plot['script'], int(slot))
+    out['sha256'] = sha256_text(copy_text(tree, out['script'], out['cue'], out['slot'], faction, plot.get('set'), module, links))
     return out
+
+
+def entry(plot_id, slot, root, faction=None, module=None, links=None):
+    """The recipe entry of plot `plot_id` for `slot`, made from this PC's unpacked game data (root: gamedata's cache).
+    faction: the slot's own faction in factions mode; module and links: see copy_text."""
+    plot = PLOTS.get(plot_id)
+    if plot is None:
+        raise PlotError(f'unknown plot {plot_id!r} (known: {", ".join(sorted(PLOTS))})')
+    if plot.get('follows') and module != plot['follows']:
+        raise PlotError(f"plot {plot_id} continues the story of {plot['follows']}: it is copied with that story (story_entries)")
+    return _entry(plot_id, plot, slot, root, faction, module, links)
+
+
+def follow_on(start):
+    """The plots that continue the story of `start` (PLOTS[...]['follows']), in id order."""
+    return sorted(pid for pid, plot in PLOTS.items() if plot.get('follows') == start)
+
+
+def story_entries(story, start, slot, root, faction=None, follow=()):
+    """The entries of a slot that plays the story of `start` (story: the catalog's start script) as its own copy, and the
+    plots of `follow` that continue it (follow_on), as one set: every copy names the slot's own scripts of the set
+    where the stock text names the stock ones (Story_Yaki_P2 waits for GS_Terran1_P2's last step, GS_Terran1_P2 reads
+    Story_Yaki_P2's actors), and answers player.module as `start`. The story first, then the plots in the given order
+    (the order the story MD begins them in, within one frame)."""
+    plot = plot_of(dict(story or {}, id=STORY))
+    if plot is None or not START.fullmatch(start or ''):
+        raise PlotError(f'not a start script of {start!r}: {story!r}')
+    unknown = [pid for pid in follow if pid not in follow_on(start)]
+    if unknown:
+        raise PlotError(f'{", ".join(unknown)}: no plot that continues the story of {start}')
+    names = {plot['script']: copy_name(plot['script'], slot)}
+    names.update({PLOTS[pid]['script']: copy_name(PLOTS[pid]['script'], slot) for pid in follow})
+    if len(names) != 1 + len(follow):
+        raise PlotError(f'slot {slot}: two copies of one script')
+
+    def links(script):
+        return {s: n for s, n in names.items() if s != script}
+    return ([_entry(STORY, plot, slot, root, faction, start, links(plot['script']))] +
+            [_entry(pid, PLOTS[pid], slot, root, faction, start, links(PLOTS[pid]['script'])) for pid in follow])
 
 
 FIRST_STEPS = ('instantly', 'signal', 'cancel')
@@ -216,14 +335,22 @@ def first_plots(data):
 
 
 def check_entry(e):
-    plot = PLOTS.get(e.get('id')) if isinstance(e, dict) else None
+    plot = plot_of(e)
     ok = (plot is not None and type(e.get('slot')) is int and 2 <= e['slot'] <= 8 and
           all(e.get(k) == plot[k] for k in ('extension', 'file', 'script', 'cue')) and
           e.get('copy') == copy_name(plot['script'], e['slot']) and e.get('target') == target(e['id'], e['slot']) and
           e.get('faction') in (None, f"x4lan_player{e['slot']}") and
+          (e.get('module') is None or (isinstance(e['module'], str) and START.fullmatch(e['module']))) and
+          (not plot.get('follows') or e.get('module') == plot['follows']) and
+          (e['id'] != STORY or e.get('module') is not None) and
           re.fullmatch(r'[0-9a-f]{64}', e.get('sha256') or '') and isinstance(e.get('sources'), list) and e['sources'] and
           all(isinstance(x, list) and len(x) == 2 and isinstance(x[0], str) and (x[0] == 'base' or x[0] in STOCK_EXTENSIONS) and
               re.fullmatch(r'[0-9a-f]{64}', x[1] or '') for x in e['sources']))
+    if ok:
+        try:
+            check_links(e.get('links'), plot['script'], e['slot'])
+        except PlotError:
+            ok = False
     if not ok:
         raise PlotError(f'not a plot copy entry: {e!r}')
     return e
@@ -236,6 +363,12 @@ def slot_plots(slots):
         entries = [check_entry(e) for e in (slot.get('plots') or [])]
         if any(e['slot'] != int(k) for e in entries) or len({e['script'] for e in entries}) != len(entries):
             raise PlotError(f'slot {k}: its plot copies name another slot or one script twice')
+        stories = [e for e in entries if e['id'] == STORY]
+        if len(stories) > 1 or (stories and slot.get('story')):
+            raise PlotError(f"slot {k}: its start's story both as the stock script and as a copy, or two of them")
+        mine = {e['script'] for e in entries}
+        if any(set(e.get('links') or {}) - mine for e in entries):
+            raise PlotError(f'slot {k}: a copy links a script the slot has no copy of')
         if entries:
             found[int(k)] = entries
     return found
@@ -264,11 +397,12 @@ def generate(entries, root):
     files = {}
     for e in entries:
         check_entry(e)
-        tree, sources = stock_tree(root, PLOTS[e['id']])
+        plot = plot_of(e)
+        tree, sources = stock_tree(root, plot)
         if sources != e['sources']:
             raise PlotError(f"{e['file']}: this PC's game files are not the session's (another game version or set of DLCs: "
                             f"{[x[0] for x in sources]} here, {[x[0] for x in e['sources']]} in the session)")
-        made = copy_text(tree, e['script'], e['cue'], e['slot'], e.get('faction'), PLOTS[e['id']].get('set'))
+        made = copy_text(tree, e['script'], e['cue'], e['slot'], e.get('faction'), plot.get('set'), e.get('module'), e.get('links'))
         if sha256_text(made) != e['sha256']:
             raise PlotError(f"{e['file']}: the copy made on this PC is not the session's (another launcher version)")
         files[e['target']] = made

@@ -29,7 +29,7 @@ static void test_engine_rng_linux(void) {
     memcpy(mapped,&class_vt,8);runtime=9201;memcpy(mapped+8,&runtime,8);
     memcpy(unmapped,&class_vt,8);runtime=9999;memcpy(unmapped+8,&runtime,8);
     memcpy(stranger,&foreign,8);memcpy(stranger+8,&runtime,8);
-    erng_keyed=erng_native=erng_unmapped=erng_fallback=0;
+    erng_keyed=erng_native=erng_unmapped=erng_fallback=erng_load=0;
     uint64_t state=0;
     /* Keyed: Windows' (tick, key, 0, 0, class). */
     assert(erng_lx_state(mapped,&state)==1 && state==lockstep_seed(ERNG_DOMAIN,598,0x401,0,0,WORLD_KEY_SAVED) && erng_keyed==1);
@@ -37,7 +37,11 @@ static void test_engine_rng_linux(void) {
     assert(erng_lx_state(unmapped,&state)==1 && state==lockstep_seed(ERNG_DOMAIN,598,0,ship_class->windows_rva,1,WORLD_KEY_NONE) && erng_fallback==1);
     /* Neither a key nor a known class, or not an admitted frame: the thread's word. */
     assert(erng_lx_state(stranger,&state)==0 && erng_unmapped==1);
-    boot_phase=2;assert(erng_lx_state(mapped,&state)==0 && erng_native==1);boot_phase=3;
+    /* The snapshot's load (boot phase 2): Windows' load stream (0, key, 2, 0, class), the fallback (0, 0, vtable, 3, none);
+     * before it (phase 1) the thread's word. */
+    boot_phase=2;assert(erng_lx_state(mapped,&state)==1 && state==lockstep_seed(ERNG_DOMAIN,0,0x401,ERNG_LOAD_STREAM,0,WORLD_KEY_SAVED) && erng_load==1);
+    assert(erng_lx_state(unmapped,&state)==1 && state==lockstep_seed(ERNG_DOMAIN,0,0,ship_class->windows_rva,1+ERNG_LOAD_STREAM,WORLD_KEY_NONE));
+    boot_phase=1;assert(erng_lx_state(mapped,&state)==0 && erng_native==1);boot_phase=3;
     /* The step: keyed leaves the thread's word alone; natively it steps it in place. */
     uint64_t *word=gate_tls_rng(gate_tls_self());
     *word=0x4444;assert(erng_lx_step(mapped)==ters_ror30(lockstep_seed(ERNG_DOMAIN,598,0x401,0,0,WORLD_KEY_SAVED)) && *word==0x4444);
@@ -57,7 +61,7 @@ static void test_engine_rng_linux(void) {
     assert((uint32_t)io[1]==0x10 && (uint32_t)io[2]==0x18 && x1==8.0+now && io[4]==(uint64_t)(uintptr_t)mapped);
     memcpy(&io[3],&eight,8);ters_call(page,stranger,io);assert(io[0]==ters_ror30(0x5555) && *word==ters_ror30(0x5555)); /* native */
     munmap(page,GATE_PAGE);
-    char out[256];assert(erng_status(out,sizeof(out))>0 && strstr(out," fallback=1 "));
+    char out[256];assert(erng_status(out,sizeof(out))>0 && strstr(out," fallback=2 ") && strstr(out," load=2")); /* the load stream's two */
     world_identity_installed=0;world_identity_count=0;free(world_identities);world_identities=NULL;
     printf("engine refresh rng PASS\n");
 }

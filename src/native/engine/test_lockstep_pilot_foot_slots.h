@@ -85,6 +85,55 @@ static void test_pfslot_update_fn(void *fpc) {
     float x;memcpy(&x,(unsigned char*)fpc+0x100,4);x+=pnat_base[0x38f4e8b];memcpy((unsigned char*)fpc+0x100,&x,4);
 }
 static void test_pfslot_forward(int id,unsigned char active) {assert(id==0x1a);pnat_base[0x38f4e8b]=active;}   /* d7d3b0 */
+/* The pilot chair's X4 side (pfslot_chair): SMem::Allocate from a pool, the event's constructor as X4's (its vtable, the
+ * trigger +0x18, the name +0x20, the instant bytes +0x40/+0x41), PostEvent as rows (the scope and the singleton at the post),
+ * the character's properties per macro (the player's macro: no chair config; one with chairconfig_paranid, a long name;
+ * one with a short name the trigger table does not know) and the trigger table's lookup. */
+typedef struct {void *source,*event,*name,*singleton;int trigger;unsigned char instant[2],immediate;unsigned scope;double time;} test_pchair_row;
+static test_pchair_row test_pchair_rows[16];
+static unsigned test_pchair_count,test_pchair_allocs;
+static int test_pchair_no_memory;
+static __attribute__((aligned(16))) unsigned char test_pchair_pool[16][PCHAIR_EVENT_SIZE],test_pchair_props[3][0x400],test_pchair_config[2][0x340],
+    test_pchair_macros[2][0x80];
+static void *test_pchair_allocate(size_t size,uintptr_t a,uintptr_t b,uintptr_t c,unsigned alignment) {
+    assert(size==PCHAIR_EVENT_SIZE && !a && !b && !c && alignment==0x10);
+    if(test_pchair_no_memory) return NULL;
+    return test_pchair_pool[test_pchair_allocs++%16];
+}
+static void *test_pchair_event(void *event,int trigger,void *name,unsigned char instant,unsigned char again) {
+    unsigned char *e=event;void *vt=pnat_base+PCHAIR_EVENT_VTABLE;
+    memset(e,0,PCHAIR_EVENT_SIZE);memcpy(e,&vt,8);memcpy(e+0x18,&trigger,4);memcpy(e+0x20,&name,8);e[0x40]=instant;e[0x41]=again;
+    return event;
+}
+static void test_pchair_post(void *source,void *event,double time,unsigned char immediate) {
+    assert(test_pchair_count<16);
+    const unsigned char *e=event;test_pchair_row *r=&test_pchair_rows[test_pchair_count++];
+    r->source=source;r->event=event;memcpy(&r->trigger,e+0x18,4);memcpy(&r->name,e+0x20,8);r->instant[0]=e[0x40];r->instant[1]=e[0x41];
+    r->immediate=immediate;r->time=time;r->scope=pstk_scope_slot;r->singleton=test_pslot_singleton();
+}
+static unsigned char *test_pchair_character(void *macro) {
+    if(macro==test_pchair_macros[0]) return test_pchair_props[1];
+    if(macro==test_pchair_macros[1]) return test_pchair_props[2];
+    return test_pchair_props[0];
+}
+static int test_pchair_trigger_id(uintptr_t length,const void *view) {
+    const char *text=NULL;uint64_t n=0;memcpy(&text,view,8);memcpy(&n,(const unsigned char*)view+8,8);
+    assert(length==n && text);
+    return n==19 && !memcmp(text,"chairconfig_paranid",19)?0x12:0;
+}
+static void test_pchair_fixtures(void) {
+    static const char paranid[]="chairconfig_paranid";
+    memset(test_pchair_props,0,sizeof(test_pchair_props));memset(test_pchair_config,0,sizeof(test_pchair_config));
+    void *config=test_pchair_config[0];const char *text=paranid;uint64_t n=19,capacity=31;   /* a long name: its text elsewhere */
+    memcpy(test_pchair_props[1]+PCHAIR_CONFIG,&config,8);
+    memcpy(test_pchair_config[0]+PCHAIR_CONFIG_NAME,&text,8);memcpy(test_pchair_config[0]+PCHAIR_CONFIG_NAME+0x10,&n,8);
+    memcpy(test_pchair_config[0]+PCHAIR_CONFIG_NAME+0x18,&capacity,8);
+    config=test_pchair_config[1];n=9;capacity=15;                                                /* a short one: in its buffer */
+    memcpy(test_pchair_props[2]+PCHAIR_CONFIG,&config,8);memcpy(test_pchair_config[1]+PCHAIR_CONFIG_NAME,"chair_odd",10);
+    memcpy(test_pchair_config[1]+PCHAIR_CONFIG_NAME+0x10,&n,8);memcpy(test_pchair_config[1]+PCHAIR_CONFIG_NAME+0x18,&capacity,8);
+    test_pchair_count=test_pchair_allocs=0;test_pchair_no_memory=0;
+}
+static const pchair_fns test_pchair_fns={test_pchair_allocate,test_pchair_event,test_pchair_post,test_pchair_character,test_pchair_trigger_id};
 static void test_pilot_foot_slots_block(unsigned char *region,unsigned char *input,unsigned char *p1,unsigned char *p2) {
     void *agent=test_pslot_agent2,*room=test_pslot_room,*null=NULL;
     pfslot_fns saved_fn=pfslot_fn;uint64_t start=pilot_start,stop=pilot_stop,saved_issued=stats.issued;
@@ -104,7 +153,8 @@ static void test_pilot_foot_slots_block(unsigned char *region,unsigned char *inp
     test_pslot_ship_vt[PSLOT_IS_CLASS]=(void*)test_pfslot_ship_is;
     {void *vt=test_pfslot_dock_vt,*dock=test_pfslot_dock,*ship=test_pslot_ship2;test_pfslot_dock_vt[PSLOT_IS_CLASS]=(void*)test_pfslot_dock_is;
      memset(test_pfslot_dock,0,sizeof(test_pfslot_dock));memcpy(test_pfslot_dock,&vt,8);memcpy(test_pslot_ship2+0x70,&dock,8);memcpy(test_pslot_room+0x70,&ship,8);}
-    {void *vt=test_pfslot_target_vt;test_pfslot_target_vt[0x11e0/8]=(void*)test_pfslot_target_is;memset(test_pfslot_target,0,sizeof(test_pfslot_target));memcpy(test_pfslot_target,&vt,8);}
+    {void *vt=test_pfslot_target_vt;test_pfslot_target_vt[0x11e0/8]=(void*)test_pfslot_target_is;memset(test_pfslot_target,0,sizeof(test_pfslot_target));memcpy(test_pfslot_target,&vt,8);
+     test_pfslot_target_vt[PCHAIR_TARGET_SLOT/8]=(void*)test_pfslot_target_is;*(uint64_t*)(test_pfslot_target+8)=0x4d00ULL;}   /* 7173f0's test; its ID */
     {void *c=test_pfslot_conversation;memset(test_pfslot_conversation,0,sizeof(test_pfslot_conversation));*(int*)(test_pfslot_conversation+0x1a0)=1;
      memcpy(region+PFSLOT_CONVERSATION,&c,8);}
     *(int*)(region+PFSLOT_POSITION_NONE)=0x55;
@@ -118,7 +168,12 @@ static void test_pilot_foot_slots_block(unsigned char *region,unsigned char *inp
     {unsigned mask=pslot_mask;pslot_mask=0;assert(!pfslot_arm_using() && !strcmp(pstk_arm_why,"foot_slots_without_slots"));pslot_mask=mask;}
     /* Without the module slot 2's walking keys and GET_UP are refused; with it they are slot 2's replay ids. */
     assert(pstk_verdict_slot(PSTK_STATE,0x1a,2)==PSTK_REFUSE && pstk_verdict_slot(PSTK_ACTION,0x115,2)==PSTK_REFUSE && !pfslot_claim_ok(2));
+    /* The pilot chair (native_gate_pilot_chair) needs the foot slots and X4's five functions. */
+    pchair_fns saved_chair=pchair_fn;test_pchair_fixtures();pchair_fn=test_pchair_fns;pchair_armed=0;
+    assert(!pchair_arm_using() && !strcmp(pstk_arm_why,"chair_without_foot_slots"));
     assert(pfslot_arm_using() && pfslot_armed && !strcmp(pfslot_stage,"armed") && pfslot_arm_using());
+    pchair_fn.event=NULL;assert(!pchair_arm_using() && !strcmp(pstk_arm_why,"chair_functions"));pchair_fn.event=test_pchair_event;
+    assert(pchair_arm_using() && pchair_armed && !strcmp(pchair_stage,"live") && pchair_arm_using() && pchair_digest==PCHAIR_DOMAIN);
     assert(pstk_verdict_slot(PSTK_STATE,0x1a,2)==PSTK_REPLAY && pstk_verdict_slot(PSTK_ACTION,0x115,2)==PSTK_REPLAY &&
            pstk_verdict_slot(PSTK_RANGE,0xf,2)==PSTK_REPLAY && pstk_verdict_slot(PSTK_RANGE,7,2)==PSTK_REPLAY && pstk_verdict_slot(PSTK_STATE,0x78,2)==PSTK_REFUSE);
     assert(pfslot_claim_ok(2) && !pfslot_claim_ok(1) && !pfslot_claim_ok(3));
@@ -276,6 +331,8 @@ static void test_pilot_foot_slots_block(unsigned char *region,unsigned char *inp
         assert(*(void**)(p2+0x70)==room && !s->walk_room && test_pfslot_rebases==5 && test_pfslot_rebase_args[2]==(void*)room);
         assert(test_pslot_count('T')==1 && *(int*)(p2+PFSLOT_POSITION)==0x77 && test_pfslot_fpc[PFSLOT_FPC_SEAT]==1 && !f->bank[0x3d] && !p2[PFOOT_PLAYER_FLAG]);
         assert(!pfslot_own_walking() && pfoot_own_seated() && pfslot_claim_ok(2) && !pfslot_any_walking());
+        /* The chair: the dock's connection without a record (717a90's case): nothing posted, counted untagged. */
+        assert(!test_pchair_count && pchairs[2].untagged==1 && !pchairs[2].posted && pchair_digest==PCHAIR_DOMAIN);
         {char a[64];pfslot_frame();assert(pfslot_frame_text(a,sizeof(a)) && !strcmp(a,"|W2:0:0000000000000000"));}
         /* Up again: the FPC is there already (70eee0 keeps it); the ship's own stand-up connection this time, and its
          * record carries the get-up tag: 716e20's choice, the tagged placement with the record's name (never 717c30). */
@@ -283,6 +340,7 @@ static void test_pilot_foot_slots_block(unsigned char *region,unsigned char *inp
         {const unsigned places=test_pfslot_places;test_pfslot_tagged_places=0;
          assert(pslot_replay(tick) && f->walking && f->stood==2 && f->placed==2 && f->tagged==1 && f->fpc==test_pfslot_fpc && !s->controller);
          float x;memcpy(&x,test_pfslot_fpc+0x100,4);assert(test_pfslot_tagged_places==1 && test_pfslot_places==places && x==7.0f);}
+        assert(!test_pchair_count);   /* the get-up's deactivate_chair is X4's own post in 7176f0 */
         test_pfslot_record_tagged=0;}
     /* The status row names each slot: walking/getups/kept/stood/sat/ignored/updates/placed/unplaced. */
     {   char row[1024];assert(pfslot_status(row,sizeof(row)) && strstr(row," foot_slots=walking foot_slots_why=- foot_slots_hook=1/") && strstr(row," fs2=1/5/2/2/1/0/"));}
@@ -292,8 +350,19 @@ static void test_pilot_foot_slots_block(unsigned char *region,unsigned char *inp
     {   const LONG64 sat=f->sat,stood=f->stood;const unsigned takes=test_pslot_count('T'),releases=test_pslot_count('R');
         uint64_t tick=22;stats.issued=tick;pstk_slot_frames[1].tick=tick;pstk_slot_frames[1].r.events[0]=(pstk_event){PSTK_ACTION,PFOOT_GET_UP,0};
         pfslot_ship_docked_test=test_pfslot_ship_docked;test_pfslot_docked=1;
+        test_pfslot_record_tagged=1;test_pchair_count=0;test_pchair_allocs=0;   /* the ship's own seat connection, tagged */
         assert(pslot_replay(tick) && !f->walking && !s->walking && s->docked && s->seated && !s->controller && f->sat==sat+1 && pfslot_dock_sits==1);
         assert(test_pslot_count('T')==takes && *(int*)(p2+PFSLOT_POSITION)==0x77 && test_pfslot_fpc[PFSLOT_FPC_SEAT]==1 && pfslot_claim_ok(2));
+        /* The chair at the docked sit-down: 7173f0's two events (the player's chair config, here the default 0x11, then
+         * activate_chair 6) with the record's name, played (instant 0), posted not immediate at the game time to the target,
+         * in slot 2's scope (its player the singleton). */
+        assert(test_pchair_count==2 && pchairs[2].posted==1 && !pchairs[2].instant && pchairs[2].config==PCHAIR_CONFIG_DEFAULT && pchair_digest!=PCHAIR_DOMAIN);
+        for(unsigned i=0;i<2;i++) {
+            const test_pchair_row *r=&test_pchair_rows[i];
+            assert(r->source==test_pfslot_target && r->event==test_pchair_pool[i] && r->trigger==(i?PCHAIR_ACTIVATE:PCHAIR_CONFIG_DEFAULT) &&
+                   r->name==test_pfslot_record_name && !r->instant[0] && !r->instant[1] && !r->immediate && r->time==100.0 && r->scope==2 &&
+                   r->singleton==p2 && *(void**)r->event==(void*)(region+PCHAIR_EVENT_VTABLE));
+        }
         assert(pfslot_undocked() && s->docked && !s->controller && !pfslot_dock_takes);          /* still docked: nothing */
         {char row[1024];assert(pfslot_status(row,sizeof(row)) && strstr(row," docked=2/0/1/0"));}
         tick=23;stats.issued=tick;pstk_slot_frames[1].tick=tick;                                 /* up from the docked seat */
@@ -301,6 +370,7 @@ static void test_pilot_foot_slots_block(unsigned char *region,unsigned char *inp
         assert(test_pslot_count('R')==releases);
         tick=24;stats.issued=tick;pstk_slot_frames[1].tick=tick;                                 /* and down again */
         assert(pslot_replay(tick) && !f->walking && s->docked && !s->controller);
+        assert(test_pchair_count==4 && pchairs[2].posted==2 && test_pchair_rows[2].trigger==PCHAIR_CONFIG_DEFAULT && test_pchair_rows[3].trigger==PCHAIR_ACTIVATE);
         test_pfslot_docked=0;                                                                    /* the ship is free: its controls */
         assert(pfslot_undocked() && !s->docked && s->controller==test_pslot_c2 && *(void***)test_pslot_c2==&s->vt.slots[0] &&
                pfslot_dock_takes==1 && test_pslot_count('T')==takes+1 && test_pslot_singleton()==p1);
@@ -314,6 +384,7 @@ static void test_pilot_foot_slots_block(unsigned char *region,unsigned char *inp
         test_pfslot_docked=1;tick=25;stats.issued=tick;pstk_slot_frames[1].tick=tick;            /* as the tests below expect it: walking */
         assert(pslot_replay(tick) && f->walking && s->walking && !s->docked);
         test_pfslot_docked=0;
+        assert(test_pchair_count==4 && pchairs[2].posted==2);   /* the take after the undocking and the stand-up post nothing */
     }
     /* stop+1: the call site back before the seats go; the walking seat leaves with its pointers only. */
     {   assert(pfslot_pass(41) && !pfslot_hook_installed && region[PFSLOT_CALL_SITE]==0xe8 && !strcmp(pfslot_stage,"released") && !f->walking);
@@ -322,7 +393,14 @@ static void test_pilot_foot_slots_block(unsigned char *region,unsigned char *inp
     /* Bodies (the crash fix): connected while everyone sits; slot 1's GET_UP replayed (leaving) parks them in that pass,
      * before X4 stands it up; they come back PFBODY_SETTLE ticks after it sat down; slot 2's GET_UP of the tick parks too. */
     {   memset(p2+0x70,0,8);memset(p2+0x200,0,8);stats.issued=6;pilot_stop=100;
-        assert(pslot_seat(2));pfbody_connect=test_pfbody_connect;pfbody_filter=test_pfbody_filter_object;test_pfbody_mode=0;test_pfbody_calls=0;
+        /* The chair at a seat: slot 2's first seat of the session (its earlier ones were before the chair was armed) is
+         * instant, as X4's start seat; the status names the posts. */
+        test_pchair_count=0;
+        assert(pslot_seat(2) && test_pchair_count==2 && test_pchair_rows[0].instant[0]==1 && test_pchair_rows[1].instant[1]==1 &&
+               test_pchair_rows[0].trigger==PCHAIR_CONFIG_DEFAULT && test_pchair_rows[1].trigger==PCHAIR_ACTIVATE && test_pchair_rows[0].scope==2 &&
+               test_pchair_rows[1].source==test_pfslot_target && pchairs[2].posted==3 && pchairs[2].instant==1 && pchairs[2].seats==1);
+        {char row[2048];assert(pfslot_status(row,sizeof(row)) && strstr(row," chair=live/3/1/0/") && strstr(row," chair_why=- chair2=3/1/0/1/11"));}
+        pfbody_connect=test_pfbody_connect;pfbody_filter=test_pfbody_filter_object;test_pfbody_mode=0;test_pfbody_calls=0;
         memcpy(region+PFBODY_KILL_SITE,pfbody_kill_bytes,sizeof(pfbody_kill_bytes));
         assert(pfbody_arm_using() && pfbody_kill_install() && pfbody_connect_slot(2) && pfbody_mask==2 && *(void**)(p2+0x70)==room);
         /* A join save at T (lockstep_pilot_join.h, W3): armed from the join core's save_at on every client, ahead of this
@@ -360,10 +438,163 @@ static void test_pilot_foot_slots_block(unsigned char *region,unsigned char *inp
     assert(pslot_hook_uninstall());
     memset(pstk_slot_frames,0,sizeof(pstk_slot_frames));memset(p2+0x200,0,8);memset(p2+0x70,0,8);
     pfslot_armed=0;pfslot_failed=0;pfslot_hook_installed=0;pfslot_stage="off";pfslot_why="-";pfslot_hook_calls=pfslot_late=pfslot_getups_claimed=0;
+    pchair_armed=0;pchair_failed=0;pchair_hold=0;pchair_stage="off";pchair_why="-";memset(pchairs,0,sizeof(pchairs));pchair_fn=saved_chair;
+    test_pfslot_record_tagged=0;
     memset(pfslots,0,sizeof(pfslots));pfslot_fn=saved_fn;pfoot_armed=0;pfoot_failed=0;pfoot_why="-";pfoot_state=PFOOT_SEATED;
     test_pslot_ship_vt[PSLOT_IS_CLASS]=ship_is;memcpy(test_pslot_room+0x70,room_parent,8);memcpy(test_pslot_ship2+0x70,ship_parent,8);
     memset(region+PFSLOT_CONVERSATION,0,8);memset(region+PFOOT_BANK,0,PFOOT_BANK_SIZE);(void)null;
     pilot_start=start;pilot_stop=stop;stats.issued=saved_issued;pstk_capturing=capturing;pstk_capture_slot=capture_slot;
-    printf("pilot foot slots: slot 2 up in its scope (release, FPC, placement, bank), its walk and update, receipt, eye, sit-down, bodies parked around get-ups "
-           "and for a join save PASS\n");
+    printf("pilot foot slots: slot 2 up in its scope (release, FPC, placement, bank), its walk and update, receipt, eye, sit-down, its chair (untagged, "
+           "docked sit-downs played, first seat instant), bodies parked around get-ups and for a join save PASS\n");
+}
+/* The pilot chair for slots 2 and 3 (pfslot_chair), on the three-slot fixtures of test_pilot_slots (client 3): two players
+ * in two ships, each chair activated in its own slot's scope with its own character's chair config, the first seats
+ * instant; one ship cannot seat two players (the second seat is refused before anything is posted); slot 3's later seat
+ * and its docked and flying sit-downs played; a record without the tag, without a name, a target of another class:
+ * nothing; outside the slot's scope and an allocation that fails: stop 226; a joiner's rebuild posts nothing and its next
+ * seat is the session's; the digest is the same for the same steps and holds no address. */
+static __attribute__((aligned(16))) unsigned char test_pchair_target[2][0x40],test_pchair_record[2][0x140],test_pchair_name[2][8],test_pchair_fpc[0x3c0];
+static void *test_pchair_target_vt[600];
+static int test_pchair_tagged[2],test_pchair_other_class;
+static unsigned char test_pchair_ship_is(void *self,int cls) {(void)self;return cls==PFSLOT_SHIP_CLASS;}
+static unsigned char test_pchair_target_is(void *self,int cls) {
+    assert(self==test_pchair_target[0] || self==test_pchair_target[1]);return cls==PFSLOT_TARGET_CLASS && !test_pchair_other_class;
+}
+/* The three-slot controllers' class test and chain (test_pslot_c_is knows slot 2's fixture controller only). */
+static unsigned char test_pchair_c_is(void *self,int cls) {assert(self==test_pslot3_c[0] || self==test_pslot3_c[1]);return cls==PSLOT_CONTROLLER_CLASS;}
+static void *test_pchair_c_next(void *self) {(void)self;return NULL;}
+static int test_pchair_ship_index(const void *ship) {for(int i=0;i<2;i++) if(ship==test_pslot3_ship[i]) return i;assert(0);return -1;}
+static int test_pchair_conn_type(int position) {assert(position==0x77);return 3;}
+static unsigned char test_pchair_ship_conn(void *ship,void *out,int type) {
+    const int i=test_pchair_ship_index(ship);void *pair[2]={test_pchair_target[i],(void*)(uintptr_t)(0x10+i)};
+    assert(type==3);memcpy(out,pair,16);return 1;
+}
+static void *test_pchair_ship_record(void *ship,int type) {assert(type==3);return test_pchair_record[test_pchair_ship_index(ship)];}
+static unsigned char test_pchair_dock_conn(void *dock,void *out,int type) {(void)dock;(void)out;(void)type;assert(0);return 0;}
+static void *test_pchair_dock_record(void *dock,int type) {(void)dock;(void)type;assert(0);return NULL;}
+static unsigned char test_pchair_tag_has(void *tags,const int *tag) {
+    assert(*tag==0x4242);
+    for(int i=0;i<2;i++) if(tags==test_pchair_record[i]+PFSLOT_RECORD_TAGS) return (unsigned char)test_pchair_tagged[i];
+    assert(0);return 0;
+}
+/* Fresh arming (a client's or a joiner's), both slots seated again at take-1 with every step as before: the digest. */
+static uint64_t test_pchair_session(uint64_t take,unsigned later3) {
+    pchair_armed=0;assert(pchair_arm_using() && pchair_digest==PCHAIR_DOMAIN);
+    pchairs[3].seats=later3;   /* slot 3 sat before: its seat is a later one */
+    for(unsigned k=2;k<=3;k++) if(pslots[k].seated) assert(pslot_release(k));
+    stats.issued=take-1;test_pchair_count=0;
+    assert(pslot_seat(2) && pslot_seat(3) && test_pchair_count==4 && test_pchair_rows[2].instant[0]==!later3);
+    return pchair_digest;
+}
+static void test_pilot_chair_slots(unsigned char *region,unsigned char *p1) {
+    const pfslot_fns saved_fn=pfslot_fn;const pchair_fns saved_chair=pchair_fn;const uint64_t saved_issued=stats.issued;const unsigned saved_slot=stats.slot;
+    int (*saved_docked)(const unsigned char*)=pfslot_ship_docked_test;const unsigned saved_mode=pnat_mode;
+    test_pslot_reset();test_pslot3_made=0;test_pslot3_row_count=0;pview_slot_player=NULL;
+    void **cvt=(void**)(region+PSLOT_VTABLE);cvt[49]=(void*)test_pslot3_assist;cvt[50]=(void*)test_pslot3_mode;
+    void *const saved_c_is=cvt[3],*const saved_c_next=cvt[20];cvt[3]=(void*)test_pchair_c_is;cvt[20]=(void*)test_pchair_c_next;
+    vps_create=test_pslot3_factory;pnat_fn.controller=test_pslot3_controller_of;
+    pslot_fn.take=test_pslot3_take;pslot_fn.release=test_pslot3_release;pslot_fn.update=test_pslot3_update;
+    test_pslot3_ship_vt[PSLOT_TAKE]=(void*)test_pslot3_take;test_pslot3_ship_vt[PSLOT_RELEASE]=(void*)test_pslot3_release;
+    test_pslot3_ship_vt[PSLOT_IS_CLASS]=(void*)test_pchair_ship_is;test_pslot3_room_vt[PSLOT_IS_CLASS]=(void*)test_pslot3_is_room;
+    test_pchair_target_vt[PCHAIR_TARGET_SLOT/8]=(void*)test_pchair_target_is;
+    for(unsigned i=0;i<2;i++) {
+        void *svt=test_pslot3_ship_vt,*rvt=test_pslot3_room_vt,*room=test_pslot3_room[i],*ship=test_pslot3_ship[i],*tvt=test_pchair_target_vt,*name=test_pchair_name[i];
+        memset(test_pslot3_ship[i],0,0x500);memcpy(test_pslot3_ship[i],&svt,8);memcpy(test_pslot3_ship[i]+PSLOT_ROOM,&room,8);test_pslot3_ship[i][0xd1]=1;
+        memset(test_pslot3_room[i],0,0x400);memcpy(test_pslot3_room[i],&rvt,8);memcpy(test_pslot3_room[i]+0x70,&ship,8);   /* the cockpit in its ship */
+        memset(test_pchair_target[i],0,0x40);memcpy(test_pchair_target[i],&tvt,8);*(uint64_t*)(test_pchair_target[i]+8)=0x5100u+i;   /* its ID */
+        memset(test_pchair_record[i],0,0x140);memcpy(test_pchair_record[i]+PFSLOT_RECORD_NAME,&name,8);test_pchair_tagged[i]=1;
+        pilot_slots[i+1].resolved=1;pilot_slots[i+1].object=test_pslot3_ship[i];pilot_slots[i+1].player=0;pilot_slots[i+1].dead=0;
+    }
+    pfslot_fn=(pfslot_fns){NULL,NULL,NULL,NULL,NULL,test_pchair_conn_type,test_pchair_ship_conn,test_pchair_dock_conn,NULL,test_pchair_ship_record,
+        test_pchair_dock_record,test_pchair_tag_has};
+    *(int*)(region+PFSLOT_GETUP_TAG)=0x4242;
+    test_pchair_fixtures();pchair_fn=test_pchair_fns;pilot_slot_count=3;stats.slot=3;
+    const uint64_t take=pilot_start-PILOT_SUPPRESS_LEAD;
+    assert(pslot_arm_using(7) && pslot_mask==6 && pslot_construct_all(take) && test_pslot3_made==2);
+    {void *m=test_pchair_macros[0];memcpy(test_pslot3_p[1]+PCHAIR_MACRO,&m,8);}   /* slot 3's player: another character (chairconfig_paranid) */
+    pfslot_armed=1;pchair_armed=0;assert(pchair_arm_using() && pchair_armed);
+    /* take-1: both seats, each chair in its own slot's scope with its own player the singleton, its own ship's target, its
+     * own character's config, instant (the first seats: X4's start seat); X4's order: the config, then activate_chair. */
+    stats.issued=take-1;
+    assert(pslot_seat_all(take) && pslots[2].seated && pslots[3].seated && test_pslot_singleton()==p1 && !pstk_scope_slot && test_pchair_count==4);
+    for(unsigned i=0;i<4;i++) {
+        const test_pchair_row *r=&test_pchair_rows[i];const unsigned j=i/2;
+        assert(r->source==test_pchair_target[j] && r->scope==j+2 && r->singleton==test_pslot3_p[j] && r->name==test_pchair_name[j] &&
+               r->trigger==(i&1?PCHAIR_ACTIVATE:j?0x12:PCHAIR_CONFIG_DEFAULT) && r->instant[0]==1 && r->instant[1]==1 && !r->immediate &&
+               r->time==100.0 && r->event==test_pchair_pool[i]);
+    }
+    assert(pchairs[2].posted==1 && pchairs[3].posted==1 && pchairs[2].instant==1 && pchairs[3].instant==1 && pchairs[2].config==0x11 && pchairs[3].config==0x12);
+    {char row[4096];assert(pfslot_status(row,sizeof(row)) && strstr(row," chair=live/2/0/0/") && strstr(row," chair2=1/0/0/1/11 chair3=1/0/0/1/12"));}
+    /* One ship seats one player: slot 3 in slot 2's ship is refused (it has slot 2's PlayerController) before any post. */
+    {   pslot_slot *x=&pslots[3];
+        assert(pslot_release(3) && !x->seated);
+        test_pchair_count=0;
+        assert(!pslot_seat_ship(3,test_pslot3_ship[0]) && !strcmp(pslot_why,"ship_controlled") && !test_pchair_count && pchairs[3].posted==1 &&
+               pchairs[3].seats==1 && !x->seated);
+        pslot_failed=0;pslot_why="-";pslot_stage="seated";
+        /* Its own ship again (a later seat, as X4's teleport into a seat: the suit, the way home, a respawn): played. */
+        assert(pslot_seat(3) && x->seated && test_pchair_count==2 && !test_pchair_rows[0].instant[0] && !test_pchair_rows[1].instant[1] &&
+               test_pchair_rows[0].trigger==0x12 && test_pchair_rows[1].trigger==PCHAIR_ACTIVATE && test_pchair_rows[0].scope==3 &&
+               test_pchair_rows[1].source==test_pchair_target[1] && pchairs[3].posted==2 && pchairs[3].instant==1 && pchairs[3].seats==2);}
+    /* Slot 3 sits down (its GET_UP while walking, in its scope): in a docked ship, then flying; both played to its own ship's
+     * target. Before each, the state its stand-up leaves: no controller (released), walking, its FPC. */
+    {   pslot_slot *x=&pslots[3];pfslot_slot *f=&pfslots[3];
+        assert(pslot_enter(3));
+        assert(InterlockedCompareExchangePointer((void*volatile*)x->controller,pnat_base+PSLOT_VTABLE,&x->vt.slots[0])==(void*)&x->vt.slots[0]);
+        test_pslot3_release(x->ship);x->controller=NULL;
+        assert(pslot_leave(3));
+        memset(test_pchair_fpc,0,sizeof(test_pchair_fpc));x->walking=1;f->walking=1;f->fpc=test_pchair_fpc;
+        pfslot_ship_docked_test=test_pfslot_ship_docked;test_pfslot_docked=1;test_pchair_count=0;
+        assert(pslot_enter(3) && pfslot_sit_down(3) && pslot_leave(3));
+        assert(x->docked && !x->walking && !f->walking && !x->controller && test_pchair_count==2 && test_pchair_rows[0].source==test_pchair_target[1] &&
+               test_pchair_rows[0].scope==3 && test_pchair_rows[0].trigger==0x12 && !test_pchair_rows[0].instant[0] && pchairs[3].posted==3);
+        x->docked=0;x->walking=1;f->walking=1;test_pfslot_docked=0;test_pchair_count=0;
+        assert(pslot_enter(3) && pfslot_sit_down(3) && pslot_leave(3));
+        assert(x->controller==test_pslot3_c[1] && !x->walking && test_pchair_count==2 && test_pchair_rows[1].trigger==PCHAIR_ACTIVATE &&
+               !test_pchair_rows[1].instant[1] && test_pchair_rows[1].singleton==test_pslot3_p[1] && pchairs[3].posted==4 && f->sat==2);
+        pfslot_ship_docked_test=saved_docked;f->fpc=NULL;}
+    /* No tagged record, no name, a target of another class: nothing (X4's 717a90, 7173f0's own tests). */
+    {   const LONG64 untagged=pchairs[2].untagged;void *name=NULL;test_pchair_count=0;
+        assert(pslot_enter(2));
+        test_pchair_tagged[0]=0;assert(pfslot_chair(2,0));test_pchair_tagged[0]=1;
+        memcpy(test_pchair_record[0]+PFSLOT_RECORD_NAME,&name,8);assert(pfslot_chair(2,0));
+        name=test_pchair_name[0];memcpy(test_pchair_record[0]+PFSLOT_RECORD_NAME,&name,8);
+        test_pchair_other_class=1;assert(pfslot_chair(2,0));test_pchair_other_class=0;
+        assert(pslot_leave(2) && !test_pchair_count && pchairs[2].untagged==untagged+3 && pchairs[2].posted==1 && !pchair_failed);}
+    /* A character whose config name the trigger table does not know (a short name, in its own buffer): the default. */
+    {   void *m=test_pchair_macros[1];memcpy(test_pslot3_p[0]+PCHAIR_MACRO,&m,8);test_pchair_count=0;
+        assert(pslot_enter(2) && pfslot_chair(2,0) && pslot_leave(2) && test_pchair_count==2 && test_pchair_rows[0].trigger==PCHAIR_CONFIG_DEFAULT);
+        m=test_pslot_macro;memcpy(test_pslot3_p[0]+PCHAIR_MACRO,&m,8);}
+    /* Fail closed (stop 226): outside the slot's scope, and an allocation that fails (nothing posted). */
+    pnat_mode=PNAT_MODE_STOCK;
+    {   test_pchair_count=0;
+        assert(!pfslot_chair(3,0) && pchair_failed && !strcmp(pchair_why,"chair_scope") && pnat_failed && pilot_stop_reason()==PCHAIR_STOP_REASON);
+        pchair_failed=0;pchair_why="-";pchair_stage="live";pnat_failed=0;pnat_fail_stage=NULL;
+        test_pchair_no_memory=1;
+        assert(pslot_enter(3) && !pfslot_chair(3,0) && pslot_leave(3) && pchair_failed && !strcmp(pchair_why,"chair_allocate") && !strcmp(pchair_stage,"failed") &&
+               pilot_stop_reason()==PCHAIR_STOP_REASON && !test_pchair_count);
+        {char row[4096];assert(pfslot_status(row,sizeof(row)) && strstr(row," chair=failed/") && strstr(row," chair_why=chair_allocate"));}
+        test_pchair_no_memory=0;pchair_failed=0;pchair_why="-";pchair_stage="live";pnat_failed=0;pnat_fail_stage=NULL;}
+    pnat_mode=saved_mode;
+    /* A joiner: its save holds slot 2's chair, its rebuild of the seat posts nothing and counts as the slot's seat; its next
+     * seat (a respawn's) is played as the session's second seat is. */
+    {   pchair_armed=0;assert(pchair_arm_using() && !pchairs[2].posted && !pchairs[2].seats);
+        assert(pslot_release(2));test_pchair_count=0;
+        pchair_hold=1;assert(pslot_seat(2));pchair_hold=0;   /* as lockstep_pilot_join.h's pjoin_rebuild_slot */
+        assert(!test_pchair_count && pchairs[2].skipped==1 && pchairs[2].seats==1 && !pchairs[2].posted && pchair_digest==PCHAIR_DOMAIN);
+        assert(pslot_release(2) && pslot_seat(2) && test_pchair_count==2 && !test_pchair_rows[0].instant[0] && pchairs[2].posted==1 && !pchairs[2].instant);
+        {char row[4096];assert(pfslot_status(row,sizeof(row)) && strstr(row," chair=live/1/0/1/") && strstr(row," chair2=1/0/1/0/11 chair3=0/0/0/0/0"));}}
+    /* The digest: the same steps, the same digest (another event pool, the same value); a later seat of slot 3 another. */
+    {   const uint64_t a=test_pchair_session(take,0);test_pchair_allocs=7;
+        const uint64_t b=test_pchair_session(take,0),c=test_pchair_session(take,1);
+        assert(a==b && a!=c && a!=PCHAIR_DOMAIN);}
+    assert(pslot_release_all() && !pslots[2].seated && !pslots[3].seated);
+    pchair_armed=0;pchair_failed=0;pchair_hold=0;memset(pchairs,0,sizeof(pchairs));pchair_stage="off";pchair_why="-";pchair_fn=saved_chair;
+    pfslot_armed=0;memset(pfslots,0,sizeof(pfslots));pfslot_fn=saved_fn;pfslot_ship_docked_test=saved_docked;
+    test_pslot3_ship_vt[PSLOT_IS_CLASS]=NULL;for(unsigned i=0;i<2;i++) memset(test_pslot3_room[i]+0x70,0,8);
+    memset(&pilot_slots[2],0,sizeof(pilot_slots[2]));*(int*)(region+PFSLOT_GETUP_TAG)=0;cvt[3]=saved_c_is;cvt[20]=saved_c_next;
+    vps_create=test_pslot_factory;pnat_fn.controller=test_pslot_controller_of;stats.issued=saved_issued;stats.slot=saved_slot;
+    printf("pilot chair: slots 2 and 3 in two ships, each chair in its own scope with its own config, first seats instant, one ship one player, "
+           "later seats and docked and flying sit-downs played, untagged/nameless/other class nothing, stop 226 outside the scope and without memory, "
+           "a joiner's rebuild held, the digest PASS\n");
 }

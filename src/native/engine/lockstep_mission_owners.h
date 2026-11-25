@@ -78,9 +78,14 @@ static unsigned mpp_story_slot;   /* the slot whose start story is being begun n
 static uint64_t mpp_story_key;    /* ...and the path key of the static cue that begins it */
 static int mpp_story_missed;      /* the last ask claimed nothing (yet) */
 static volatile LONG64 mpp_story_asked,mpp_story_claimed;
+/* A claim's slot is its low bits; MPP_SLOT_ONCE marks a static cue taken by the first player whose place event made it
+ * fire (lockstep_pilot_death.h pvehk_place, mpp_place_fired below): that claim goes again when the cue waits again. */
+#define MPP_SLOT_MASK 0x0fu
+#define MPP_SLOT_ONCE 0x10u
+_Static_assert(PILOT_SLOTS<=MPP_SLOT_MASK,"a claim's slot fits its low bits");
 
 static unsigned mpp_owner_of(uint64_t cue_id) {
-    for(unsigned i=0;i<mpp_count;i++) if(mpp_owners[i].cue==cue_id) return mpp_owners[i].slot;
+    for(unsigned i=0;i<mpp_count;i++) if(mpp_owners[i].cue==cue_id) return mpp_owners[i].slot&MPP_SLOT_MASK;
     return 0;
 }
 static unsigned mpp_first_count;
@@ -99,7 +104,7 @@ static unsigned mpp_slot_of(const unsigned char *cue) {
         if(!sample_read((void *)(at+MPP_CUE_PARENT),&parent,8)) return 0;
         at=parent;
     }
-    return mpp_first_count && mpp_script_is_first(cue)?1u:0u;
+    return mpp_first_count?(unsigned)mpp_script_is_first(cue):0u;
 }
 /* A plot that other slots run as copies of their own (tools/dev/native_gate_plot_copies.py) is player 1's own in that
  * session. gate.mpp_first("<Script>") names the stock script before the first tick; the scripts nobody owns hear every
@@ -109,36 +114,44 @@ static unsigned mpp_slot_of(const unsigned char *cue) {
  * nobody owns does): the script is player 1's as a claimed cue is. mpp_slot_of answers 1 for its cues, so its frames
  * are slot 1's (what they show and say is client 1's), its missions are in client 1's lists only and its listeners
  * hear player 1 only. The answer is asked at every MD frame: a script object found to be named, or not, is remembered
- * by its address (scripts live as long as the game). */
-#define MPP_FIRST 8u
+ * by its address (scripts live as long as the game).
+ * The same by name for another slot (gate.mpp_first("<Script>", k)): a session continued from a save
+ * (src/lockstep/launcher/milestone.py) gives slot k's own plot copies back to slot k before the first tick. Their root
+ * cues were claimed at their begin, by a frame that does not come again, and a load gives every cue a new runtime ID;
+ * X4 gives an MD cue value to Lua as nil, so the probe cannot name the cue itself (live rk8 continue, 24 Nov). The
+ * script's name is the same in the save and in the overlay, and every cue of the script is that slot's, as the claim
+ * of its root cue made them. */
+#define MPP_FIRST 32u
 #define MPP_FIRST_SEEN 1024u
 static uint64_t mpp_first[MPP_FIRST];
+static unsigned char mpp_first_slot[MPP_FIRST],mpp_first_script_slot[MPP_FIRST];
 static uintptr_t mpp_first_scripts[MPP_FIRST],mpp_first_not[MPP_FIRST_SEEN];
 static volatile LONG64 mpp_first_kept;
-static int mpp_first_add(const char *script) {
+static int mpp_first_add_slot(const char *script,unsigned k) {
     const size_t n=script?strlen(script):0;
-    if(!n || n>=CUE_PATH_NAME_MAX) return 0;
+    if(!n || n>=CUE_PATH_NAME_MAX || k<1 || k>PILOT_SLOTS) return 0;
     const uint64_t key=cue_fnv(CUE_FNV_BASIS,script,n);
-    for(unsigned i=0;i<mpp_first_count;i++) if(mpp_first[i]==key) return 1;
+    for(unsigned i=0;i<mpp_first_count;i++) if(mpp_first[i]==key) return mpp_first_slot[i]==k;   /* one slot per script */
     if(mpp_first_count==MPP_FIRST) return 0;
     memset(mpp_first_not,0,sizeof(mpp_first_not));   /* a script seen before it was named is asked again */
-    mpp_first[mpp_first_count++]=key;return 1;
+    mpp_first_slot[mpp_first_count]=(unsigned char)k;mpp_first[mpp_first_count++]=key;return 1;
 }
-/* 1: this cue (an instance or a static cue) is of a script named so. */
+#define mpp_first_add(script) mpp_first_add_slot((script),1u)   /* player 1's own (the tests name it so) */
+/* The slot whose script this cue (an instance or a static cue) is of, by a name given to mpp_first_add_slot; 0 none. */
 static int mpp_script_is_first(const unsigned char *cue) {
     uintptr_t def=0,script=0;char name[CUE_PATH_NAME_MAX];uint64_t size=0;
     if(!mpp_first_count || !cue) return 0;
     if(!sample_read(cue+CUE_PATH_DEF,&def,8) || !def) def=(uintptr_t)cue;
     if(!sample_read((const void *)(def+CUE_PATH_SCRIPT),&script,8) || !script) return 0;
-    for(unsigned i=0;i<MPP_FIRST;i++) if(mpp_first_scripts[i]==script) {InterlockedIncrement64(&mpp_first_kept);return 1;}
+    for(unsigned i=0;i<MPP_FIRST;i++) if(mpp_first_scripts[i]==script) {InterlockedIncrement64(&mpp_first_kept);return mpp_first_script_slot[i];}
     const unsigned seen=(unsigned)((script>>4)%MPP_FIRST_SEEN);
     if(mpp_first_not[seen]==script) return 0;
     const int n=cue_string_with(read_local,script+CUE_PATH_SCRIPT_NAME,name,sizeof(name),&size);
     if(n<=0) return 0;
     const uint64_t key=cue_fnv(CUE_FNV_BASIS,name,(size_t)n);
     for(unsigned i=0;i<mpp_first_count;i++) if(mpp_first[i]==key) {
-        for(unsigned j=0;j<MPP_FIRST;j++) if(!mpp_first_scripts[j]) {mpp_first_scripts[j]=script;break;}
-        InterlockedIncrement64(&mpp_first_kept);return 1;
+        for(unsigned j=0;j<MPP_FIRST;j++) if(!mpp_first_scripts[j]) {mpp_first_scripts[j]=script;mpp_first_script_slot[j]=mpp_first_slot[i];break;}
+        InterlockedIncrement64(&mpp_first_kept);return mpp_first_slot[i];
     }
     mpp_first_not[seen]=script;
     return 0;
@@ -182,7 +195,8 @@ static int mpp_notice_script(const unsigned char *cue) {
         if((size_t)n==strlen(mpp_notice_names[i]) && !memcmp(name,mpp_notice_names[i],(size_t)n)) {mpp_notice_scripts[i]=script;return 1;}
     mpp_notice_not[seen]=script;return 0;
 }
-/* The slot whose ship (its pilot slot's ship, or the ship it sits in) or player has this component ID; 0 none. */
+/* The slot whose ship (its pilot slot's ship, or the ship it sits in), player or (native_gate_computer_forward,
+ * lockstep_pilot_death.h) player's ship computer has this component ID; 0 none. */
 static uint64_t mpp_id_at(const unsigned char *object) {uint64_t id=0;return object && sample_read(object+8,&id,8)?id:0;}
 static unsigned mpp_slot_by_id(uint64_t id) {
     if(!id) return 0;
@@ -190,7 +204,8 @@ static unsigned mpp_slot_by_id(uint64_t id) {
         if(pilot_slots[k-1].resolved && pilot_slots[k-1].runtime==id) return k;
         if(k>=2 && ((pslots[k].ship && mpp_id_at(pslots[k].ship)==id) || (pslots[k].player && mpp_id_at(pslots[k].player)==id))) return k;
     }
-    return pslot_p1 && mpp_id_at(pslot_p1)==id?1u:0u;
+    if(pslot_p1 && mpp_id_at(pslot_p1)==id) return 1u;
+    return pvehk_computer_slot_by_id(id);
 }
 /* The slot whose notice this frame is, 0 none (not an event frame, another script, an event about nobody's ship). */
 static unsigned mpp_notice_slot(const unsigned char *cue) {
@@ -229,18 +244,27 @@ static void mpp_notice_enter(unsigned k) {if(!mpp_notice_depth++) mpp_notice_ope
 static void mpp_notice_leave(void) {if(mpp_notice_depth && !--mpp_notice_depth) mpp_notice_open=0;}
 /* A full table: the claims of cues that are gone leave it, the others keep their order (the same on every client: the cues
  * are the simulation's). Only with the engine's map at hand. Returns how many left. */
+static unsigned mpp_once_count;   /* claims with MPP_SLOT_ONCE in the table */
+static void mpp_once_recount(void) {mpp_once_count=0;for(unsigned i=0;i<mpp_count;i++) if(mpp_owners[i].slot&MPP_SLOT_ONCE) ++mpp_once_count;}
 static unsigned mpp_prune(void) {
     unsigned kept=0;
     if(!uirep_fn.find) return 0;
     for(unsigned i=0;i<mpp_count;i++) if(uimis_cue(mpp_owners[i].cue)) mpp_owners[kept++]=mpp_owners[i];
     const unsigned gone=mpp_count-kept;
-    mpp_count=kept;InterlockedExchangeAdd64(&mpp_pruned,(LONG64)gone);return gone;
+    mpp_count=kept;mpp_once_recount();InterlockedExchangeAdd64(&mpp_pruned,(LONG64)gone);return gone;
 }
-/* Slot k owns this cue from now on (a later claim by another slot takes it over). 1 claimed, 0 the table is full. */
+/* Slot k owns this cue from now on (a later claim by another slot takes it over). 1 claimed, 0 the table is full. k may
+ * carry MPP_SLOT_ONCE (mpp_place_fired). */
 static int mpp_claim_id(unsigned k,uint64_t cue_id) {
-    for(unsigned i=0;i<mpp_count;i++) if(mpp_owners[i].cue==cue_id) {mpp_owners[i].slot=k;InterlockedIncrement64(&mpp_claims);return 1;}
+    for(unsigned i=0;i<mpp_count;i++) if(mpp_owners[i].cue==cue_id) {
+        if(mpp_owners[i].slot&MPP_SLOT_ONCE) --mpp_once_count;
+        if(k&MPP_SLOT_ONCE) ++mpp_once_count;
+        mpp_owners[i].slot=k;InterlockedIncrement64(&mpp_claims);return 1;
+    }
     if(mpp_count>=MPP_OWNERS && !mpp_prune()) {InterlockedIncrement64(&mpp_full);return 0;}
-    mpp_owners[mpp_count].cue=cue_id;mpp_owners[mpp_count].slot=k;++mpp_count;InterlockedIncrement64(&mpp_claims);return 1;
+    mpp_owners[mpp_count].cue=cue_id;mpp_owners[mpp_count].slot=k;++mpp_count;InterlockedIncrement64(&mpp_claims);
+    if(k&MPP_SLOT_ONCE) ++mpp_once_count;
+    return 1;
 }
 /* A replayed accept: slot k claims the offer cue with this runtime ID. 1 claimed, 0 the cue is gone here (the same on every
  * client when the worlds agree) or the table is full. */
@@ -248,6 +272,85 @@ static int mpp_claim(unsigned k,uint64_t cue_id) {
     if(!mpp_armed || k<1 || k>PILOT_SLOTS) return 0;
     if(!uimis_cue(cue_id)) {InterlockedIncrement64(&mpp_claim_gone);return 0;}
     return mpp_claim_id(k,cue_id);
+}
+/* ---- a place event's first player (lockstep_pilot_death.h pvehk_place) ----
+ * The scripts nobody owns hear slot k's sector, zone and cluster changes inside slot k's scope. What such an event starts
+ * is slot k's, as player 1's would be in a game of one:
+ *   - the cue's own frame for that event is a frame of slot k's (mpp_frame_enter: scope and owner, so what it shows and
+ *     says is client k's: lockstep_md_presentation.h, lockstep_md_media.h, lockstep_speech_local.h), and a root
+ *     instance made in it is slot k's (mpp_created_root: an owned frame is on the stack);
+ *   - a static cue nobody owned that the event made fire (waiting before the call, active or complete after it) is
+ *     claimed for slot k with MPP_SLOT_ONCE, so its sub-cues follow slot k in their later frames: the approach a
+ *     script checks with its timer, the cutscene and the lines it then starts (md/story_terran_prelude.xml: the Teladi
+ *     scene after a player enters the Asteroid Belt). A one-time scene of the world is the first player's; the others
+ *     do not get it again, as they would not in a game of one. The claim goes when that cue waits again (its script
+ *     reset it: mpp_once_check), so a cue that the world arms again hears every player again.
+ * Scripts that keep one 'player space' or per-client state are not handed a place event (mpp_place_denied): the generic
+ * missions manager (its offers per slot are the 'offers' rule above; an offer's RemoveDueToDistance would drop player
+ * 1's offers by player k's position), the client's own guidance (Guidance, local), and the two managers of one player
+ * space (NPC_Instantiation, Signal_Leaks: player k's sector change would take player 1's sector's objects away).
+ * Status place=frames/claims/released/denied (mpp_status). */
+#define MPP_CUE_STATE 0x180u   /* JOIN_CUE_STATE: 1 waiting, 2 active, 3 complete */
+#define MPP_STATE_WAITING 1u
+#define MPP_STATE_ACTIVE 2u
+#define MPP_STATE_COMPLETE 3u
+static unsigned mpp_place_slot;              /* the slot whose place event the forward hands to mpp_place_cue now, else 0 */
+static const unsigned char *mpp_place_cue;
+static volatile LONG64 mpp_place_frames,mpp_place_claims,mpp_place_released,mpp_place_denials;
+static uint32_t mpp_cue_state(const unsigned char *cue) {uint32_t s=0;return cue && sample_read(cue+MPP_CUE_STATE,&s,4)?s:0xffffffffu;}
+/* An MD cue that is a static cue (its definition is itself): its runtime ID, else 0. */
+static uint64_t mpp_static_id(const unsigned char *cue) {
+    uintptr_t vt=0,def=0;uint64_t id=0;
+    if(!cue || !sample_read(cue,&vt,8) || vt!=(uintptr_t)(image+SCRIPT_RNG_CUE_VT) || !sample_read(cue+CUE_PATH_DEF,&def,8) ||
+       def!=(uintptr_t)cue || !sample_read(cue+MPP_CUE_ID,&id,8)) return 0;
+    return id;
+}
+/* The forward's call of one cue begins (k, cue) and ends (0, NULL). */
+static void mpp_place_call(unsigned k,const unsigned char *cue) {mpp_place_slot=cue && k>=2 && k<=PILOT_SLOTS?k:0;mpp_place_cue=mpp_place_slot?cue:NULL;}
+/* After the call: a static cue nobody owned that the event made fire is slot k's until it waits again. */
+static void mpp_place_fired(unsigned k,const unsigned char *cue,uint32_t before) {
+    if(!mpp_armed || k<2 || k>PILOT_SLOTS || before!=MPP_STATE_WAITING) return;
+    const uint32_t after=mpp_cue_state(cue);
+    if(after!=MPP_STATE_ACTIVE && after!=MPP_STATE_COMPLETE) return;
+    const uint64_t id=mpp_static_id(cue);
+    if(!id || mpp_slot_of(cue)) return;
+    if(mpp_claim_id(k|MPP_SLOT_ONCE,id)) InterlockedIncrement64(&mpp_place_claims);
+}
+/* A frame of a static cue claimed so, while it waits again: the claim goes (the same frame on every client). */
+static void mpp_once_check(const unsigned char *cue) {
+    if(mpp_cue_state(cue)!=MPP_STATE_WAITING) return;
+    const uint64_t id=mpp_static_id(cue);
+    if(!id) return;
+    for(unsigned i=0;i<mpp_count;i++) if(mpp_owners[i].cue==id) {
+        if(!(mpp_owners[i].slot&MPP_SLOT_ONCE)) return;
+        memmove(mpp_owners+i,mpp_owners+i+1,(size_t)(mpp_count-i-1)*sizeof(*mpp_owners));--mpp_count;
+        if(mpp_once_count) --mpp_once_count;
+        InterlockedIncrement64(&mpp_place_released);return;
+    }
+}
+#define MPP_PLACE_DENIED_SCRIPTS 4u
+static const char *const mpp_place_denied_script[MPP_PLACE_DENIED_SCRIPTS]={"GenericMissions","Guidance","NPC_Instantiation","Signal_Leaks"};
+static const char *const mpp_place_denied_cue="RemoveDueToDistance";   /* md.GenericMissions.OfferOnObject's, copied into each mission's script */
+static uintptr_t mpp_place_scripts_denied[MPP_PLACE_DENIED_SCRIPTS],mpp_place_scripts_allowed[64];
+/* 1: the forward does not hand a place event to this cue (its script or its own name above). */
+static int mpp_place_denied(const unsigned char *cue) {
+    uintptr_t def=0,script=0;char name[CUE_PATH_NAME_MAX];uint64_t size=0;int n;
+    if(!cue) return 0;
+    if(!sample_read(cue+CUE_PATH_DEF,&def,8) || !def) def=(uintptr_t)cue;
+    if(sample_read((const void *)(def+CUE_PATH_SCRIPT),&script,8) && script) {
+        for(unsigned i=0;i<MPP_PLACE_DENIED_SCRIPTS;i++) if(mpp_place_scripts_denied[i]==script) {InterlockedIncrement64(&mpp_place_denials);return 1;}
+        const unsigned seen=(unsigned)((script>>4)%64u);
+        if(mpp_place_scripts_allowed[seen]!=script && (n=cue_string_with(read_local,script+CUE_PATH_SCRIPT_NAME,name,sizeof(name),&size))>0) {
+            for(unsigned i=0;i<MPP_PLACE_DENIED_SCRIPTS;i++)
+                if((size_t)n==strlen(mpp_place_denied_script[i]) && !memcmp(name,mpp_place_denied_script[i],(size_t)n)) {
+                    mpp_place_scripts_denied[i]=script;InterlockedIncrement64(&mpp_place_denials);return 1;
+                }
+            mpp_place_scripts_allowed[seen]=script;
+        }
+    }
+    n=cue_string_with(read_local,def+CUE_PATH_NAME,name,sizeof(name),&size);
+    if(n>0 && (size_t)n==strlen(mpp_place_denied_cue) && !memcmp(name,mpp_place_denied_cue,(size_t)n)) {InterlockedIncrement64(&mpp_place_denials);return 1;}
+    return 0;
 }
 /* ---- new root instances follow their slot ---- */
 /* MD::Cue's instance constructor 0x1111a40 (this, the static cue, the parent instance) has four callers; two pass no
@@ -515,9 +618,11 @@ static void mpp_story_frame(void *cue,unsigned scope) {
 static unsigned mpp_frame_enter(void *cue) {
     if(!mpp_armed) return 0;
     const unsigned scope=pstk_scope_slot;
+    if(mpp_once_count) mpp_once_check(cue);   /* a first player's static cue that waits again is nobody's again */
     if(mpp_story_slot) mpp_story_frame(cue,scope);
-    unsigned k=mpp_count?mpp_slot_of(cue):0u,notice=0;
+    unsigned k=mpp_count || mpp_first_count?mpp_slot_of(cue):0u,notice=0;
     if(!k && mpp_notices_on && (k=mpp_notice_slot(cue))!=0) {notice=MPP_FRAME_NOTICE;mpp_notice_row(cue,k);}   /* a notice about a player's ship */
+    if(!k && mpp_place_slot && cue==mpp_place_cue && scope==mpp_place_slot) {k=scope;InterlockedIncrement64(&mpp_place_frames);}   /* slot k's place event */
     if(!k) return 0;   /* nobody's */
     if(k==1) {         /* slot 1's: the canonical player as it is; what the frame shows and says is slot 1's */
         if(scope) return 0;
@@ -612,7 +717,8 @@ static int mpp_call_leave(unsigned k) {
 static uint64_t mpp_active[PILOT_SLOTS+1];   /* slot k's active mission ID while the manager holds another slot's (2..N) */
 static uint64_t mpp_active_saved;            /* the canonical ID while a scope is open */
 static unsigned mpp_active_open;             /* the slot whose active mission the manager holds now, 0 = canonical */
-static volatile LONG64 mpp_active_swaps,mpp_active_gone,mpp_active_shown,mpp_active_shown_changed,mpp_active_guidance;
+static volatile LONG64 mpp_active_swaps,mpp_active_gone,mpp_active_shown,mpp_active_shown_changed,mpp_active_guidance,
+                       mpp_active_guidance_refused;
 static uint64_t mpp_active_shown_id;       /* what this client's last presentation scope showed as its active mission */
 static LONG64 mpp_active_guidance_at;      /* the Guidance script's frames counted when the open scope began */
 /* The manager's active mission becomes this ID with its index of now; an ID not in the vector is none. */
@@ -626,6 +732,38 @@ static void mpp_active_put(unsigned char *m,uint64_t id) {
     if(id && !found) {id=0;InterlockedIncrement64(&mpp_active_gone);}
     *(volatile uint64_t*)(m+MPP_MGR_ACTIVE)=id;*(volatile uint64_t*)(m+MPP_MGR_ACTIVE_INDEX)=index;
 }
+/* 1: the manager's missions vector holds a mission with this ID. */
+static int mpp_mission_present(unsigned char *m,uint64_t id) {
+    unsigned char *begin=NULL,*end=NULL;
+    if(!id || !sample_read(m+UIMIS_MISSIONS,&begin,8) || !sample_read(m+UIMIS_MISSIONS+8,&end,8) || !begin || end<begin) return 0;
+    size_t n=(size_t)(end-begin)/UIMIS_MISSION_SIZE;
+    if(n>MPP_MISSIONS_MAX) return 0;
+    for(size_t i=0;i<n;i++) {uint64_t at=0;if(!sample_read(begin+i*UIMIS_MISSION_SIZE,&at,8)) return 0;if(at==id) return 1;}
+    return 0;
+}
+/* 1: this MD cue is of the script module with this name (its definition's module, as uimis_cue_check reads it). */
+static int mpp_cue_of_module(const unsigned char *cue,const char *module_name) {
+    uintptr_t definition=0,module=0;char name[96];
+    if(!cue || !read_local(cue+UIMIS_CUE_DEFINITION,&definition,8) || !definition ||
+       !read_local((void*)(definition+UIMIS_DEFINITION_MODULE),&module,8) || !module ||
+       !npc_string_with(uimis_read,module+UIMIS_MODULE_NAME,name,sizeof(name))) return 0;
+    return !strcmp(name,module_name);
+}
+/* What a presentation scope in which X4's Guidance script ran may keep as slot k's active mission: none, a mission slot k
+ * owns, or one of the Guidance script's own that nobody owns (this client's course). Anything else is what X4's manager
+ * picked when the course ended: it makes another mission the active one, and on client k that was another player's.
+ * Two-PC game of 24 Nov, client 2: player 2's course ended (EndGuidance at tick ~21776) and the manager made the only
+ * other mission, player 1's Terran Cadet story, the active one; kept as player 2's, the next Shift+A flew player 2 to
+ * player 1's story target. A test can answer for X4's cues (mpp_active_own_test). */
+static int (*mpp_active_own_test)(unsigned k,uint64_t id);
+static int mpp_active_own(unsigned k,uint64_t id) {
+    if(!id) return 1;
+    if(mpp_active_own_test) return mpp_active_own_test(k,id);
+    const unsigned char *cue=uimis_cue(id);
+    if(!cue) return 0;
+    const unsigned owner=mpp_slot_of(cue);
+    return owner==k || (!owner && mpp_cue_of_module(cue,"Guidance"));
+}
 /* A scope of slot k opens (the simulation's: pslot_enter; client k's presentation: pres_enter). */
 static void mpp_active_enter(unsigned k) {
     unsigned char *m;uint64_t now=0;
@@ -635,14 +773,19 @@ static void mpp_active_enter(unsigned k) {
 }
 /* ...and closes: keep = the simulation's scope (what it left is slot k's active mission from now on); a presentation scope
  * keeps nothing (a change there is counted: the UI's SetActiveMission is captured and replayed, never run here), but
- * for this client's own guidance: a change made while the Guidance script ran in the scope is kept (header 'active'). */
+ * for this client's own guidance: a change made while the Guidance script ran in the scope is kept (header 'active'),
+ * when it is slot k's (mpp_active_own). Another player's mission is not: slot k keeps the mission it had while that is
+ * still there, else none (guidance=kept/refused). */
 static void mpp_active_leave(unsigned k,int keep) {
     unsigned char *m;uint64_t now=0;
     if(!k || mpp_active_open!=k) return;
     mpp_active_open=0;
     if(!(m=uimis_manager(UIMIS_MISSION_MANAGER)) || !sample_read(m+MPP_MGR_ACTIVE,&now,8)) return;
     if(keep) mpp_active[k]=now;
-    else if(now!=mpp_active[k] && script_rng_guidance_frames!=mpp_active_guidance_at) {mpp_active[k]=now;InterlockedIncrement64(&mpp_active_guidance);}
+    else if(now!=mpp_active[k] && script_rng_guidance_frames!=mpp_active_guidance_at) {
+        if(mpp_active_own(k,now)) {mpp_active[k]=now;InterlockedIncrement64(&mpp_active_guidance);}
+        else {if(!mpp_mission_present(m,mpp_active[k])) mpp_active[k]=0;InterlockedIncrement64(&mpp_active_guidance_refused);}
+    }
     else {mpp_active_shown_id=mpp_active[k];InterlockedIncrement64(&mpp_active_shown);if(now!=mpp_active[k] && !(mpp_active[k] && !now)) InterlockedIncrement64(&mpp_active_shown_changed);}
     mpp_active_put(m,mpp_active_saved);
 }
@@ -671,7 +814,8 @@ static int mpp_parse_list(const char *text,size_t *at,size_t length,unsigned fir
     while(*at<length && text[*at]!='|') {
         unsigned slot=0;uint64_t id=0;size_t digits=0;
         while(*at<length && text[*at]>='0' && text[*at]<='9' && slot<100) {slot=slot*10u+(unsigned)(text[(*at)++]-'0');++digits;}
-        if(!digits || slot<first || slot>PILOT_SLOTS || *at>=length || text[(*at)++]!=':') return -1;
+        const unsigned plain=one_per_slot?slot:slot&~MPP_SLOT_ONCE;   /* a claim may be a first player's (MPP_SLOT_ONCE) */
+        if(!digits || plain<first || plain>PILOT_SLOTS || *at>=length || text[(*at)++]!=':') return -1;
         digits=0;
         for(;*at<length && text[*at]!=',' && text[*at]!='|';(*at)++,digits++) {
             const char c=text[*at];const unsigned v=c>='0' && c<='9'?(unsigned)(c-'0'):c>='a' && c<='f'?(unsigned)(c-'a'+10):16u;
@@ -696,7 +840,7 @@ static int mpp_restore(const char *text,size_t length) {
     if(count<0 || at>=length || text[at++]!='|') return 0;
     const int actives=mpp_parse_list(text,&at,length,2,1,active,PILOT_SLOTS);
     if(actives<0 || at!=length) return 0;
-    memcpy(mpp_owners,rows,(size_t)count*sizeof(*rows));mpp_count=(unsigned)count;
+    memcpy(mpp_owners,rows,(size_t)count*sizeof(*rows));mpp_count=(unsigned)count;mpp_once_recount();
     for(int i=0;i<actives;i++) mpp_active[active[i].slot]=active[i].cue;
     return 1;
 }
@@ -709,13 +853,16 @@ static int mpp_arm(void) {
     memset(mpp_first_scripts,0,sizeof(mpp_first_scripts));memset(mpp_first_not,0,sizeof(mpp_first_not));
     mpp_notice_open=mpp_notice_depth=0;mpp_notice_frames=mpp_notice_claims=mpp_notice_forwarded=0;
     memset(mpp_notice_scripts,0,sizeof(mpp_notice_scripts));memset(mpp_notice_not,0,sizeof(mpp_notice_not));
-    mpp_ai_frames=mpp_ai_entered=mpp_ai_inside=mpp_ai_conflicts=mpp_ai_refused=0;mpp_armed=1;return 1;
+    mpp_ai_frames=mpp_ai_entered=mpp_ai_inside=mpp_ai_conflicts=mpp_ai_refused=0;
+    mpp_once_count=0;mpp_place_slot=0;mpp_place_cue=NULL;mpp_place_frames=mpp_place_claims=mpp_place_released=mpp_place_denials=0;
+    memset(mpp_place_scripts_denied,0,sizeof(mpp_place_scripts_denied));memset(mpp_place_scripts_allowed,0,sizeof(mpp_place_scripts_allowed));
+    mpp_armed=1;return 1;
 }
 static int mpp_status(char *out,size_t cap) {
     return snprintf(out,cap,"armed=%d owners=%u hash=%016llx claims=%lld gone=%lld full=%lld frames=%lld entered=%lld inside=%lld "
         "conflicts=%lld refused=%lld calls=%lld call_refused=%lld leave_failed=%lld active=%llx/%llx/%llx swaps=%lld active_gone=%lld "
         "shown=%lld/%lld/%llx generations=%lld generated=%lld/%lld pruned=%lld depth=%u hook=%d/%s faction=%lld/%lld/%lld story=%lld/%lld "
-        "ai=%d/%lld/%lld/%lld/%lld/%lld sched=%d/%lld/%lld/%lld guidance=%lld notices=%d/%lld/%lld/%lld",mpp_armed,mpp_count,(unsigned long long)mpp_owners_hash(),
+        "ai=%d/%lld/%lld/%lld/%lld/%lld sched=%d/%lld/%lld/%lld guidance=%lld/%lld notices=%d/%lld/%lld/%lld place=%lld/%lld/%lld/%lld",mpp_armed,mpp_count,(unsigned long long)mpp_owners_hash(),
         (long long)mpp_claims,(long long)mpp_claim_gone,(long long)mpp_full,(long long)mpp_frames,(long long)mpp_entered,(long long)mpp_inside,
         (long long)mpp_conflicts,(long long)mpp_refused,(long long)mpp_calls,(long long)mpp_call_refused,(long long)mpp_leave_failed,
         (unsigned long long)mpp_active[2],(unsigned long long)mpp_active[3],(unsigned long long)mpp_active[4],(long long)mpp_active_swaps,
@@ -724,5 +871,6 @@ static int mpp_status(char *out,size_t cap) {
         (long long)mpp_faction_swaps,(long long)mpp_faction_same,(long long)mpp_faction_changed,(long long)mpp_story_asked,(long long)mpp_story_claimed,
         mpp_ai_on,(long long)mpp_ai_frames,(long long)mpp_ai_entered,(long long)mpp_ai_inside,(long long)mpp_ai_conflicts,(long long)mpp_ai_refused,
         mpp_sched_installed[0]+mpp_sched_installed[1]+mpp_sched_installed[2],(long long)mpp_sched_calls[0],(long long)mpp_sched_calls[1],(long long)mpp_sched_calls[2],
-        (long long)mpp_active_guidance,mpp_notices_on,(long long)mpp_notice_frames,(long long)mpp_notice_claims,(long long)mpp_notice_forwarded);
+        (long long)mpp_active_guidance,(long long)mpp_active_guidance_refused,mpp_notices_on,(long long)mpp_notice_frames,(long long)mpp_notice_claims,(long long)mpp_notice_forwarded,
+        (long long)mpp_place_frames,(long long)mpp_place_claims,(long long)mpp_place_released,(long long)mpp_place_denials);
 }

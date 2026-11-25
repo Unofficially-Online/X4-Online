@@ -101,6 +101,8 @@ def _check_hull(hull, slot):
 def build_spec(catalog, base_start, players, mode, starts, omit=None, story=(), unpiloted=(), piloted=()):
     """The session-start spec: base start S for slot 1 and a resolved per-player start (kit + hull) per slot.
     story: slots that ask for their start's story by name (a start in gamestarts.STORY_DEFAULT has it without asking).
+    A slot's story is the claimed stock script ('story') or its own copy with the plots after it ('plots', made from the
+    catalog's script folder, catalog.scripts: this PC's game data); see the loop below.
     A player's hull is made without an NPC pilot, as a stock start's own ship is: with one, a person who got up from the
     seat saw that pilot appear in it (a playtest report of 11 Nov: no NPC should appear in the seat when the player gets up).
     piloted: slots whose hull keeps an NPC pilot holding the Wait order (the form before; for tests of that form).
@@ -134,12 +136,14 @@ def build_spec(catalog, base_start, players, mode, starts, omit=None, story=(), 
         if k not in starts:
             raise SessionError(f'--omit {k}: slot {k} has no per-player start')
     slots, used = {}, {base_start: 1}   # slot 1's own ship stands at the base start's place: a slot with the same start goes beside it
+    claimed = set()   # stock start scripts a slot 2..N runs as its own (the stock form: one slot per script)
+    follow_ids = {pid for pid, plot in plot_copies.PLOTS.items() if plot.get('follows')}
     for k in sorted(starts):
         parts = list(omit.get(k, ()))
         world = 'world' in parts   # --omit K=world: the ship-only form (native_gate_gamestarts.py module text)
         try:
             tpl = gamestarts.template(catalog, starts[k], world=world)
-            kit = gamestarts.slot_kit(tpl, mode, k, [p for p in parts if p not in ('world', 'story')])
+            kit = gamestarts.slot_kit(tpl, mode, k, [p for p in parts if p not in ('world', 'story') and p not in follow_ids])
         except gamestarts.CatalogError as error:
             hint = ''
             if not world and not gamestarts.per_player_refusal(catalog.record(starts[k]), world=True):
@@ -155,31 +159,53 @@ def build_spec(catalog, base_start, players, mode, starts, omit=None, story=(), 
         if k not in piloted:
             hull['pilot'] = False
         _check_hull(hull, k)
-        # The start's own story (its gs_*.xml Start cue) runs for this slot, as this slot's player, unless --omit K=story
-        # or another player already has that start's story: the stock scripts keep one story's state per start (the
-        # base start's runs for slot 1 by X4's own module rule).
+        # The start's own story (its gs_*.xml Start cue) runs for this slot, as this slot's player, unless --omit K=story.
+        # The stock script keeps one story's state, so it is one player's: the base start's runs for slot 1 by X4's own
+        # module rule, and the first slot 2..N with another start claims that start's stock script (story_patch). A slot
+        # whose start is the base start's or an earlier slot's plays the story as its own copy of the script
+        # (native_gate_plot_copies.py story_entries: GS_Terran1_P3), and so does a slot whose start's story other stock
+        # plots continue (follow_on: the Terran cadet's Story_Yaki): those come with it as copies of the same set, on by
+        # default, each left out by --omit K=<plot id>.
         wanted = k in story or tpl['gamestart'] in gamestarts.STORY_DEFAULT
         if k in story:
             why = ('it is left out by --omit' if 'story' in parts else
-                   f"another player has the story of {tpl['gamestart']} (the stock script keeps one story per start)" if n else
                    f"start {tpl['gamestart']} has no story script of the stock shape (or is not a class b start taken with "
                    f'--omit {k}=world)' if not tpl.get('story') else None)
             if why:
                 raise SessionError(f'--story {k}: {why}')
-        story_k = tpl.get('story') if wanted and 'story' not in parts and not n else None
-        if story_k:
-            _check_story(story_k, k)
+        foreign = sorted(set(parts) & follow_ids - set(plot_copies.follow_on(tpl['gamestart'])))
+        if foreign:
+            raise SessionError(f"--omit {k}={','.join(foreign)}: start {tpl['gamestart']} has no such plot after its story "
+                               f"(plots after a start's story: {', '.join(sorted(follow_ids))})")
+        own = tpl.get('story') if wanted and 'story' not in parts else None
+        story_k, copies_k = None, []
+        if own:
+            _check_story(own, k)
+            follow = [pid for pid in plot_copies.follow_on(tpl['gamestart']) if pid not in parts]
+            if tpl['gamestart'] == base_start or own['script'] in claimed or follow:
+                try:
+                    copies_k = plot_copies.story_entries(own, tpl['gamestart'], k, catalog.scripts,
+                                                         identity.pool(k) if mode == 'factions' else None, follow)
+                except plot_copies.PlotError as error:
+                    raise SessionError(f'slot {k}: its story as its own copy: {error}') from None
+            else:
+                story_k = own
+                claimed.add(own['script'])
         slots[str(k)] = {'gamestart': tpl['gamestart'], 'class': tpl['class'], 'kit': kit, 'hull': hull,
                          'offset_x': n * gamestarts.SAME_START_OFFSET, 'presentation': tpl['presentation'],
                          'inventory_not_applied': tpl['inventory'] if 'inventory' in parts else {}, 'world_omitted': tpl['world_omitted'], 'story': story_k}
+        if copies_k:
+            slots[str(k)]['plots'] = copies_k
     # The kits must pass the identity plan's own rules (the same ones Lua applies on every client).
     ships = [f'{i:016x}' for i in range(1, players + 1)]
     try:
         identity.build_plan(players, mode, ships=ships, occupied_ship=ships[0], kits=[s['kit'] for s in slots.values()])
     except ValueError as error:
         raise SessionError(str(error)) from None
+    # fixture 'none': the capture makes no fixture ships and the session names none (native_gate_scenarios.capture_battle_md);
+    # a spec without the field (made before 24 Nov) has the battle fixture.
     return {'format': SPEC_FORMAT, 'base_start': base_start, 'base_class': base_class, 'base_parts': base_parts,
-            'players': players, 'mode': mode, 'slots': slots, 'catalog': catalog.sources}
+            'players': players, 'mode': mode, 'slots': slots, 'catalog': catalog.sources, 'fixture': 'none'}
 
 
 def _check_story(story, slot):
@@ -224,8 +250,14 @@ def add_plots(spec, plots, root):
             raise SessionError(f'--plot {k}: slot {k} has no per-player start')
         if len(set(ids)) != len(ids):
             raise SessionError(f'--plot {k}: a plot named twice')
-        try:
-            slot['plots'] = [plot_copies.entry(plot_id, int(k), root, identity.pool(int(k))) for plot_id in ids]
+        after = [i for i in ids if (plot_copies.PLOTS.get(i) or {}).get('follows')]
+        if after:   # a plot after a start's story comes with that story, as a copy of the same set (build_spec)
+            raise SessionError(f"--plot {k}={after[0]}: it continues the story of {plot_copies.PLOTS[after[0]]['follows']} and "
+                               f'comes with it (--start {k}=<that start> --omit {k}=world --story {k})')
+        try:   # after the slot's story copies (build_spec), which begin first
+            slot['plots'] = list(slot.get('plots') or []) + [plot_copies.entry(plot_id, int(k), root, identity.pool(int(k)))
+                                                             for plot_id in ids]
+            plot_copies.slot_plots({str(k): slot})
         except plot_copies.PlotError as error:
             raise SessionError(f'--plot {k}: {error}') from None
     return spec
@@ -293,15 +325,18 @@ def story_md(stories, plots=None, first=None):
     # the stock script (code 1+100*j, j the plot's place among the session's plot ids) and in a slot's copy (story_code);
     # a plot's d-th debug cue (from 1) has 1000*(d-1) more.
     # The copy's cue is under the root cue the slot owns, so its frame runs as that slot's player.
+    # Only plots with debug cues take a place j (a start's story copy has none): the codes of a session without them are
+    # what they were.
     debug = []
-    ids = sorted({e['id'] for entries in (plots or {}).values() for e in entries} | {e['id'] for e in first or ()})
+    ids = sorted(i for i in {e['id'] for entries in (plots or {}).values() for e in entries} | {e['id'] for e in first or ()}
+                 if (plot_copies.PLOTS.get(i) or {}).get('debug'))
     for j, plot_id in enumerate(ids, 1):
         plot = plot_copies.PLOTS[plot_id]
         for d, name in enumerate(plot.get('debug') or ()):
             debug.append((story_code(1, j) + 1000 * d, f"md.{plot['script']}.{name}", 1, plot_id))
     for k, entries in sorted((plots or {}).items()):
         for i, e in enumerate(entries, 1):
-            for d, name in enumerate(plot_copies.PLOTS[e['id']].get('debug') or ()):
+            for d, name in enumerate((plot_copies.PLOTS.get(e['id']) or {}).get('debug') or ()):
                 debug.append((story_code(k, i) + 1000 * d, f"md.{e['copy']}.{name}", int(k), e['id']))
     if debug:
         cue = ET.SubElement(root.find('cues'), 'cue', {'name': 'PlotDebug', 'instantiate': 'true'})
@@ -472,7 +507,7 @@ def build_capture(spec, fixedtick_dll, out):
     extra_md = {HULLS_MD: hulls_md(spec)} if hulls else {}
     extra = [f'X4LAN_CONFIG.native_gate_snapshot_hulls = {hulls}'] if hulls else []
     out = scenarios.build_capture_overlay(spec['base_start'], fixedtick_dll, out, allowed={spec['base_start']},
-                                          extra_md=extra_md, extra_config=extra)
+                                          extra_md=extra_md, extra_config=extra, fixture=spec.get('fixture', 'battle'))
     if write_story_files(out, story_slots(spec['slots']), plot_copies.slot_plots(spec['slots']),
                          plot_copies.first_plots(spec)):   # the save is made with the patched start scripts
         scenarios.write_manifest(out)
@@ -570,7 +605,7 @@ def register(spec, snapshot):
     if header['start'] != spec['base_start']:
         raise SessionError(f"save start {header['start']} is not the session base start {spec['base_start']}")
     import build_native_gate_overlay as builder
-    fixture = builder.snapshot_fixture(snapshot)
+    fixture = [] if spec.get('fixture') == 'none' else builder.snapshot_fixture(snapshot)
     hulls = {}
     if spec['slots']:
         ids = saved_list(snapshot, HULLS_SCRIPT, HULLS_CUE, '$ships')
@@ -595,6 +630,7 @@ def register(spec, snapshot):
             'players': spec['players'], 'snapshot': {'path': str(snapshot.resolve()), 'sha256': sha, 'bytes': snapshot.stat().st_size},
             'seed': header.get('seed'), 'build': header.get('build'), 'player_ship': header['player']['ship'],
             'player_macro': header['player']['macro'], 'player_sector': header['player']['sector'], 'fixture': fixture,
+            'fixture_form': 'none' if spec.get('fixture') == 'none' else 'battle',
             'hulls': hulls, 'slots': {k: {'gamestart': v['gamestart'], 'class': v['class'], 'sector': v['hull']['sector'],
                                           'ship': v['hull']['macro'], 'world_omitted': v.get('world_omitted', []),
                                           'story': v.get('story'), 'plots': v.get('plots') or [], 'kit': v['kit']}
@@ -609,7 +645,8 @@ def session_of(path):
     for key in ('base_start', 'mode', 'players', 'snapshot', 'player_ship', 'player_sector', 'fixture', 'hulls', 'slots'):
         if key not in s:
             raise SessionError(f'{path}: {key} missing')
-    if len(s['fixture']) != 12 or not all(identity.saved(f) for f in s['fixture'] + [s['player_ship']] + list(s['hulls'].values())):
+    count = 0 if s.get('fixture_form') == 'none' else 12   # a session made since 24 Nov has no fixture
+    if len(s['fixture']) != count or not all(identity.saved(f) for f in s['fixture'] + [s['player_ship']] + list(s['hulls'].values())):
         raise SessionError(f'{path}: invalid saved IDs')
     if set(s['hulls']) != set(s['slots']):
         raise SessionError(f'{path}: every per-player start needs its hull')
@@ -666,7 +703,9 @@ def main(argv=None):
     s.add_argument('--omit', action='append', help='K=PART,PART: parts of slot K\'s start that are not applied (' +
                    ', '.join(gamestarts.OMITTABLE) + ')')
     s.add_argument('--story', default='', metavar='K[,K...]',
-                   help="slots whose start's own story script runs for that slot's player (a class b start taken with --omit K=world)")
+                   help="slots whose start's own story script runs for that slot's player (a class b start taken with --omit K=world; "
+                        "a slot on the base start's or an earlier slot's start plays its own copy, and the Terran cadet's comes with "
+                        "the Terran story after it: --omit K=yaki leaves that out)")
     s.add_argument('--piloted', default='', metavar='K[,K...]',
                    help='slots whose start ship keeps an NPC pilot (the default is none: nobody appears in the seat when the player gets up)')
     s.add_argument('--unpiloted', default='', metavar='K[,K...]', help='the default for every slot now; accepted for older scripts')

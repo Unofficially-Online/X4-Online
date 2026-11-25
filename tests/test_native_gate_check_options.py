@@ -1205,6 +1205,39 @@ class HitClaimOptionTests(unittest.TestCase):
         self.assertEqual(self.failures(self.READY), [])
 
 
+class PilotSlotsRoomAttentionOptionTests(unittest.TestCase):
+    """native_gate_pilot_slots_room_attention (a slot's player's room inroom, as X4's own player's): true only, with the
+    stock path and its slots 2..N."""
+    READY = (BASE+'X4LAN_CONFIG.native_gate_pilot_inputs = true\nX4LAN_CONFIG.native_gate_pilot_stock = true\n'
+             "X4LAN_CONFIG.native_gate_pilot_stock_slots = 'all'\n")
+    PREREQUISITES = ("X4LAN_CONFIG.native_gate_pilot_stock_slots = 'all'\n", 'X4LAN_CONFIG.native_gate_pilot_stock = true\n')
+
+    def failures(self, text):
+        return [failure['rule'] for failure in module.check(text)[1] if 'pilot_slots_room_attention' in failure['rule']]
+
+    def test_true_with_the_stock_slots(self):
+        self.assertEqual(self.failures(self.READY+'X4LAN_CONFIG.native_gate_pilot_slots_room_attention = true\n'), [])
+        for value in ("'inroom'", '1', "'true'"):
+            with self.subTest(value=value):
+                self.assertEqual(len(self.failures(self.READY+'X4LAN_CONFIG.native_gate_pilot_slots_room_attention = %s\n' % value)), 1)
+        for drop in self.PREREQUISITES:
+            with self.subTest(drop=drop):
+                text = self.READY.replace(drop, '')+'X4LAN_CONFIG.native_gate_pilot_slots_room_attention = true\n'
+                self.assertEqual(len(self.failures(text)), 1)
+        self.assertEqual(self.failures(BASE+'X4LAN_CONFIG.native_gate_pilot_slots_room_attention = false\n'), [])
+        self.assertEqual(self.failures(self.READY), [])
+
+    def test_a_session_default_with_its_prerequisites(self):
+        values, report = module.defaults.apply(module.defaults.parse(SessionDefaultsOptionTests.SESSION))
+        self.assertIn('native_gate_pilot_slots_room_attention', report['applied'])
+        self.assertEqual(values['native_gate_pilot_slots_room_attention'], 'true')
+        on = dict((key, needs) for key, _, needs, _ in module.defaults.TABLE['on'])
+        self.assertEqual(on['native_gate_pilot_slots_room_attention'], ('native_gate_pilot_stock_slots',))
+        values, report = module.defaults.apply(module.defaults.parse(SessionDefaultsOptionTests.SESSION+
+                                                                     'X4LAN_CONFIG.native_gate_pilot_stock = false\n'))
+        self.assertIn('native_gate_pilot_slots_room_attention', [key for key, _, _ in report['skipped']])
+
+
 class PilotPredictOptionTests(unittest.TestCase):
     PILOT = BASE+'X4LAN_CONFIG.native_gate_pilot_inputs = true\n'
 

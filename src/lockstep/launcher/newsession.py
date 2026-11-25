@@ -40,9 +40,11 @@ def catalog(game_dir=None, cache=None, log=print):
 
 def starts(game_dir=None, cache=None, show_all=False, log=print):
     """The stock starts: which one can be the session base (slot 1) and which a player's own start (slots 2..N).
-    player-start=ship+story: with --omit K=world the player gets that start's ship, place and kit and its own story
-    script (the first slot with that start; --omit K=world,story leaves the story out), not its other world parts
-    (stations, plots other scripts run); ship-only: a start without a story script of the stock shape."""
+    player-start=ship+story: with --omit K=world the player gets that start's ship, place and kit and, with --story K,
+    its own story (the stock script for the first slot with that start, a copy of it for a slot whose start is the base
+    start's or an earlier slot's, with the stock plots that continue it; --omit K=world,story leaves the story out), not
+    its other world parts (stations, plots other scripts run); ship-only: a start without a story script of the stock
+    shape."""
     rows = [r for r in catalog(game_dir, cache, log).rows() if show_all or r['class'] != '-']
     for r in rows:
         pl = r['player']
@@ -80,6 +82,30 @@ class NewSessionOptions:
     cache: Path | None = None
     display: int | None = None                   # the capture client's window on this monitor (1 = primary)
     focus: bool = True                           # False: that window never keeps the keyboard focus or the cursor
+    fixture_ships: bool = False                  # True: slots without --start fly fixture ships (the form before 24 Nov)
+
+
+def own_starts(o, cat, log=print):
+    """(starts, omit) for the spec: every slot 2..N without --start takes the base start's own ship, place and kit beside
+    slot 1's (as --start K=BASE --omit K=world), so each player starts in that start's ship with its loadout. Before
+    24 Nov such a slot flew one of the capture fixture's fighters (a two-PC game at the Terran cadet start: player 2
+    in an Argon fighter). Kept: o.fixture_ships, open slots (--open: a joiner picks its start) and a base start that
+    cannot give a slot its ship (logged)."""
+    gamestarts, _ = tools()
+    starts, omit = dict(o.starts), dict(o.omit)
+    opened = {int(k) for k in str(o.open or '').split(',') if k.strip().isdigit()}
+    missing = [k for k in range(2, o.players + 1) if k not in starts and k not in opened]
+    if o.fixture_ships or not missing:
+        return starts, omit
+    why = gamestarts.per_player_refusal(cat.record(o.base_start), world=True)
+    if why:
+        log(f"slots {', '.join(map(str, missing))}: fixture ships ({why})")
+        return starts, omit
+    for k in missing:
+        starts[k] = o.base_start
+        parts = [p for p in (omit.get(k) or '').split(',') if p] if isinstance(omit.get(k, ''), str) else list(omit[k])
+        omit[k] = ','.join(parts + ([] if 'world' in parts else ['world']))
+    return starts, omit
 
 
 def new_session(o, log=print):
@@ -90,7 +116,9 @@ def new_session(o, log=print):
     if out.exists():
         raise SystemExit(f'{out} exists (a session folder is made once; pick a new --out)')
     try:
-        spec = session_start.build_spec(catalog(o.game, o.cache, log), o.base_start, o.players, o.mode, o.starts, o.omit,
+        cat = catalog(o.game, o.cache, log)
+        starts, omit = own_starts(o, cat, log)
+        spec = session_start.build_spec(cat, o.base_start, o.players, o.mode, starts, omit,
                                         story=o.story, unpiloted=o.unpiloted, piloted=o.piloted)
         if o.plots:
             install = Path(o.game) if o.game else game.find_install()
@@ -105,7 +133,7 @@ def new_session(o, log=print):
         log(f"slot {k}: start {slot['gamestart']} (class {slot['class']}) in {slot['hull']['sector']}, kit "
             + ', '.join(sorted(slot['kit']))
             + (f"; its story runs for this player ({slot['story']['script']}.{slot['story']['cue']})" if slot.get('story') else '')
-            + (f"; its own copy of: {', '.join(e['id'] for e in slot['plots'])}" if slot.get('plots') else '')
+            + (f"; its own copies: {', '.join(e['id'] + '=' + e['copy'] for e in slot['plots'])}" if slot.get('plots') else '')
             + (f"; left out: {'; '.join(slot['world_omitted'])}"[:400] if slot.get('world_omitted') else ''))
     capture = session_start.build_capture(spec, None, out / 'capture-overlay')
     save = out / 'session-save.xml.gz'

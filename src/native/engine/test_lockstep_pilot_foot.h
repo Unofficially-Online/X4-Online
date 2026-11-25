@@ -750,6 +750,35 @@ static void test_pilot_foot_image(const char *path) {
     assert(mapped[0xd7cebc]==0x88 && *(uint32_t*)(mapped+0xd7cebc+2)==PFSLOT_FPC_SEAT && TPF_CALL(0xd7ceb4)==0xd7d2e0u);
     assert(TPF_RIP(0xd7d346,6)==PFSLOT_POSITION_NONE && *(uint32_t*)(mapped+0xd7d34c+2)==PFSLOT_POSITION);
     assert(TPF_CALL(0x717cb3)==PFSLOT_MAY_STAND && TPF_CALL(0x717ccb)==0x5a3da0u);
+    /* The pilot chair (lockstep_pilot_foot_slots.h pfslot_chair): its pins and the three trigger table entries; 7173f0's
+     * target test (class 0x4d at vtable +0x11e8), the record's name (+0x128), the chair config (0x11 unless P+0x60 ->
+     * 5a3e40 -> +0x368, its name at +0x300 -> 3148d0 says another), then 6; each event 0x48 bytes at alignment 0x10 from
+     * 14b7140, built by 9a1830 with the flag twice, posted by 99a3f0 not immediate; the constructor's vtable and fields;
+     * 716670's tail: its lookup, the tag, 7173f0 with the instant flag of its fourth argument or 717a90; the seat click,
+     * the teleport's seat (0) and the game's start seat from HelperModule::InitializeUI (1); 7176f0's 0x25, immediate. */
+    pchair_pins_checked=0;assert(pchair_pins());pchair_pins_checked=0;
+    assert(mapped[0x71742f]==0xba && *(uint32_t*)(mapped+0x717430)==PFSLOT_TARGET_CLASS && *(uint32_t*)(mapped+0x717436)==PCHAIR_TARGET_SLOT &&
+           *(uint32_t*)(mapped+0x71745b)==PFSLOT_RECORD_NAME && mapped[0x71747c]==PCHAIR_MACRO && *(uint32_t*)(mapped+0x717485)==PCHAIR_CONFIG &&
+           *(uint32_t*)(mapped+0x717490)==PCHAIR_CONFIG_NAME && mapped[0x717474]==0xbe && *(uint32_t*)(mapped+0x717475)==PCHAIR_CONFIG_DEFAULT);
+    assert(TPF_CALL(0x71747d)==PCHAIR_CHARACTER && TPF_CALL(0x7174bc)==PCHAIR_TRIGGER_ID && !memcmp(mapped+0x7174c1,"\x85\xc0\x0f\x45\xf0",5));
+    assert(TPF_CALL(0x7174fd)==PCHAIR_ALLOCATE && TPF_CALL(0x71755c)==PCHAIR_ALLOCATE && *(uint32_t*)(mapped+0x7174f9)==PCHAIR_EVENT_SIZE &&
+           *(uint32_t*)(mapped+0x7174f4)==0x10u && *(uint32_t*)(mapped+0x717558)==PCHAIR_EVENT_SIZE && *(uint32_t*)(mapped+0x717553)==0x10u);
+    assert(TPF_CALL(0x71751d)==PCHAIR_EVENT && TPF_CALL(0x717582)==PCHAIR_EVENT && mapped[0x71757a]==0xba && *(uint32_t*)(mapped+0x71757b)==PCHAIR_ACTIVATE &&
+           !memcmp(mapped+0x717518,"\x8b\xd6",2) && !memcmp(mapped+0x717511,"\x45\x0f\xb6\xce",4) && !memcmp(mapped+0x717573,"\x45\x0f\xb6\xce",4));
+    assert(TPF_CALL(0x717534)==PCHAIR_POST && TPF_CALL(0x717594)==PCHAIR_POST && !memcmp(mapped+0x717523,"\x45\x33\xc9",3) &&
+           !memcmp(mapped+0x717588,"\x45\x33\xc9",3));
+    assert(TPF_RIP(0x9a1854,7)==PCHAIR_EVENT_VTABLE && !memcmp(mapped+0x9a185e,"\x89\x51\x18",3) && !memcmp(mapped+0x9a187b,"\x48\x8d\x4b\x20",4) &&
+           !memcmp(mapped+0x9a1884,"\x40\x88\x7b\x40",4) && !memcmp(mapped+0x9a188d,"\x88\x43\x41",3));
+    assert(TPF_CALL(0x716c34)==PFSLOT_CONN_TYPE && TPF_CALL(0x716c56)==PFSLOT_SHIP_CONN && TPF_CALL(0x716c64)==PFSLOT_SHIP_RECORD &&
+           TPF_CALL(0x716c75)==PFSLOT_DOCK_CONN && TPF_CALL(0x716c83)==PFSLOT_DOCK_RECORD && TPF_CALL(0x716cb2)==PFSLOT_TAG_HAS &&
+           TPF_RIP(0x716c9e,6)==PFSLOT_GETUP_TAG && TPF_CALL(0x716cc9)==0x7173f0u && TPF_CALL(0x716cd7)==0x717a90u &&
+           !memcmp(mapped+0x716cc2,"\x45\x0f\xb6\xce",4) && !memcmp(mapped+0x716c0e,"\x44\x0f\xb6\x75\x58",5));
+    assert(TPF_CALL(0x35bdc8)==0x716670u && !memcmp(mapped+0x35bdbb,"\x45\x33\xc9",3));                                      /* the seat click: 0 */
+    assert(TPF_CALL(0x7055ff)==0x716670u && !memcmp(mapped+0x7055ef,"\x45\x33\xc9",3) && TPF_RIP(0x7055f2,7)==PSLOT_PILOT_POSITION);   /* teleport: 0 */
+    assert(TPF_CALL(0x71430b)==0x716670u && !memcmp(mapped+0x7142f2,"\x41\xb1\x01",3) && TPF_RIP(0x7142fe,7)==PSLOT_PILOT_POSITION &&
+           TPF_CALL(0xabe053)==0x7142a0u && TPF_CALL(0xabe103)==0x7142a0u);                                                     /* the start: 1 */
+    assert(TPF_RIP(0x71778e,7)==PCHAIR_EVENT_VTABLE && *(uint32_t*)(mapped+0x71779b)==PCHAIR_DEACTIVATE && !memcmp(mapped+0x7177be,"\x41\xb1\x01",3) &&
+           TPF_CALL(0x7177ca)==PCHAIR_POST);
     #undef TPF_CALL
     #undef TPF_RIP8
     #undef TPF_RIP

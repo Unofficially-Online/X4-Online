@@ -65,6 +65,8 @@ D.ON={
  {'native_gate_world_hash_stride',1800,'','census: the world digest joins the report every 1800 ticks (a split stops at the relay)'},
  {'native_gate_world_hash_schema','WORLD_IMPORTED_2','native_gate_world_hash_stride','census with the enriched navigation fields'},
  {'native_gate_world_hash_shields','canonical','native_gate_world_hash_stride','census shields in canonical form'},
+ {'native_gate_world_hash_spread',900,'native_gate_world_hash_stride !native_gate_world_hash_join !native_gate_world_rolling_slices !native_gate_world_nav_stride !native_gate_world_pages_window !native_gate_world_trace_ticks !native_gate_motion_watch_zones !native_gate_hybrid !native_gate_world_static','census read in parts over the 900 ticks before each stride tick (about 1 ms a tick) instead of in one step (0.75-0.9 s every 1800 ticks); the same objects and roots, each object read at its part tick on every client (lockstep_world_hash.h)'},
+ {'native_gate_world_record',8,'native_gate_world_hash_stride !native_gate_world_rolling_slices','the objects each of the last eight census captures changed, beside the log (x4lan-census-<k>.txt, about 2 MB and a few ms per capture): a census split of a live game names its objects (tools/dev/census_record_diff.py, lockstep_world_hash.h)'},
  {'native_gate_path_determinism',3,'native_gate_serial_pathing','navigation stamps and pathing budget fixed'},
  -- Pathing batch jobs inline on the pathing thread, in batch order (lockstep_travel_determinism.h), since 11 Nov. The parallel
  -- jobs with a travel snapshot (native_gate_travel_snapshot, the default before) freeze one read between agents; another one
@@ -140,6 +142,7 @@ D.ON={
  {'native_gate_tick_hz',30,'','30 simulation steps per second (the relay runs --tick-hz 30)'},
  {'native_gate_runtime_ids',true,'native_gate_world_identities','runtime IDs allocated alike on every client'},
  {'native_gate_runtime_ids_barrier',true,'native_gate_runtime_ids','the runtime ID word joins the digest'},
+ {'native_gate_runtime_ids_caller_rows','delta','native_gate_runtime_ids','log thinning: a RUNTIME_IDS_CALLER row only for a stack whose count moved since its last row (60% fewer bytes; census_runtime_callers.py rebuilds every table)'},
  {'native_gate_runtime_ids_local',true,'native_gate_runtime_ids native_gate_created_identities','client-local objects take local runtime IDs'},
  {'native_gate_runtime_ids_ui_elements',true,'native_gate_runtime_ids_local','a UI element attention change (part animations) takes local runtime IDs'},
  {'native_gate_render_rng_split',true,'','the render runs on its own RNG word'},
@@ -154,6 +157,7 @@ D.ON={
  {'native_gate_view_points_source','ship','native_gate_view_points','view points at the ships'},
  {'native_gate_view_triggers','block','native_gate_view_points','camera triggers blocked in the simulation'},
  {'native_gate_view_cameras',true,'native_gate_view_points native_gate_view_triggers','cameras of simulation cutscenes are viewers on every client: a comm call films its speaker'},
+ {'native_gate_view_cameras_animated',true,'native_gate_view_cameras','an animated call camera films its speaker as a still one does (the call video was black)'},
  {'native_gate_view_ui','block','native_gate_view_points native_gate_runtime_ids_local','UI view queries blocked in the simulation'},
  {'native_gate_mass_traffic','sync','','mass traffic joined at the gate'},
  {'native_gate_region_pass','sync','','region passes joined at the gate'},
@@ -197,11 +201,16 @@ D.ON={
  {'native_gate_pilot_capture_source','@plan_stock','native_gate_pilot_stock','every client captures its own slot (stock)'},
  {'native_gate_pilot_device','@plan_nodevice','native_gate_pilot_stock','stock capture: no device sampler'},
  {'native_gate_pilot_present',true,'native_gate_pilot_stock native_gate_pilot_stock_slots native_gate_render_rng_split','client k presents slot k (camera, HUD, UI)'},
+ {'native_gate_pilot_present_sound',true,'native_gate_pilot_present','a player 2+ hears the world around its own ship: X4 sound update runs as that player (guns, engines and travel drive were parked 173 km away)'},
+ {'native_gate_sound_source',true,'native_gate_pilot_present','a sound or voice line of a player 2+ own player (the first line of a call, its ship computer, the UI feedback sounds) is heard on that player screen'},
+ {'native_gate_sound_play_scope',true,'native_gate_pilot_present_sound','a player 2+ hears the shots of its own guns and every other short sound around its ship: a sound started by the simulation plays first where that player is (it was stopped at once as out of range)'},
+ {'native_gate_ship_sound_context',true,'native_gate_pilot_present','the ship a player 2+ is in has its own cockpit sounds on that player screen, after boarding, sitting down, getting up and every ship change'},
  {'native_gate_pilot_ship_state',true,'native_gate_pilot_inputs','slot ships state in the receipt'},
  {'native_gate_pilot_block_orders',true,'native_gate_pilot_inputs','stock menus that would act on one client are blocked; the UI replay reopens what it shares'},
  {'native_gate_pilot_fire','record','native_gate_pilot_inputs native_gate_actor_rng_all native_gate_world_identities native_gate_bullet_cadence=every','slot ships fire from the record trigger (record)'},
- {'native_gate_pilot_aim',true,'native_gate_pilot_fire=record native_gate_pilot_stock','each player guns follow that player cursor (manual aim)'},
- {'native_gate_pilot_aim_assist',true,'native_gate_pilot_aim','without manual aim each player guns track that player target in range (aim assist)'},
+ {'native_gate_pilot_aim',true,'native_gate_pilot_fire=record native_gate_pilot_stock','each player guns follow that player cursor (manual aim), with the target speed in the gimbal turn'},
+ {'native_gate_pilot_aim_assist',true,'native_gate_pilot_aim','each player guns lock onto that player target as in X4 (aim assist: crosshair near the target, or no mouse steering)'},
+ {'native_gate_pilot_aim_present',true,'native_gate_pilot_aim','each player sees its own guns, their aim dots and the aim assist icon follow its cursor at once (the shots keep the replayed aim)'},
  {'native_gate_hit_claims','victim','native_gate_pilot_inputs native_gate_world_identities native_gate_pilot_source=wire native_gate_bullet_cadence=every','player-versus-player hits decided by the victim slot'},
  {'native_gate_pilot_death',true,'native_gate_pilot_stock','a slot ship death does not end the session'},
  {'native_gate_pilot_respawn',300,'native_gate_pilot_death','a new slot ship after 300 ticks'},
@@ -212,12 +221,27 @@ D.ON={
  {'native_gate_nav_mesh','sync','native_gate_pilot_foot native_gate_world_identities','interior nav helpers built at an agreed join (stop 186): with on foot, the wharf patrol split without it (footlook5 in sync with it)'},
  {'native_gate_pilot_foot_bodies',true,'native_gate_pilot_foot native_gate_pilot_stock_slots','slots 2..N in their seats rooms'},
  {'native_gate_pilot_foot_slots',true,'native_gate_pilot_foot native_gate_pilot_stock_slots','slots 2..N get up and walk'},
+ -- X4 moves its own player's pilot chair at the seat and the stand-up (TriggerAnimationEvents to the ship): players 2..N sat
+ -- in a chair that never activated, so their get-up played nothing (24 Nov report: the get-up looked like a jump out of the seat).
+ {'native_gate_pilot_chair',true,'native_gate_pilot_foot_slots','the pilot chair of players 2+ moves when they sit down and get up, as player 1 chair does (on every client)'},
+ {'native_gate_pilot_teleport',true,'native_gate_pilot_foot_slots native_gate_pilot_foot_bodies','a player 2+ who gets up where nobody may stand (a fighter docked inside a carrier) is put at the ship bridge transporter as player 1 is, in that player own scope on every client, the fade on its own screen only; X4 connecting such a player stops safely (222)'},
  {'native_gate_player_settings_per_slot',true,'native_gate_ui_replay~faction','each slot its own faction settings'},
  {'native_gate_missions_per_player',true,'native_gate_ui_replay~events native_gate_ui_replay~missions native_gate_script_rng native_gate_pilot_stock_slots','a mission slot k accepts runs as slot k player on every client (personal missions, first form)'},
  {'native_gate_missions_per_player_offers',true,'native_gate_missions_per_player','generic mission offers around every player, not only player 1'},
  {'native_gate_research_per_faction',true,'native_gate_missions_per_player','research and blueprints belong to a faction: shared in coop, each player faction its own in factions mode (a production module tells and credits its owner)'},
  {'native_gate_pilot_present_walk_hud',true,'native_gate_pilot_present native_gate_pilot_foot_slots','no cockpit HUD and no radar on a player 2+ own screen while that player walks'},
+ -- X4's player keeps slot 1's seated camera chain on client k; walking, X4's GetOffset applied it in the scope and put the
+ -- camera in front of the walking HUD (24 Nov report: the UI on foot after a get-up was wrong, twice its size).
+ {'native_gate_pilot_present_walk_camera',true,'native_gate_pilot_present native_gate_pilot_foot_slots','the HUD and the menus of a player 2+ on foot at their own size: that player camera sits on its eye as after X4 own stand-up'},
+ -- The camera chain's head link (X4's CockpitHead controller: the travel push, its easing when a menu opens) moved the
+ -- world-space UI of a seated player 2+ toward the eye, which rests at the seat (24 Nov: the map drawn too large after a
+ -- sector change, the UI gliding on M and on a mission click).
+ {'native_gate_pilot_present_seat_camera',true,'native_gate_pilot_present','the map, the menus and the HUD of a seated player 2+ at their own size in travel and while a menu opens: no head movement on that player UI'},
+ -- X4's HUD lists the objects of ONE zone and its neighbours, the zone of the UI's player (X4's own, slot 1's on every
+ -- client): player 2 in another zone had no box and no target on the ships around it (rk9, 24 Nov, a continued game).
+ {'native_gate_pilot_present_hud_zone',true,'native_gate_pilot_present','the HUD of a player 2+ marks and targets the ships around that player: its target elements come from that player zone, not player 1 zone'},
  {'native_gate_pilot_slots_post',true,'native_gate_pilot_stock_slots','a player 2+ own ship answers that player as its pilot while the game runs as that player (the autopilot check)'},
+ {'native_gate_pilot_slots_room_attention',true,'native_gate_pilot_stock_slots','a player 2+ room in its own ship (or where it walks) is at the attention the game gives its own player room, so that player ship computer runs its autopilot through every zone change as player 1 does (it ended unheard when the cockpit dipped below visible for one tick: the autopilot stayed on and missed its arrival)'},
  {'native_gate_missions_per_player_ai_frames',true,'native_gate_missions_per_player','the autopilot and other scripts of a player 2+ own ship computer run as that player'},
  {'native_gate_notices_per_player',true,'native_gate_missions_per_player','the game notices about a player ship (docking, Successfully docked, the station welcome, the bridge lines) are said and shown for that player on its own screen (player 1 docking was heard on both screens, player 2 docking on none)'},
  {'native_gate_md_media',true,'native_gate_pilot_stock_slots','a mission call on the target monitor starts in the simulation at one tick on every client and shows on its owner client only'},
@@ -232,6 +256,7 @@ D.ON={
  {'native_gate_faction_present',true,'native_gate_pilot_stock_slots native_gate_pilot_present','factions mode: a player with a faction of its own sees that faction as the player faction in its own menus and HUD (its own stations and ships under Property Owned, not those of player 1)'},
  {'native_gate_swarm_seed',true,'native_gate_pilot_stock_slots','swarm missiles keep the same formation on every client (X4 seeds the offsets of a swarm with a memory address, so each client flew its missiles elsewhere)'},
  {'native_gate_shared_listeners',true,'native_gate_pilot_stock_slots','a script no player owns (world plots, story activators, statistics) hears the events of every player, each inside that player scope'},
+ {'native_gate_computer_forward',true,'native_gate_shared_listeners native_gate_notices_per_player','a player 2+ ship computer says Autopilot engaged and disengaged to that player (its signals reached no script)'},
  {'native_gate_ui_reload_hold',true,'native_gate_ui_guard','a window resize, a UI scale change or a controller-mode switch no longer ends a player session: X4 reloads its UI after the session'},
  {'native_gate_ui_compslot',true,'native_gate_ui_guard native_gate_pilot_foot_slots','on foot a click works: the pilot seat (sit down) and the transporter terminal (its menu, Use Spacesuit) for every player'},
  {'native_gate_ui_holds',true,'native_gate_pilot_foot_bodies','what a client UI refers to holds no temporary ship in the simulation'},
@@ -242,6 +267,9 @@ D.ON={
  {'native_gate_render_motion','extrapolate','native_gate_render_fps','moving objects drawn smoothed in the render-only frames'},
  {'native_gate_own_predict','present','native_gate_pilot_stock native_gate_render_rng_split','the own ship answers the controls at once (display only)'},
  {'native_gate_own_predict_hud',true,'native_gate_own_predict=present','the HUD brackets and lead marks placed for the camera the picture is drawn with'},
+ {'native_gate_own_throttle',true,'native_gate_own_predict=present','the own set speed, boost and travel drive show on the HUD in the frame of the key, and the drawn ship answers a wheel step or a stop at once (display only)'},
+ {'native_gate_render_radar',true,'native_gate_render_rng_split','the HUD radar turns with the drawn own ship in every frame, not in steps behind it (display only)'},
+ {'native_gate_render_shots',true,'native_gate_render_motion native_gate_bullet_rng','bullets drawn moving between the steps, own shots leaving the drawn guns (display only)'},
  {'native_gate_join_start_money',true,'native_gate_ui_replay','in coop an open slot start money reaches the shared wallet when its player joins'},
  {'native_gate_hud_ship_refresh',true,'native_gate_pilot_present native_gate_ui_replay','each client radar, crosshair and weapon panel on its own player ship'},
  {'native_gate_own_predict_rows',0,'native_gate_own_predict','no per-step OWN_PREDICT row (diagnostic); OWN_PREDICT_STATUS every 600 ticks stays'},
@@ -470,6 +498,7 @@ D.DIAGNOSTIC={
  {'native_gate_motion_watch_spline_every','motion watch: a spline row on every watched update'},
  {'native_gate_pilot_aim_script','gun aim per player: a scripted aim point and trigger for runs without people (test)'},
  {'native_gate_own_predict_hud_probe','own-ship prediction: a target projected with the simulated and the displayed camera (diagnostic rows)'},
+ {'native_gate_own_throttle_rows','own throttle: an OWN_THROTTLE row every N ticks while the HUD shows what the simulation does not yet (diagnostic)'},
  {'native_gate_pilot_slots_registry','personal missions C1: the slot players in the component registry (diagnostic)'},
  {'native_gate_motion_watch_zones','motion watch zones'},
  {'native_gate_motion_watch_zones_xs','motion watch zones: the XS ships (real traffic) instead of S to XL'},
@@ -546,6 +575,7 @@ D.EXCLUDED={
  {'native_gate_pilot_stock_script','scripted controls for runs without people'},
  {'native_gate_pilot_local_script','scripted local keys for runs without people'},
  {'native_gate_ui_replay_script','scripted UI plan for runs without people'},
+ {'native_gate_snapshot_no_fixture','a player session without a capture fixture (x4ls new-session): the battle sample has no fixture actors'},
  {'native_gate_ui_replay_console','test console: a Lua file of each client (a path with %d for the slot) run as a click while the session goes'},
  {'native_gate_ui_build_script','scripted build plan for runs without people'},
  {'native_gate_ui_replay_fleet','test fleet handed to the player at the setup tick'},
@@ -613,6 +643,7 @@ D.TUNING={
  {'native_gate_own_predict_horizon','own-ship prediction cap in ticks (probe: 10)'},
  {'native_gate_own_predict_tau','own-ship correction time constant (probe: 150 ms)'},
  {'native_gate_own_predict_others','own-ship prediction of the other stock slots (probe: on)'},
+ {'native_gate_render_clock','the render-only frames display clock (probe: gap, anchored at each step; steady: one clock, A/B for the judder RENDER_DISPLAY counts)'},
  {'native_gate_pilot_pad','device sampler pad (wire runs)'},
  {'native_gate_pilot_invert','device sampler axes (wire runs)'},
  {'native_gate_pilot_native_requests','native capture channels (capture source native)'},
@@ -627,7 +658,7 @@ D.TUNING={
 }
 -- The keys a session config supplies itself (no default).
 D.SESSION={'native_gate_test','native_gate_clients','native_gate_player_identity_plan','native_gate_relay_host','native_gate_arm_timeout_ms',
- 'native_gate_arm_at','native_gate_story','native_gate_plot_first','native_gate_plot_ready',
+ 'native_gate_arm_at','native_gate_story','native_gate_plot_first','native_gate_plot_ready','native_gate_milestones','native_gate_continue','native_gate_plot_owned',
  'native_gate_input_priority','native_gate_defaults'}
 -- Stop reasons the probe names in its info line (docs/LOCKSTEP-REGISTRY.txt, section 4; tests check them).
 D.STOP_REASONS={[1]='the relay stopped the session',[2]='not the main thread or loading at start',[3]='load or state mismatch',
@@ -644,7 +675,7 @@ D.STOP_REASONS={[1]='the relay stopped the session',[2]='not the main thread or 
  [169]='region camera (highway rows)',[170]='UI lazy',[171]='supply wants',[172]='loadout order',[173]='order canon',[174]='pick order',
  [175]='macro arena',[176]='path budget',[177]='economy load',[178]='cutscene ready',[179]='fp redirect',[180]='path transforms',
  [181]='body pose',[182]='render frames',[183]='render display',[184]='own-ship prediction',[185]='on foot',[186]='nav mesh',
- [187]='hybrid sectors',[188]='character play',[189]='flight limits',[190]='adaptive plan',[191]='adaptive source',[192]='adaptive quiet',[193]='adaptive dropped',[194]='adaptive pilot',[195]='UI write guard',[196]='speech clock',[197]='safe pos order',[198]='nav refresh watch',[199]='spline calc watch',[204]='body1 mass',[205]='body step',[206]='impulse',[207]='impulse',[208]='ik step',[209]='ik wrap',[210]='steer roll',[212]='avoid angle',[213]='pursuit speed',[216]='weave phase',[211]='shape refresh',[219]='contact orient',[224]='worker layout'}
+ [187]='hybrid sectors',[188]='character play',[189]='flight limits',[190]='adaptive plan',[191]='adaptive source',[192]='adaptive quiet',[193]='adaptive dropped',[194]='adaptive pilot',[195]='UI write guard',[196]='speech clock',[197]='safe pos order',[198]='nav refresh watch',[199]='spline calc watch',[204]='body1 mass',[205]='body step',[206]='impulse',[207]='impulse',[208]='ik step',[209]='ik wrap',[210]='steer roll',[212]='avoid angle',[213]='pursuit speed',[216]='weave phase',[211]='shape refresh',[219]='contact orient',[221]='player sound',[223]='player sound context',[224]='worker layout',[222]='pilot teleport',[226]='pilot chair',[230]='render radar',[231]='render shots',[240]='player attack'}
 
 local function on(v) return v~=nil and v~=false end
 local function copy(v)

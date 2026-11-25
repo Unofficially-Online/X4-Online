@@ -27,16 +27,33 @@ from pathlib import Path
 ROW = re.compile(r'RUNTIME_IDS_CALLER tick=(\d+) phase=(\w+) thread=(\w+) route=(\w+) count=(\d+) frames=([0-9a-f,]+)(?: cue=([\w.$]+))?')
 
 
+MARKER = re.compile(r'RUNTIME_IDS_CALLERS tick=(\d+) mode=delta ')
+
+
 def read_table(path):
     """{tick: {(phase, thread, route, frames): count}} from one client's log; an MD cue instance's frames end in
-    ' cue=<name>' (the same stack for another cue is another row)."""
-    tables = collections.defaultdict(dict)
+    ' cue=<name>' (the same stack for another cue is another row). The table is cumulative (counts only grow, no stack
+    leaves it), so every stack's last count is carried forward: with native_gate_runtime_ids_caller_rows='delta' (the
+    session default) a table lists only the stacks whose count moved, and its RUNTIME_IDS_CALLERS marker row marks the
+    tick even when none did; a full table gives the same result."""
+    tables, current, last = {}, {}, None
     with open(path, errors='replace') as log:
         for line in log:
+            if 'RUNTIME_IDS_CALLER' not in line:
+                continue
             match = ROW.search(line)
+            marker = None if match else MARKER.search(line)
+            if not match and not marker:
+                continue
+            tick = int((match or marker).group(1))
+            if last is not None and tick != last:
+                tables[last] = dict(current)
+            last = tick
             if match:
-                tick, phase, thread, route, count, frames, cue = match.groups()
-                tables[int(tick)][(phase, thread, route, frames + (' cue=' + cue if cue else ''))] = int(count)
+                _, phase, thread, route, count, frames, cue = match.groups()
+                current[(phase, thread, route, frames + (' cue=' + cue if cue else ''))] = int(count)
+    if last is not None:
+        tables[last] = dict(current)
     return tables
 
 

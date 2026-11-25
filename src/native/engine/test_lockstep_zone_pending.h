@@ -61,6 +61,9 @@ static void test_near_page(void) {
     NEAR_STUB("ui holds add",UIH_STUB_ADD,0x20);NEAR_STUB("ui holds drop",UIH_STUB_DROP,0x20);NEAR_STUB("transporter",PFTR_CARRY_STUB,0x20);NEAR_STUB("figure",FFIG_BODY_STUB,0x20);
     NEAR_STUB("undock events",UDSCR_STUB,0x20);NEAR_STUB("undock events trampoline",UDSCR_TRAMPOLINE,0x20);
     NEAR_STUB("media conversation",MDV_CONV_STUB,0x20);NEAR_STUB("subtitle pick",SPL_PICK_STUB,0x20);
+    NEAR_STUB("sound source",PRES_SOURCE_STUB,PSND_STUB_ROOM);NEAR_STUB("computer engaged",PVEHK_COMPUTER_ENGAGED_STUB,PSND_STUB_ROOM);
+    NEAR_STUB("computer disengaged",PVEHK_COMPUTER_DISENGAGED_STUB,0x20);
+    NEAR_STUB("place events",PVEHK_PLACE_STUB,0x20);
     #undef NEAR_STUB
     for(unsigned i=0;i<n;i++) {
         assert(used[i].at+used[i].size<=PVIEW_PAGE);

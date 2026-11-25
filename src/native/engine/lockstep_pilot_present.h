@@ -30,6 +30,8 @@
  *     VBI slot 10  GameRender::Move (through the render split's wrapper): HUD draw,
  *                  animation, every camera;
  *     VBI slot 4   the dispatch of presentation ids (camera, menus, map, targets);
+ *     VBI slot 9   XSfx::Base::Move, vtable entry 0x2caf290: the sound update, every voice placed and occluded
+ *                  (native_gate_pilot_present_sound, the sound below);
  *     9fe573       the camera's view bank refill in UniverseFrameUpdate (re-pointed
  *                  through the near page);
  *     9fe5d0       the camera pick 717ed0 (crosshair, what is under the cursor): it writes
@@ -104,6 +106,20 @@
 #define PRES_MODE 0x868u
 #define PRES_ID 8u                      /* Component: its runtime ID */
 #define PRES_CHAIN_MAX 24u
+/* The sound (header of the sound, below the entry points). */
+#define PRES_SOUND_ENTRY 0x2caf290u     /* XSfx::Base, XVbiHandler vtable 0x2caf288 slot 1 (VBI slot 9) */
+#define PRES_SOUND_MOVE 0x14ea490u      /* XSfx::Base::Move */
+#define PRES_SOUND_MOVE_SIZE 0x1eeu
+#define PRES_SOUND_MOVE_SHA "c47bb5a417ee26077e37ee59df3b27a93b6f37307cc80b9b9c794f4555ee653a"
+#define PRES_LISTENER 0x70bc10u         /* U::Player (player, 0): the sound manager's listener room from the camera anchor's */
+#define PRES_LISTENER_SIZE 0x2bau
+#define PRES_LISTENER_SHA "617a4a7ddd2ad40af350cf847dfa5b094249460e2bc2428b819ff98f85845720"
+#define PRES_SOUND_MANAGER 0x6cf15b8u   /* the sound manager; +0x88 the listener's room (a component's +0x30) */
+#define PRES_LISTENER_ROOM 0x88u
+#define PSND_STOP_REASON 221u           /* player sound: this, the sound's source, lockstep_pilot_death.h's computer */
+static int pres_sound,pres_sound_installed;
+static void (*pres_sound_original)(void *);                  /* X4's update (pres_use_image), or a test's */
+static void (*pres_listener_fn)(void *,unsigned char);       /* X4's 0x70bc10, or a test's */
 typedef struct {
     void (*ui_move)(void *);
     void (*refill)(void *);
@@ -195,6 +211,8 @@ static void pres_rng_back(uint64_t *rng,uint64_t word) {
     if(rng && *rng!=word) {InterlockedIncrement64(&pres_rng_moved);*rng=word;}
 }
 #include "lockstep_pilot_eye.h"
+#include "lockstep_pilot_walk_camera.h"   /* a walking slot's camera without slot 1's seated chain */
+#include "lockstep_pilot_hud_zone.h"      /* the HUD's objects around this client's own slot (its zone's scanners) */
 /* A walking slot's on-foot interaction state. [F, 9.00] What a walking player can use is offered through UI messages whose
  * actions test the player themselves. U::ActivateTransporterRoomAction (vtable 0x2b45a38: the terminal of a ship's
  * transporter room, "Use Transporter Room", whose menu holds "Use Spacesuit") is possible (its vtable +8, 35d140) only if
@@ -276,6 +294,7 @@ static void pres_use_image(void) {
     pres_plan_bind();
     peye_seat=(peye_seat_fn)(image+PEYE_SEAT);peye_fpc_pose=(peye_pose_fn)(image+PEYE_FPC_POSE);peye_fpc_stock=(void**)(image+PEYE_FPC_VTABLE);
     pres_foot_list_at=PRES_FOOT_LIST;pres_foot_floor_at=PRES_FOOT_FLOOR;pres_foot_inventory_at=PRES_FOOT_INVENTORY;
+    pres_sound_original=(void(*)(void*))(image+PRES_SOUND_MOVE);pres_listener_fn=(void(*)(void*,unsigned char))(image+PRES_LISTENER);
 }
 /* ---- the presentation scope ---- */
 static int pres_enter(void);static void pres_leave(void);
@@ -428,6 +447,7 @@ static int pres_enter(void) {
     peye_enter(p1,pres_view_at,bank,s,pres_parent_saved);
     if(pres_main_at) peye_enter_main(pres_main_at,(unsigned)((size_t)(pres_main_at-(p1+PRES_VIEW_CACHE))/PRES_VIEW_STRIDE));
     peye_anchor_enter(p1,pres_camera);   /* the HUD's anchor scene: no head movement of X4's own player in it */
+    pwcam_enter(pres_camera,s);          /* a walking slot: the camera on its eye, as after X4's own stand-up */
     pres_foot_enter(p1,s,pres_slot);   /* a walking slot: its interactables and its floor (the terminal, header above) */
     InterlockedExchange(&pres_open,1);InterlockedIncrement64(&pres_scopes);
     mpp_active_enter(pres_slot);   /* this client's own active mission on its HUD and in its menus */
@@ -444,6 +464,7 @@ static void pres_leave(void) {
     rsch_view_leave(pres_slot);
     mpp_active_leave(pres_slot,0);
     pres_foot_leave(p1,s);
+    pwcam_leave();
     peye_leave();
     if(pres_room_is) {
         size_t bank=(size_t)(pres_view_at-(p1+PRES_VIEW_CACHE));
@@ -538,6 +559,7 @@ static void pres_ui_move(void *self) {
         return;
     }
     InterlockedIncrement64(&pres_ui);
+    phz_scope_pass();   /* the HUD's zone scanners on this slot's zone, before X4's UI move (lockstep_pilot_hud_zone.h) */
     __try {pres_fn.ui_move(self);pres_leave();pres_paused=0;}
     __except(pres_fault_filter(GetExceptionInformation(),"ui")) {
         pres_fault_stop();
@@ -546,6 +568,424 @@ static void pres_ui_move(void *self) {
         if(lock->OwningThread==(HANDLE)(uintptr_t)GetCurrentThreadId()) LeaveCriticalSection(lock);
     }
     ophud_leave();ophud_in_ui=0;
+}
+/* ---- the sound (native_gate_pilot_present_sound, a session default) ----
+ * X4 places every sound against a camera (OpenAL's listener stays at the origin, sound init 0x14ed910). The per-voice
+ * update 0x14f1120 -> 0x14f1740 asks the emitter (a component's +0x30, vtable slot 2: 0x3e8470) for its transform
+ * relative to the listener camera 0x9f9ee0. In camera mode 0 that answer needs the Cluster (class 0xf, 0x490040 ->
+ * 0x3d91e0 over the published view-cache parents) of the camera's bank component [camera+0x30+bank*0x2b0], X4's player,
+ * to be the emitter's Cluster; otherwise it is 0 and the voice goes to (1e5, 1e5, 1e5) m (0x14f187c, constant
+ * 0x2cc2910), 173 km away: silent. The occlusion (emitter +0x38, 0x3e89b0) takes the listener's room from the sound
+ * manager (0x6cf15b8)+0x88, which U::Player 0x70bc10 sets from the camera anchor's room in Player::Move (0x713094, the
+ * universe update). The sound update is VBI slot 9, XSfx::Base::Move 0x14ea490 (XSfx::Base's XVbiHandler vtable
+ * 0x2caf288, slot 1 at 0x2caf290), and it was no presentation entry: on client k it ran with X4's player in slot 1's
+ * cockpit and Cluster, so every sound around slot k's ship (its own guns, engines and travel drive, the others') failed
+ * that test (24 Nov: player 2 in another system than player 1 heard no positional sound; the starts ran, sound=5572/5572;
+ * with both players in one cluster some sound came back). Which component: the camera refill 0x9799f0 writes the
+ * camera's anchor [camera+0x770] into the bank (block +0, with its parents' transforms), and the anchor is X4's player on
+ * every client (the camera stays on the canonical player, header); a ship's sounds have its +0x30 interface as emitter
+ * (0x7c8bc0), slot 2 0x75a190 -> 0x3e8470. The same voice update evaluates the emitter's curves: slot 5 at 0x14f1c72
+ * (Engine 0x54ee80, the cockpit factor for "the player's ship" through the player's live parents; Ship 0x7dbef0 ->
+ * 0x7dd1d0, the ship controller's values on the input bank), slot 6 (0x14f9450) and slot 8 (0x14f1219): outside a scope
+ * those answered for slot 1's ship and slot 1's input on client k (stock-J2d: lower on client 2).
+ * On client k (k = 2..N, its own slot) the vtable entry is ours (a data CAS, as the UI's entry 0x2bc07d8): the update
+ * runs in the presentation scope, after X4's own 0x70bc10(X4's player, 0) in the same scope, so the listener's room is
+ * slot k's cockpit room; the sound manager's room is put back after the update (the universe update sets it every
+ * frame). A scope that cannot be opened (slot k not seated, another scope open): X4's update as before (plain=). Client
+ * 1 never installs it. Render-only frames NULL the table entry (lockstep_render_frames.h), not the vtable. Presentation
+ * only: the scope's rules hold (a SIM write is discarded and counted, refused=), the listener call holds the thread's
+ * RNG word (rng_moved=). A fault in the update ends presentation as one in the UI does (162, why=sound_fault:<rva>).
+ * Pinned: the update, the listener routine, the entry's value; the entry is checked at every gate tick (stop 221
+ * player sound, why=sound_entry_lost, lockstep_pilot_death.h psnd_check). Status sound=on/installed/scopes/plain/
+ * listener/faults. */
+static volatile LONG64 pres_sound_scopes,pres_sound_plain,pres_sound_listener,pres_sound_faults;
+static int pres_sound_pins(void) {
+    return hash_ok(image+PRES_SOUND_MOVE,PRES_SOUND_MOVE_SIZE,PRES_SOUND_MOVE_SHA) && hash_ok(image+PRES_LISTENER,PRES_LISTENER_SIZE,PRES_LISTENER_SHA) &&
+        *(void**)(image+PRES_SOUND_ENTRY)==(void*)(image+PRES_SOUND_MOVE);
+}
+static void pres_sound_move(void *self) {
+    void (*const original)(void*)=pres_sound_original;
+    if(!pres_enter()) {InterlockedIncrement64(&pres_sound_plain);original(self);return;}
+    InterlockedIncrement64(&pres_sound_scopes);
+    unsigned char *manager=NULL,*room=NULL;
+    volatile int have=0;uint64_t word=0,*volatile rng=NULL;
+    if(pres_listener_fn && read_local(pnat_base+PRES_SOUND_MANAGER,&manager,8) && manager && read_local(manager+PRES_LISTENER_ROOM,&room,8)) have=1;
+    __try {
+        if(have) {rng=pres_rng_hold(&word);pres_listener_fn(pslot_p1,0);pres_rng_back(rng,word);rng=NULL;InterlockedIncrement64(&pres_sound_listener);}
+        original(self);
+        if(have) *(unsigned char *volatile*)(manager+PRES_LISTENER_ROOM)=room;
+        pres_leave();
+    }
+    __except(pres_fault_filter(GetExceptionInformation(),"sound")) {
+        if(rng) pres_rng_back(rng,word);
+        if(have) *(unsigned char *volatile*)(manager+PRES_LISTENER_ROOM)=room;
+        InterlockedIncrement64(&pres_sound_faults);pres_fault_stop();
+    }
+}
+/* The entry ours (pres_start, client k >= 2 only) and X4's again (pres_unhook). The tick check reads installed. */
+static int pres_sound_install(void) {
+    if(pres_sound_installed) return 1;
+    if(!pres_sound_original || !pnat_swap8(pnat_base+PRES_SOUND_ENTRY,(void*)pres_sound_original,(void*)pres_sound_move,1)) return 0;
+    pres_sound_installed=1;return 1;
+}
+static void pres_sound_uninstall(void) {
+    if(!pres_sound_installed) return;
+    pres_sound_installed=0;
+    if(!pnat_swap8(pnat_base+PRES_SOUND_ENTRY,(void*)pres_sound_move,(void*)pres_sound_original,1)) pres_sound_installed=1;   /* not ours: the check names it */
+}
+static int pres_sound_intact(void) {return !pres_sound_installed || *(void*volatile*)(pnat_base+PRES_SOUND_ENTRY)==(void*)pres_sound_move;}
+static int pres_sound_status(char *out,size_t capacity) {
+    const int n=snprintf(out,capacity," sound=%d/%d/%lld/%lld/%lld/%lld",pres_sound,pres_sound_installed,(long long)pres_sound_scopes,(long long)pres_sound_plain,
+        (long long)pres_sound_listener,(long long)pres_sound_faults);
+    return n>0 && (size_t)n<capacity?n:0;
+}
+/* A stub on the slots' near page entered by a jump from inside an X4 function: rax..r11, the flags and xmm0..xmm5 are
+ * kept; `load` (at most 16 bytes) puts the arguments into rcx/rdx (xmm2 stays as it came: a third argument of type
+ * double); `fn` is called; its answer goes nowhere (PSND_OUT_NONE), into r12 (PSND_OUT_R12), into r9 (PSND_OUT_R9: the
+ * saved r9 is replaced before the pops) or into rax (PSND_OUT_RAX, the same way); then X4's own `tail` (at most 16 bytes: the instructions the site's jump
+ * replaced) and a jump to `resume`. at_entry: the site is a function's first instruction (rsp 8 mod 16 there), else
+ * inside a body between calls (rsp 16-aligned). The bytes written; 0 when they do not fit in `room`. The sound's source
+ * below and lockstep_pilot_death.h's ship computer place theirs with it. */
+#define PSND_STUB_ROOM 0xc0u
+enum {PSND_OUT_NONE,PSND_OUT_R12,PSND_OUT_R9,PSND_OUT_RAX};
+static unsigned psnd_stub(unsigned char *p,unsigned room,const unsigned char *load,unsigned load_size,const void *fn,int out,int at_entry,
+                          const unsigned char *tail,unsigned tail_size,const void *resume) {
+    static const unsigned char save[]={0x50,0x51,0x52,0x41,0x50,0x41,0x51,0x41,0x52,0x41,0x53,0x9c};   /* push rax..r11, pushfq */
+    static const unsigned char xsave[]={0xf3,0x0f,0x7f,0x44,0x24,0x20,0xf3,0x0f,0x7f,0x4c,0x24,0x30,0xf3,0x0f,0x7f,0x54,0x24,0x40,
+        0xf3,0x0f,0x7f,0x5c,0x24,0x50,0xf3,0x0f,0x7f,0x64,0x24,0x60,0xf3,0x0f,0x7f,0x6c,0x24,0x70};        /* movdqu [rsp+0x20..0x7f], xmm0..5 */
+    static const unsigned char xback[]={0xf3,0x0f,0x6f,0x44,0x24,0x20,0xf3,0x0f,0x6f,0x4c,0x24,0x30,0xf3,0x0f,0x6f,0x54,0x24,0x40,
+        0xf3,0x0f,0x6f,0x5c,0x24,0x50,0xf3,0x0f,0x6f,0x64,0x24,0x60,0xf3,0x0f,0x6f,0x6c,0x24,0x70};
+    static const unsigned char back[]={0x9d,0x41,0x5b,0x41,0x5a,0x41,0x59,0x41,0x58,0x5a,0x59,0x58};   /* popfq, pop r11..rax */
+    const uint32_t frame=at_entry?0x88u:0x80u;   /* the call with rsp 16-aligned, 0x20 of shadow, xmm0..5 above it */
+    unsigned n=0;
+    if(load_size>16 || tail_size>16 || out<PSND_OUT_NONE || out>PSND_OUT_RAX ||
+       sizeof(save)+7+sizeof(xsave)+load_size+12+8+sizeof(xback)+7+sizeof(back)+tail_size+14>room) return 0;
+    memcpy(p+n,save,sizeof(save));n+=sizeof(save);
+    p[n++]=0x48;p[n++]=0x81;p[n++]=0xec;memcpy(p+n,&frame,4);n+=4;     /* sub rsp, frame */
+    memcpy(p+n,xsave,sizeof(xsave));n+=sizeof(xsave);
+    memcpy(p+n,load,load_size);n+=load_size;
+    p[n++]=0x48;p[n++]=0xb8;memcpy(p+n,&fn,8);n+=8;                       /* mov rax, fn */
+    p[n++]=0xff;p[n++]=0xd0;                                               /* call rax */
+    if(out==PSND_OUT_R12) {p[n++]=0x49;p[n++]=0x89;p[n++]=0xc4;}           /* mov r12, rax */
+    if(out==PSND_OUT_R9 || out==PSND_OUT_RAX) {   /* mov [rsp+frame+0x18] (the saved r9) or [rsp+frame+0x38] (the saved rax), rax */
+        const uint32_t at=frame+(out==PSND_OUT_R9?0x18u:0x38u);p[n++]=0x48;p[n++]=0x89;p[n++]=0x84;p[n++]=0x24;memcpy(p+n,&at,4);n+=4;
+    }
+    memcpy(p+n,xback,sizeof(xback));n+=sizeof(xback);
+    p[n++]=0x48;p[n++]=0x81;p[n++]=0xc4;memcpy(p+n,&frame,4);n+=4;     /* add rsp, frame */
+    memcpy(p+n,back,sizeof(back));n+=sizeof(back);
+    if(tail_size) {memcpy(p+n,tail,tail_size);n+=tail_size;}
+    n+=pview_abs_jump(p+n,resume);
+    return n;
+}
+/* A site of `size` (5..8) bytes in one 16-byte block becomes a jump to the stub at `offset` on the slots' near page and
+ * nops: the stub written first (the page writable for the write only), then the site by CAS. 1 done. */
+static int psnd_site_install(unsigned site,const unsigned char *original,unsigned size,unsigned offset,const unsigned char *load,unsigned load_size,
+                             const void *fn,int out,int at_entry,const unsigned char *tail,unsigned tail_size,unsigned resume,unsigned char *patched) {
+    DWORD old,ignored;unsigned char stub[PSND_STUB_ROOM];
+    if(!pslot_page || size<5 || size>8 || offset+PSND_STUB_ROOM>PVIEW_PAGE || memcmp(pnat_base+site,original,size) || ((site+size-1u)&~15u)!=(site&~15u)) return 0;
+    const unsigned n=psnd_stub(stub,sizeof(stub),load,load_size,fn,out,at_entry,tail,tail_size,pnat_base+resume);
+    if(!n || !VirtualProtect(pslot_page,PVIEW_PAGE,PAGE_READWRITE,&old)) return 0;
+    memset(pslot_page+offset,0xcc,PSND_STUB_ROOM);memcpy(pslot_page+offset,stub,n);
+    if(!VirtualProtect(pslot_page,PVIEW_PAGE,PAGE_EXECUTE_READ,&ignored)) return 0;
+    FlushInstructionCache(GetCurrentProcess(),pslot_page,PVIEW_PAGE);
+    const int32_t rel=(int32_t)((intptr_t)(pslot_page+offset)-(intptr_t)(pnat_base+site+5));
+    patched[0]=0xe9;memcpy(patched+1,&rel,4);memset(patched+5,0x90,size-5);
+    return pview_cas(site,original,patched,size);
+}
+/* ---- the sound's source (native_gate_sound_source, a session default) ----
+ * A sound whose emitter is a slot player P_k (k = 2..N) or something it holds had no place either. X4 gives a sound its
+ * emitter at the start (0x14e8ec0, the emitter in r9: a component's +0x30); the universe's player is the emitter of
+ * every "player" sound, and inside slot k's scope that is P_k, built by the factory outside the component tree with no
+ * published view cache: 0x3e8470 answers 0 for it and the voice is parked 173 km away. So on client k:
+ *   - the first line of every call (SpeakNextLine 0x561330 takes the universe's player as a comm line's emitter at
+ *     0x56160d and hands it to the sound start at 0x561799; the first line starts at once in its owner's frame, in slot
+ *     k's scope: 24 Nov, all 37 lines started in scope 2 during a call were silent, the 45 its queue started later in no
+ *     scope were heard);
+ *   - every line of slot k's own ship computer (its target readout, its autopilot lines: the entity is a child of P_k);
+ *   - the UI feedback sounds X4 starts on the player (the autopilot's 0xd9c920 from 0x72bf20, the time warp, quick dock,
+ *     boost, target cycling) for slot k's actions, replayed in slot k's scope.
+ * The sound start's entry jumps to a stub of ours (its first two instructions, mov rax,rsp; mov [rax+0x10],rbx, run
+ * there before X4's code goes on at +7; nothing else in the function is touched, so the emitter X4 keeps in its home
+ * slot and in rsi is ours from the start): when the emitter's object is this client's own slot's player P_k or has it
+ * among its +0x70 parents, the emitter becomes X4's own player's (pslot_p1+0x30). X4's player is where the listener is:
+ * on client k its sound update runs in the presentation scope, X4's player at slot k's seat (the sound above). Another
+ * slot's player stays as X4 had it (no place: silent there, as before; its lines are muted there anyway). And slot 1's
+ * own: X4's player (or something it holds) as the emitter of a sound started outside every scope (no slot scope, no
+ * presentation scope open: slot 1's replayed actions, its UI feedback sounds) is slot 1's; with the sound update in
+ * slot k's scope X4's player stands where client k's listener is, so such a sound would be heard on client k as its
+ * own. While client k presents its seated slot (the sound update then runs in the scope) it gets this client's own
+ * slot player's emitter instead, which has no place (parked, as slot 1's were before the sound update moved). A voice line is left to the speech module (SpeakNextLine's start, return 0x56179e: its mute
+ * decides, and the lines of client k's own calls that its queue starts later, outside every scope, take X4's player
+ * as theirs). Client 1 never installs it. Presentation only: the emitter goes to the sound system and nowhere else.
+ * Installed with the sound's entry at presenting's start; pinned (the whole start routine, SpeakNextLine's call of it);
+ * the entry checked every gate tick (221, why=source_entry_lost). Status source=on/installed/starts/moved/kept/parked. */
+#define PRES_SOURCE 0x14e8ec0u           /* the sound start (manager, out, sound id, emitter, ...) */
+#define PRES_SOURCE_SIZE 0x622u
+#define PRES_SOURCE_SHA "6287e9144c2ac433c5697ced8b2529761e784e2fa1974244441e707c304155aa"
+#define PRES_SOURCE_HEAD 7u
+#define PRES_SOURCE_STUB 0xd00u          /* on the slots' near page (free from 0xaa0 to 0xeff, 24 Nov), PSND_STUB_ROOM */
+#define PRES_SOURCE_SPEECH 0x56179eu     /* the return address of SpeakNextLine's sound start (call at 0x561799) */
+#define PRES_SOURCE_DEPTH 16u
+static const unsigned char pres_source_head[PRES_SOURCE_HEAD]={0x48,0x8b,0xc4,0x48,0x89,0x58,0x10};   /* mov rax,rsp; mov [rax+0x10],rbx */
+static int pres_source,pres_source_installed;
+static unsigned char pres_source_patched[PRES_SOURCE_HEAD];
+static volatile LONG64 pres_source_starts,pres_source_moved,pres_source_kept,pres_source_parked;
+static int pres_source_pins(void) {
+    const int32_t rel=(int32_t)(PRES_SOURCE-PRES_SOURCE_SPEECH);
+    return hash_ok(image+PRES_SOURCE,PRES_SOURCE_SIZE,PRES_SOURCE_SHA) && !memcmp(image+PRES_SOURCE,pres_source_head,PRES_SOURCE_HEAD) &&
+        image[PRES_SOURCE_SPEECH-5u]==0xe8 && !memcmp(image+PRES_SOURCE_SPEECH-4u,&rel,4);
+}
+/* The slot whose player this object is or lies below (its +0x70 parents): 2..N, 1 for X4's own player; 0 none. */
+static unsigned pres_source_slot(const unsigned char *object) {
+    for(unsigned depth=0;object && depth<PRES_SOURCE_DEPTH;depth++) {
+        for(unsigned k=2;k<=PILOT_SLOTS;k++) if(pslots[k].player && pslots[k].player==object) return k;
+        if(pslot_p1 && object==pslot_p1) return 1;
+        if(!read_local(object+0x70,&object,8)) return 0;
+    }
+    return 0;
+}
+/* The emitter a sound starts with (`from` its call's return address): X4's own player's for one of this client's own
+ * slot player; this slot player's (no place) for slot 1's player outside every scope but a voice line; else as it came. */
+static uintptr_t pres_source_rule(uintptr_t emitter,uintptr_t from) {
+    InterlockedIncrement64(&pres_source_starts);
+    if(!pres_source_installed || !pres_slot || !pslot_p1 || emitter<=0x30u) return emitter;
+    const unsigned k=pres_source_slot((const unsigned char*)(emitter-0x30u));
+    if(!k) return emitter;
+    if(k==1) {
+        unsigned char *const own=pslots[pres_slot].player;
+        if(!own || !pres_active || !pslots[pres_slot].seated || pstk_scope_slot || pres_open || from==(uintptr_t)(pnat_base+PRES_SOURCE_SPEECH)) return emitter;
+        InterlockedIncrement64(&pres_source_parked);
+        return (uintptr_t)(own+0x30);
+    }
+    if(k!=pres_slot) {InterlockedIncrement64(&pres_source_kept);return emitter;}
+    InterlockedIncrement64(&pres_source_moved);
+    return (uintptr_t)(pslot_p1+0x30);
+}
+/* The stub's arguments: mov rcx,r9 (the emitter); mov rdx,[rsp+0xc8] (the return address: 0x40 of pushes, 0x88 of frame) */
+static const unsigned char pres_source_load[11]={0x4c,0x89,0xc9,0x48,0x8b,0x94,0x24,0xc8,0,0,0};
+static int pres_source_install(void) {
+    if(pres_source_installed) return 1;
+    if(!psnd_site_install(PRES_SOURCE,pres_source_head,PRES_SOURCE_HEAD,PRES_SOURCE_STUB,pres_source_load,sizeof(pres_source_load),(const void*)pres_source_rule,PSND_OUT_R9,1,
+                          pres_source_head,PRES_SOURCE_HEAD,PRES_SOURCE+PRES_SOURCE_HEAD,pres_source_patched)) return 0;
+    pres_source_installed=1;return 1;
+}
+static void pres_source_uninstall(void) {
+    if(!pres_source_installed) return;
+    pres_source_installed=0;   /* the rule answers X4's emitter from here on */
+    if(!pview_cas(PRES_SOURCE,pres_source_patched,pres_source_head,PRES_SOURCE_HEAD)) pres_source_installed=1;   /* not ours: the check names it */
+}
+static int pres_source_intact(void) {return !pres_source_installed || !memcmp(pnat_base+PRES_SOURCE,pres_source_patched,PRES_SOURCE_HEAD);}
+static int pres_source_status(char *out,size_t capacity) {
+    const int n=snprintf(out,capacity," source=%d/%d/%lld/%lld/%lld/%lld",pres_source,pres_source_installed,(long long)pres_source_starts,(long long)pres_source_moved,
+        (long long)pres_source_kept,(long long)pres_source_parked);
+    return n>0 && (size_t)n<capacity?n:0;
+}
+/* ---- a sound's first play (native_gate_sound_play_scope, a session default; stop 223) ----
+ * X4 decides at once whether a new voice is heard. The sound start 0x14e8ec0 makes the voice (0x14eed60, state 1..3,
+ * play bit +0xe8 bit 0) and, with the play bit, plays it there (0x14e94ce: 0x14efac0, alSourcePlay at 0x14efe3d, then the
+ * voice's update 0x14f1500). That update places the voice (0x14f1120 -> 0x14f1740, the emitter's +0x30 slot 2) and
+ * measures it (0x14f0200: the emitter's distance against the sound's range [voice+0xf0] or [def+0xdc] km x 1000 x 1.5 +
+ * 14 m); a playing voice out of range is stopped at 0x14f171e: for good unless its flags (+0xe8: 0x20, 2, bit 9, bit
+ * 11) make it a virtual one that X4's sound update plays again when it comes into range. A loop (an engine, a travel
+ * drive) is virtual; a one-shot (a gun's shot: the bullet's launch effect, an EffectObject whose element sound starts at
+ * 0xd7994a; an impact, an explosion) is not. Most sounds start in the simulation (Weapon::Move's effects, the effect
+ * creators, the ships' sound sets), outside every presentation scope, so on client k that first placement was made
+ * from slot 1's view: the emitter's Cluster is not slot 1's camera's (0x3e8470 answers 0, the voice at 1e5 m), a
+ * shot of slot k's own guns was out of range and stopped for good before X4's sound update, which runs in the scope
+ * (native_gate_pilot_present_sound), could place it. Player 2 heard no shot of its own (24 Nov, rk8, the whole game),
+ * while its engines and travel drive, loops, came back at the next update.
+ * On client k (k = 2..N, presenting its seated slot, the sound update in the scope) the play at 0x14e94c7 (je over the
+ * call, xor edx,edx; mov rcx,r13: 7 bytes, one block) jumps to a stub that asks pres_play_rule: a voice with an emitter
+ * (+0x80) and a place (+0x60, 3D) that starts outside the presentation scope (another thread, or the frame thread with
+ * no scope open) is not played there; its play bit stays, and X4's sound update, in the scope of the same or the next
+ * frame, finds it in state 1..3 with the bit and plays it (0x14f1500 -> 0x14efac0), placed and measured from slot k's
+ * view, at the start of its sample. Every other voice plays at once, as X4 does. Client 1 never installs it.
+ * Presentation only: the voice, its handle (the start's answer, [voice+8]) and every simulation byte stay as they were;
+ * the play draws nothing (the start's two draws, in 0x14eed60, are before the site and on the sound words of
+ * native_gate_sound_rng). Pinned: the start (as the source), the play 0x14efac0, the voice update 0x14f1500 and the
+ * update loop 0x14f6700; the site's bytes are checked every gate tick (stop 223, why=play_site_lost). Status
+ * play=on/installed/starts/deferred. */
+#define PRES_PLAY_SITE 0x14e94c7u        /* je 0x14e94d3; xor edx,edx; mov rcx,r13 (then call 0x14efac0 at 0x14e94ce) */
+#define PRES_PLAY_SIZE 7u
+#define PRES_PLAY_CALL 0x14e94ceu        /* the call of the play */
+#define PRES_PLAY_AFTER 0x14e94d3u       /* mov eax,[r13+8]: the start's answer */
+#define PRES_PLAY_STUB 0xc00u            /* on the slots' near page (free from 0xaa0 to 0xcff, 24 Nov), PSND_STUB_ROOM */
+#define PRES_PLAY_FN 0x14efac0u
+#define PRES_PLAY_FN_SIZE 0x496u
+#define PRES_PLAY_FN_SHA "c1d3c08310976d425a92e08b3b3e51deb5ac00fbf2b641741fbc00cb414ffb94"
+#define PRES_VOICE_UPDATE 0x14f1500u
+#define PRES_VOICE_UPDATE_SIZE 0x238u
+#define PRES_VOICE_UPDATE_SHA "80dba5135c4850c42fd6a757a1d1a99890fb4dbaa199bd48c27cc4368296da05"
+#define PRES_VOICES 0x14f6700u           /* XSfx::Base::Move's loop over every voice: 0x14f1500 for each */
+#define PRES_VOICES_SIZE 0x2bfu
+#define PRES_VOICES_SHA "fabbdee3f70f2fc975b9a1be68ace8237809e8bc7ed3bcba3b9d6135134cc125"
+#define PRES_VOICE_FLAGS 0xe8u
+#define PRES_VOICE_PLACED 0x60u          /* byte: a 3D voice */
+#define PRES_VOICE_EMITTER 0x80u
+#define PSCTX_STOP_REASON 223u           /* player sound context: the play site, the own ship's sound set */
+static const unsigned char pres_play_head[PRES_PLAY_SIZE]={0x74,0x0a,0x33,0xd2,0x49,0x8b,0xcd};
+/* The stub's tail: test al,al; jz +0x13 (over X4's two instructions and the jump to the call, to the jump past it);
+ * xor edx,edx; mov rcx,r13 (X4's own). psnd_stub then jumps to the call; the stub ends with the jump past it. */
+static const unsigned char pres_play_tail[9]={0x84,0xc0,0x74,0x13,0x33,0xd2,0x49,0x8b,0xcd};
+static const unsigned char pres_play_load[3]={0x4c,0x89,0xe9};   /* mov rcx,r13: the voice */
+static int pres_play,pres_play_installed;
+static unsigned char pres_play_patched[PRES_PLAY_SIZE];
+static volatile LONG64 pres_play_starts,pres_play_deferred;
+static int pres_play_pins(void) {
+    return pres_source_pins() && !memcmp(image+PRES_PLAY_SITE,pres_play_head,PRES_PLAY_SIZE) && image[PRES_PLAY_CALL]==0xe8 &&
+        *(const int32_t*)(image+PRES_PLAY_CALL+1)==(int32_t)(PRES_PLAY_FN-PRES_PLAY_AFTER) &&
+        hash_ok(image+PRES_PLAY_FN,PRES_PLAY_FN_SIZE,PRES_PLAY_FN_SHA) && hash_ok(image+PRES_VOICE_UPDATE,PRES_VOICE_UPDATE_SIZE,PRES_VOICE_UPDATE_SHA) &&
+        hash_ok(image+PRES_VOICES,PRES_VOICES_SIZE,PRES_VOICES_SHA);
+}
+/* 1: X4 plays the voice now; 0: not now (its play bit clear, or X4's sound update in client k's scope plays it). */
+static uintptr_t pres_play_rule(const unsigned char *voice) {
+    uint32_t flags=0;unsigned char placed=0;const void *emitter=NULL;
+    if(!voice || !read_local(voice+PRES_VOICE_FLAGS,&flags,4) || !(flags&1u)) return 0;   /* X4's je */
+    InterlockedIncrement64(&pres_play_starts);
+    if(!pres_play_installed || !pres_slot || !pres_active || !pres_sound_installed || !pslots[pres_slot].seated) return 1;
+    if(pres_open && GetCurrentThreadId()==ui_thread) return 1;   /* in the scope: placed from this client's view */
+    if(!read_local(voice+PRES_VOICE_PLACED,&placed,1) || !placed || !read_local(voice+PRES_VOICE_EMITTER,&emitter,8) || !emitter) return 1;
+    InterlockedIncrement64(&pres_play_deferred);
+    return 0;
+}
+/* The play's stub into p (room bytes): the rule's answer in rax (nothing else changed), then X4's two instructions and
+ * X4's call (`call`), or the jump past it (`after`). The bytes written; 0 when they do not fit. */
+static unsigned pres_play_stub(unsigned char *p,unsigned room,const void *fn,const void *call,const void *after) {
+    const unsigned n=psnd_stub(p,room,pres_play_load,sizeof(pres_play_load),fn,PSND_OUT_RAX,0,pres_play_tail,sizeof(pres_play_tail),call);
+    if(!n || n+14u>room) return 0;
+    return n+pview_abs_jump(p+n,after);
+}
+static int pres_play_install(void) {
+    DWORD old,ignored;unsigned char stub[PSND_STUB_ROOM];
+    if(pres_play_installed) return 1;
+    if(!pslot_page || memcmp(pnat_base+PRES_PLAY_SITE,pres_play_head,PRES_PLAY_SIZE)) return 0;
+    const unsigned n=pres_play_stub(stub,sizeof(stub),(const void*)pres_play_rule,pnat_base+PRES_PLAY_CALL,pnat_base+PRES_PLAY_AFTER);
+    if(!n) return 0;
+    if(!VirtualProtect(pslot_page,PVIEW_PAGE,PAGE_READWRITE,&old)) return 0;
+    memset(pslot_page+PRES_PLAY_STUB,0xcc,PSND_STUB_ROOM);memcpy(pslot_page+PRES_PLAY_STUB,stub,n);
+    if(!VirtualProtect(pslot_page,PVIEW_PAGE,PAGE_EXECUTE_READ,&ignored)) return 0;
+    FlushInstructionCache(GetCurrentProcess(),pslot_page,PVIEW_PAGE);
+    const int32_t rel=(int32_t)((intptr_t)(pslot_page+PRES_PLAY_STUB)-(intptr_t)(pnat_base+PRES_PLAY_SITE+5));
+    pres_play_patched[0]=0xe9;memcpy(pres_play_patched+1,&rel,4);pres_play_patched[5]=pres_play_patched[6]=0x90;
+    if(!pview_cas(PRES_PLAY_SITE,pres_play_head,pres_play_patched,PRES_PLAY_SIZE)) return 0;
+    pres_play_installed=1;return 1;
+}
+static void pres_play_uninstall(void) {
+    if(!pres_play_installed) return;
+    pres_play_installed=0;   /* the rule plays every voice at once from here on */
+    if(!pview_cas(PRES_PLAY_SITE,pres_play_patched,pres_play_head,PRES_PLAY_SIZE)) pres_play_installed=1;   /* not ours: the check names it */
+}
+static int pres_play_intact(void) {return !pres_play_installed || !memcmp(pnat_base+PRES_PLAY_SITE,pres_play_patched,PRES_PLAY_SIZE);}
+static int pres_play_status(char *out,size_t capacity) {
+    const int n=snprintf(out,capacity," play=%d/%d/%lld/%lld",pres_play,pres_play_installed,(long long)pres_play_starts,(long long)pres_play_deferred);
+    return n>0 && (size_t)n<capacity?n:0;
+}
+/* ---- the own ship's sound set (native_gate_ship_sound_context, a session default; stop 223) ----
+ * X4 starts a ship's own sounds (its cockpit ambience, the ship detail group: the macro's sounds, ship+0xb68) when the
+ * player's camera enters it: U::Object::SetParent's anchor test (0x6ce5cc) calls 0x97dff0 for the camera's anchor and
+ * its ancestors, which posts CameraEnteredEvent / CameraLeftEvent at once, and Ship slot 366 0x7cddc0 / slot 367 0x7cde70
+ * (every ship class, the space suit too) recompute the ship's attention and call slot 1143 0x7c8bc0 (start: the list
+ * {[0x395d024]}, the name at 0x2f61360, inside 1) / slot 1144 0x7c8c60 (stop: the list). The test follows view point 1
+ * on every client (native_gate_camera_context='view', lockstep_region_camera.h: the attention part is simulation), so
+ * slot k's ship never had its own sounds on client k (inventory G09: boarding, sitting down, getting up, transport,
+ * suit, ship change; a sector, zone, gate, highway, dock or undock change re-parents the ship, not into or out of it,
+ * and keeps them, as in stock). On client k (k = 2..N) each pass of the presentation (the frame thread, outside every
+ * scope) finds the ship slot k's player is in now (the class-0x49 ancestor of its room; none while it is not seated:
+ * dead, in transit) and, when it changed, calls slot 1144 on the one it left (found again by its ID: a destroyed ship
+ * stopped its own) and slot 1143 on the new one, with X4's own arguments; the end of presenting stops the last one.
+ * Only the two sound slots run, never 366/367 (their attention part is the simulation's). Presentation only: the
+ * starts go through 0x14e8ec0 (their draws on native_gate_sound_rng's words, slot 1143's through native_gate_ship_sound_rng
+ * when armed) with the ship as emitter, and the play above plays them in the scope. Slot 1's ship keeps the sounds the
+ * simulation's camera events give it on every client (a 0.05 volume loop with a 10 m range at slot 1's cockpit).
+ * Pinned: both handlers (their arguments) and both slots. A fault counts and ends the module (stop 223,
+ * why=context_fault). Status context=on/installed/starts/stops/faults/ship ID. */
+#define PSCTX_ENTERED 0x7cddc0u
+#define PSCTX_ENTERED_SIZE 0xa3u
+#define PSCTX_ENTERED_SHA "9a6e057e4e9e142a9c7e53088cb51e5a1cef3167c58eb635e0eca6fa668a04d0"
+#define PSCTX_LEFT 0x7cde70u
+#define PSCTX_LEFT_SIZE 0x99u
+#define PSCTX_LEFT_SHA "60e8389ac294f5f34dc5a21b8c5f18b59795b176df1b0979990190a1b9af8467"
+#define PSCTX_STOP_FN 0x7c8c60u
+#define PSCTX_STOP_FN_SIZE 0x10u
+#define PSCTX_STOP_FN_SHA "a94800dfec37fb51e9229a17db7f7a92a918bb05ea3357a5340564283f8afbab"
+#define PSCTX_START_SLOT 0x23b8u         /* Ship slot 1143 */
+#define PSCTX_STOP_SLOT 0x23c0u          /* Ship slot 1144 */
+#define PSCTX_KIND 0x395d024u            /* the list's one entry (read live: set at X4's start) */
+#define PSCTX_NAME 0x2f61360u            /* the name argument */
+#define PSCTX_SHIP_CLASS 0x49
+#define PSCTX_DEPTH 8u
+/* X4's small list of 32-bit entries (0xce7c0's layout): four inline, the capacity 4 at +0x10, the count at +0x18. */
+typedef struct {uint32_t inline_[4];uint64_t capacity,count;} psctx_list;
+typedef void (*psctx_start_fn)(void *,psctx_list *,void *,unsigned char);
+typedef void (*psctx_stop_fn)(void *,psctx_list *);
+static int psctx,psctx_installed;
+static uint64_t psctx_ship_id;
+static volatile LONG64 psctx_starts,psctx_stops,psctx_faults;
+static const char *psctx_why="-";
+static void *(*psctx_find)(uint64_t);   /* tests; NULL: X4's registry (0xced70) */
+static int psctx_pins(void) {
+    return hash_ok(image+PSCTX_ENTERED,PSCTX_ENTERED_SIZE,PSCTX_ENTERED_SHA) && hash_ok(image+PSCTX_LEFT,PSCTX_LEFT_SIZE,PSCTX_LEFT_SHA) &&
+        hash_ok(image+PSCTX_STOP_FN,PSCTX_STOP_FN_SIZE,PSCTX_STOP_FN_SHA) && hash_ok(image+SS_TARGET,SS_BODY,SS_BODY_SHA);
+}
+/* The ship (class 0x49) a component lies in, itself included; NULL when none. */
+static unsigned char *psctx_ship_of(unsigned char *p) {
+    for(unsigned depth=0;p && depth<PSCTX_DEPTH;depth++) {
+        void **vtable=NULL;unsigned char (*is_a)(void *,int)=NULL;   /* X4's answer is al */
+        if(!read_local(p,&vtable,8) || !vtable || !read_local((unsigned char*)vtable+0x11e8,&is_a,8) || !is_a) return NULL;
+        if(is_a(p,PSCTX_SHIP_CLASS)) return p;
+        if(!read_local(p+0x70,&p,8)) return NULL;
+    }
+    return NULL;
+}
+static void *psctx_lookup(uint64_t id) {
+    void *map=NULL;
+    if(psctx_find) return psctx_find(id);
+    return id && read_local(pnat_base+0x6cf1500,&map,8) && map?((void*(*)(void*,uint64_t,int))(pnat_base+0xced70))(map,id,4):NULL;
+}
+/* Slot 1143 or 1144 of a ship, as its camera handler calls it. 0 on a fault (the module ends). */
+static int psctx_call(unsigned char *ship,int start) {
+    psctx_list list;void **vtable=NULL;void *fn=NULL;uint32_t kind=0;
+    memset(&list,0,sizeof(list));list.capacity=4;list.count=1;
+    if(!read_local(pnat_base+PSCTX_KIND,&kind,4) || !read_local(ship,&vtable,8) || !vtable ||
+       !read_local((unsigned char*)vtable+(start?PSCTX_START_SLOT:PSCTX_STOP_SLOT),&fn,8) || !fn) return 1;
+    list.inline_[0]=kind;
+    uint64_t word=0,*volatile rng=pres_rng_hold(&word);volatile int fault=0;
+    __try {
+        if(start) ((psctx_start_fn)fn)(ship,&list,pnat_base+PSCTX_NAME,1);else ((psctx_stop_fn)fn)(ship,&list);
+    }
+    __except(GetExceptionCode()==EXCEPTION_ACCESS_VIOLATION?EXCEPTION_EXECUTE_HANDLER:EXCEPTION_CONTINUE_SEARCH) {fault=1;}
+    pres_rng_back(rng,word);
+    if(fault) {InterlockedIncrement64(&psctx_faults);psctx_installed=0;psctx_why="context_fault";return 0;}
+    InterlockedIncrement64(start?&psctx_starts:&psctx_stops);
+    return 1;
+}
+/* The pass: the ship slot k's player is in now, against the one it was in. */
+static void psctx_follow(const pslot_slot *s) {
+    if(!psctx_installed) return;
+    unsigned char *ship=s->seated && s->player?psctx_ship_of(pslot_at(s)):NULL;uint64_t id=0;
+    if(ship && (!read_local(ship+8,&id,8) || !id)) ship=NULL;
+    if(id==psctx_ship_id) return;
+    if(psctx_ship_id) {unsigned char *left=psctx_lookup(psctx_ship_id);if(left && !psctx_call(left,0)) return;}
+    psctx_ship_id=0;
+    if(ship && psctx_call(ship,1)) psctx_ship_id=id;
+}
+static void psctx_end(void) {
+    if(psctx_installed && psctx_ship_id) {unsigned char *left=psctx_lookup(psctx_ship_id);if(left) (void)psctx_call(left,0);}
+    psctx_ship_id=0;psctx_installed=0;
+}
+static int psctx_status(char *out,size_t capacity) {
+    const int n=snprintf(out,capacity," context=%d/%d/%lld/%lld/%lld/%llx",psctx,psctx_installed,(long long)psctx_starts,(long long)psctx_stops,
+        (long long)psctx_faults,(unsigned long long)psctx_ship_id);
+    return n>0 && (size_t)n<capacity?n:0;
+}
+/* The tick check of this package (stop 223): the play site still ours, the context module not ended by a fault. */
+static const char *psctx_check_why="-";
+static int psctx_armed_any(void) {return pres_play_installed || psctx || pres_play;}
+static int psctx_check(void) {
+    const char *why=!pres_play_intact()?"play_site_lost":strcmp(psctx_why,"-")?psctx_why:NULL;
+    if(!why) return 1;
+    if(!strcmp(psctx_check_why,"-")) psctx_check_why=why;
+    return 0;
 }
 static void pres_render_call(render_rng_fn original,void *self) {
     if(!pres_enter()) {original(self);return;}
@@ -676,9 +1116,10 @@ static void pres_diff_build(const pslot_slot *s) {
 }
 /* The UI entry and the re-pointed calls back (compare-and-swap, from any thread once no scope is open). */
 static void pres_unhook(void) {
-    pres_refill_uninstall();pres_pick_uninstall();
+    pres_refill_uninstall();pres_pick_uninstall();pres_sound_uninstall();pres_source_uninstall();pres_play_uninstall();
+    psctx_installed=0;psctx_ship_id=0;   /* pres_stop ended the own ship's set on the frame thread first */
     if(pres_ui_installed && pres_entry_swap((void*)pres_ui_move,(void*)pres_fn.ui_move)) pres_ui_installed=0;
-    pres_restored=!pres_ui_installed && !pres_refill_installed && !pres_pick_installed;
+    pres_restored=!pres_ui_installed && !pres_refill_installed && !pres_pick_installed && !pres_sound_installed && !pres_source_installed && !pres_play_installed;
 }
 static int pres_start(uint64_t tick) {
     pslot_slot *s=&pslots[pres_slot];unsigned char *universe=NULL;uint64_t want=0;
@@ -690,6 +1131,10 @@ static int pres_start(uint64_t tick) {
     pres_ui_installed=1;
     if(!pres_refill_install()) return pres_fail("refill_site");
     if(!pres_pick_install()) return pres_fail("pick_site");
+    if(pres_sound && !pres_sound_install()) return pres_fail("sound_entry");     /* the sound update in the scope (the sound, above) */
+    if(pres_source && !pres_source_install()) return pres_fail("sound_source");  /* this slot's own sounds at X4's player (the sound's source) */
+    if(pres_play && !pres_play_install()) return pres_fail("sound_play");        /* a voice started outside the scope plays in it (a sound's first play) */
+    psctx_installed=psctx;psctx_ship_id=0;psctx_why="-";                          /* the own ship's sound set (followed by pres_pass) */
     pres_diff_build(s);
     peye_update(s);
     pres_active=1;
@@ -725,6 +1170,7 @@ static void pres_anchor_home(void) {
 /* Everything back, as the canonical player, on the frame thread. */
 static void pres_stop(void) {
     if(pres_open) pres_leave();
+    psctx_end();
     pres_plan_home();
     pres_active=0;peye_on=0;
     pres_anchor_home();
@@ -758,6 +1204,7 @@ static int pres_pass(uint64_t tick) {
         peye_update(&pslots[pres_slot]);
         if(!pres_anchor_check()) return pres_fail(pres_fault_text);
         pres_plan_follow(&pslots[pres_slot]);pres_plan_kick(&pslots[pres_slot],tick);
+        psctx_follow(&pslots[pres_slot]);
         return 1;
     }
     if(tick==pilot_stop+1) pres_stop();
@@ -774,7 +1221,7 @@ static int pres_arm_using(int hud) {
     if(pres_slot && !render_rng_installed) return pstk_arm_refuse("present_without_render_split");
     if(pres_slot && (!pres_fn.ui_move || !pres_fn.refill || !pres_fn.anchors || !pres_fn.occupied || !pres_fn.controlled || !pres_fn.zone || !pres_fn.ancestor || !pres_fn.pick || !pres_fn.click))
         return pstk_arm_refuse("present_functions");
-    peye_reset();
+    peye_reset();pwcam_reset();
     pres_failed=0;pres_active=0;pres_stage=pres_slot?"armed":"own_player";pres_why="-";pres_refused_region="-";pres_fault_detail[0]=0;pres_restored=1;pres_anchor_moved=0;
     pres_armed=1;return 1;
 }
@@ -813,9 +1260,21 @@ static int pres_status(char *out,size_t capacity) {
         pres_hud,(long long)pres_anchor_moves,(long long)pres_rng_moved,pres_walk_hud,(long long)pres_walk_scopes,
         pres_plan_state,(long long)pres_plan_changes,(long long)pres_plan_faults,(long long)pres_plan_unreadable,(long long)pres_plan_kicks,(long long)pres_clicks,(long long)pres_foot_scopes,(long long)pres_foot_moved);
     if(n<=0 || (size_t)n>=capacity) return 0;
+    const int sound=pres_sound_status(out+n,capacity-(size_t)n);
+    if(!sound) return 0;
+    n+=sound;
+    const int source=pres_source_status(out+n,capacity-(size_t)n);
+    if(!source) return 0;
+    n+=source;
+    const int hud_zone=phz_status(out+n,capacity-(size_t)n);
+    if(!hud_zone) return 0;
+    n+=hud_zone;
     int eye=peye_status(out+n,capacity-(size_t)n);
     if(!eye) return 0;
     n+=eye;
+    const int walk_cam=pwcam_status(out+n,capacity-(size_t)n);
+    if(!walk_cam) return 0;
+    n+=walk_cam;
     int more=snprintf(out+n,capacity-(size_t)n," present_restored=%d%s%s",pres_restored,pres_fault_detail[0]?" present_fault=":"",pres_fault_detail);
     return more>0 && (size_t)(n+more)<capacity?n+more:0;
 }

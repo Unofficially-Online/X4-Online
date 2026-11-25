@@ -33,6 +33,7 @@
      <clear_group group="global.$PlayerShipsGroup"/>
      <set_value name="global.$X4LAN_PlayersState" exact="[]"/>
      <set_value name="$X4LAN_L" exact="[]"/>
+     <set_value name="$X4LAN_T" exact="table[]"/>
      <do_all exact="global.$X4LAN_Players.count" counter="$X4LAN_I">
       <set_value name="$X4LAN_E" exact="global.$X4LAN_Players.{$X4LAN_I}"/>
       <do_if value="$X4LAN_E.exists">
@@ -40,6 +41,7 @@
        <do_if value="$X4LAN_E.controlled">
         <add_to_group groupname="global.$PlayerControlledGroup" object="$X4LAN_E.controlled"/>
         <append_to_list name="$X4LAN_L" exact="$X4LAN_E.controlled"/>
+        <set_value name="$X4LAN_T.{$X4LAN_E.controlled}" exact="$X4LAN_E"/>
         <do_if value="$X4LAN_E.controlled.isclass.ship">
          <add_to_group groupname="global.$PlayerOccupiedShipGroup" object="$X4LAN_E.controlled"/>
         </do_if>
@@ -57,18 +59,23 @@
      </do_all>
      <!-- What every player controls, on every player's entity, for AI scripts (they read no MD globals, and X4 keeps no
           script variables on a ship): the wharf's refit start (native_gate_player_refit.xml) reads it as
-          player.entity.$X4LAN_Controlled, whichever player its frame sees. -->
+          player.entity.$X4LAN_Controlled, whichever player its frame sees; and who controls each of those objects
+          ($X4LAN_Pilots: the controlled object to its player's entity), the pilot a protecting ship sees on a player's
+          own ship (native_gate_player_escort.xml): a stock player's ship holds its player as its pilot, a player
+          2..N's only inside that player's scope. -->
      <do_all exact="global.$X4LAN_Players.count" counter="$X4LAN_I">
       <set_value name="$X4LAN_E" exact="global.$X4LAN_Players.{$X4LAN_I}"/>
       <do_if value="$X4LAN_E.exists">
        <set_value name="$X4LAN_E.$X4LAN_Controlled" exact="$X4LAN_L"/>
+       <set_value name="$X4LAN_E.$X4LAN_Pilots" exact="$X4LAN_T"/>
       </do_if>
      </do_all>
-     <debug_text text="'[X4LAN] PLAYER_GROUPS_SET event=%s player=%s controlled=%s piloted=%s containers=%s ships=%s time=%s'.[@event.name, player.entity, global.$PlayerControlledGroup.count, global.$PlayerOccupiedShipGroup.count, global.$PlayerContainerGroup.count, global.$PlayerShipsGroup.count, player.age]"/>
+     <debug_text text="'[X4LAN] PLAYER_GROUPS_SET event=%s player=%s controlled=%s piloted=%s containers=%s ships=%s pilots=%s time=%s'.[@event.name, player.entity, global.$PlayerControlledGroup.count, global.$PlayerOccupiedShipGroup.count, global.$PlayerContainerGroup.count, global.$PlayerShipsGroup.count, $X4LAN_T.keys.count, player.age]"/>
      <remove_value name="$X4LAN_I"/>
      <remove_value name="$X4LAN_E"/>
      <remove_value name="$X4LAN_S"/>
      <remove_value name="$X4LAN_L"/>
+     <remove_value name="$X4LAN_T"/>
     </do_if>
    </actions>
   </library>

@@ -37,6 +37,8 @@
  * (t_first). A render-only frame starting at t is presented by the FrameTick after it, at about
  * t + max(frame interval, measured frame period). So s = (t + max(interval, estimate) - t_first) / T,
  * T = 1/native_gate_tick_hz, clamped to 0..1 (1 = the next step's presentation). The step frame is s 0.
+ * (That is native_gate_render_clock = 'gap', the default; 'steady' runs one display clock for every frame instead, and
+ * RENDER_DISPLAY counts the judder either way: see the display clock below.)
  *   extrapolate  a render-only frame draws pose(N) advanced by s along the motion N-1 -> N (no delay;
  *                the step frame itself is the simulation's; overshoot on a change, gone at the next step);
  *   interpolate  every frame, the step frame included, draws pose(N-1) advanced by s (s - 1 relative
@@ -67,7 +69,8 @@
  * outside slot 10 everything is as stage 1 leaves it. The table is written whenever stage 2 is on (D) or
  * stage 3 is on and a chain member is displaced (G), in the frames that draw an offset.
  * Not covered (visible, not desync sources): the HUD (slot 6 is not run in a render-only frame: brackets and
- * the crosshair stay at the step's projection), particles and effects that are not components, objects
+ * the crosshair stay at the step's projection; the HUD radar's camera: lockstep_render_radar.h; bullets, which are
+ * in no zone's children vector: lockstep_render_shots.h), particles and effects that are not components, objects
  * outside the camera's zone, the view-block cache of a step frame filled before slot 10 (interpolate
  * mode; cam_cached=), new input (still applied at the next step: the camera shows the camera's own motion
  * between the two last steps, not a mouse movement made since; a non-consuming read of X4's pending input
@@ -385,13 +388,84 @@ static double rdisp_time_offset(void) {
     double s=(double)(rf_frame_start+ahead-rf_gap_first)/(double)step;
     return s<0?0:s>1?1:s;
 }
+/* ---- the display clock (native_gate_render_clock) and its judder ----
+ * 'gap' (the probe's value when absent): s as above, anchored at each step's presentation: the step frame 0, the first
+ * render-only frame of its gap about 0.5, a second one 1.0 (clamped). With the step cadence following the permits (24 Nov,
+ * player 2's log: 0/1/2/3/4+ render-only frames in 11/76/12/0.3/0.2 % of the gaps, 99 % of them late) the drawn time then
+ * advances by 0, 0.5 or 1 step between two presented frames: everything moving relative to the camera judders by up to half
+ * a step's motion. 'steady': one display clock for every frame, step frames included: D = (P - base) / T with P the
+ * frame's presentation (a render-only frame: its start + max(interval, estimate); a step frame: the next frame's start),
+ * s = D - N clamped to 0..1, the base slewed by RDISP_CLOCK_GAIN of the error towards s = RDISP_CLOCK_TARGET per frame
+ * (the middle: a steady 2-frame cadence draws 0.25 and 0.75, half a frame of room either way), reset when it is more
+ * than 2 steps off or N jumped (a pause, a join, a stall). Either way RENDER_DISPLAY counts the judder (the drawn time's
+ * advance between two frames against the presentation's, in steps: rms/max x1000, stalls = no advance, skips = a whole
+ * step at once). A model of the permit-driven cadence (permits every step with 2 to 12 ms of jitter, render-only frames
+ * every interval while one is missing, the step frame as soon as it is there) puts the judder rms at 0.24-0.28 steps
+ * with 'gap' and 0.17-0.21 with 'steady'; the rest comes from the step frames starting whenever their permit arrives
+ * (presentation intervals of 8 to 17 ms), which only a step frame waiting for the frame cadence removes (rms 0.03-0.09
+ * in that model). So 'steady' is the A/B, not the default, until a live run's judder rows say which is better. */
+enum {RDISP_CLOCK_GAP,RDISP_CLOCK_STEADY};
+#define RDISP_CLOCK_TARGET 0.5
+#define RDISP_CLOCK_GAIN 0.02
+static int rdisp_clock_mode,rdisp_clock_valid,rdisp_judder_valid;
+static int64_t rdisp_clock_base,rdisp_judder_last_p;
+static uint64_t rdisp_clock_n,rdisp_clock_resets,rdisp_judder_last_n,rdisp_judder_n,rdisp_judder_stalls,rdisp_judder_skips;
+static double rdisp_judder_last_d,rdisp_judder_sum2,rdisp_judder_max;
+/* This frame's presentation (performance counter). */
+static int64_t rdisp_present_at(void) {
+    const int64_t ahead=rf_interval>rf_estimate?rf_interval:rf_estimate;
+    if(rdisp_render_frame) return rf_frame_start+ahead;
+    const int64_t now=rf_qpc(),next=rf_last_start+rf_interval;   /* a step's picture: the next frame's start */
+    return next>now?next:now;
+}
+/* The steady clock's s for a frame presented at present, N = n, a step = step counter units. */
+static double rdisp_steady(int64_t present,uint64_t n,int64_t step) {
+    if(step<=0) return 0;
+    double s=RDISP_CLOCK_TARGET;
+    if(rdisp_clock_valid && n>=rdisp_clock_n && n<=rdisp_clock_n+4) {
+        s=(double)(present-rdisp_clock_base)/(double)step-(double)n;
+        if(!(fabs(s-RDISP_CLOCK_TARGET)<=2.0)) rdisp_clock_valid=0;
+    } else rdisp_clock_valid=0;
+    if(!rdisp_clock_valid) {
+        rdisp_clock_base=present-(int64_t)(((double)n+RDISP_CLOCK_TARGET)*(double)step);s=RDISP_CLOCK_TARGET;
+        rdisp_clock_valid=1;++rdisp_clock_resets;
+    } else rdisp_clock_base+=(int64_t)(RDISP_CLOCK_GAIN*(s-RDISP_CLOCK_TARGET)*(double)step);
+    rdisp_clock_n=n;
+    return s<0?0:s>1?1:s;
+}
+/* The drawn time's advance from the previous frame against the presentation's (both in steps). */
+static void rdisp_judder_note(int64_t present,uint64_t n,double s,int64_t step) {
+    const double d=(double)n+s;
+    if(step>0 && rdisp_judder_valid && n>=rdisp_judder_last_n && n<=rdisp_judder_last_n+2 && present>rdisp_judder_last_p) {
+        const double advance=d-rdisp_judder_last_d,j=advance-(double)(present-rdisp_judder_last_p)/(double)step;
+        ++rdisp_judder_n;rdisp_judder_sum2+=j*j;if(fabs(j)>rdisp_judder_max) rdisp_judder_max=fabs(j);
+        if(advance<0.05) ++rdisp_judder_stalls;else if(advance>0.95) ++rdisp_judder_skips;
+    }
+    rdisp_judder_valid=step>0;rdisp_judder_last_d=d;rdisp_judder_last_p=present;rdisp_judder_last_n=n;
+}
+/* gate.render_clock(mode): 'gap' or 'steady', before the start; afterwards the same value only. */
+static int rdisp_clock_of(const char *text,size_t length) {
+    if(text && length==3 && !memcmp(text,"gap",3)) return RDISP_CLOCK_GAP;
+    if(text && length==6 && !memcmp(text,"steady",6)) return RDISP_CLOCK_STEADY;
+    return -1;
+}
+static int rdisp_clock_arm(int mode,int started) {
+    if(mode!=RDISP_CLOCK_GAP && mode!=RDISP_CLOCK_STEADY) return 0;
+    if(started) return rdisp_clock_mode==mode;
+    rdisp_clock_mode=mode;rdisp_clock_valid=0;return 1;
+}
 __attribute__((unused)) static double rdisp_display_offset(void) { /* the hook interface */return rdisp_window || rdisp_open?rdisp_s_world:0.0;}
 /* Slot 10 entry (MoveWorker, before predict_present_enter): the offset, and in a step frame the step's sample. */
 static void rdisp_sample(void) {
     rdisp_window=0;rdisp_override_count=0;rdisp_s_time=rdisp_s_world=rdisp_s_camera=0;
     if(!stats.active || !rf_fps) return;
     rdisp_render_frame=InterlockedCompareExchange(&rf_frame_open,0,0)!=0;
-    if(rdisp_render_frame) rdisp_s_time=rdisp_time_offset();
+    {
+        const int64_t present=rdisp_present_at(),step=gate_tick_hz?rf_freq()/(int64_t)gate_tick_hz:0;
+        if(rdisp_clock_mode==RDISP_CLOCK_STEADY) rdisp_s_time=rdisp_steady(present,stats.issued,step);
+        else if(rdisp_render_frame) rdisp_s_time=rdisp_time_offset();
+        rdisp_judder_note(present,stats.issued,rdisp_s_time,step);
+    }
     rdisp_s_world=rdisp_motion_mode==RDISP_INTERPOLATE?rdisp_s_time-1.0:rdisp_s_time;
     rdisp_s_camera=rdisp_camera_mode==RDISP_INTERPOLATE?rdisp_s_time-1.0:rdisp_s_time;
     rdisp_window=1;
@@ -809,7 +883,8 @@ static int rdisp_status(char *out,size_t capacity) {
         "disp_m=%.4g disp_rad=%.4g err_m=%.4g/%.4g err_rad=%.4g/%.4g err_n=%llu err_hist=%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu "
         "cam_written=%llu cam_restored=%llu eye_restored=%llu cam_identity=%llu cam_stale=%llu cam_snaps=%llu cam_resets=%llu cam_cached=%llu "
         "chain=%llu chain_parent=%llu cam_rad=%.4g cam_m=%.4g cam_err_m=%.4g/%.4g cam_err_rad=%.4g/%.4g cam_err_n=%llu "
-        "foreign=%llu nested=%llu failures=%lld restored=%d others=%llu/%llu/%llu/%llu/%llu/%llu/%llu/%llu",
+        "foreign=%llu nested=%llu failures=%lld restored=%d others=%llu/%llu/%llu/%llu/%llu/%llu/%llu/%llu "
+        "clock=%s clock_resets=%llu judder_x1000=%.0f/%.0f judder_n=%llu stalls=%llu skips=%llu",
         rdisp_mode_name(rdisp_camera_mode),rdisp_mode_name(rdisp_motion_mode),rdisp_armed,rdisp_active,rdisp_stage,rdisp_why,
         (unsigned long long)rdisp_last_tick,rdisp_s_last,rdisp_s_max,(unsigned long long)rdisp_samples,(unsigned long long)rdisp_sample_fail,
         (unsigned long long)rdisp_sample_us,(unsigned long long)(rdisp_samples?rdisp_sample_us_sum/rdisp_samples:0),(unsigned long long)rdisp_sample_us_max,
@@ -830,7 +905,10 @@ static int rdisp_status(char *out,size_t capacity) {
         (unsigned long long)rdisp_foreign,(unsigned long long)rdisp_nested,(long long)rdisp_failures,rdisp_restored,
         (unsigned long long)rdisp_oth_cameras,(unsigned long long)rdisp_oth_written,(unsigned long long)rdisp_oth_restored,
         (unsigned long long)rdisp_oth_eye,(unsigned long long)rdisp_oth_foreign,(unsigned long long)rdisp_oth_table,
-        (unsigned long long)rdisp_oth_parent,(unsigned long long)rdisp_oth_full);
+        (unsigned long long)rdisp_oth_parent,(unsigned long long)rdisp_oth_full,
+        rdisp_clock_mode==RDISP_CLOCK_STEADY?"steady":"gap",(unsigned long long)rdisp_clock_resets,
+        rdisp_judder_n?1000.0*sqrt(rdisp_judder_sum2/(double)rdisp_judder_n):0.0,1000.0*rdisp_judder_max,(unsigned long long)rdisp_judder_n,
+        (unsigned long long)rdisp_judder_stalls,(unsigned long long)rdisp_judder_skips);
     return n>0 && (size_t)n<capacity?n:0;
 }
 /* Row seq (or the oldest still kept); *next = the cursor after it; 0 when there is none yet. */

@@ -37,7 +37,7 @@ CLAIM_HEX = ('12' '00' 'efbe' 'efcdab8967452301' 'd56a170000000000' 'f8ff' 'ff7f
 HITS = '01' + CLAIM_HEX
 OCTREE = '05000000' + '0d' + '00' * 15                                 # nav octree report: W=5, index 6, 8 and 9 built
 # Stock piloting record v3 (lockstep_pilot_stock.h): flags active, capture 0x0102, no cursor, aim or view, one state event BOOST=1.
-STOCK = '03' + '01' + '0201' + '00' * 24 + '00' + '00' * 13 + '01' + '1140' + '01000000'
+STOCK = '04' + '01' + '0201' + '00' * 24 + '00' + '00' * 13 + '01' + '1140' + '01000000'
 UI = '01' + '6400' + '01' + '0102' + '0100'   # UI replay section v1 (lockstep_ui_replay.h): capture 100, one travel start
 FFI = '01' + '03' + '0700' + '01'              # relayed UI FFI calls v1 (lockstep_ui_exports.h): one record, export 7, one bool
 HYBRID = '01' + '00' + '3c000000' + '2907000000000000' + '0000' + '00' * 8 + '00'   # hybrid record v1 header, no entries

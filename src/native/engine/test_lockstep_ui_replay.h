@@ -103,7 +103,7 @@ static void test_uirep_reset(void) {
     memset(test_uirep_player,0,sizeof(test_uirep_player));memset(test_uirep_ship,0,sizeof(test_uirep_ship));
     pnat_failed=0;pnat_fail_stage=NULL;pstk_scope_slot=0;
     uirep_captured=uirep_refused=uirep_taken=uirep_staged_count=uirep_applied_native=uirep_applied_lua=uirep_stale=uirep_passed=0;
-    uirep_scope_start=uirep_scope_stop=uirep_scope_refused=uirep_scope_nested=uirep_unavailable=uirep_guard_refused=uirep_target_passed=uirep_lua_errors=uirep_waits=0;
+    uirep_scope_start=uirep_scope_stop=uirep_scope_refused=uirep_scope_nested=uirep_unavailable=uirep_guard_refused=uirep_target_passed=uirep_lua_errors=uirep_waits=uirep_travel_left=0;
 }
 /* A stride reached as its patch reaches it: inside X4's frame (rsp 16-aligned, shadow space there), by a jump. */
 extern void test_uirep_site_back(void);
@@ -199,12 +199,39 @@ static void test_ui_replay(void) {
     /* The two wrappers inside a slot scope (the J key's record, the simulation's own stops): the adapter. */
     test_uirep_call_count=0;pstk_scope_slot=2;
     test_uirep_available=0;uirep_activity_start(NULL,1,0);assert(!test_uirep_call_count && uirep_unavailable==1);   /* MD's check */
+    *(uint64_t*)(region+UIREP_AUTOPILOT)=0x5001;                                                                    /* its autopilot flies */
     test_uirep_drive_on=1;uirep_activity_start(NULL,1,0);assert(test_uirep_count('A')==1);test_uirep_drive_on=0;test_uirep_available=1; /* already charging */
+    *(uint64_t*)(region+UIREP_AUTOPILOT)=0;
     uirep_activity_start(NULL,1,0);assert(test_uirep_count('A')==1);                                                 /* already the activity */
     uirep_activity_start(NULL,3,0);assert(test_uirep_count('A')==1 && uirep_scope_refused==1);                       /* only travel here */
     uirep_activity_stop(NULL,3,1);assert(test_uirep_count('A')==1);                                                  /* not the activity */
     uirep_activity_stop(NULL,1,1);assert(test_uirep_count('A')==2 && test_uirep_calls[1].b==0);
     uirep_activity_stop(NULL,0,1);assert(test_uirep_count('A')==2);                                                  /* none */
+    /* A drive left running by an autopilot that was stopped (no activity, no autopilot): the key ends it, taken over
+     * and stopped on this ship (the two-PC game of 24 Nov). */
+    {   const LONG64 starts=uirep_scope_start;uint64_t last=0;
+        memset(test_uirep_player+UIREP_PLAYER_LAST_SHIP,0,8);test_uirep_drive_on=1;test_uirep_available=0;
+        uirep_activity_start(NULL,1,0);
+        assert(test_uirep_count('A')==4 && test_uirep_calls[2].b==1 && test_uirep_calls[3].b==0 && uirep_travel_left==1 && uirep_scope_start==starts);
+        memcpy(&last,test_uirep_player+UIREP_PLAYER_LAST_SHIP,8);assert(last==0x5001);
+        int now=-1;memcpy(&now,test_uirep_player+UIREP_PLAYER_ACTIVITY,4);assert(!now);
+        {char text[1024];assert(uirep_status(text,sizeof(text))>0 && strstr(text," unavailable=1 travel_left=1"));}
+        test_uirep_drive_on=0;test_uirep_available=1;}
+    /* The same for slot 8 (every player 2..N), in its own scope on its own player: with its autopilot flying the drive is
+     * taken over (as before), without it the leftover is ended. */
+    {   static __attribute__((aligned(16))) unsigned char player8[sizeof(test_uirep_player)];const pslot_slot kept=pslots[PILOT_SLOTS];
+        memset(player8,0,sizeof(player8));memset(&pslots[PILOT_SLOTS],0,sizeof(pslots[PILOT_SLOTS]));
+        pslots[PILOT_SLOTS].player=player8;pslots[PILOT_SLOTS].ship=test_uirep_ship;
+        pstk_scope_slot=PILOT_SLOTS;test_uirep_drive_on=1;test_uirep_available=0;test_uirep_call_count=0;
+        *(uint64_t*)(region+UIREP_AUTOPILOT)=0x5001;
+        uirep_activity_start(NULL,1,0);assert(test_uirep_count('A')==1 && test_uirep_calls[0].a==player8 && test_uirep_calls[0].b==1 &&
+                                              test_uirep_calls[0].scope==PILOT_SLOTS && uirep_travel_left==1);
+        int now=0;memcpy(&now,player8+UIREP_PLAYER_ACTIVITY,4);assert(now==1);
+        memset(player8+UIREP_PLAYER_ACTIVITY,0,4);*(uint64_t*)(region+UIREP_AUTOPILOT)=0;
+        uirep_activity_start(NULL,1,0);assert(test_uirep_count('A')==3 && test_uirep_calls[1].a==player8 && test_uirep_calls[2].b==0 && uirep_travel_left==2);
+        memcpy(&now,player8+UIREP_PLAYER_ACTIVITY,4);assert(!now);
+        {int other=-1;memcpy(&other,test_uirep_player+UIREP_PLAYER_ACTIVITY,4);assert(!other);}   /* slot 2's player untouched */
+        test_uirep_drive_on=0;test_uirep_available=1;pstk_scope_slot=2;pslots[PILOT_SLOTS]=kept;}
     assert(!test_uirep_count('S') && !test_uirep_count('E'));pstk_scope_slot=0;
     /* The setter's own events coming back (live u1..u3, a stack overflow at the stop): the setter runs once, stop and start. */
     {LONG64 nested=uirep_scope_nested;test_uirep_call_count=0;pstk_scope_slot=2;test_uirep_events_back=1;

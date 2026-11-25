@@ -440,6 +440,23 @@ class MixedPlatformTests(unittest.TestCase):
 
 
 class SessionBindTests(unittest.TestCase):
+    def test_a_session_without_a_fixture_says_so(self):
+        """A session without a fixture (fixture_form 'none') sets the fixture key false: absent, the defaults table gives it
+        snapshot 005's twelve and the gate stops at the load (rk5, 24 Nov: SNAPSHOT_BOUNDARY stage=bind_actor)."""
+        with tempfile.TemporaryDirectory() as d:
+            base = Path(d)
+            (base / 'ui').mkdir()
+            (base / 'ui/config.lua.append').write_text("X4LAN_CONFIG.native_gate_snapshot_fixture = {'0000000000176a13'}\n"
+                                                       'X4LAN_CONFIG.native_gate_test = true\n', encoding='utf-8')
+            build_play_overlay.bind_session_joiner(base, {'fixture': [], 'fixture_form': 'none', 'player_ship': '00000000000ae3f4'})
+            config = (base / 'ui/config.lua.append').read_text(encoding='utf-8')
+            self.assertIn('X4LAN_CONFIG.native_gate_snapshot_fixture = false', config)
+            self.assertIn('X4LAN_CONFIG.native_gate_snapshot_no_fixture = true', config)   # the probe's own word
+            self.assertIn("X4LAN_CONFIG.native_gate_world_hash_watch = {'00000000000ae3f4'}", config)
+            self.assertNotIn('0000000000176a13', config)
+            with self.assertRaises(SystemExit):   # a battle session names its twelve
+                build_play_overlay.bind_session_joiner(base, {'fixture': [], 'fixture_form': 'battle', 'player_ship': '00000000000ae3f4'})
+
     def test_session_base_binds_the_session_saves_fixture(self):
         """--session: the battle base takes the session save's checksum, fixture and watch list (ns1: without them the gate
         bound snapshot 005's fixture and stopped at its first frame); a fixture other than the registered one is refused."""
@@ -467,7 +484,7 @@ class SessionBindTests(unittest.TestCase):
                 (out / 'ui/config.lua.append').write_text('X4LAN_CONFIG.enabled = true' + chr(10))
             return 'ok'
         with tempfile.TemporaryDirectory() as d, mock.patch.object(build_play_overlay, 'step', fake_step), \
-                mock.patch.object(scenarios, 'snapshot_lines', lambda path: (lines, {'start': 'gs_x'})):
+                mock.patch.object(scenarios, 'snapshot_lines', lambda path, fixture=True: (lines, {'start': 'gs_x'})):
             snap = Path(d) / 'session-save.xml.gz'
             snap.write_bytes(b'save')
             session_file = Path(d) / 'session.json'

@@ -43,6 +43,15 @@ static void test_pilot_deliver(void) {
         assert(test_pdl_calls==1 && test_pdl_sources[0]==p2);
         memcpy(image+PVEHK_FWD_UI_EVENT+8,&type_was,8);test_pdl_calls=4;
     }
+    /* So is a player-owned object's attack (its MD handler names no source either). */
+    {
+        static void *owned_event[6];void *owned_vt=image+PVEHK_FWD_OWNED_ATTACK_EVENT,*type_was=NULL;
+        memcpy(&type_was,image+PVEHK_FWD_OWNED_ATTACK_EVENT+8,8);
+        {void *fn=(void*)test_pdl_type;memcpy(image+PVEHK_FWD_OWNED_ATTACK_EVENT+8,&fn,8);}
+        owned_event[0]=owned_vt;test_pdl_calls=0;pvehk_deliver_forward(2,owned_event,1.0);
+        assert(test_pdl_calls==1 && test_pdl_sources[0]==p2);
+        memcpy(image+PVEHK_FWD_OWNED_ATTACK_EVENT+8,&type_was,8);test_pdl_calls=4;
+    }
     /* The due pass's question about a slot's player: nobody on it listens and player 1's object has listeners of
      * the type: an entry that is not empty, with nothing behind it; counted. Everything else is X4's answer. */
     {

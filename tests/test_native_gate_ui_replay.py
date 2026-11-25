@@ -471,6 +471,31 @@ class SessionTests(unittest.TestCase):
         self.assertEqual(rows, ['UI_REPLAY_SCRIPT tick=40 op=suit_home ok=true result=1002ULL=true scope=0',
                                 'UI_REPLAY_SCRIPT tick=46 op=suit_fly ok=true result=home after=6'])
 
+    def test_suit_to_flies_the_suit_to_a_named_ship_and_asks_to_dock_there(self):
+        """The ship of that name and owner, looked up at the op's tick, is the request's and the flight's target; no such
+        ship: no request, no keys."""
+        lua, g = client()
+        lua.execute('''
+          C.RequestDockAt=function(id,c) stock_calls[#stock_calls+1]='RequestDockAt:'..tostring(id);return true end
+          gate.pilot_stock_inject=function(kind,id,v) stock_calls[#stock_calls+1]=kind..id..'='..v;return 1 end
+          env.GetContainedObjectsByOwner=function(owner) stock_calls[#stock_calls+1]='owner:'..owner;return {'a','b'} end
+          env.GetComponentData=function(o,what) return o=='b' and 'FF Bail' or 'other' end
+          env.ConvertIDTo64Bit=function(o) return o=='b' and 2002ULL or 2001ULL end
+          DELTAS={{30,0,10},nil}
+          tools={gate=gate,C=C,env=env,own_slot=2,home_id=function() return 1002ULL end,
+            suit_delta=function(target) stock_calls[#stock_calls+1]='to:'..tostring(target);N=(N or 0)+1;return DELTAS[N] end}
+          S=new_session({script=X4LAN_UI_REPLAY_CORE.script({{0,'suit_to','FF Bail','player',5},{3,'suit_to','None','player',5}},40,tools)})
+          for t=40,45 do S.frame(t) end
+        ''')
+        self.assertEqual(values(g.stock_calls), ['owner:player', 'RequestDockAt:2002ULL',
+                                                 'to:2002ULL', 'state7=1', 'state13=1',   # right and ahead
+                                                 'to:2002ULL', 'state7=0', 'state13=0',   # aboard: every key released
+                                                 'owner:player'])                        # no such ship
+        rows = [line for line in values(g.logs) if 'UI_REPLAY_SCRIPT' in line]
+        self.assertEqual(rows, ['UI_REPLAY_SCRIPT tick=40 op=suit_to ok=true result=2002ULL=true scope=0',
+                                'UI_REPLAY_SCRIPT tick=42 op=suit_fly ok=true result=home after=2',
+                                'UI_REPLAY_SCRIPT tick=43 op=suit_to ok=true result=no_ship scope=0'])
+
     def test_the_missile_op_holds_and_releases_the_recorded_trigger(self):
         lua, g = client()
         lua.execute('''
@@ -513,11 +538,15 @@ class SessionTests(unittest.TestCase):
                                 'UI_REPLAY_SCRIPT tick=42 op=target_none ok=true result=nil scope=1',
                                 'UI_REPLAY_SCRIPT tick=43 op=target_slot ok=true result=false scope=0',
                                 'UI_REPLAY_SCRIPT tick=50 op=target_slot ok=true result=false scope=0'])
-        self.assertEqual(dict(g.X4LAN_UI_REPLAY_CORE.SCOPED), {'target_slot': True, 'target_none': True, 'target_home': True, 'dock_home': True, 'suit_home': True, 'guidance_slot': True, 'guidance_end': True, 'guidance_set': True, 'guidance_look': True, 'inv_read': True, 'inv_drop': True,
+        self.assertEqual(dict(g.X4LAN_UI_REPLAY_CORE.SCOPED), {'target_slot': True, 'target_none': True, 'target_home': True, 'dock_home': True, 'suit_home': True, 'suit_to': True, 'dock_named': True, 'guidance_slot': True, 'guidance_end': True, 'guidance_set': True, 'guidance_look': True, 'inv_read': True, 'inv_drop': True,
                                                                   'foot_where': True, 'transport_list': True, 'transport_to': True, 'transport_named': True, 'inv_research_seen': True, 'inv_research_hqs': True,
                                                                   # the shops' and the control panels' clicks (reps, itemtrader, hack)
                                                                   'trader_pick': True, 'trader_look': True, 'itemtrader_buy': True, 'inv_total': True,
-                                                                  'panel_find': True, 'hack_yes': True})
+                                                                  'panel_find': True, 'hack_yes': True,
+                                                                  # the HUD's top level bar and Back (the Ship Interactions scenario)
+                                                                  'toplevel_tab': True, 'menu_back': True,
+                                                                  # the wingmate's test: this client's own HUD colours (escort_colour)
+                                                                  'escort_colour': True, 'escort_select': True, 'escort_map': True})
 
     def test_the_guidance_ops_set_and_end_it_where_the_maps_click_runs(self):
         """play39p-long: client 2's map set guidance on slot 1's ship (SetGuidance) inside its presentation scope; the ops do
@@ -733,6 +762,40 @@ class ProbeTests(unittest.TestCase):
                                 f'UI_REPLAY_SCRIPT tick={start+8} op=guidance_end ok=true result=ffi scope=1'])
         self.assertTrue(any(c.startswith('guidance:1002:UIPosRot:') for c in clients[0].values('ui_calls')))
 
+    def test_ship_interactions_opens_for_a_click_on_every_slot_2_to_8(self):
+        """The real probe arms the dock menu's filter on clients of slots 2..8 (not on slot 1, X4's own player): the HUD
+        bar's click opens Ship Interactions in flight, X4's automatic open in flight stays out."""
+        prelude = PROBE_MOCK + '''
+          opened={}
+          OpenMenu=function(name) opened[#opened+1]=name end
+          Helper={closeMenuAndOpenNewMenu=function(menu,newname,param) OpenMenu(newname,param,{menu.name}) end,
+            closeMenu=function(menu,due) if due=='back' and menu.param2 then OpenMenu(menu.param2[1]) end end}
+          require('ffi').C.GetPlayerCurrentControlGroup=function() return 'pilotcontrol' end
+          gate.pilot_slots_max=function() return 8 end
+          local data=GetComponentData
+          GetComponentData=function(id,key,...) if key=='isdocked' then return DOCKED end;return data(id,key,...) end
+        '''
+        ships = [self.stock.S1, self.stock.S2] + ['00000000001760%02x' % k for k in range(3, 9)]
+        for slot in (1, 2, 3, 8):
+            with self.subTest(slot=slot):
+                c = self.stock.StockClient(slot, slots_all=True, prelude=prelude, native_gate_clients=8, native_gate_pilot_slots=ships,
+                                           native_gate_pilot_capture_source=['stock'] * 8, native_gate_pilot_device=[False] * 8,
+                                           native_gate_pilot_pad=[0] * 8, native_gate_pilot_present=True, native_gate_runtime_ids=True,
+                                           native_gate_ui_replay=True)
+                self.assertEqual(c.errors(), [], c.values('logs')[-3:])
+                armed = [line for line in c.values('logs') if 'UI_DOCKED_MENU_ARMED' in line]
+                c.lua.execute("Helper.closeMenuAndOpenNewMenu({name='TopLevelMenu'},'DockedMenu',{0,0},nil);OpenMenu('DockedMenu',{0,0},nil)")
+                if slot == 1:
+                    self.assertEqual(armed, [])
+                    self.assertEqual(c.values('opened'), ['DockedMenu', 'DockedMenu'])        # stock: no filter
+                    continue
+                self.assertTrue(armed and armed[0].endswith(f'UI_DOCKED_MENU_ARMED slot={slot} helper=true'), armed)
+                self.assertEqual(c.values('opened'), ['DockedMenu'])
+                rows = [line.split('NATIVE_GATE ')[-1] for line in c.values('logs') if 'UI_DOCKED_MENU ' in line]
+                self.assertEqual(rows, ['UI_DOCKED_MENU kept=0 passed=0 person=1 via=tab', 'UI_DOCKED_MENU kept=1 passed=0 person=1 scope=false'])
+                c.lua.execute("DOCKED=true;OpenMenu('DockedMenu',{0,0},nil)")       # its own ship docked: X4's automatic open
+                self.assertEqual(c.values('opened'), ['DockedMenu', 'DockedMenu'])
+
     def test_the_minimum_hull_reaches_md_for_every_slot_ship(self):
         prelude = PROBE_MOCK + '''
           gate.pilot_ship=function(s) return 1000+s end
@@ -747,6 +810,60 @@ class ProbeTests(unittest.TestCase):
         bad = [self.stock.StockClient(1, slots_all=True, prelude=prelude, **dict(cfg, native_gate_ui_replay_min_hull=0))]
         self.stock.run(bad, 13)
         self.assertTrue(any('native_gate_ui_replay_min_hull' in e for e in bad[0].errors()), bad[0].errors())
+
+    def test_the_wingmate_ops_look_target_and_read_the_hud_colour(self):
+        """The wingmate's test ops (mocks, not the game): escort_look hands every slot's ship to MD (canonical), escort_target
+        signals the galaxy as a person's click (default a Xenon scout 500 m ahead), escort_colour reads X4's relation status
+        of each slot's ship and of the protectors MD left on the slot's player entity, inside this client's scope."""
+        prelude = PROBE_MOCK + '''
+          gate.pilot_ship=function(s) return 1000+s end
+          gate.ui_inventory_player=function(k) return 'P'..k end
+          local ffi=require('ffi')
+          ffi.new=function(t,...) return {t=t,v=...} end
+          ffi.string=function(s) return s end
+          ffi.C.GetPlayerGalaxyID=function() return 77 end
+          ffi.C.GetRelationStatus4=function(id,conn)
+            local v=type(id)=='table' and id.v or id   -- the harness's ffi.new: {t=type, v=value}
+            ui_calls[#ui_calls+1]='rel:'..tostring(v)..':'..conn
+            local own=tonumber(v)==1001 or tonumber(v)==1002
+            return {relationStatus=own and 5 or 3,owningFactionID=own and 'player' or 'terran'}
+          end
+          GetNPCBlackboard=function(entity,key) ui_calls[#ui_calls+1]='bb:'..entity..':'..key;return entity=='P2' and {'5005'} or {} end
+          GetComponentData=function(id,...) return false,false,false,false end
+          ffi.C.GetConfigSetting=function(name) return name=='factioncolortargetsystem' and 0 or -1 end
+          ffi.C.SetSofttarget=function(id,s) ui_calls[#ui_calls+1]='soft:'..tostring(id);return true end
+          AddUITriggeredEvent=function(screen,control,v)
+            if control=='EscortLook' then ui_calls[#ui_calls+1]=screen..'/'..control..':'..tostring(v[1])..','..tostring(v[2]) end
+            if control=='EscortFront' then ui_calls[#ui_calls+1]=screen..'/'..control..':'..tostring(v) end
+          end
+          SignalObject=function(o,signal,a,b) ui_calls[#ui_calls+1]='signal:'..tostring(o)..':'..signal..':'..tostring(a)..':'..tostring(b) end
+          local azure,green={r=64,g=176,b=240},{r=0,g=200,b=0}
+          Menus={{name='MapMenu',contextMenuMode='userquestion',holomapcolor={playercolor=green,friendcolor=azure,missioncolor=azure},
+            closeContextMenu=function() ui_calls[#ui_calls+1]='map_context_closed' end,
+            getContainerNameAndColors=function(c) return 'Velvet',{r=255,g=255,b=255} end,getObjectColor=function(id) return {r=255,g=255,b=255} end}}
+        '''
+        cfg = dict(native_gate_pilot_present=True, native_gate_runtime_ids=True, native_gate_ui_replay=['target'],
+                   native_gate_ui_replay_script=[[], [[7, 'escort_look'], [8, 'escort_target'], [9, 'escort_target', 'ship_xen_m_miner_solid_01_a_macro', 700],
+                                                      [10, 'escort_colour'], [11, 'escort_front'], [12, 'escort_select'], [13, 'escort_map']]])
+        clients = [self.stock.StockClient(k, slots_all=True, prelude=prelude, **cfg) for k in (1, 2)]
+        self.stock.run(clients, 19)
+        c = clients[1]
+        self.assertEqual(c.errors(), [], c.values('logs')[-3:])
+        calls = c.values('ui_calls')
+        self.assertIn('X4LAN_UiReplay/EscortLook:1001,1002', calls)
+        self.assertIn('signal:77:x4lan_escort_target:ship_xen_s_scout_01_a_macro:500', calls)
+        self.assertIn('signal:77:x4lan_escort_target:ship_xen_m_miner_solid_01_a_macro:700', calls)
+        rows = {line.split(' op=')[1].split(' ')[0]: line for line in c.values('logs') if 'UI_REPLAY_SCRIPT' in line}
+        self.assertIn('result=factioncolour=0 slot1=5/player slot2=5/player,guard:5005=3/terran/own=false/mission=false/enemy=false/hostile=false scope=',
+                      rows['escort_colour'])   # scoped (this mock opens none)
+        self.assertIn('X4LAN_UiReplay/EscortFront:1002', calls)   # this client's own ship by default
+        self.assertIn('soft:5005', calls)
+        self.assertIn('result=true 5005 scope=', rows['escort_select'])
+        self.assertNotIn('scope=', rows['escort_front'])   # canonical
+        self.assertIn('map_context_closed', calls)
+        self.assertIn('result=list=255,255,255 info=255,255,255 player=0,200,0 friend=64,176,240 mission=64,176,240 scope=', rows['escort_map'])
+        self.assertNotIn('scope=', rows['escort_look'])   # canonical: the probe's own frame
+        self.assertNotIn('scope=', rows['escort_target'])   # a person's click: the signal is captured and replayed in its scope
 
     def test_its_rows_are_written_on_ticks_the_status_stride_holds(self):
         clients = self.clients(native_gate_status_stride=1000, native_gate_ui_replay_script=[[[7, 'travel_key']], []])
@@ -801,7 +918,7 @@ class WireTests(unittest.TestCase):
         blob = ref.encode({'ui': self.SECTION})
         self.assertEqual(blob, '4d01' + '55' + '08' + self.SECTION)
         self.assertEqual(ref.decode(blob), {'ui': self.SECTION})
-        stock = '03' + '01' + '0201' + '00' * 38 + '00'
+        stock = '04' + '01' + '0201' + '00' * 38 + '00'
         both = ref.encode({'stock': stock, 'ui': self.SECTION})
         self.assertEqual(ref.decode(both), {'stock': stock, 'ui': self.SECTION})
         self.assertTrue(both.startswith('4d0153'))     # ascending kinds: stock before ui
@@ -824,7 +941,7 @@ class WireTests(unittest.TestCase):
         lua.execute('''
           M=X4LAN_INPUT_MUX_CORE.mux(function() end)
           budget=nil
-          M.register('stock','stock',{proposal=function() return '03'..string.rep('00',228) end})
+          M.register('stock','stock',{proposal=function() return '04'..string.rep('00',228) end})
           M.register('ui','ui',{proposal=function(tick,b) budget=b;return nil end})
           blob=M.proposal(1)
         ''')
@@ -955,6 +1072,149 @@ class UndockWatchTests(unittest.TestCase):
             lua, g = self.session(own_slot, event)
             self.watch(lua, g, ((10, True), (11, False)))
             self.assertEqual(values(g.calls), [])
+
+
+DOCKED_MENU = r'''
+  opened={};closed={};rows={}
+  -- who answers "the player": 'slot' (this client's presentation scope is open: a person's click, a key, the UI's own
+  -- frame), 'probe' (the probe's canonical frame, the scope paused), 'outside' (no scope at all)
+  SCOPE='slot'
+  OWN={slot=false,probe=true,outside=true}   -- slot k flies its ship, player 1 sits docked
+  denv={}
+  denv.OpenMenu=function(name,param,param2) opened[#opened+1]=name..'@'..SCOPE end
+  -- the menu helper's two routes as the stock helper takes them (a stand-in, not the stock code): a navigation opens
+  -- the new menu with a return record, then closes the old one; Back opens the return record; any other close may
+  -- open the dock menu by itself after asking the question as whoever runs it
+  denv.Helper={
+    closeMenuAndOpenNewMenu=function(menu,newname,param,noreturn)
+      denv.OpenMenu(newname,param,noreturn and menu.param2 or {menu.name,menu.param})
+      closed[#closed+1]=menu.name
+      if INNER then INNER() end
+      if FAIL then error('stock failed') end
+    end,
+    closeMenu=function(menu,due)
+      closed[#closed+1]=menu.name..':'..tostring(due)
+      if due=='back' and menu.param2 and #menu.param2>0 then denv.OpenMenu(menu.param2[1],menu.param2[2],menu.param2[3]);return 'back' end
+      if OWN[SCOPE] then denv.OpenMenu('DockedMenu',{0,0},nil) end
+      return 'closed'
+    end}
+  P={present=function(on)
+       if on then if SCOPE=='probe' then SCOPE='slot';return true end;return false end
+       SCOPE='probe';return true end,
+     own=function() if OWN_FAILS then error('no ship') end;return OWN[SCOPE] end,
+     log=function(s) rows[#rows+1]=s end}
+  TOP={name='TopLevelMenu'}
+  MAP={name='MapMenu',param2={'DockedMenu',{0,0},{'restore'}}}
+'''
+
+
+class DockedMenuTests(unittest.TestCase):
+    """Ship Interactions on a client of slot 2..N (K.docked_menu; the probe arms it for every slot 2..N): a person's click
+    on the HUD's top level bar and Back open it as in stock, X4's automatic opens are asked again for this client's own
+    player. The rk7/rk8 games of 24 Nov: player 2's click on Ship Interactions in flight was dropped (UI_DOCKED_MENU
+    kept=N after each click). Mocked menu helper and scopes: the routes and the rows, not the game."""
+
+    def arm(self, helper=True):
+        lua, g = client()
+        lua.execute(DOCKED_MENU)
+        if not helper:
+            lua.execute('denv.Helper=nil')
+        lua.execute('D,WHY=X4LAN_UI_REPLAY_CORE.docked_menu(denv,P)')
+        return lua, g
+
+    def test_a_click_on_ship_interactions_opens_it_in_flight(self):
+        lua, g = self.arm()
+        # the HUD's own bar (its return record) and the map's tabs (noreturn), both in this client's scope
+        lua.execute("denv.Helper.closeMenuAndOpenNewMenu(TOP,'DockedMenu',{0,0},nil)")
+        lua.execute("denv.Helper.closeMenuAndOpenNewMenu({name='MapMenu'},'DockedMenu',{0,0},true)")
+        self.assertEqual(values(g.opened), ['DockedMenu@slot', 'DockedMenu@slot'])
+        self.assertEqual(values(g.closed), ['TopLevelMenu', 'MapMenu'])
+        self.assertEqual(values(g.rows), ['UI_DOCKED_MENU kept=0 passed=0 person=1 via=tab', 'UI_DOCKED_MENU kept=0 passed=0 person=2 via=tab'])
+        self.assertTrue(lua.eval('D.helper'))
+        # what the click met before: the same open without the person's mark, in flight, is kept out
+        lua.execute("denv.OpenMenu('DockedMenu',{0,0},nil)")
+        self.assertEqual(values(g.opened), ['DockedMenu@slot', 'DockedMenu@slot'])
+        self.assertEqual(values(g.rows)[-1], 'UI_DOCKED_MENU kept=1 passed=0 person=2 scope=false')
+
+    def test_back_from_ship_information_returns_to_it(self):
+        lua, g = self.arm()
+        self.assertEqual(lua.eval("denv.Helper.closeMenu(MAP,'back')"), 'back')
+        self.assertEqual(values(g.opened), ['DockedMenu@slot'])
+        self.assertEqual(values(g.rows), ['UI_DOCKED_MENU kept=0 passed=0 person=1 via=back'])
+        # Back without a return record, or a close: no person's open; the helper's own open after it (here from the
+        # probe's frame, where player 1's docked answer makes it) is asked again
+        lua.execute("SCOPE='probe';denv.Helper.closeMenu({name='MapMenu'},'back');denv.Helper.closeMenu({name='MapMenu',param2={'DockedMenu'}},'close');SCOPE='slot'")
+        self.assertEqual(values(g.opened), ['DockedMenu@slot'])
+        self.assertEqual(values(g.rows)[1:], ['UI_DOCKED_MENU kept=1 passed=0 person=1 scope=true', 'UI_DOCKED_MENU kept=2 passed=0 person=1 scope=true'])
+        # a conversation menu's Back goes to its conversation, not to a menu: not marked
+        lua.execute("denv.Helper.closeMenu({name='X',conversationMenu=true,param2={'DockedMenu'}},'back')")
+        self.assertEqual(values(g.rows)[-1], 'UI_DOCKED_MENU kept=3 passed=0 person=1 scope=false')
+
+    def test_the_automatic_opens_are_asked_for_this_clients_own_player(self):
+        lua, g = self.arm()
+        # the probe's canonical frame (player 1 docked): asked again in the scope, slot k flies: kept, the frame paused again
+        lua.execute("SCOPE='probe';denv.Helper.closeMenu({name='MapMenu'},'close')")
+        self.assertEqual(values(g.opened), [])
+        self.assertEqual(values(g.rows), ['UI_DOCKED_MENU kept=1 passed=0 person=0 scope=true'])
+        self.assertEqual(g.SCOPE, 'probe')
+        # slot k docked itself: its own dock menu opens
+        lua.execute("OWN.slot=true;denv.OpenMenu('DockedMenu',{0,0},nil)")
+        self.assertEqual(values(g.opened), ['DockedMenu@probe'])
+        self.assertEqual((lua.eval('D.kept'), lua.eval('D.passed'), lua.eval('D.person')), (1, 1, 0))
+        # outside any scope and when the question fails: as before, the open goes on
+        lua.execute("SCOPE='outside';denv.OpenMenu('DockedMenu',{0,0},nil);SCOPE='slot';OWN_FAILS=true;denv.OpenMenu('DockedMenu',{0,0},nil)")
+        self.assertEqual(values(g.opened), ['DockedMenu@probe', 'DockedMenu@outside', 'DockedMenu@slot'])
+        self.assertEqual(lua.eval('D.passed'), 3)
+
+    def test_other_menus_pass_and_the_mark_ends_with_its_call(self):
+        lua, g = self.arm()
+        lua.execute("denv.Helper.closeMenuAndOpenNewMenu(TOP,'MapMenu',{0,0,true},nil)")
+        self.assertEqual(values(g.opened), ['MapMenu@slot'])
+        self.assertEqual(values(g.rows), [])
+        # an automatic open inside another navigation is not the person's
+        lua.execute("INNER=function() denv.OpenMenu('DockedMenu',{0,0},nil) end;denv.Helper.closeMenuAndOpenNewMenu(TOP,'MapMenu',{0,0,true},nil);INNER=nil")
+        self.assertEqual(values(g.rows), ['UI_DOCKED_MENU kept=1 passed=0 person=0 scope=false'])
+        # a stock error goes on unchanged and leaves no mark behind
+        lua.execute("FAIL=true;OK,WHY=pcall(denv.Helper.closeMenuAndOpenNewMenu,TOP,'DockedMenu',{0,0},nil);FAIL=nil")
+        self.assertFalse(g.OK)
+        self.assertIn('stock failed', g.WHY)
+        lua.execute("denv.OpenMenu('DockedMenu',{0,0},nil)")
+        self.assertEqual(values(g.rows)[-2:], ['UI_DOCKED_MENU kept=1 passed=0 person=1 via=tab', 'UI_DOCKED_MENU kept=2 passed=0 person=1 scope=false'])
+        # the stock functions keep their answers
+        self.assertEqual(lua.eval("denv.Helper.closeMenu(MAP,'back')"), 'back')
+
+    def test_once_per_lua_state_and_without_the_helper(self):
+        lua, g = self.arm()
+        lua.execute('OPEN=denv.OpenMenu;D2,WHY2=X4LAN_UI_REPLAY_CORE.docked_menu(denv,P)')
+        self.assertIsNone(g.D2)
+        self.assertEqual(g.WHY2, 'armed')
+        self.assertTrue(lua.eval('OPEN==denv.OpenMenu and denv.X4LAN_OPEN_MENU_STOCK~=denv.OpenMenu'))
+        self.assertTrue(lua.eval('denv.X4LAN_DOCKED_NAV_STOCK.closeMenu~=denv.Helper.closeMenu'))
+        lua, g = self.arm(helper=False)
+        self.assertFalse(lua.eval('D.helper'))
+        lua.execute("denv.OpenMenu('DockedMenu',{0,0},nil)")
+        self.assertEqual(values(g.rows), ['UI_DOCKED_MENU kept=1 passed=0 person=0 scope=false'])
+        lua, g = client()
+        lua.execute('D,WHY=X4LAN_UI_REPLAY_CORE.docked_menu({},{})')
+        self.assertEqual(g.WHY, 'no_open_menu')
+
+    @unittest.skipUnless((ROOT.parent/'x4-re/gamelua/08/ui/addons/ego_detailmonitorhelper/helper.lua').is_file(), 'x4-re stock UI scripts not at hand')
+    def test_the_stock_routes_are_the_ones_marked(self):
+        """Read against the stock helper: the bar's Ship Interactions entry opens DockedMenu, its click and scroll go through
+        Helper.closeMenuAndOpenNewMenu, Back opens the return record, and the helper's own opens of DockedMenu are the
+        automatic ones (asked first)."""
+        text = (ROOT.parent/'x4-re/gamelua/08/ui/addons/ego_detailmonitorhelper/helper.lua').read_text(encoding='utf-8', errors='replace')
+        entry = re.search(r'\{ id = "cockpit",.*?menu = "(\w+)".*?needsdock = (\w+)', text)
+        self.assertEqual(entry.groups(), ('DockedMenu', 'false'))
+        body = re.search(r'\nfunction Helper\.scrollTopLevelInternal\(.*?\n(.*?)\nend\n', text, re.S).group(1)
+        self.assertEqual(len(re.findall(r'Helper\.closeMenuAndOpenNewMenu\(menu, Helper\.topLevelMenus\[\w+\]\.menu', body)), 2)
+        self.assertNotIn('OpenMenu(', body.replace('closeMenuAndOpenNewMenu(', ''))
+        body = re.search(r'\nfunction Helper\.closeMenu\(menu, dueToClose.*?\n(.*?)\nend\n', text, re.S).group(1)
+        self.assertIn('OpenMenu(menu.param2[1], menu.param2[2], menu.param2[3])', body)
+        self.assertIn('if menu.conversationMenu then', body)
+        autos = re.findall(r'\n([^\n]*)\n[^\n]*\n\s*OpenMenu\("DockedMenu"', text)
+        self.assertEqual(len(re.findall(r'OpenMenu\("DockedMenu"', text)), 1)
+        self.assertTrue(all('pilotcontrol' in line for line in autos), autos)
 
 
 class OptionTests(unittest.TestCase):

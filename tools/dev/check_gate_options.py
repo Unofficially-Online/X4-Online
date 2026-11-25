@@ -85,6 +85,17 @@ PROBE_OPTIONS = {
     'native_gate_zone_pending': (('true',), (), None),
     'native_gate_anim_listeners': (('true', 'scopes'), (), None),
     'native_gate_undock_screen': (('true',), (), None),
+    'native_gate_pilot_chair': (('true',), (), None),
+    'native_gate_pilot_teleport': (('true',), (), None),
+    'native_gate_pilot_present_sound': (('true',), (), None),
+    'native_gate_pilot_present_walk_camera': (('true',), (), None),
+    'native_gate_pilot_present_seat_camera': (('true',), (), None),
+    'native_gate_pilot_present_hud_zone': (('true',), (), None),
+    'native_gate_sound_source': (('true',), (), None),
+    'native_gate_sound_play_scope': (('true',), (), None),
+    'native_gate_ship_sound_context': (('true',), (), None),
+    'native_gate_view_cameras_animated': (('true',), (), None),
+    'native_gate_computer_forward': (('true',), (), None),
     'native_gate_spline_phase': (('true',), (), None),
     'native_gate_faction_present': (('true',), (), None),
     'native_gate_motion_watch_orders': (('true',), (), None),
@@ -423,6 +434,32 @@ def own_predict_rules(config_text, enabled):
     return failures
 
 
+def own_throttle_rules(config_text, enabled):
+    """native_gate_own_throttle (lockstep_own_throttle.h): true or false, on the clients that draw with
+    native_gate_own_predict 'present'; native_gate_own_throttle_rows a whole number 0..3600."""
+    failures = []
+    value = lua_value(config_text, 'native_gate_own_throttle')
+    rows = lua_value(config_text, 'native_gate_own_throttle_rows')
+    if value in (None, 'nil', 'false'):
+        if rows not in (None, 'nil'):
+            failures.append(dict(rule='native_gate_own_throttle_rows needs native_gate_own_throttle', bits=['native_gate_own_throttle']))
+        return failures
+    modes = lua_modes(value)
+    if not modes or any(m not in ('true', 'false', 'nil') for m in modes):
+        return [dict(rule='native_gate_own_throttle must be true, false or a per-client list of them', bits=[value])]
+    predict = lua_modes(lua_value(config_text, 'native_gate_own_predict') or 'nil')
+    if 'present' not in predict:
+        failures.append(dict(rule="native_gate_own_throttle needs native_gate_own_predict = 'present'", bits=['native_gate_own_predict']))
+    if rows not in (None, 'nil'):
+        try:
+            number = float(rows)
+        except ValueError:
+            number = None
+        if number is None or number != int(number) or not 0 <= number <= 3600:
+            failures.append(dict(rule='native_gate_own_throttle_rows must be a whole number 0..3600', bits=[rows]))
+    return failures
+
+
 def pilot_death_rules(config_text, enabled):
     """native_gate_pilot_death (lockstep_pilot_death.h, stop reason 163): a stock session; the slot's ship
     comes back only with native_gate_pilot_respawn, a delay in whole ticks."""
@@ -661,6 +698,30 @@ def render_display_rules(config_text, enabled):
         if not armed:
             failures.append(dict(rule='native_gate_render_display_rows needs native_gate_render_camera or native_gate_render_motion',
                                  bits=['native_gate_render_camera', 'native_gate_render_motion']))
+    # native_gate_render_clock (lockstep_render_display.h): 'gap' (absent) or 'steady', on top of native_gate_render_fps.
+    clock = lua_value(config_text, 'native_gate_render_clock')
+    if clock is not None and clock not in ('nil', "'gap'", '"gap"'):
+        if clock not in ("'steady'", '"steady"'):
+            failures.append(dict(rule="native_gate_render_clock must be 'gap' or 'steady'", bits=[clock]))
+        if fps is None or fps in ('false', 'nil'):
+            failures.append(dict(rule='native_gate_render_clock needs native_gate_render_fps', bits=['native_gate_render_fps']))
+    # native_gate_render_radar (lockstep_render_radar.h): true, 'rotate' or 'observe', on the render RNG split's wrapper.
+    radar = lua_value(config_text, 'native_gate_render_radar')
+    if radar is not None and radar not in ('false', 'nil'):
+        if radar not in ('true', "'rotate'", '"rotate"', "'observe'", '"observe"'):
+            failures.append(dict(rule="native_gate_render_radar must be true, 'rotate' or 'observe'", bits=[radar]))
+        if 'native_gate_render_rng_split' not in enabled:
+            failures.append(dict(rule='native_gate_render_radar needs native_gate_render_rng_split', bits=['native_gate_render_rng_split']))
+    # native_gate_render_shots (lockstep_render_shots.h): true, 'lead', 'motion' or 'probe', on top of stage 3 and the bullet Move wrapper.
+    shots = lua_value(config_text, 'native_gate_render_shots')
+    if shots is not None and shots not in ('false', 'nil'):
+        if shots not in ('true', "'lead'", '"lead"', "'motion'", '"motion"', "'probe'", '"probe"'):
+            failures.append(dict(rule="native_gate_render_shots must be true, 'lead', 'motion' or 'probe'", bits=[shots]))
+        missing = [k for k in ('native_gate_render_motion',) if k not in armed]
+        if 'native_gate_bullet_rng' not in enabled and 'native_gate_bullet_diag' not in enabled:
+            missing.append('native_gate_bullet_rng')
+        if missing:
+            failures.append(dict(rule='native_gate_render_shots needs native_gate_render_motion and native_gate_bullet_rng', bits=missing))
     return failures
 
 
@@ -692,6 +753,24 @@ def hybrid_rules(config_text, enabled):
         failures.append(dict(rule='native_gate_hybrid owners must be pilot slots (native_gate_pilot_slots)', bits=['native_gate_pilot_slots']))
     if not re.search(r'X4LAN_CONFIG\.native_gate_clients\s*=\s*(?:[2-8]\b|@X4LANE_CLIENTS@)', config_text):
         failures.append(dict(rule='native_gate_hybrid needs the protocol 3 input wire (native_gate_clients)', bits=['native_gate_clients']))
+    return failures
+
+
+def pilot_slots_room_attention_rules(config_text, enabled):
+    """native_gate_pilot_slots_room_attention (lockstep_pilot_room_attention.h): a seated slot 2..N's player's room is
+    inroom, as X4 makes its own player's. Its hooks go in with the stock slots' hooks, so it needs native_gate_pilot_stock
+    and native_gate_pilot_stock_slots."""
+    value = lua_value(config_text, 'native_gate_pilot_slots_room_attention')
+    failures = []
+    if value is None or value in ('false', 'nil'):
+        return failures
+    if value != 'true':
+        failures.append(dict(rule='native_gate_pilot_slots_room_attention must be true', bits=[value]))
+    if 'native_gate_pilot_stock' not in enabled:
+        failures.append(dict(rule='native_gate_pilot_slots_room_attention needs native_gate_pilot_stock', bits=['native_gate_pilot_stock']))
+    if lua_value(config_text, 'native_gate_pilot_stock_slots') in (None, 'false', 'nil'):
+        failures.append(dict(rule='native_gate_pilot_slots_room_attention needs native_gate_pilot_stock_slots',
+                             bits=['native_gate_pilot_stock_slots']))
     return failures
 
 
@@ -733,8 +812,9 @@ def probe_rules(config_text, enabled):
         if 'native_gate_world_identities' not in enabled or not re.search(r'X4LAN_CONFIG\.native_gate_snapshot_sha\s*=', config_text):
             failures.append(dict(rule='world motion watch needs saved identities and a snapshot', bits=['native_gate_world_identities', 'native_gate_snapshot_sha']))
     for rule in (predict_rules, hit_claim_rules, pilot_fire_rules, capture_source_rules, pilot_stock_rules, pilot_present_rules,
-                 pilot_death_rules, pilot_foot_rules, pilot_foot_bodies_rules, pilot_foot_slots_rules, ui_replay_rules,
-                 player_settings_rules, crash_note_rules, render_fps_rules, render_display_rules, own_predict_rules, hybrid_rules):
+                 pilot_death_rules, pilot_foot_rules, pilot_foot_bodies_rules, pilot_foot_slots_rules, pilot_slots_room_attention_rules,
+                 ui_replay_rules,
+                 player_settings_rules, crash_note_rules, render_fps_rules, render_display_rules, own_predict_rules, own_throttle_rules, hybrid_rules):
         failures += rule(config_text, enabled)
     if lua_value(config_text, 'native_gate_pilot_stock_script') is not None and 'native_gate_pilot_stock' not in enabled:
         failures.append(dict(rule='native_gate_pilot_stock_script needs native_gate_pilot_stock', bits=['native_gate_pilot_stock']))

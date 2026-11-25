@@ -28,9 +28,19 @@
  * go into the shadow universe's camera list and the anchor's chain is recomputed as for a changed view point. A shot
  * whose cutscene has left the list, or whose ID is another's now, stops at that latch too. The anchor is found again by
  * its ID before every evaluation while a stand-in is shown (a component that is gone leaves the stand-in inactive).
- * Rendering and X4's cutscene manager are untouched. Not covered: CameraAnimated shots (their site is still refused and
- * not noted: none seen in a session), and a player who joins while a call runs (the join package does not carry the
- * shots; the call's viewers are missing on the joiner until it ends). */
+ * Rendering and X4's cutscene manager are untouched. Not covered: a player who joins while a call runs (the join package
+ * does not carry the shots; the call's viewers are missing on the joiner until it ends).
+ *
+ * Animated shots (native_gate_view_cameras_animated, a session default). A call can film its speaker with a
+ * Cutscenes::CameraAnimated shot (vtable 0x2c6d5d0): its update CameraAnimated::vfunc2 0x10e22f0 makes its camera at the
+ * first pass and calls SetAttention(target, 1) at 0x10e2afb (trigger site 0x10e2b00), refused by the view triggers as
+ * the camera shot's is, and so far not noted: nothing raised the speaker's ship and the call's video was black (24 Nov,
+ * the mission video of call 14: cutscene= went 13/0/13/0 -> 13/0/13/1, VIEW_CAMERAS adds stayed 13). Its shot has the
+ * camera shot's layout where this module reads it (read from 0x10e22f0, pinned up to the site): the shot is the update's
+ * rcx, kept in r14 for the whole function (mov r14,rcx at 0x10e2361, never written again), its target's ID at +0x20
+ * (add rcx,0x20 -> 0x1102ae0, the camera shot's own lookup), its cutscene [[shot+0x50]+0x70] (0x10e2379, 0x10e2394).
+ * So the site is noted as 0x10d831a is, the shot read from r14 by unwinding; its end is the shots' common end
+ * (0x10d5f5b). Status animated=on/notes. */
 #define VCAM_MAX 8u
 #define VCAM_PAGE 0x2000u            /* the stand-ins on the view page, 0x1000 apart */
 #define VCAM_SIZE 0x940u             /* a camera object (the shot allocates 0x940) */
@@ -41,11 +51,16 @@
 #define VCAM_FIND 0xced70u
 #define VCAM_SITE_END 0x10d5f5bu     /* the shot's end: SetAttention(target, 1), the shot in rbx */
 #define VCAM_SITE_SHOT 0x10d831au    /* a camera shot's update after it made its camera, the shot in r14 */
+#define VCAM_SITE_ANIMATED 0x10e2b00u /* CameraAnimated::vfunc2 0x10e22f0's SetAttention after it made its camera, the shot in r14 */
+#define VCAM_ANIMATED_FN 0x10e22f0u
+#define VCAM_ANIMATED_SIZE 0x810u     /* the update up to the site */
+#define VCAM_ANIMATED_SHA "62907da00550d0986a38f9b9e6413dc90483641dfa1727ad349b219f42aa9702"
 #define VCAM_LIST_MAX 256u
 typedef void *(*vcam_find_fn)(void *,uint64_t,int);
 typedef struct {unsigned char *shot,*cutscene;uint64_t id;int cutscene_id;unsigned char used,ended,shown;} vcam_t;
 static vcam_t vcams[VCAM_MAX];
-static int vcam_armed,vcam_pins_checked;
+static int vcam_armed,vcam_pins_checked,vcam_animated;
+static uint64_t vcam_animated_notes;
 static unsigned vcam_shown;          /* stand-ins in the shadow's camera list */
 static uint64_t vcam_shown_ids[VCAM_MAX];
 static uint64_t vcam_adds,vcam_ends,vcam_dropped,vcam_local,vcam_other,vcam_full,vcam_no_shot,vcam_gone,vcam_chains,vcam_peak;
@@ -102,8 +117,9 @@ static void *vcam_frame_register(uint32_t site,int r14) {
 }
 /* A refused evaluation of one of the cutscene shots' sites (under the evaluation's lock): noted for the next latch. */
 static void vcam_note(uint32_t site) {
-    if(!vcam_armed || (site!=VCAM_SITE_END && site!=VCAM_SITE_SHOT)) return;
-    unsigned char *shot=vcam_frame_register(site,site==VCAM_SITE_SHOT);
+    if(!vcam_armed || (site!=VCAM_SITE_END && site!=VCAM_SITE_SHOT && !(vcam_animated && site==VCAM_SITE_ANIMATED))) return;
+    if(site==VCAM_SITE_ANIMATED) ++vcam_animated_notes;
+    unsigned char *shot=vcam_frame_register(site,site!=VCAM_SITE_END);
     if(!shot) {++vcam_no_shot;return;}
     if(site==VCAM_SITE_END) {
         for(unsigned i=0;i<VCAM_MAX;i++) if(vcams[i].used && vcams[i].shot==shot && !vcams[i].ended) {vcams[i].ended=1;++vcam_ends;}
@@ -172,20 +188,27 @@ static int vcam_arm(void) {
     memset(view_page+VIEW_PAGE_SHADOW+0x2c0,0,0x108);
     vcam_armed=1;vcam_why="-";return 1;
 }
+/* gate.view_cameras_animated(1): after gate.view_cameras(1), before the first tick; the update pinned up to its site. */
+static int vcam_animated_arm(void) {
+    if(vcam_animated) return 1;
+    if(!vcam_armed || stats.issued || GetCurrentThreadId()!=ui_thread) {vcam_why="animated_late";return 0;}
+    if(!hash_ok(image+VCAM_ANIMATED_FN,VCAM_ANIMATED_SIZE,VCAM_ANIMATED_SHA)) {vcam_why="animated_pins";return 0;}
+    vcam_animated_notes=0;vcam_animated=1;return 1;
+}
 /* The session's end: no stand-in stays in the shadow's list. */
 static void vcam_stop(void) {
     if(!vcam_armed) return;
     if(view_page) memset(view_page+VIEW_PAGE_SHADOW+0x2c0,0,0x108);
-    vcam_shown=0;vcam_armed=0;memset(vcams,0,sizeof(vcams));
+    vcam_shown=0;vcam_armed=0;vcam_animated=0;memset(vcams,0,sizeof(vcams));
 }
 static int vcam_status(char *out,size_t capacity) {
     unsigned noted=0;char ids[VCAM_MAX*18+2]="-";int k=0;
     for(unsigned i=0;i<VCAM_MAX;i++) noted+=vcams[i].used!=0;
     for(unsigned i=0;i<vcam_shown;i++) k+=snprintf(ids+k,sizeof(ids)-(size_t)k,"%s%llx",i?",":"",(unsigned long long)vcam_shown_ids[i]);
     int n=snprintf(out,capacity,"armed=%d shown=%u ids=%s noted=%u adds=%llu ends=%llu dropped=%llu gone=%llu local=%llu other=%llu "
-        "no_shot=%llu full=%llu chains=%llu peak=%llu why=%s",vcam_armed,vcam_shown,ids,noted,(unsigned long long)vcam_adds,
+        "no_shot=%llu full=%llu chains=%llu peak=%llu animated=%d/%llu why=%s",vcam_armed,vcam_shown,ids,noted,(unsigned long long)vcam_adds,
         (unsigned long long)vcam_ends,(unsigned long long)vcam_dropped,(unsigned long long)vcam_gone,(unsigned long long)vcam_local,
         (unsigned long long)vcam_other,(unsigned long long)vcam_no_shot,(unsigned long long)vcam_full,(unsigned long long)vcam_chains,
-        (unsigned long long)vcam_peak,vcam_why);
+        (unsigned long long)vcam_peak,vcam_animated,(unsigned long long)vcam_animated_notes,vcam_why);
     return n>0 && (size_t)n<capacity?n:0;
 }

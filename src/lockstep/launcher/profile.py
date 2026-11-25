@@ -213,6 +213,9 @@ def collect(profile, logfile, out, root=None):
         shutil.copy2(path / logfile, out / 'engine-output.log')  # the name the census tools read
     if (path / 'x4lan-crash.txt').is_file():  # the crash note (native_gate_crash_note): an unhandled exception's CRASH line
         shutil.copy2(path / 'x4lan-crash.txt', out / 'x4lan-crash.txt')
+    # The census record (native_gate_world_record): the objects of the last captures, for tools/dev/census_record_diff.py.
+    for record in sorted(path.glob('x4lan-census-*.txt')) if path.is_dir() else []:
+        shutil.copy2(record, out / record.name)
     saves = [p for p in (path / 'save').glob('*') if p.is_file() and p.name != SNAPSHOT_SLOT] if (path / 'save').is_dir() else []   # files only: a hot join's save/mpjoin stays
     for save in saves:
         shutil.copy2(save, out / save.name)

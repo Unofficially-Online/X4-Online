@@ -87,6 +87,8 @@ static const char *pilot_stage="off";
 static unsigned pilot_stock_slots; /* bit s-1: slot s is flown by stock piloting (lockstep_pilot_stock.h) */
 static int pslot_failed;          /* a slots 2..N invariant failed (lockstep_pilot_slots.h, stop reason 161) */
 static int pres_failed;           /* a presentation invariant failed (lockstep_pilot_present.h, stop reason 162) */
+static int pchair_failed;          /* the pilot chair of slots 2..N (lockstep_pilot_foot_slots.h, stop reason 226) */
+static int ptele_failed;           /* X4's move of a slot's player on foot, the fail-safe (lockstep_pilot_teleport.h, stop reason 222) */
 static volatile LONG pres_open;   /* its scope is open: a slot scope refuses (lockstep_pilot_slots.h) */
 /* Ship death (lockstep_pilot_death.h, stop reason 163): armed, failed, bit s-1 = slot s has no ship, this pass's lookup. */
 static int pdeath_armed,pdeath_failed;
@@ -768,9 +770,9 @@ static int pilot_capture_native_controls(uint64_t tick,pilot_record *r,const cha
     return 1;
 }
 /* 113 when a native-controls invariant failed, 155 a stock-piloting one, 161 one of the stock
- * slots 2..N, 162 their presentation, 164 the UI replay, 91 for every other pilot stop. */
+ * slots 2..N, 162 their presentation, 164 the UI replay, 226 their pilot chair, 91 for every other pilot stop. */
 static unsigned pilot_stop_reason(void) {
-    return pnat_failed?(pnat_mode==PNAT_MODE_STOCK?(uirep_failed?164u:pfoot_failed?PFOOT_STOP_REASON:pres_failed?162u:pslot_failed?161u:pdeath_failed?163u:PSTK_STOP_REASON):PNAT_STOP_REASON):91u;
+    return pnat_failed?(pnat_mode==PNAT_MODE_STOCK?(uirep_failed?164u:pchair_failed?226u:ptele_failed?222u:pfoot_failed?PFOOT_STOP_REASON:pres_failed?162u:pslot_failed?161u:pdeath_failed?163u:PSTK_STOP_REASON):PNAT_STOP_REASON):91u;
 }
 /* The local ring keeps this client's proposed, not yet applied records with
  * their capture and apply ticks (presentation prediction input, later). */

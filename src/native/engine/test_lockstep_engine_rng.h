@@ -1,5 +1,5 @@
 /* native_gate_engine_refresh_rng: keyed reschedule draw (seed, thread word untouched,
- * unmapped and loading frames native), trampoline, site CAS/check/restore, the pinned build. */
+ * the snapshot load's stream, unmapped and pre-load frames native), trampoline, site CAS/check/restore, the pinned build. */
 static uint64_t test_erng_seen;
 static float test_erng_draw(uint64_t *word,float range) {test_erng_seen=*word;*word^=0x5555;return range*0.5f;}
 static void test_engine_rng(void) {
@@ -10,7 +10,7 @@ static void test_engine_rng(void) {
     assert(world_identities);world_identity_count=0;world_identity_sealed=0;
     assert(world_identity_record(0x5b065,0x78855) && world_identity_record(0x5b066,0x896ff));
     static unsigned char ship[0x40];memset(ship,0,sizeof(ship));*(uint64_t*)(ship+8)=0x5b065;
-    erng_keyed=erng_native=erng_unmapped=erng_fallback=0;
+    erng_keyed=erng_native=erng_unmapped=erng_fallback=erng_load=0;
     /* Admitted frame: the draw runs on (tick, ship key); the thread's word is neither read nor advanced. */
     stats.active=1;boot_phase=3;stats.issued=574;uint64_t word=0x1111;
     float r=erng_run(test_erng_draw,&word,2.0f,ship);
@@ -27,8 +27,15 @@ static void test_engine_rng(void) {
     memset(ship,0,8);word=0x4444;erng_run(test_erng_draw,&word,2.0f,ship);
     assert(test_erng_seen==0x4444 && word==(0x4444^0x5555) && erng_unmapped==1);
     word=0x4444;erng_run(test_erng_draw,&word,2.0f,NULL);assert(test_erng_seen==0x4444 && erng_unmapped==2);
-    boot_phase=2;*(uint64_t*)(ship+8)=0x5b065;word=0x4444;erng_run(test_erng_draw,&word,2.0f,ship);
-    assert(test_erng_seen==0x4444 && erng_native==1);
+    /* The session snapshot's load (boot phase 2, X4's boot event passes at the frozen load time): keyed from (0, key) in the
+     * load stream, the class fallback likewise; the thread's word untouched. Before it (phase 1, or no boot mode): the word. */
+    boot_mode=1;boot_phase=2;*(uint64_t*)(ship+8)=0x5b065;word=0x4444;erng_run(test_erng_draw,&word,2.0f,ship);
+    assert(test_erng_seen==lockstep_seed(ERNG_DOMAIN,0,0x78855,ERNG_LOAD_STREAM,0,WORLD_KEY_SAVED) && word==0x4444 && erng_load==1 && erng_keyed==5);
+    *(uint64_t*)(ship+8)=0x9898;memcpy(ship,&vt,8);erng_run(test_erng_draw,&word,2.0f,ship);
+    assert(test_erng_seen==lockstep_seed(ERNG_DOMAIN,0,0,0x2b82440,1+ERNG_LOAD_STREAM,WORLD_KEY_NONE) && word==0x4444 && erng_fallback==2 && erng_load==2);
+    memset(ship,0,8);*(uint64_t*)(ship+8)=0x5b065;
+    boot_mode=0;erng_run(test_erng_draw,&word,2.0f,ship);assert(test_erng_seen==0x4444 && erng_native==1 && erng_load==2);
+    boot_mode=1;boot_phase=1;word=0x4444;erng_run(test_erng_draw,&word,2.0f,ship);assert(test_erng_seen==0x4444 && erng_native==2);
     /* The trampoline: mov r8, rsi; jmp [rip]; erng_draw. */
     unsigned char t[17];erng_write_trampoline(t);
     assert(t[0]==0x4c && t[1]==0x8b && t[2]==0xc6 && t[3]==0xff && t[4]==0x25 && !t[5] && !t[8] && *(void**)(t+9)==(void*)erng_draw && erng_trampoline_ok(t));
@@ -48,10 +55,10 @@ static void test_engine_rng(void) {
     assert(erng_cas(erng_rel(image+ERNG_DRAW),erng_rel(erng_page)) && erng_state()==1);
     erng_done=1;erng_installed=1;assert(erng_owned());
     image[ERNG_SITE+2]^=1;assert(erng_state()<0 && !erng_owned());image[ERNG_SITE+2]^=1;assert(erng_owned());
-    char out[256];assert(erng_status(out,sizeof(out))>0 && strstr(out,"installed=1 ") && strstr(out," keyed=4 native=1 unmapped=2 fallback=1 "));
+    char out[256];assert(erng_status(out,sizeof(out))>0 && strstr(out,"installed=1 ") && strstr(out," keyed=5 native=2 unmapped=2 fallback=2 ") && strstr(out," load=2"));
     erng_restore();assert(!erng_installed && erng_restored && !erng_done && erng_state()==0);
     memset(image+ERNG_SITE,0,5);VirtualFree(erng_page,0,MEM_RELEASE);erng_page=saved_page;
-    erng_restored=0;erng_stage="idle";erng_keyed=erng_native=erng_unmapped=erng_fallback=0;
+    erng_restored=0;erng_stage="idle";erng_keyed=erng_native=erng_unmapped=erng_fallback=erng_load=0;
     VirtualFree(world_identities,0,MEM_RELEASE);world_identities=prior;world_identity_count=prior_count;world_identity_sealed=prior_sealed;
     world_identity_installed=saved_ids;
     stats.issued=saved_issued;ui_thread=saved_ui;stats.active=saved_active;boot_mode=saved_boot;boot_phase=saved_phase;

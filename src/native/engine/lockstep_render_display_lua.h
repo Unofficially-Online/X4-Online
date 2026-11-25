@@ -22,3 +22,26 @@ static int lua_render_display_row(lua_State *L) {
     if(!n) {p_lua_pushnil(L);return 1;}
     p_lua_pushlstring(L,out,(size_t)n);p_lua_pushnumber(L,(double)next);return 2;
 }
+/* gate.render_radar(mode) 'rotate' | 'observe', gate.render_radar_status() (lockstep_render_radar.h);
+ * gate.render_shots(mode) 'lead' | 'motion' | 'probe', gate.render_shots_status() (lockstep_render_shots.h). */
+static int lua_render_radar(lua_State *L) {
+    size_t length=0;const char *mode=p_lua_tolstring(L,1,&length);
+    p_lua_pushnumber(L,rradar_arm(rradar_mode_of(mode,length),used));return 1;
+}
+static int lua_render_radar_status(lua_State *L) {
+    char out[1600];int n=accept_ui()?rradar_status(out,sizeof(out)):0;
+    if(n) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);return 1;
+}
+static int lua_render_shots(lua_State *L) {
+    size_t length=0;const char *mode=p_lua_tolstring(L,1,&length);
+    p_lua_pushnumber(L,rshot_arm(rshot_mode_of(mode,length),used));return 1;
+}
+static int lua_render_shots_status(lua_State *L) {
+    char out[1600];int n=accept_ui()?rshot_status(out,sizeof(out)):0;
+    if(n) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);return 1;
+}
+/* gate.render_clock(mode) 'gap' | 'steady' (lockstep_render_display.h, the display clock). */
+static int lua_render_clock(lua_State *L) {
+    size_t length=0;const char *mode=p_lua_tolstring(L,1,&length);
+    p_lua_pushnumber(L,rdisp_clock_arm(rdisp_clock_of(mode,length),used));return 1;
+}

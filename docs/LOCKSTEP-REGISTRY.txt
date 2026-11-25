@@ -167,6 +167,14 @@ function's entry, must agree with its owner first)
   0x7313e6   0x710390, X4's entry of a suited player into a    enter (native_gate_pilot_death_  +0x100): a slot 2..N's player is
              ship; the same call in the dock core 0x730ff0      suit)                            noted for the pass, never moved by
                                                                                                    X4; any other player passes
+  0x6cf155   U::Object's parent change 0x6cdab0: eight calls  lockstep_pilot_death.h pvehk_    calls re-pointed (slots' near page
+  0x6cf200   of PostEvent 0x99a3f0 (immediate) with a        place (native_gate_shared_       +0xee0), pinned 0x6cecb9..0x6cf2ad:
+  0x6cf29a   U::ChangedClusterEvent / ChangedSectorEvent /      listeners)                       slot k's player's sector, zone and
+  0x6cef55   ChangedZoneEvent: on each entity of the moved                                        cluster changes also to the cues
+  0x6cf000   subtree, on each object, on the moved object                                         nobody owns on player 1's object,
+  0x6cf09a   itself (sector, zone)                                                                in slot k's scope; a body-less P_k
+  0x6cedf6                                                                                         gets X4's event from its object's
+  0x6ceea7                                                                                         post; X4's post runs after it
   0xfa7330   the screen fade's start (behind FadeScreen2;      lockstep_pilot_death.h pvehk_    E9 -> stub (slots' near page
              called by the eject at 0x7100ae and by the         fade                             +0x120, trampoline +0x140): from
              entry's body at 0x71050d)                                                            those two callers the fade only
@@ -215,7 +223,9 @@ function's entry, must agree with its owner first)
   0x730df0 (the UNDOCK key context's keeper, asked again with each client's own player, same file),
   0x10f1310 / 0x10f1630 (the cutscene manager's start and its stop by ID), 0x317ae0 (a render target's ID from its name),
   0x151dc0 / 0x157860 (a notification by its ID; its removal): lockstep_md_media.h, the start of a mission's picture on
-  the target monitor in the UI's place and the end of its timeout.
+  the target monitor in the UI's place and the end of its timeout,
+  0xad8dc0 (UI::ICom::AdjacentZoneScanner's slot 570: the HUD's zone scanners rescanned in a client of slot 2..N's own
+  presentation scope, so its target elements come from that slot's zone; lockstep_pilot_hud_zone.h).
 
 4. STOP REASONS (gate finish(reason); stats.reason, the probe's STOP line)
 Codes 1..99 belong to the gate core (lockstep_gate.c, linux/gate_linux.c);
@@ -355,7 +365,9 @@ Modules (define, owner):
                                 slot_take_controller, slot_update_scope, slot_update_fault, slot_update_leave,
                                 slot_update_outside_frame, slot_unseated, slot_fpc_lost, slot_moved, slot_player_lost,
                                 slot_hook_install, slot_hook_lost, slot_hook_restore; a docked seat taking its
-                                controls back after the undocking: slot_undock_scope, slot_undock_leave)
+                                controls back after the undocking: slot_undock_scope, slot_undock_leave; a sit-down
+                                in another ship of its faction, its seat changed in the pass: slot_reseat_body,
+                                slot_reseat_release, slot_reseat_seat)
   186 NMESH_STOP_REASON         lockstep_nav_mesh.h (native_gate_nav_mesh: interior nav helper builds at the gate's join)
   187 HYB_STOP_REASON          lockstep_hybrid.h (native_gate_hybrid, hybrid sectors slice H1; whys: no_slots, owner_slot,
                                 owner_lost, owner_sector, shared_sector, sector_key, sector_lost, owner_left, other_entered,
@@ -431,11 +443,41 @@ Modules (define, owner):
   220 LXAJ_STOP_REASON          linux/gate_area_jobs.h (native_gate_area_jobs on the Linux gate: one of the three QueueJob
                                 calls no longer ours, the page, or a pin; whys page_changed, site_changed. Windows'
                                 lockstep_area_jobs.h has no tick check)
+  221 PSND_STOP_REASON          lockstep_pilot_present.h (player sound: native_gate_pilot_present_sound, native_gate_sound_source,
+                                and lockstep_pilot_death.h's native_gate_computer_forward; the gate tick finds one of
+                                their sites no longer ours: XSfx::Base's vtable entry 0x2caf290, the sound start's entry
+                                0x14e8ec0, the computer's two autopilot sites 0x72c0a6 / 0x72bcab; whys sound_entry_lost,
+                                source_entry_lost, computer_site_lost; status PLAYER_SOUND)
+  222 PTELE_STOP_REASON         lockstep_pilot_teleport.h (native_gate_pilot_teleport, a default: X4's move of a slot 2..N
+                                player on foot to its ship's bridge transporter; X4 connected a slot's player or gave it
+                                a camera (whys slot_camera, slot_connected; teleport_slot= names it), U::Player's slot 76
+                                entry no longer ours (teleport_entry_lost, teleport_entry_restore), the move's scope
+                                (teleport_leave:<check>) or a fault in it (teleport_fault); the undock key on foot's
+                                scope (undock_leave:<check>) or a fault in it (undock_fault). The pins refuse the arming:
+                                pins_teleport:<rva>)
+  223 PSCTX_STOP_REASON         lockstep_pilot_present.h (player sound context: native_gate_sound_play_scope, a default:
+                                the sound start's play site 0x14e94c7 no longer ours, why play_site_lost; and
+                                native_gate_ship_sound_context, a default: a fault in X4's start or stop of the own
+                                ship's sound set (Ship slots 1143/1144), why context_fault. The pins refuse the arming;
+                                status PLAYER_SOUND play=, context=, context_why=)
   224 WLAY_STOP_REASON          lockstep_worker_layout.h (native_gate_worker_layout, a default: the pathing batches
                                 were not laid out before the first admitted step, or Jolt's concurrency slot is no
                                 longer ours; stages occupied, unreadable, layout, not_laid_out, slot_changed); on the
                                 Linux gate 224 LXWL_STOP_REASON (linux/gate_worker_layout.h, the same stages)
-  free: 109, 114-119, 122-129, 147-149, 221-223, 225-255.
+  226 PCHAIR_STOP_REASON        lockstep_pilot_foot_slots.h (native_gate_pilot_chair, a default: the pilot chair of slots
+                                2..N, X4's trigger events at their seats and sit-downs; a post outside the slot's scope,
+                                without the game time, a fault or an allocation that failed in it; whys chair_scope,
+                                chair_time, chair_fault, chair_allocate. The pins refuse the arming: pins_chair:<rva>)
+  230 RRADAR_STOP_REASON         lockstep_render_radar.h (native_gate_render_radar, a default: the HUD radar's camera
+                                turned with the drawn own ship inside slot 10; whys pins, nested; a foreign write
+                                into X4's radar bank is counted, not a stop)
+  231 RSHOT_STOP_REASON         lockstep_render_shots.h (native_gate_render_shots, a default: bullets drawn moving
+                                between the steps inside slot 10; whys pins, bullet_move, block_foreign, nested)
+  240 PATK_STOP_REASON          lockstep_pilot_attack.h (armed with native_gate_pilot_fire, a default: slot k's attacks
+                                posted on slot k's player as X4 posts the player's; the decision's jump at 0x520172, the post
+                                call at 0x5201ba or their page no longer ours; whys site_changed, page_changed; status
+                                attacks= in PILOT_FIRE_STATUS)
+  free: 109, 114-119, 122-129, 147-149, 225, 227-229, 232-239, 241-255.
 Not stop reasons although named *_STOP*: PSLOT_STOP_WAIT (a wait count),
 PFIRE_STOP, PNAT_STOP_IN_MENU, PNAT_FULL_STOP (flags, 0).
 Renumbered on 1 November 2026 (integration): region camera 130 -> 165, speak

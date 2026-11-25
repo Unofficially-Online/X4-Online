@@ -16,6 +16,11 @@ plays on (native_gate_save_every, lockstep_periodic_save.h); x4ls play collects 
 in can be approached from a save minutes before it. The Windows gate only: off with --mixed-platform (a Linux client would
 not save, and a save has effects on the world that made it), and off unless asked for with --open (not yet run with a join).
 
+Story milestones (a session with --session): each completed mission chapter of a story the session runs
+(tools/dev/native_gate_milestones.py) makes every client save the world at one tick, collected by x4ls play as
+RUN/saves/milestones/<story>-M<n>-slot<k>.xml.gz; x4ls continue starts a session from one. By the periodic save's rule:
+not with --mixed-platform or --open (logged only).
+
 Hot join (--open K[,K...]): slots K start absent and a player can join one of them while the session runs (x4ls play
 --open K, x4ls join without --arm-at). The base gets the join stack (--world-identities, --join report|strict,
 --join-absent K) and the players the join keys every joiner needs (native_gate_join_precise, _refresh_builds, _ids and
@@ -40,7 +45,9 @@ TICK_MAX = 8388607    # pilot window bound (lockstep_pilot_inputs.h PILOT_TICK_M
 # X4's options and ship configuration menus pause through the Lua global Pause(); a save pauses too and ends the session on
 # that client (x4ls --checkpoint-at). The Lua guard refuses these globals while the session runs (an info line on the first
 # refusal); the menus then work unpaused. The pause test (native_gate_pause_test) shows what an unrefused Pause() does.
-PLAY_LUA_BLOCK = ('Pause', 'Unpause', 'SaveGame')
+# SaveGame: held; with a session the probe turns a person's save into a save of the session by every client
+# (native_gate_milestones). LoadGame: a load of one client is no part of a session (said once in game).
+PLAY_LUA_BLOCK = ('Pause', 'Unpause', 'SaveGame', 'LoadGame')
 SAVE_EVERY_MINUTES = 10   # --save-every's default (sessions of Windows clients without open slots)
 # Play mode keeps the world hash in every digest (desyncs are still found) but writes no per-object world pages: a capture
 # is about 120 MB of WORLD_OBJECT rows per client (smoke 8 Nov: 238 of 280 MB after 2 minutes). x4ls triage asks for
@@ -173,6 +180,12 @@ def save_every_ticks(minutes, mixed_platform, opened):
     return ticks
 
 
+def milestone_saves(mixed_platform, opened):
+    """'on' when a session's clients save at its story milestones (tools/dev/native_gate_milestones.py): the periodic
+    save's rule, without its interval (a session with --save-every 0 still saves its milestones)."""
+    return 'off' if mixed_platform or opened else 'on'
+
+
 def joiner_command(recipe, snapshot, gate_dll, out, package, package_sha, session=None):
     """The build_play_overlay.py arguments of a joiner's overlay: the session's recipe with the join save and package
     (session: the recipe's session.json written on the joiner's PC, when the session has one). package None: an early
@@ -196,12 +209,16 @@ def joiner_command(recipe, snapshot, gate_dll, out, package, package_sha, sessio
 def bind_session_save(base, snapshot, session_data):
     """--session: the base overlay bound to the session save itself, its checksum, its fixture (the twelve ships the capture
     spawned) and the census watch list (native_gate_session_start.py rebase). The battle base binds snapshot 005's fixture by
-    default, so a session from another start stopped at its first frame (ns1, 8 Nov: stop 74, SNAPSHOT_BOUNDARY bind_actor)."""
+    default, so a session from another start stopped at its first frame (ns1, 8 Nov: stop 74, SNAPSHOT_BOUNDARY bind_actor).
+    A session without a fixture (fixture_form 'none', x4ls new-session since 24 Nov) names none: the gate binds none."""
     sys.path.insert(0, str(DEV))
     import native_gate_scenarios as scenarios
-    lines, header = scenarios.snapshot_lines(snapshot)
+    none = session_data.get('fixture_form') == 'none'
+    lines, header = scenarios.snapshot_lines(snapshot, fixture=not none)
     if header['start'] != session_data.get('base_start'):
         raise SystemExit(f"--session: the save's start {header['start']} is not the session's {session_data.get('base_start')}")
+    if none and session_data.get('fixture'):
+        raise SystemExit("--session: a session without a fixture (fixture_form 'none') names fixture ships")
     fixture = re.findall(r"'([0-9a-f]{16})'", next(line for line in lines if '.native_gate_snapshot_fixture ' in line))
     if fixture != session_data.get('fixture'):
         raise SystemExit("--session: the save's fixture is not the registered one (session.json fixture)")
@@ -216,20 +233,25 @@ def bind_session_joiner(base, session_data):
     """--session with --join-package: the joiner's base keeps the join save's checksum, but its fixture and watch list are
     the session's own (session.json: the twelve ships of the session's capture and the session's player ship). The battle base
     names snapshot 005's fixture, which no session from another capture has (hjs1, 10 Nov: the joiner overlay was refused,
-    native_gate_snapshot_fixture is no saved identity of the package)."""
+    native_gate_snapshot_fixture is no saved identity of the package). A session without a fixture (fixture_form 'none')
+    names none."""
     sys.path.insert(0, str(DEV))
     import native_gate_scenarios as scenarios
     fixture = session_data.get('fixture')
     ship = session_data.get('player_ship')
     hexid = re.compile(r'[0-9a-f]{16}')
-    if (not isinstance(fixture, list) or not fixture or not all(isinstance(s, str) and hexid.fullmatch(s) for s in fixture)
+    none = session_data.get('fixture_form') == 'none'
+    if (not isinstance(fixture, list) or (not fixture) != none or not all(isinstance(s, str) and hexid.fullmatch(s) for s in fixture)
             or not isinstance(ship, str) or not hexid.fullmatch(ship)):
         raise SystemExit('--session: session.json names no fixture and player ship')
     watch = fixture + ([ship] if ship not in fixture else [])
-    lines = ['X4LAN_CONFIG.native_gate_snapshot_fixture = {' + ','.join(repr(s) for s in fixture) + '}',
+    lines = ['X4LAN_CONFIG.native_gate_snapshot_fixture = ' + ('{' + ','.join(repr(s) for s in fixture) + '}' if fixture else 'false'),
              'X4LAN_CONFIG.native_gate_world_hash_watch = {' + ','.join(repr(s) for s in watch) + '}']
+    if not fixture:   # the defaults table makes the false above absent: this key tells the probe
+        lines.append('X4LAN_CONFIG.native_gate_snapshot_no_fixture = true')
     config = base / 'ui/config.lua.append'
-    keys = tuple(f'X4LAN_CONFIG.{key} ' for key in ('native_gate_snapshot_fixture', 'native_gate_world_hash_watch'))
+    keys = tuple(f'X4LAN_CONFIG.{key} ' for key in ('native_gate_snapshot_fixture', 'native_gate_snapshot_no_fixture',
+                                                     'native_gate_world_hash_watch'))
     kept = [line for line in config.read_text(encoding='utf-8').splitlines() if not line.startswith(keys)]
     config.write_text(NL.join(kept + lines) + NL, encoding='utf-8')
     scenarios.write_manifest(base)
@@ -392,6 +414,10 @@ def main(argv=None):
         cmd += ['--set', f'native_gate_save_every={save_ticks}', '--set', f'native_gate_save_keep={args.save_keep}']
     if args.session:
         cmd += ['--session', args.session.resolve()] + (['--session-joiner'] if joiner else [])
+        # Story milestones save the world as the periodic saves do, so by the same rule: Windows clients only, no open slots
+        # (a save has effects on the world that made it; a Linux client or a joiner would not make it). Logged either way.
+        if milestone_saves(args.mixed_platform, opened) == 'off':
+            cmd += ['--milestone-saves', 'off']
     for item in sets:
         cmd += ['--set', item]
     step('players', cmd)

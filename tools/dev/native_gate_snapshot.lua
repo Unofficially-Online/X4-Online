@@ -30,7 +30,8 @@ local hulls_raised,hulls_count,save_wait
 local function log(s) DebugError('[X4LAN] NATIVE_SNAPSHOT '..s) end
 RegisterEvent('X4LAN_SessionHulls.Ready',function(_,count) hulls_count=tonumber(count) or -1 end)
 RegisterEvent('X4LAN_NativeGate.Ready',function(_,count)
- assert(tonumber(count)==12,'snapshot fixture incomplete');ready=C.GetCurrentGameTime()
+ -- a player session's capture has no fixture (native_gate_snapshot_no_fixture: native_gate_scenarios.capture_battle_md)
+ assert(tonumber(count)==12 or (cfg.native_gate_snapshot_no_fixture==true and tonumber(count)==0),'snapshot fixture incomplete');ready=C.GetCurrentGameTime()
  log('ACTORS_READY time='..string.format('%.17g',ready))
 end)
 RegisterEvent('gameSaved',function(_,success)
@@ -71,7 +72,7 @@ local function frame()
  if not ready or time<ready+2 or saving then return end
  if not inspecting then inspecting=true;AddUITriggeredEvent('X4LAN_NativeGate','InspectAttention',{});return end
  if nearby==nil then return end
- assert(nearby==12,'snapshot requires all 12 actors at nearby attention')
+ assert(nearby==12 or (cfg.native_gate_snapshot_no_fixture==true and nearby==0),'snapshot requires all 12 actors at nearby attention')
  if hulls then
   assert(hulls_raised or hulls_count==nil,'session hulls answered before the request')
   if not hulls_raised then

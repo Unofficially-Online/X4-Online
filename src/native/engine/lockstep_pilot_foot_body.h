@@ -142,6 +142,7 @@ static const struct {unsigned rva,size;const char *sha;} pfbody_pin_table[]={
     {0x71a560u,0x668,"d3c3b97836592d28fd8172139f60804933003eabc690025ca0b3447845674e41"},   /* the Player's camera, made X4's */
     {PFBODY_MARK,0x1ae,"5754e5297dee0c7dfece3833ca2a26e2e592e2703831c0e3f3c2369c33961671"}};  /* 'in the universe', down the children */
 static int pfbody_fail(const char *why) {
+    why=pslot_leave_named(why);   /* "body_leave:parent" (lockstep_pilot_slots.h) */
     pfbody_stage="failed";if(!strcmp(pfbody_why,"-")) pfbody_why=why;
     pfbody_failed=1;pfoot_failed=1;pfoot_why=pfbody_why;return 0;   /* stop reason 185 */
 }

@@ -139,6 +139,83 @@
     </cue>
    </cues>
   </cue>
+  <!-- Test only (script op friendly, in every client's plan at the same tick; friendly fire, 24 Nov): a ship of a faction
+       the players are at peace with, with its own pilot (or none), METRES straight ahead of slot SLOT's ship and called NAME, so a
+       scripted run can shoot it as a person would (target_named, aim_fire). Rows: FRIENDLY_SETUP, then every second for
+       three minutes FRIENDLY_WATCH when something changed (hull, shield, the relation of the ship and of its faction to
+       faction.player), and FRIENDLY_ATTACKED for its first attackers (who, how, whose). -->
+  <cue name="Friendly" instantiate="true" namespace="this">
+   <conditions><event_ui_triggered screen="'X4LAN_UiReplay'" control="'Friendly'"/></conditions>
+   <actions>
+    <set_value name="$near" exact="event.param3.$n"/>
+    <set_value name="$faction" exact="faction.{if event.param3.$f? then event.param3.$f else 'terran'}"/>
+    <do_if value="@$near.isoperational">
+     <transform_position name="$At" refposition="$near.position" refrotation="$near.rotation">
+      <position x="0m" y="0m" z="event.param3.$d * 1m"/>
+     </transform_position>
+     <do_if value="event.param3.$p">
+      <create_ship name="$friend" macro="macro.{if event.param3.$m? then event.param3.$m else 'ship_ter_m_corvette_01_a_macro'}" zone="$near.zone">
+       <owner exact="$faction" overridenpc="true"/>
+       <pilot>
+        <select faction="$faction" tags="tag.aipilot"/>
+       </pilot>
+       <position value="$At"/>
+      </create_ship>
+     </do_if>
+     <do_else>
+      <!-- without a pilot it stays where it is, so a long burst keeps hitting it -->
+      <create_ship name="$friend" macro="macro.{if event.param3.$m? then event.param3.$m else 'ship_ter_m_corvette_01_a_macro'}" zone="$near.zone">
+       <owner exact="$faction" overridenpc="true"/>
+       <position value="$At"/>
+      </create_ship>
+     </do_else>
+     <set_object_name object="$friend" name="event.param3.$a"/>
+     <do_if value="event.param3.$s">
+      <set_object_shield object="$friend" exact="0"/>
+     </do_if>
+     <do_if value="event.param3.$h?">
+      <set_object_hull object="$friend" exact="event.param3.$h"/>
+     </do_if>
+     <do_if value="event.param3.$k?">
+      <!-- a floor under its hull: the shots go on until its pilot bails (a roll every 30 s) instead of killing it -->
+      <set_object_min_hull object="$friend" exact="event.param3.$k"/>
+     </do_if>
+     <do_if value="event.param3.$w and @$friend.pilot.exists">
+      <!-- its pilot holds its place (a Wait order, the default), so a burst keeps hitting it -->
+      <create_order id="'Wait'" object="$friend" default="true"/>
+     </do_if>
+     <set_value name="$watch_until" exact="player.age + 180s"/>
+     <set_value name="$watch_last" exact="''"/>
+     <set_value name="$attacks" exact="0"/>
+     <debug_text text="'[X4LAN] FRIENDLY_SETUP ship=%s name=%s owner=%s near=%s distance=%s relation=%s faction_relation=%s hull=%s shield=%s time=%s'.[$friend.idcode, $friend.name, $friend.owner.id, $near.idcode, $friend.distanceto.{$near}, $friend.relationto.{faction.player}, $friend.owner.relationto.{faction.player}, $friend.hull, $friend.shield, player.age]"/>
+    </do_if>
+    <do_else>
+     <debug_text text="'[X4LAN] FRIENDLY_REFUSED time=%s'.[player.age]"/>
+    </do_else>
+   </actions>
+   <cues>
+    <cue name="FriendlyWatch" instantiate="true" checkinterval="1s">
+     <conditions><check_value value="@$friend.exists and player.age lt $watch_until"/></conditions>
+     <actions>
+      <find_object_component name="$leaks" class="class.signalleak" object="$friend" multiple="true"/>
+      <set_value name="$line" exact="'hull=%s shield=%s relation=%s faction_relation=%s hull_percent=%s owner=%s attacks=%s distance=%s enemy=%s hostile=%s pilot=%s people=%s claimable=%s capturable=%s leaks=%s next_bail=%s'.[@$friend.hull, @$friend.shield, @$friend.relationto.{faction.player}, @$friend.owner.relationto.{faction.player}, @$friend.hullpercentage, @$friend.owner.id, $attacks, (@$friend.distanceto.{$near})i, @$friend.hasrelation.enemy.{faction.player}, @$friend.hasrelation.kill.{faction.player}, @$friend.pilot.exists, @$friend.people.count, @$friend.canbeclaimed, @$friend.iscapturable, $leaks.count, @$friend.pilot.$nextcapturechance]"/>
+      <do_if value="$line != $watch_last">
+       <set_value name="$watch_last" exact="$line"/>
+       <debug_text text="'[X4LAN] FRIENDLY_WATCH name=%s time=%s %s'.[@$friend.name, player.age, $line]"/>
+      </do_if>
+     </actions>
+    </cue>
+    <cue name="FriendlyAttacked" instantiate="true">
+     <conditions><event_object_attacked object="$friend"/></conditions>
+     <actions>
+      <set_value name="$attacks" operation="add"/>
+      <do_if value="$attacks le 8 or ($attacks / 25) * 25 == $attacks">
+       <debug_text text="'[X4LAN] FRIENDLY_ATTACKED name=%s n=%s attacker=%s attacker_owner=%s method=%s hull=%s relation=%s time=%s'.[@$friend.name, $attacks, @event.param.idcode, @event.param.owner.id, event.param2, @$friend.hull, @$friend.relationto.{faction.player}, player.age]"/>
+      </do_if>
+     </actions>
+    </cue>
+   </cues>
+  </cue>
   <!-- Test only (script op hold_stock, in every client's plan at the same tick): wares into a slot ship's hold, so a
        scripted run has cargo to drop. has= is what the ship then holds of it. -->
   <cue name="Hold" instantiate="true">
@@ -485,6 +562,98 @@
      <set_value name="$In" exact="$In + ' player' + $K + '=' + $E + '/' + @$E.controlled + '/' + @$E.container + '/' + @$E.ship"/>
     </do_all>
     <debug_text text="'[X4LAN] GROUPS_LOOK controlled=%s piloted=%s containers=%s ships=%s named=%s%s time=%s'.[global.$PlayerControlledGroup.count, global.$PlayerOccupiedShipGroup.count, global.$PlayerContainerGroup.count, global.$PlayerShipsGroup.count, @global.$X4LAN_Players.count, $In, player.age]"/>
+   </actions>
+  </cue>
+  <!-- Test only (script op escort_look, in every client's plan at the same tick): the ships that protect each slot's ship
+       (X4's ProtectShip order on it, or the Attack order that order gives with the ship as its escort; the Terran
+       cadet's wingmate) and how they do it: whether each is a wingman of that ship's formation, its distance and what it
+       attacks; and the ship's pilot as a script outside every player's scope sees it, beside the player the player
+       groups name for it (native_gate_player_escort.xml). The protectors go on the slot's player entity
+       ($X4LAN_EscortGuards) for the colour op escort_colour. Rows only. -->
+  <cue name="EscortLook" instantiate="true" namespace="this">
+   <conditions><event_ui_triggered screen="'X4LAN_UiReplay'" control="'EscortLook'"/></conditions>
+   <actions>
+    <do_all exact="event.param3.count" counter="$K">
+     <set_value name="$Ship" exact="event.param3.{$K}"/>
+     <set_value name="$In" exact="''"/>
+     <set_value name="$Guards" exact="[]"/>
+     <do_if value="@$Ship.exists">
+      <find_ship name="$Near" space="$Ship.sector" multiple="true">
+       <match_distance object="$Ship" max="30km"/>
+      </find_ship>
+      <do_all exact="$Near.count" counter="$N">
+       <set_value name="$G" exact="$Near.{$N}"/>
+       <set_value name="$O" exact="@$G.order"/>
+       <do_if value="$G != $Ship and ((@$O.id == 'ProtectShip' and @$O.$target == $Ship) or (@$O.id == 'Attack' and @$O.$escort == $Ship))">
+        <append_to_list name="$Guards" exact="$G"/>
+        <set_value name="$In" exact="$In + ' guard=' + $G.idcode + '/' + $G.owner.id + '/' + $O.id + '/' + (if $G.isformationwingman then 'wingman' else 'loose') + '/' + (if @$G.formationleader == $Ship then 'leader=ship' else 'leader=' + @$G.formationleader.idcode) + '/' + $G.distanceto.{$Ship} + '/' + (if $O.id == 'Attack' then @$O.$primarytarget.idcode else '-')"/>
+       </do_if>
+      </do_all>
+      <do_if value="@global.$X4LAN_Players.{$K}.exists">
+       <set_value name="global.$X4LAN_Players.{$K}.$X4LAN_EscortGuards" exact="$Guards"/>
+      </do_if>
+      <debug_text text="'[X4LAN] ESCORT_LOOK slot=%s ship=%s pilot=%s pilots=%s guards=%s%s time=%s'.[$K, $Ship.idcode, @$Ship.pilot, @player.entity.$X4LAN_Pilots.{$Ship}, $Guards.count, $In, player.age]"/>
+     </do_if>
+     <do_else>
+      <debug_text text="'[X4LAN] ESCORT_LOOK slot=%s ship=gone time=%s'.[$K, player.age]"/>
+     </do_else>
+    </do_all>
+   </actions>
+  </cue>
+  <!-- Test only (script op escort_front, in every client's plan at the same tick): the ships that protect a slot's ship
+       (ProtectShip on it) are put 150 m ahead of it, looking its way, so that player's camera shows them and their HUD
+       marks (the wingmate's colour check); their order brings them back into the formation. Rows only. -->
+  <cue name="EscortFront" instantiate="true" namespace="this">
+   <conditions><event_ui_triggered screen="'X4LAN_UiReplay'" control="'EscortFront'"/></conditions>
+   <actions>
+    <set_value name="$Ship" exact="event.param3"/>
+    <set_value name="$Moved" exact="0"/>
+    <do_if value="@$Ship.isoperational">
+     <find_ship name="$Near" space="$Ship.sector" multiple="true">
+      <match_distance object="$Ship" max="30km"/>
+     </find_ship>
+     <do_all exact="$Near.count" counter="$N">
+      <set_value name="$G" exact="$Near.{$N}"/>
+      <do_if value="$G != $Ship and @$G.order.id == 'ProtectShip' and @$G.order.$target == $Ship">
+       <transform_position name="$Ahead" refposition="$Ship.position" refrotation="$Ship.rotation">
+        <position x="($Moved * 40 - 20) * 1m" y="10m" z="150m"/>
+       </transform_position>
+       <warp object="$G" zone="$Ship.zone">
+        <position value="$Ahead"/>
+        <rotation value="$Ship.rotation"/>
+       </warp>
+       <set_value name="$Moved" operation="add"/>
+       <debug_text text="'[X4LAN] ESCORT_FRONT ship=%s guard=%s owner=%s distance=%s time=%s'.[$Ship.idcode, $G.idcode, $G.owner.id, $G.distanceto.{$Ship}, player.age]"/>
+      </do_if>
+     </do_all>
+    </do_if>
+    <debug_text text="'[X4LAN] ESCORT_FRONT ship=%s moved=%s time=%s'.[@$Ship.idcode, $Moved, player.age]"/>
+   </actions>
+  </cue>
+  <!-- Test only (script op escort_target, as a person's click: a signal on the galaxy that every client replays in the
+       scope of the player who made it): a Xenon ship without a pilot (it neither moves nor fires) appears ahead of that
+       player's ship and becomes that player's target, for the player's guns (aim_fire) and the protecting wingmate:
+       stock, a protector attacks what its protected player's ship attacks (native_gate_player_escort.xml). It keeps
+       half its hull. Rows only. -->
+  <cue name="EscortTarget" instantiate="true" namespace="this">
+   <conditions><event_object_signalled object="player.galaxy" param="'x4lan_escort_target'"/></conditions>
+   <actions>
+    <set_value name="$Ship" exact="player.ship"/>
+    <do_if value="@$Ship.isoperational">
+     <transform_position name="$Ahead" refposition="$Ship.position" refrotation="$Ship.rotation">
+      <position z="event.param3 * 1m"/>
+     </transform_position>
+     <create_ship name="$Dummy" macro="macro.{event.param2}" zone="$Ship.zone">
+      <owner exact="faction.xenon"/>
+      <position value="$Ahead"/>
+     </create_ship>
+     <set_object_min_hull object="$Dummy" exact="50"/>
+     <set_player_target object="$Dummy"/>
+     <debug_text text="'[X4LAN] ESCORT_TARGET player=%s ship=%s dummy=%s macro=%s purpose=%s pilot=%s distance=%s time=%s'.[player.entity, $Ship.idcode, $Dummy.idcode, event.param2, @$Dummy.primarypurpose, @$Dummy.pilot, $Dummy.distanceto.{$Ship}, player.age]"/>
+    </do_if>
+    <do_else>
+     <debug_text text="'[X4LAN] ESCORT_TARGET player=%s ship=none time=%s'.[player.entity, player.age]"/>
+    </do_else>
    </actions>
   </cue>
   <!-- Missions and conversations (native_gate_ui_replay missions, conversation; reports/LOCKSTEP-UI-MISSIONS-20261101.txt):
@@ -1376,6 +1545,106 @@
        own guns. The four
        MtReal cues hear the generic missions' logbook cues, which every stock generic mission signals at its end,
        and name the player in whose scope that end ran and its account. Rows only. -->
+  <!-- Test only (script op leak_goto; friendly fire, 24 Nov: the stock claim of an abandoned ship): this player's ship (its
+       spacesuit) is put METRES in front of the claim signal of the ship named, out from the hull and looking at it, so the
+       suit's repair laser (fired straight ahead) or the scan mode reaches it. Rows LEAK_GOTO and, every second for two
+       minutes, LEAK_WATCH (the ship's owner, claimable, the leak, the suit's distance to it, the player's ship). -->
+  <!-- Test fixture (script op suit_dock, canonical by its UI event): a player's suit ($s) METRES ($d) out from the
+       spacesuit dock of a ship ($t), facing it, as if flown there. X4's own player update (0x7113e0) docks a suit that
+       asked that ship for docking once it is within 0.9 of the dock range of one of its docks, and then puts the player
+       aboard (0x731560). Rows SUIT_DOCK / SUIT_DOCK_REFUSED. -->
+  <cue name="SuitDock" instantiate="true" namespace="this">
+   <conditions><event_ui_triggered screen="'X4LAN_UiReplay'" control="'SuitDock'"/></conditions>
+   <actions>
+    <set_value name="$Ship" exact="event.param3.$s"/>
+    <set_value name="$Target" exact="event.param3.$t"/>
+    <set_value name="$Metres" exact="event.param3.$d"/>
+    <set_value name="$Dock" exact="null"/>
+    <do_if value="@$Target.exists">
+     <find_dockingbay name="$Dock" object="$Target">
+      <match_dock size="tag.dock_xs"/>
+     </find_dockingbay>
+    </do_if>
+    <do_if value="@$Ship.exists and @$Dock.exists">
+     <create_position name="$TPos" space="$Target.zone" object="$Target"/>
+     <create_position name="$DPos" space="$Target.zone" object="$Dock"/>
+     <set_value name="$Away" exact="[$Dock.distanceto.{$Target}, 1m].max"/>
+     <set_value name="$Spot" exact="position.[$DPos.x + ($DPos.x - $TPos.x) * $Metres / $Away, $DPos.y + ($DPos.y - $TPos.y) * $Metres / $Away, $DPos.z + ($DPos.z - $TPos.z) * $Metres / $Away]"/>
+     <create_orientation name="$Look" orientation="look_at" refposition="$DPos">
+      <position value="$Spot"/>
+     </create_orientation>
+     <warp object="$Ship" zone="$Target.zone">
+      <position value="$Spot"/>
+      <rotation value="$Look"/>
+     </warp>
+     <debug_text text="'[X4LAN] SUIT_DOCK player=%s ship=%s class=%s target=%s dock=%s distance=%s owner=%s assigned=%s time=%s'.[player.entity, $Ship, $Ship.class, $Target, $Dock, $Ship.distanceto.{$Dock}, $Target.owner.id, @$Ship.assigneddock, player.age]"/>
+    </do_if>
+    <do_else>
+     <debug_text text="'[X4LAN] SUIT_DOCK_REFUSED ship=%s target=%s dock=%s time=%s'.[@$Ship, @$Target, @$Dock, player.age]"/>
+    </do_else>
+   </actions>
+  </cue>
+  <cue name="LeakGoto" instantiate="true" namespace="this">
+   <!-- the UI event of a client's op, so every client runs it at the same tick; $s: that player's ship (its suit) -->
+   <conditions><event_ui_triggered screen="'X4LAN_UiReplay'" control="'LeakGoto'"/></conditions>
+   <actions>
+    <set_value name="$Ship" exact="event.param3.$s"/>
+    <set_value name="$Target" exact="event.param3.$t"/>
+    <set_value name="$Metres" exact="event.param3.$d"/>
+    <set_value name="$Leak" exact="null"/>
+    <do_if value="@$Target.exists">
+     <find_object_component name="$Leaks" class="class.signalleak" object="$Target" multiple="true"/>
+     <do_all exact="$Leaks.count" counter="$i">
+      <do_if value="$Leaks.{$i}.type == signalleaktype.claim">
+       <set_value name="$Leak" exact="$Leaks.{$i}"/>
+      </do_if>
+     </do_all>
+    </do_if>
+    <do_if value="@$Ship.exists and $Leak">
+     <create_position name="$TPos" space="$Target.zone" object="$Target"/>
+     <create_position name="$LPos" space="$Target.zone" object="$Leak"/>
+     <set_value name="$Away" exact="[$Leak.distanceto.{$Target}, 1m].max"/>
+     <set_value name="$Spot" exact="position.[$LPos.x + ($LPos.x - $TPos.x) * $Metres / $Away, $LPos.y + ($LPos.y - $TPos.y) * $Metres / $Away, $LPos.z + ($LPos.z - $TPos.z) * $Metres / $Away]"/>
+     <create_orientation name="$Look" orientation="look_at" refposition="$LPos">
+      <position value="$Spot"/>
+     </create_orientation>
+     <warp object="$Ship" zone="$Target.zone">
+      <position value="$Spot"/>
+      <rotation value="$Look"/>
+     </warp>
+     <set_value name="$watch_until" exact="player.age + 120s"/>
+     <set_value name="$watch_last" exact="''"/>
+     <debug_text text="'[X4LAN] LEAK_GOTO player=%s ship=%s class=%s target=%s leak=%s distance=%s owner=%s claimable=%s time=%s'.[player.entity, $Ship, $Ship.class, $Target, $Leak, $Ship.distanceto.{$Leak}, $Target.owner.id, $Target.canbeclaimed, player.age]"/>
+    </do_if>
+    <do_else>
+     <debug_text text="'[X4LAN] LEAK_GOTO_REFUSED player=%s ship=%s target=%s leaks=%s time=%s'.[player.entity, @$Ship, @$Target, @$Leaks.count, player.age]"/>
+    </do_else>
+   </actions>
+   <cues>
+    <cue name="LeakWatch" instantiate="true" checkinterval="1s">
+     <conditions><check_value value="@$Target.exists and player.age lt $watch_until"/></conditions>
+     <actions>
+      <!-- where the leak is seen from the suit (metres right, up, ahead, whole: facing it is 0/0/4) and its hull -->
+      <set_value name="$rel" exact="'-'"/>
+      <do_if value="@$Ship.exists and @$Leak.exists">
+       <create_position name="$relpos" space="$Ship" object="$Leak"/>
+       <set_value name="$rel" exact="'%s/%s/%s'.[($relpos.x / 1m)i, ($relpos.y / 1m)i, ($relpos.z / 1m)i]"/>
+      </do_if>
+      <set_value name="$line" exact="'owner=%s claimable=%s leak=%s suit=%s distance=%s pilot=%s player_ship=%s seen=%s leak_hull=%s'.[$Target.owner.id, @$Target.canbeclaimed, @$Leak.exists, @$Ship.exists, (@$Ship.distanceto.{$Target})i, @$Target.pilot.knownname, @player.ship, $rel, @$Leak.hullpercentage]"/>
+      <do_if value="$line != $watch_last">
+       <set_value name="$watch_last" exact="$line"/>
+       <debug_text text="'[X4LAN] LEAK_WATCH target=%s time=%s %s'.[$Target, player.age, $line]"/>
+      </do_if>
+     </actions>
+    </cue>
+    <cue name="LeakClaimed" instantiate="true">
+     <conditions><event_object_claimed claimed="$Target"/></conditions>
+     <actions>
+      <debug_text text="'[X4LAN] LEAK_CLAIMED target=%s by=%s owner=%s player=%s time=%s'.[$Target, @event.param, $Target.owner.id, player.entity, player.age]"/>
+     </actions>
+    </cue>
+   </cues>
+  </cue>
   <cue name="MtGoto" instantiate="true" namespace="this">
    <conditions><event_object_signalled object="player.galaxy" param="'x4lan_goto'"/></conditions>
    <actions>
@@ -1506,19 +1775,25 @@
    </actions>
   </cue>
   <!-- The audit's shared listener: a cue nobody owns, registered on the universe's player of the game's start. With
-       native_gate_shared_listeners it also runs for what players 2..N do, and its row names that player. -->
+       native_gate_shared_listeners it also runs for what players 2..N do, and its row names that player (a sector
+       change: lockstep_pilot_death.h pvehk_place; the row's sector is that player's new one). -->
   <cue name="AuditShared" instantiate="true">
    <conditions>
     <check_any>
      <event_object_changed_room object="player.entity"/>
+     <event_object_changed_sector object="player.entity"/>
      <event_player_changed_target/>
      <event_player_killed_object/>
+     <event_player_attacked_object/>
+     <event_player_owned_attacked_object/>
      <event_player_started_control/>
      <event_ui_triggered screen="'X4LAN_Audit'"/>
     </check_any>
    </conditions>
    <actions>
-    <debug_text text="'[X4LAN] MPP_AUDIT_SHARED event=%s player=%s ship=%s time=%s'.[event.name, player.entity, player.ship, player.age]"/>
+    <!-- for a player-owned ship's attack (md.Notifications.PlayerOwnedShipAttacks: the bail chance is a quarter unless the
+         attacker is player.occupiedship) the attacker and the player's ship; for sector, zone and cluster changes the sector -->
+    <debug_text text="'[X4LAN] MPP_AUDIT_SHARED event=%s player=%s ship=%s sector=%s time=%s%s'.[event.name, player.entity, player.ship, @player.sector.knownname, player.age, if event.name == 'event_player_owned_attacked_object' then ' attacker=%s target=%s occupied=%s own=%s'.[@event.param, @event.param2, @player.occupiedship, event.param == player.occupiedship] else '']"/>
    </actions>
   </cue>
   <cue name="SlotOffers" instantiate="true">

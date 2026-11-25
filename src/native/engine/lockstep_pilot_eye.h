@@ -212,10 +212,23 @@ static void peye_pose(void *self,float *out,double time,unsigned char overwrite)
     else {float r[16];peye_compose(out,local,r);memcpy(out,r,sizeof(r));}
     InterlockedIncrement64(&peye_poses);
 }
-/* In pres_enter, after the identity: both poses of the canonical player p1 (view = its cache entry of this bank). */
+/* In pres_enter, after the identity: both poses of the canonical player p1 (view = its cache entry of this bank).
+ * Walking (stage 'walk'), the presented pose is the FPC's own in the room P_k is in NOW, which is the scope's parent: the
+ * tick's keys of the two rooms say nothing about it. X4 moves a walking slot's player between rooms as it walks
+ * (lockstep_pilot_foot_body.h), inside a tick; until 24 Nov every later scope of that tick compared the rooms with the
+ * tick's keys and had no eye (nor the walking camera, lockstep_pilot_walk_camera.h): client k drew X4's own player's
+ * pose in slot k's room for those frames, its camera at slot 1's seat. The rk9 flashing (the user's two-PC game,
+ * 24 Nov): 10 and 12 scopes without the eye exactly at slot 2's two room moves (room=0/0/1/0/1, then 2), the first one
+ * its step off the fighter's cockpit onto the pad right after the get-up. Now a walk keeps its eye through a room move
+ * (counted eye_walk=rooms); a walker that stopped walking since the tick's update gets none (counted stale). */
+static volatile LONG64 peye_walk_rooms,peye_walk_stale;
 static void peye_enter(unsigned char *p1,unsigned char *view,unsigned bank,const pslot_slot *s,unsigned char *room1) {
     peye_live=peye_published=0;
-    if(!peye_on || !peye_vt_ready || bank>1 || peye_key[1]!=room1 || peye_key[2]!=s->ship || peye_key[3]!=pslot_at(s)) return;
+    if(!peye_on || !peye_vt_ready || bank>1 || peye_key[2]!=s->ship) return;
+    if(peye_walk_fpc) {
+        if(pfslot_walking_fpc(pres_slot)!=peye_walk_fpc) {InterlockedIncrement64(&peye_walk_stale);return;}
+        if(peye_key[1]!=room1 || peye_key[3]!=pslot_at(s)) InterlockedIncrement64(&peye_walk_rooms);
+    } else if(peye_key[1]!=room1 || peye_key[3]!=pslot_at(s)) return;
     unsigned char *ctl=NULL;void *vt=NULL;
     if(read_local(p1+PEYE_MOVEMENT,&ctl,8) && ctl && read_local(ctl,&vt,8)) {
         if(vt==(void*)peye_fpc_stock) {
@@ -328,7 +341,7 @@ static void peye_leave(void) {
 }
 static void peye_reset(void) {
     peye_on=0;peye_seat_mode=0;peye_walk_fpc=NULL;peye_live=peye_published=0;peye_main_published=0;peye_main_scopes=0;peye_stage="off";memset(peye_key,0,sizeof(peye_key));peye_ctl=NULL;
-    peye_updates=peye_scopes=peye_poses=peye_lost=peye_other=0;peye_other_vtable=0;peye_identity(peye_delta);
+    peye_updates=peye_scopes=peye_poses=peye_lost=peye_other=0;peye_other_vtable=0;peye_identity(peye_delta);peye_walk_rooms=peye_walk_stale=0;
 }
 static int peye_status(char *out,size_t capacity) {
     int n=snprintf(out,capacity," eye=%s/%lld/%lld/%lld/%.3f,%.3f,%.3f",peye_stage,(long long)peye_scopes,(long long)peye_poses,(long long)peye_lost,
@@ -337,6 +350,8 @@ static int peye_status(char *out,size_t capacity) {
         n+=snprintf(out+n,capacity-(size_t)n," eye_main=%lld",(long long)peye_main_scopes);
     if(n>0 && (size_t)n<capacity && peye_anchor_scopes)   /* scopes with the HUD's anchor scene at rest */
         n+=snprintf(out+n,capacity-(size_t)n," eye_anchor=%lld",(long long)peye_anchor_scopes);
+    if(n>0 && (size_t)n<capacity && (peye_walk_rooms || peye_walk_stale))   /* walking scopes after a room move; a stale walker */
+        n+=snprintf(out+n,capacity-(size_t)n," eye_walk=%lld/%lld",(long long)peye_walk_rooms,(long long)peye_walk_stale);
     if(n>0 && (size_t)n<capacity && peye_other) {
         int more=snprintf(out+n,capacity-(size_t)n," eye_controller=%llx:%lld",(unsigned long long)peye_other_vtable,(long long)peye_other);
         n=more>0?n+more:-1;

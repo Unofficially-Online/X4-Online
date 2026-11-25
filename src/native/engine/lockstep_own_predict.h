@@ -167,6 +167,9 @@ static const char *opred_stage="off";
 static volatile LONG64 opred_failures;
 /* The render-frames join: the display time of this slot 10 relative to the step, in steps. */
 static double (*opred_display_offset)(void);
+/* The throttle join (lockstep_own_throttle.h): the own slot's smoothed throttle at tick+1..tick+h from its pending records
+ * (the setpoint by X4's rules), h when that covers every throttle input of the horizon, else 0 (the command model's own). */
+static unsigned (*opred_throttle_path)(unsigned slot,uint64_t tick,unsigned h,double *path);
 /* Slot 10: the entries swapped in this call (MoveWorker only). */
 static __attribute__((aligned(16))) float opred_blocks[PILOT_SLOTS][32];
 static unsigned char *volatile *opred_open_at[PILOT_SLOTS];
@@ -369,7 +372,8 @@ static void opred_run(const opred_slot *p,int model,const predict_pose *base,con
 }
 /* The commands of the next h steps (u[k] applies at tick+1+k) and how many records were missing. */
 static unsigned opred_future(opred_slot *p,unsigned slot,uint64_t tick,unsigned h,const double u_now[OPRED_CHANNELS],double (*u)[OPRED_CHANNELS]) {
-    opred_held held=p->held;double phi[OPRED_FEATURES],prev[OPRED_CHANNELS];unsigned missing=0;
+    opred_held held=p->held;double phi[OPRED_FEATURES],prev[OPRED_CHANNELS],throttle[OPRED_HORIZON_MAX];unsigned missing=0;
+    const unsigned throttles=p->own && opred_throttle_path && h<=OPRED_HORIZON_MAX?opred_throttle_path(slot,tick,h,throttle):0;
     memcpy(prev,u_now,sizeof(prev));
     for(unsigned k=0;k<h;k++) {
         pstk_record r;
@@ -377,6 +381,7 @@ static unsigned opred_future(opred_slot *p,unsigned slot,uint64_t tick,unsigned 
         else ++missing;   /* held: the same controls, the same cursor */
         opred_features(&held,phi);
         opred_command_step(&p->cmd,prev,phi,u[k]);
+        if(k<throttles) u[k][3]=throttle[k];   /* the smoothed throttle by the setpoint's own rules */
         memcpy(prev,u[k],sizeof(prev));
     }
     return missing;

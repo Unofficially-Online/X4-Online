@@ -215,10 +215,27 @@ static void test_pilot_eye(void) {
         InterlockedExchange(&pres_open,0);peye_leave();
         s.seated=0;assert(!peye_update(&s) && !strcmp(peye_stage,"skip:parent"));s.seated=1;
     }
+    /* Walking (stage 'walk', K2-9): the eye stays through a room move inside the tick (the rk9 flashing: X4 moved slot 2
+     * from its fighter's cockpit onto the pad after its get-up, and the rest of that tick's scopes had no eye); a walker
+     * that stopped walking since the update gets none. */
+    {   const unsigned saved_pres=pres_slot;const int saved_armed=pfslot_armed;const pfslot_slot saved_f=pfslots[2];int (*const saved_time)(double*)=pnat_fn.time;
+        pres_slot=2;pfslot_armed=1;pfslots[2].walking=1;pfslots[2].fpc=test_peye_fpc;pnat_fn.time=test_pnat_time;
+        pslot_slot w=s;w.walking=1;w.walk_room=NULL;
+        assert(peye_update(&w) && !strcmp(peye_stage,"walk") && peye_walk_fpc==test_peye_fpc && peye_key[3]==w.room);
+        const LONG64 rooms=peye_walk_rooms,scopes=peye_scopes;
+        w.walk_room=test_peye_station;   /* X4 moved it onto the pad since the update */
+        peye_enter(test_peye_p1,view,1,&w,test_peye_room1);assert(peye_live && peye_published && peye_walk_rooms==rooms+1 && peye_scopes==scopes+1);peye_leave();
+        peye_enter(test_peye_p1,view,1,&w,test_peye_station);assert(peye_live && peye_published && peye_walk_rooms==rooms+2);peye_leave();   /* slot 1 moved too */
+        w.walk_room=NULL;peye_enter(test_peye_p1,view,1,&w,test_peye_room1);assert(peye_published && peye_walk_rooms==rooms+2);peye_leave();
+        pfslots[2].walking=0;peye_enter(test_peye_p1,view,1,&w,test_peye_room1);assert(!peye_live && !peye_published && peye_walk_stale==1);peye_leave();
+        {char row[512];assert(peye_status(row,sizeof(row)) && strstr(row," eye_walk=2/1"));}
+        pfslots[2]=saved_f;pfslot_armed=saved_armed;pres_slot=saved_pres;peye_walk_rooms=peye_walk_stale=0;pnat_fn.time=saved_time;
+        assert(peye_update(&s) && peye_on);
+    }
     peye_own_seat=0;
     peye_reset();peye_seat=saved_seat;peye_fpc_pose=saved_pose;peye_fpc_stock=saved_stock;peye_vt_ready=saved_ready;
     pslot_p1=saved_p1;pilot_slots[0]=saved_slot0;vps_rng_word=saved_rng;pres_rng_moved=saved_moved;
-    printf("pilot eye: slot k's seat from X4's own seat transform, live and published in the scope, every byte back\n");
+    printf("pilot eye: slot k's seat from X4's own seat transform, live and published in the scope, every byte back; a walk keeps its eye through a room move\n");
 }
 /* In the slots flow (test_lockstep_pilot_slots.h, after its first UI frame): the eye through pres_enter and
  * pres_leave, the probe's pause and the replay's resume inside X4's UI entry; then every byte back. */
@@ -256,7 +273,7 @@ static void test_pilot_eye_flow(pslot_slot *s2,void (*ui_entry)(void*),uint64_t 
     test_peye_flow_seen=0;test_pres_ui_hook=test_peye_flow_ui;ui_entry(test_pres_self);test_pres_ui_hook=NULL;
     assert(test_peye_flow_seen==1 && !pres_open && peye_scopes==3 && !peye_lost && !peye_live && !peye_published);
     assert(!memcmp(before,p1,sizeof(before)) && !memcmp(fpc_before,test_peye_fpc,sizeof(fpc_before)) && pslot_hash()==canonical);
-    {char row[4096];assert(pres_status(row,sizeof(row)) && strstr(row," eye=on/3/1/0/0.006,-0.032,0.388 present_restored="));}
+    {char row[4096];assert(pres_status(row,sizeof(row)) && strstr(row," eye=on/3/1/0/0.006,-0.032,0.388 walk_cam=0/0/0/0 seat_cam=0/0/0 present_restored="));}
     /* Outside the scope X4's own pose. */
     {float out[16];test_peye_call6(out,1);assert(test_peye_close(out,test_peye_seat1,16,0));}
     memcpy(p1+PEYE_MOVEMENT,&kept_ctl,8);memcpy(view+PEYE_VIEW_BLOCK,&kept_block,8);pilot_slots[0]=kept_slot0;

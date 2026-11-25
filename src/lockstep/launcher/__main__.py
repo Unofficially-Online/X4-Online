@@ -1,4 +1,4 @@
-"""x4ls command line: doctor, session, play, join, starts, new-session, resume, snapshot, triage, clean, steam-fix, master."""
+"""x4ls command line: doctor, session, play, join, starts, new-session, resume, continue, snapshot, triage, clean, steam-fix, master."""
 import argparse
 import json
 from pathlib import Path
@@ -19,6 +19,15 @@ def doctor(args):
         print('overlay: manifest matches')
     print('relay:', session.RELAY, 'present' if session.RELAY.is_file() else 'MISSING')
     return 0 if ok else 1
+
+
+def play_clients(overlay, solo):
+    """x4ls play without --clients: 2, or with --solo the players the overlay's recipe was built for (2 without one)."""
+    if solo is None:
+        return 2
+    from . import hotjoin
+    recipe = hotjoin.recipe_tools().read_recipe(overlay)
+    return recipe['players'] if recipe else 2
 
 
 def run_master(args):
@@ -68,7 +77,11 @@ def main(argv=None):
     s.add_argument('relay_args', nargs='*', help='extra relay arguments after --')
 
     pl = sub.add_parser('play', help='a session for people: desyncs are silent, errors are logged, nothing ends it early')
-    pl.add_argument('--clients', type=int, default=2)
+    pl.add_argument('--clients', type=int, help="the session's players (default 2; with --solo the overlay's own count)")
+    pl.add_argument('--solo', type=int, metavar='K',
+                    help="one X4 only, for player K: the relay stands in for every other slot from the start (their players sit "
+                         'idle in their ships), to test what player K sees and hears without more X4 windows. A protocol 4 '
+                         'overlay without open slots; desyncs cannot show (docs/LAUNCHER.md "One X4 for one player")')
     pl.add_argument('--overlay', type=Path, required=True, help='built play overlay (tools/build_play_overlay.py)')
     pl.add_argument('--snapshot', type=Path, required=True, help='native .xml.gz save the overlay was built for')
     pl.add_argument('--ticks', type=int, help="relay ticks (default: the overlay's pilot window end + 1, the tick the controls go back)")
@@ -235,13 +248,19 @@ def main(argv=None):
     ns.add_argument('--players', type=int, default=2)
     ns.add_argument('--mode', choices=('coop', 'factions'), default='coop')
     ns.add_argument('--start', action='append', default=[], metavar='K=GAMESTART',
-                    help="slot K's own start (x4ls starts: player-start=yes); other slots start with slot 1")
+                    help="slot K's own start (x4ls starts: player-start=yes); every other slot starts in the session start's "
+                         'own ship beside slot 1 (its ship, place and kit)')
+    ns.add_argument('--fixture-ships', action='store_true',
+                    help="slots without --start fly the capture fixture's fighters (the form before 24 Nov, for tests of it)")
     ns.add_argument('--omit', action='append', default=[], metavar='K=PART[,PART]',
                     help="parts slot K's start leaves out (inventory, reputation, blueprints, research, known; world: only "
-                         "that start's ship, place and kit, for a start x4ls starts lists as player-start=ship-only or ship+story)")
+                         "that start's ship, place and kit, for a start x4ls starts lists as player-start=ship-only or ship+story; "
+                         "story: its story; yaki: the Terran story after the Terran cadet's)")
     ns.add_argument('--story', default='', metavar='K[,K...]',
                     help="slots whose start's own story (its missions) runs for that slot's player; for a start x4ls starts lists "
-                         'as player-start=ship+story, taken with --omit K=world. First form, in test')
+                         'as player-start=ship+story, taken with --omit K=world. Several players may take one start (also '
+                         "the session's): each plays the story as its own copy. The Terran cadet's story brings the Terran "
+                         'story after it (Story_Yaki) as its own copy too (--omit K=yaki leaves it out)')
     ns.add_argument('--piloted', default='', metavar='K[,K...]',
                     help="slots whose start ship keeps an NPC pilot. The default is none, as a stock start's own ship: with one, "
                          'that pilot appears in the seat when the player gets up')
@@ -264,9 +283,13 @@ def main(argv=None):
     ns.add_argument('--steam-fix', action='store_true')
 
     rs = sub.add_parser('resume', help='a new session from the world of a periodic save (RUN/saves; src/lockstep/launcher/resume.py)')
-    rs.add_argument('--save', type=Path, required=True, help='a periodic save of a play session (RUN/saves/c<K>-t<TICK>.xml.gz)')
-    rs.add_argument('--spec', type=Path, required=True, help="that session's spec.json (x4ls new-session OUT/spec.json)")
-    rs.add_argument('--overlay', type=Path, required=True, help='the play overlay that session ran with (its recipe is used again)')
+    rs.add_argument('--save', type=Path, required=True, help='a periodic save of a play session (RUN/saves/c<K>-t<TICK>.xml.gz); '
+                                                              'with --continue a milestone save (RUN/saves/milestones/<name>.xml.gz)')
+    rs.add_argument('--continue', dest='continue_', action='store_true',
+                    help='every player continues as saved (x4ls continue --milestone SAVE): the save must be a milestone save')
+    rs.add_argument('--spec', type=Path, help="that session's spec.json (x4ls new-session OUT/spec.json); not with --continue")
+    rs.add_argument('--overlay', type=Path, help='the play overlay that session ran with (its recipe is used again; --continue: '
+                                                 "default the recipe in the milestone's sidecar)")
     rs.add_argument('--gate-dll', type=Path, required=True)
     rs.add_argument('--out', type=Path, required=True, help='new session folder (capture overlay, save, session.json, overlay)')
     rs.add_argument('--minutes', type=float, help="length of the new session (default: the first session's)")
@@ -280,6 +303,23 @@ def main(argv=None):
     rs.add_argument('--lanes', type=Path)
     rs.add_argument('--timeout', type=int, default=900, help='seconds for the prepare step')
     rs.add_argument('--steam-fix', action='store_true')
+
+    co = sub.add_parser('continue', help='a new session from a session save, every player as saved (src/lockstep/launcher/milestone.py)')
+    what = co.add_mutually_exclusive_group(required=True)
+    what.add_argument('--milestone', type=Path, help='RUN/saves/milestones/<story>-M<n>-slot<k>.xml.gz (its .json beside it)')
+    what.add_argument('--save', type=Path, help='any session save: RUN/saves/c<K>-t<T>.xml.gz, RUN/saves/player/<name>-t<T>.xml.gz, '
+                                                'a milestone save (its .json beside it)')
+    co.add_argument('--session', type=Path, help="a save without a sidecar (an older build's): that session's session.json; with "
+                                                 '--overlay, a folder with its play-recipe.json')
+    co.add_argument('--gate-dll', type=Path, required=True)
+    co.add_argument('--out', type=Path, required=True, help='new session folder (session-save.xml.gz, session.json, overlay)')
+    co.add_argument('--overlay', type=Path, help="the first session's play overlay (default: the recipe the sidecar holds)")
+    co.add_argument('--minutes', type=float, help="length of the new session (default: the first session's)")
+    co.add_argument('--save-every', type=float, metavar='MINUTES', help="periodic saves of the new session (default: the first session's)")
+    co.add_argument('--set', action='append', default=[], metavar='native_gate_KEY=LUA_VALUE', help='further settings')
+    co.add_argument('--keep-player', metavar='ID', help="the saved ID of X4's own player object, when neither the sidecar nor its name tells")
+    co.add_argument('--keep-flight', action='store_true',
+                    help="keep the players' ships flying as saved (travel drive, speed, autopilot); default: every one starts at rest")
 
     n = sub.add_parser('snapshot', help='capture a starting snapshot (new game + 12-ship gate fixture)')
     n.add_argument('--out', type=Path, required=True, help='new .xml.gz file')
@@ -311,8 +351,18 @@ def main(argv=None):
         from . import newsession
         newsession.starts(args.game, show_all=args.all)
         return 0
+    if args.command == 'continue' or (args.command == 'resume' and args.continue_):
+        from . import milestone
+        result = milestone.prepare(milestone.ContinueOptions(
+            milestone=(args.milestone or args.save) if args.command == 'continue' else args.save, gate_dll=args.gate_dll, out=args.out,
+            overlay=args.overlay, minutes=args.minutes, sets=args.set, save_every=args.save_every, keep_player=args.keep_player,
+            session=getattr(args, 'session', None), keep_flight=getattr(args, 'keep_flight', False)))
+        print(json.dumps(result, indent=2))
+        return 0 if result['outcome'] == 'ready' else 1
     if args.command == 'resume':
         from . import resume
+        if not args.spec or not args.overlay:
+            raise SystemExit('x4ls resume needs --spec and --overlay (or --continue with a milestone save)')
         result = resume.resume(resume.ResumeOptions(save=args.save, spec=args.spec, overlay=args.overlay, gate_dll=args.gate_dll,
                                                     out=args.out, minutes=args.minutes, story=args.story, sets=args.set,
                                                     save_every=args.save_every, keep_player=args.keep_player, display=args.display,
@@ -337,7 +387,7 @@ def main(argv=None):
             unpiloted=tuple(int(k) for k in args.unpiloted.split(',') if k.strip()),
             piloted=tuple(int(k) for k in args.piloted.split(',') if k.strip()),
             sets=args.set, game=args.game, lanes=args.lanes, timeout=args.timeout, steam_fix=args.steam_fix,
-            display=args.display, focus=not args.no_focus))
+            display=args.display, focus=not args.no_focus, fixture_ships=args.fixture_ships))
         print(json.dumps(result, indent=2))
         return 0
     if args.command == 'snapshot':
@@ -443,6 +493,7 @@ def main(argv=None):
         print(json.dumps(result, indent=2))
         return 0 if result['outcome'] == 'played' else 1
     if args.command == 'play':
+        args.clients = args.clients or play_clients(args.overlay, args.solo)
         lookahead, tick_hz, last = session.play_settings(args.overlay, args.clients)
         ticks = args.ticks or (last + session.PLAY_TAIL_TICKS if last else None)
         if not ticks:
@@ -458,9 +509,10 @@ def main(argv=None):
                                   remote_slots=tuple(int(v) for v in args.remote_slots.split(',') if v.strip()),
                                   bind=args.bind, allow_from=tuple(a for a in args.allow_from.split(',') if a.strip()),
                                   port=args.port, join_wait=args.join_wait, public_host=args.public_host,
-                                  open_slots=tuple(int(v) for v in args.open.split(',') if v.strip()))
+                                  open_slots=tuple(int(v) for v in args.open.split(',') if v.strip()), solo=args.solo)
         print(f'play: {args.clients} clients, relay ticks {ticks} ({ticks / tick_hz / 60:.0f} min at {tick_hz} Hz), lookahead '
-              f'{lookahead}, stall drop ' + (f'{args.stall_drop:g} s' if lookahead else 'off'))
+              f'{lookahead}, stall drop ' + (f'{args.stall_drop:g} s' if lookahead else 'off') +
+              (f', solo: only client {args.solo} starts' if args.solo is not None else ''))
         result = session.run(options)
         print(json.dumps(result, indent=2))
         return 0 if result['outcome'] == 'played' else 1

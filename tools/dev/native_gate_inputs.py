@@ -25,7 +25,7 @@ SECTIONS = ('pilot', 'hits', 'join', 'octree', 'orders', 'stock', 'ui', 'ffi', '
 # and the relayed UI calls; octree and hybrid wait.
 PRIORITY = ('join', 'stock', 'ui', 'ffi', 'pilot', 'orders', 'hits', 'octree', 'hybrid')
 FFI_VERSION = 1                                               # lockstep_ui_exports.h relayed FFI calls
-STOCK_VERSION = 3                                             # lockstep_pilot_stock.h record version byte
+STOCK_VERSION = 4                                             # lockstep_pilot_stock.h record version byte
 UI_VERSION = 1                                                # lockstep_ui_replay.h section version byte
 HYBRID_VERSION = 1                                            # lockstep_hybrid.h record version byte
 JOIN_VERSION = 1                                              # hot join record version byte (native_gate_join.py)

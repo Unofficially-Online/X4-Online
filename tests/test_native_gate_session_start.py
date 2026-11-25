@@ -384,9 +384,21 @@ class SpecTests(unittest.TestCase):
             dll.write_bytes(b'fixed')
             out = session_start.build_capture(spec, dll, Path(d) / 'cap')
             self.assertEqual((out / 'md/x4lan_session_hulls.xml').read_text(encoding='utf-8'), text)
-            self.assertIn("player.module == 'war_start'", (out / 'md/native_gate_battle.xml').read_text(encoding='utf-8'))
+            fixture = (out / 'md/native_gate_battle.xml').read_text(encoding='utf-8')
+            self.assertIn("player.module == 'war_start'", fixture)
+            # A new spec has no fixture: the Spawn cue makes no ships and does not move the player's ship.
+            spawn = fixture.partition('<cue name="Engage">')[0]
+            self.assertEqual(spec['fixture'], 'none')
+            self.assertNotIn('<warp', spawn)
+            self.assertIn('<do_all exact="0" counter="$i">', spawn)
             config = (out / 'ui/config.lua.append').read_text()
-            self.assertTrue(config.endswith('X4LAN_CONFIG.native_gate_snapshot_gamestart = "war_start"\nX4LAN_CONFIG.native_gate_snapshot_hulls = 2\n'))
+            self.assertTrue(config.endswith('X4LAN_CONFIG.native_gate_snapshot_gamestart = "war_start"\n'
+                                            'X4LAN_CONFIG.native_gate_snapshot_no_fixture = true\nX4LAN_CONFIG.native_gate_snapshot_hulls = 2\n'))
+            # A spec made before 24 Nov (no fixture field) keeps the battle form.
+            old = {k: v for k, v in spec.items() if k != 'fixture'}
+            spawn = (session_start.build_capture(old, dll, Path(d) / 'cap-old') / 'md/native_gate_battle.xml').read_text(
+                encoding='utf-8').partition('<cue name="Engage">')[0]
+            self.assertIn('<warp', spawn)
             self.assertIn('md/x4lan_session_hulls.xml', json.loads((out / 'x4lane-manifest.json').read_text()))
             command = session_start.capture_command(spec, out, 'collect')
             self.assertIn('--gamestart war_start', command)
@@ -486,15 +498,31 @@ class StoryTests(unittest.TestCase):
             shown_in = session_start.gamestarts   # the module the spec reads (this file loads its own copy)
             old = shown_in.STORY_DEFAULT
             shown_in.STORY_DEFAULT = frozenset({'station_start'})
-            try:   # ...a shown start has it by default: the first slot with it, and --omit K=story leaves it out
+            try:   # ...a shown start has it by default: the stock script for the first slot with it, a copy for the next
                 shown = session_start.build_spec(c, 'war_start', 3, 'coop', *both)
                 self.assertEqual(session_start.story_slots(shown['slots']), {2: story})
+                self.assertEqual([e['copy'] for e in shown['slots']['3']['plots']], ['GS_Station_P3'])
                 off = session_start.build_spec(c, 'war_start', 2, 'coop', {2: 'station_start'}, {2: 'world,story'})
                 self.assertEqual(session_start.story_slots(off['slots']), {})
             finally:
                 shown_in.STORY_DEFAULT = old
-            for args, text in ((((c, 'war_start', 3, 'coop', *both), dict(story=[3])), 'another player has the story of station_start'),
-                               (((c, 'war_start', 2, 'coop', {2: 'station_start'}, {2: 'world,story'}), dict(story=[2])), 'left out by --omit'),
+            # Two players on one start (24 Nov; before, the second was refused: "another player has the story"): the first
+            # slot that asks claims the stock script, every later one plays its own copy of it.
+            later = session_start.build_spec(c, 'war_start', 3, 'coop', *both, story=[3])
+            self.assertEqual(session_start.story_slots(later['slots']), {3: story})
+            self.assertNotIn('plots', later['slots']['3'])
+            two = session_start.build_spec(c, 'war_start', 3, 'coop', *both, story=[2, 3])
+            self.assertEqual(session_start.story_slots(two['slots']), {2: story})
+            self.assertIsNone(two['slots']['3']['story'])
+            [copy] = two['slots']['3']['plots']
+            self.assertEqual({k: copy[k] for k in ('id', 'slot', 'script', 'copy', 'module', 'faction')},
+                             {'id': 'story', 'slot': 3, 'script': 'GS_Station', 'copy': 'GS_Station_P3', 'module': 'station_start',
+                              'faction': None})
+            self.assertNotIn('links', copy)   # no plot continues this start's story
+            self.assertNotIn('plots', two['slots']['2'])
+            for args, text in ((((c, 'war_start', 2, 'coop', {2: 'station_start'}, {2: 'world,story'}), dict(story=[2])), 'left out by --omit'),
+                               (((c, 'war_start', 2, 'coop', {2: 'station_start'}, {2: 'world,yaki'}), dict(story=[2])),
+                                'start station_start has no such plot after its story'),
                                (((c, 'war_start', 2, 'coop', {2: 'beta_start'}), dict(story=[2])), 'has no story script'),
                                (((c, 'war_start', 2, 'coop', {}), dict(story=[2])), 'slot 2 has no per-player start')):
                 with self.subTest(text=text), self.assertRaises(session_start.SessionError) as caught:
@@ -734,8 +762,13 @@ class RegisterTests(unittest.TestCase):
 
     def test_register_reads_start_fixture_and_hulls_and_hashes_the_save(self):
         s = self.register()
-        self.assertEqual((s['base_start'], s['player_ship'], s['player_sector'], s['fixture']),
-                         ('war_start', '00000000000ae79c', 'cluster_93_sector001_macro', FIXTURE))
+        # A new spec's session has no fixture (fixture 'none'); one made before 24 Nov reads the save's twelve.
+        self.assertEqual((s['base_start'], s['player_ship'], s['player_sector'], s['fixture'], s['fixture_form']),
+                         ('war_start', '00000000000ae79c', 'cluster_93_sector001_macro', [], 'none'))
+        save_dir = self.root / 'save-old'
+        save_dir.mkdir()
+        old = session_start.register({k: v for k, v in self.spec.items() if k != 'fixture'}, session_save(save_dir))
+        self.assertEqual((old['fixture'], old['fixture_form']), (FIXTURE, 'battle'))
         self.assertEqual(s['hulls'], {'2': '000000000000b000'})
         self.assertEqual(s['snapshot']['sha256'], hashlib.sha256(Path(s['snapshot']['path']).read_bytes()).hexdigest())
         self.assertEqual(s['slots']['2']['kit']['gamestart'], 'alpha_start')
@@ -832,6 +865,58 @@ class RegisterTests(unittest.TestCase):
         self.assertTrue(players.wallet_library(plan))
         self.assertFalse(players.wallet_library(dict(plan, kits=[])))
         self.assertFalse(players.wallet_library(dict(plan, mode='coop')))
+
+    def test_a_session_overlay_listens_for_its_milestones_and_a_continued_one_restores(self):
+        """Every session overlay has the milestone MD and its watches (tools/dev/native_gate_milestones.py); a continued session
+        (x4ls continue: no kits, a 'continue' block) gives no kit, begins no story again and arms the restore."""
+        path, session = self.write_session()
+        rebased = session_start.rebase(session_start.session_of(path), make_base(self.root / 'b', 'a' * 64), self.root / 'rebased')
+        session['base_start'] = 'x4ep1_gamestart_terran1'   # a session of the Terran cadet start: slot 1 plays its story
+        path.write_text(json.dumps(session))
+
+        def build(session_path, out, *extra):
+            args = players.defaults(players.build_parser().parse_args(['overlay', '--session', str(session_path), '--base', str(rebased),
+                                                                      '--out', str(self.root / out), '--probe', str(DEV / 'native_gate_probe.lua'),
+                                                                      '--players', '2', '--mode', 'coop', '--source', 'none', *extra]))
+            return players.build_overlay(args)
+        out, plan = build(path, 'o')
+        config = (out / 'ui/config.lua.append').read_text()
+        self.assertIn("X4LAN_CONFIG.native_gate_milestones = {save=true,watch={{'terran_cadet',1,1},", config)
+        self.assertTrue((out / 'md/x4lan_milestones.xml').is_file())
+        self.assertIn('md/x4lan_milestones.xml', json.loads((out / 'x4lane-manifest.json').read_text()))
+        self.assertNotIn('native_gate_continue', config)
+        out, _ = build(path, 'o-off', '--milestone-saves', 'off')
+        self.assertIn('native_gate_milestones = {save=false,', (out / 'ui/config.lua.append').read_text())
+        continued = json.loads(json.dumps(session))
+        continued['slots']['2']['kit'] = None
+        continued['continue'] = {'format': 'X4LAN_CONTINUE_1', 'name': 'terran_cadet-M1-slot2',
+                                 'slots': {'2': {'inventory': [{'ware': 'inv_tst', 'amount': 2}]}}}
+        cpath = self.root / 'continued.json'
+        cpath.write_text(json.dumps(continued))
+        out, plan = build(cpath, 'o-continued')
+        config = (out / 'ui/config.lua.append').read_text()
+        self.assertEqual(plan.get('kits', []), [])
+        self.assertIn("X4LAN_CONFIG.native_gate_continue = {name='terran_cadet-M1-slot2',slots={[2]={inventory={{'inv_tst',2}},"
+                      'blueprints={},research={}}}}', config)
+        self.assertNotIn('native_gate_story =', config)
+
+    def test_a_session_without_a_fixture_is_played_calm(self):
+        """A session registered without a fixture (x4ls new-session since 24 Nov) is valid, and its play overlay sends no
+        Attack orders; an older session with the battle fixture keeps the battle."""
+        path, session = self.write_session()
+        self.assertEqual((session['fixture_form'], session['fixture']), ('none', []))
+        self.assertEqual(session_start.session_of(path)['fixture'], [])
+
+        def lines_of(data):
+            path.write_text(json.dumps(data))
+            a = players.defaults(players.build_parser().parse_args(['plan', '--session', str(path), '--players', '2', '--mode', 'coop',
+                                                                     '--source', 'stock', '--stock-script', 'demo']))
+            return players.config_block(a)[0]
+        self.assertIn('X4LAN_CONFIG.native_gate_battle_engage = false', lines_of(session))
+        battle = lines_of(dict(session, fixture_form='battle', fixture=FIXTURE))
+        self.assertNotIn('X4LAN_CONFIG.native_gate_battle_engage = false', battle)
+        with self.assertRaisesRegex(Exception, 'invalid saved IDs'):   # a battle session needs its twelve
+            lines_of(dict(session, fixture_form='battle'))
 
     def test_builder_session_defaults_and_refusals(self):
         path, session = self.write_session()

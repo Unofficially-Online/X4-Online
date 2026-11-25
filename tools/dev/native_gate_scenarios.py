@@ -218,22 +218,44 @@ def compare(texts):
     return True, f'{len(reference)} identical lines on {len(texts)} clients ({summary}; {ends})'
 
 
-def capture_battle_md(gamestart, allowed=None):
-    """The battle fixture MD with only its gamestart guard changed (capture overlays only). allowed: the starts a
-    caller has checked itself (native_gate_session_start.py classifies every stock start); default STARTS."""
+# A player session's capture has no fixture (fixture 'none', x4ls new-session since 24 Nov): its Spawn cue makes no
+# ships and leaves the player's ship where the start put it, and the session's play overlay names no fixture, so the
+# gate binds none (native_gate_snapshot_fixture absent: lockstep_snapshot_fixture.h only binds a configured one). The
+# battle form (census and sandbox overlays) warps the player's ship 100 km up beside six Argon and six Xenon fighters
+# that the play overlay sends at each other: a two-PC game of 24 Nov saw them at the Terran cadet start, the players
+# about 150 km from the start's own place, and player 2 in one of those fighters.
+NONE_WARP = re.compile(r'\n *<warp object="player\.ship" sector="player\.sector">\s*<position x="0m" y="100km" z="0m"/>'
+                       r'<rotation yaw="0deg" pitch="0deg" roll="0deg"/>\s*</warp>')
+NONE_SHIPS = ('<do_all exact="12" counter="$i">', '<do_all exact="0" counter="$i">')
+FIXTURES = ('battle', 'none')
+
+
+def capture_battle_md(gamestart, allowed=None, fixture='battle'):
+    """The battle fixture MD with its gamestart guard changed (capture overlays only). allowed: the starts a caller
+    has checked itself (native_gate_session_start.py classifies every stock start); default STARTS. fixture 'none': the
+    Spawn cue makes no ships and moves nothing (NONE_WARP); the cues after it stay the file's own."""
     if gamestart not in (STARTS if allowed is None else allowed) or not re.fullmatch(r'[a-z][a-z0-9_]*', gamestart or ''):
         raise ValueError(f'unsupported gamestart {gamestart!r}; see the starts command')
+    if fixture not in FIXTURES:
+        raise ValueError(f'fixture {fixture!r}')
     text = (DEV / 'native_gate_battle.xml').read_text(encoding='utf-8')
     if text.count(MODULE_GUARD) != 1:
         raise ValueError('battle fixture gamestart guard not found exactly once')
-    return text.replace(MODULE_GUARD, f"player.module == '{gamestart}'")
+    text = text.replace(MODULE_GUARD, f"player.module == '{gamestart}'")
+    if fixture == 'battle':
+        return text
+    head, sep, rest = text.partition('<cue name="Engage">')
+    if not sep or len(NONE_WARP.findall(head)) != 1 or head.count(NONE_SHIPS[0]) != 1:
+        raise ValueError("battle fixture: the Spawn cue's warp or ship loop not found exactly once")
+    return NONE_WARP.sub('', head).replace(*NONE_SHIPS) + sep + rest
 
 
-def build_capture_overlay(gamestart, fixedtick_dll, out, allowed=None, extra_md=None, extra_config=()):
+def build_capture_overlay(gamestart, fixedtick_dll, out, allowed=None, extra_md=None, extra_config=(), fixture='battle'):
     """Overlay for tools/dev/native_gate_lane.py --capture-snapshot with another gamestart. extra_md: {name: text} of
     further MD files (the session tool's hulls); extra_config: further config lines. Without a fixed-tick DLL
-    the capture runs at the normal frame rate (native_gate_snapshot_fixed = false)."""
-    md = capture_battle_md(gamestart, allowed)
+    the capture runs at the normal frame rate (native_gate_snapshot_fixed = false). fixture 'none': no fixture ships
+    (capture_battle_md; the capture expects none: native_gate_snapshot_no_fixture)."""
+    md = capture_battle_md(gamestart, allowed, fixture=fixture)
     fixedtick_dll = Path(fixedtick_dll) if fixedtick_dll else None
     if fixedtick_dll and not fixedtick_dll.is_file():
         raise ValueError(f'fixed-tick DLL {fixedtick_dll} missing')
@@ -258,6 +280,7 @@ def build_capture_overlay(gamestart, fixedtick_dll, out, allowed=None, extra_md=
         'X4LAN_CONFIG.native_gate_snapshot = "capture"\n'
         f'X4LAN_CONFIG.native_gate_snapshot_gamestart = "{gamestart}"\n'
         + ('' if fixedtick_dll else 'X4LAN_CONFIG.native_gate_snapshot_fixed = false\n')
+        + ('X4LAN_CONFIG.native_gate_snapshot_no_fixture = true\n' if fixture == 'none' else '')
         + ''.join(line + '\n' for line in extra_config))
     write_manifest(out)
     return out
@@ -296,22 +319,27 @@ def snapshot_header(path):
     return {**info, 'player': player}
 
 
-def snapshot_lines(path):
-    """Config lines that bind a census overlay to this save (checksum, fixture, watch list)."""
+def snapshot_lines(path, fixture=True):
+    """Config lines that bind a census overlay to this save (checksum, fixture, watch list). fixture False: a save without
+    one (a player session's, fixture 'none'): the fixture key false, the player's ship alone on the watch list."""
     import build_native_gate_overlay as builder
     before = digest(path)
-    fixture = builder.snapshot_fixture(path)
+    fixture = builder.snapshot_fixture(path) if fixture else []
     header = snapshot_header(path)
     if digest(path) != before:
         raise ValueError('snapshot changed while reading it')
     watch = fixture + ([header['player']['ship']] if header['player']['ship'] not in fixture else [])
-    lines = [f'X4LAN_CONFIG.native_gate_snapshot_sha = "{before}"',
-             'X4LAN_CONFIG.native_gate_snapshot_fixture = {' + ','.join(repr(s) for s in fixture) + '}',
-             'X4LAN_CONFIG.native_gate_world_hash_watch = {' + ','.join(repr(s) for s in watch) + '}']
+    lines = [f'X4LAN_CONFIG.native_gate_snapshot_sha = "{before}"']
+    # without a fixture the key says false: absent, the defaults table (native_gate_defaults.lua) gives it snapshot 005's
+    # twelve, and the gate stops at the load (rk5, 24 Nov: SNAPSHOT_BOUNDARY stage=bind_actor check=object:imports)
+    lines.append('X4LAN_CONFIG.native_gate_snapshot_fixture = ' + ('{' + ','.join(repr(s) for s in fixture) + '}' if fixture else 'false'))
+    if not fixture:   # the defaults table makes the false above absent: this key tells the probe (its battle sample)
+        lines.append('X4LAN_CONFIG.native_gate_snapshot_no_fixture = true')
+    lines.append('X4LAN_CONFIG.native_gate_world_hash_watch = {' + ','.join(repr(s) for s in watch) + '}')
     return lines, header
 
 
-SNAPSHOT_KEYS = ('native_gate_snapshot_sha', 'native_gate_snapshot_fixture', 'native_gate_world_hash_watch')
+SNAPSHOT_KEYS = ('native_gate_snapshot_sha', 'native_gate_snapshot_fixture', 'native_gate_snapshot_no_fixture', 'native_gate_world_hash_watch')
 
 
 def rebased_config(base_text, lines):

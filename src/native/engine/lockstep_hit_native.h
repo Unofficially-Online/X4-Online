@@ -29,16 +29,25 @@
  * fully native.
  * Suppression (every client, rule over the agreed slot manifest): a keyed
  * projectile's native hit is blanked (fraction -1, component 0) when the hit
- * component belongs to a predicted slot ship, or when the shooter belongs to
- * a slot ship and the hit component belongs to a ship with a pathing read
- * bank (a claimable target). Hits on other objects stay native.
+ * component belongs to a predicted slot ship. Hits on other objects stay
+ * native, also a slot's projectile on any other ship (24 Nov, user report:
+ * shots of player 2 at a friendly ship did no damage; until then such a
+ * hit on a ship with a pathing read bank was blanked too and only the owner's
+ * outgoing claim below could apply it; the claim's segment lies d ticks of
+ * flight ahead of the bullet the player sees (projectiles are simulated, not
+ * presented ahead), so at close range it never met the hull: rk8, player 2 at
+ * a Terran corvette, 50 native hits blanked, 0 claims, the corvette never
+ * attacked. X4's own hit is what that player sees and the same on every
+ * client; counted native_out).
  * Owner evaluation (this client only, its own slot ship L): incoming - a
  * projectile not shot by L is cast again with its segment moved from the
  * displayed pose D (lockstep_pilot_predict.h, previous tick) into the pose
  * the body has now (L's read bank), so the cast answers "does it hit the ship
  * the player sees"; outgoing - L's projectile is cast again shifted by d ticks
- * of its own flight against the world as it is. A hit becomes a claim (hit
- * point in the target's frame) proposed in this tick's hits section.
+ * of its own flight against the world as it is; only a hit on another slot's
+ * ship is claimed (player versus player, decided by the policy), any other
+ * ship takes X4's own hit. A hit becomes a claim (hit point in the target's
+ * frame) proposed in this tick's hits section.
  * Resolution (slot 6, every client, lockstep_hit_claims.h rules): accepted
  * claims run OnHit(bullet, target, hit pose, normal, now) on the MoveWorker
  * in claim order with a keyed RNG word, then the bullet's hit count, the
@@ -114,7 +123,7 @@ static unsigned char *hitn_page;   /* code at +0, R14 slot at +0x1000, handler a
 static unsigned char hitn_block_patched[16];
 static int hitn_armed,hitn_installed,hitn_restored,hitn_policy,hitn_pins_checked;
 static volatile LONG hitn_live;
-static uint64_t hitn_casts,hitn_foreign,hitn_keyed,hitn_unkeyed,hitn_full,hitn_suppressed_in,hitn_suppressed_out,
+static uint64_t hitn_casts,hitn_foreign,hitn_keyed,hitn_unkeyed,hitn_full,hitn_suppressed_in,hitn_native_out,
     hitn_eval_in,hitn_eval_out,hitn_claims_in,hitn_claims_out,hitn_candidates_dropped,hitn_proposals,hitn_admitted,
     hitn_admit_refused,hitn_resolved,hitn_applied,hitn_frames,hitn_receipt,hitn_last_tick;
 static volatile LONG64 hitn_failures;
@@ -305,13 +314,13 @@ static void hitn_after_cast(hitn_cast_fn original,unsigned char *bullet,void *sy
     /* The result block lives in UpdateFlight's frame (our caller's stack). */
     unsigned shooter_slot=e->shooter_slot;
     float fraction=*(volatile float*)(result+0x20);unsigned char *component=*(unsigned char*volatile*)(result+0x28);
-    /* Suppression: identical on every client. */
+    /* Suppression: identical on every client. A slot's projectile on any other ship keeps X4's hit. */
     if(fraction>=0.0f && component) {
         unsigned target_slot=hitn_slot_of(component);
-        if(target_slot || (shooter_slot && hitn_ship_of(component))) {
+        if(target_slot) {
             *(volatile float*)(result+0x20)=-1.0f;*(unsigned char*volatile*)(result+0x28)=NULL;
-            if(target_slot) ++hitn_suppressed_in;else ++hitn_suppressed_out;
-        }
+            ++hitn_suppressed_in;
+        } else if(shooter_slot && hitn_ship_of(component)) ++hitn_native_out;
     }
     /* Owner evaluation: only this client's own slot ship, once per projectile. */
     const hitn_owner_view *view=hitn_owner_now(tick);
@@ -340,8 +349,10 @@ static void hitn_after_cast(hitn_cast_fn original,unsigned char *bullet,void *sy
         memset(scratch,0,sizeof(scratch));*(float*)(scratch+0x20)=-1.0f;
         original(system,scratch,o2,ray,HITN_TAIL(tail));++hitn_eval_out;
         unsigned char *hit=*(unsigned char**)(scratch+0x28),*ship=NULL;float bank[24];
-        if(*(float*)(scratch+0x20)>=0.0f && hit && (ship=hitn_ship_of(hit)) && ship!=own && hitn_bank(ship,bank)) {
-            unsigned target_slot=hitn_slot_of(ship);float local_point[3];int16_t q[3];
+        unsigned target_slot=0;
+        if(*(float*)(scratch+0x20)>=0.0f && hit && (ship=hitn_ship_of(hit)) && ship!=own && (target_slot=hitn_slot_of(ship)) &&
+           hitn_bank(ship,bank)) {
+            float local_point[3];int16_t q[3];
             uint64_t target=target_slot && pilot_slots[target_slot-1].renewed?pilot_slots[target_slot-1].saved:world_identity_portable(hitn_runtime(ship));
             hitn_local(bank,(const float*)scratch,local_point);
             if(target && hitn_quantize(local_point,q)) {hitn_candidate_add(HIT_OUTGOING,bullet,e->key,target,q,tick);e->flags|=HITN_CLAIMED;}
@@ -557,11 +568,11 @@ static int hitn_resolve(uint64_t tick,char *out,size_t capacity) {
 static int hitn_status(char *out,size_t capacity) {
     static const char *policies[4]={"none","shooter","victim","first"};
     int n=snprintf(out,capacity,"armed=%d installed=%d live=%ld policy=%s casts=%llu foreign=%llu keyed=%llu unkeyed=%llu full=%llu "
-        "suppressed_in=%llu suppressed_out=%llu eval_in=%llu eval_out=%llu claims_in=%llu claims_out=%llu dropped=%llu proposals=%llu "
+        "suppressed_in=%llu native_out=%llu eval_in=%llu eval_out=%llu claims_in=%llu claims_out=%llu dropped=%llu proposals=%llu "
         "admitted=%llu admit_refused=%llu resolved=%llu applied=%llu frames=%llu last=%llu receipt=%016llx overflow=%llu queued=%u expired=%llu",
         hitn_armed,hitn_installed,hitn_live,policies[hitn_policy>=0 && hitn_policy<=3?hitn_policy:0],
         (unsigned long long)hitn_casts,(unsigned long long)hitn_foreign,(unsigned long long)hitn_keyed,(unsigned long long)hitn_unkeyed,
-        (unsigned long long)hitn_full,(unsigned long long)hitn_suppressed_in,(unsigned long long)hitn_suppressed_out,
+        (unsigned long long)hitn_full,(unsigned long long)hitn_suppressed_in,(unsigned long long)hitn_native_out,
         (unsigned long long)hitn_eval_in,(unsigned long long)hitn_eval_out,(unsigned long long)hitn_claims_in,
         (unsigned long long)hitn_claims_out,(unsigned long long)hitn_candidates_dropped,(unsigned long long)hitn_proposals,
         (unsigned long long)hitn_admitted,(unsigned long long)hitn_admit_refused,(unsigned long long)hitn_resolved,

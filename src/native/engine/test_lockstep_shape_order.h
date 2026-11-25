@@ -116,7 +116,7 @@ static void test_shape_order(void) {
      * assets and keys outside the manager's table pass straight through; a load that never ends times out. */
     InitializeCriticalSection((CRITICAL_SECTION *)test_so_cache);memset(test_so_node,0,sizeof(test_so_node));
     InitializeCriticalSection(&test_so_sync_lock);test_so_done=CreateSemaphoreW(NULL,0,1,NULL);assert(test_so_done);
-    test_so_manager=VirtualAlloc(NULL,(SORDER_ENTRY_TABLE+16u)*24u,MEM_COMMIT|MEM_RESERVE,PAGE_READWRITE);assert(test_so_manager);
+    test_so_manager=VirtualAlloc(NULL,SORDER_LOADING+0x1000u,MEM_COMMIT|MEM_RESERVE,PAGE_READWRITE);assert(test_so_manager); /* the entry tables and the loading flag */
     memset(test_so_entry,0,sizeof(test_so_entry));memset(test_so_limits,0,sizeof(test_so_limits));test_so_limits[7]=test_so_limits[8]=0x100000;
     uintptr_t table7=(uintptr_t)test_so_entry[0]-0x12345u*SORDER_ENTRY_SIZE,table8=(uintptr_t)test_so_entry[1]-0x54321u*SORDER_ENTRY_SIZE;
     memcpy(test_so_manager+(SORDER_ENTRY_TABLE+7u)*24u,&table7,8);memcpy(test_so_manager+(SORDER_ENTRY_TABLE+8u)*24u,&table8,8);
@@ -169,9 +169,20 @@ static void test_shape_order(void) {
     sorder_mode=SORDER_WAIT;test_so_request_calls=0;
     sorder_request_with(test_so_request,&loader,test_so_cache,test_so_desc,0x28,0x30,(void*)8,(void*)9,5,6,7,20);
     assert(test_so_request_calls==1 && test_so_queue_calls==4); /* not sync: straight to the original */
-    sorder_mode=SORDER_SYNC;boot_phase=2;test_so_request_calls=0;
+    /* The snapshot's boot frames (boot phase 2): while the manager's loading flag is set X4 loads synchronously itself (the
+     * original, boot_native=); once it is clear the file is loaded and waited for as in an admitted frame (boot_loads=).
+     * Without boot mode or before the load (phase 1): the original. */
+    sorder_mode=SORDER_SYNC;boot_mode=1;boot_phase=2;test_so_request_calls=0;test_so_manager[SORDER_LOADING]=1;
     sorder_request_with(test_so_request,&loader,test_so_cache,test_so_desc,0x28,0x30,(void*)8,(void*)9,5,6,7,20);
-    assert(test_so_request_calls==1 && test_so_queue_calls==4);boot_phase=3; /* boot frames: no synchronous loads */
+    assert(test_so_request_calls==1 && test_so_queue_calls==4 && sorder_boot_native==1 && !sorder_boot_loads);
+    test_so_manager[SORDER_LOADING]=0;memset(test_so_cache+0x38,0,8);test_so_loader_delay=5;   /* not cached: a load */
+    assert(sorder_request_with(test_so_request,&loader,test_so_cache,test_so_desc,0x28,0x30,(void*)8,(void*)9,5,6,7,1000)==0x5ab);
+    test_so_join();
+    assert(test_so_request_calls==2 && test_so_queue_calls==5 && sorder_boot_loads==1 && sorder_loads==3 && !sorder_failures);
+    char boot_status[1024];assert(sorder_status(boot_status,sizeof(boot_status)) && strstr(boot_status," boot_loads=1 boot_native=1"));
+    boot_mode=0;sorder_request_with(test_so_request,&loader,test_so_cache,test_so_desc,0x28,0x30,(void*)8,(void*)9,5,6,7,20);
+    boot_mode=1;boot_phase=1;sorder_request_with(test_so_request,&loader,test_so_cache,test_so_desc,0x28,0x30,(void*)8,(void*)9,5,6,7,20);
+    assert(test_so_request_calls==4 && test_so_queue_calls==5 && sorder_boot_native==1);boot_phase=3;
     CloseHandle(test_so_done);DeleteCriticalSection(&test_so_sync_lock);VirtualFree(test_so_manager,0,MEM_RELEASE);test_so_manager=NULL;
     /* Every mode: the apply's NotifyShapeChanged always asks for new mass properties (live frames only). */
     sorder_notify_with(test_so_notify,(void*)0x1d0,(void*)0x8,(void*)0x40,0xab00,1);
@@ -183,7 +194,7 @@ static void test_shape_order(void) {
     assert(test_so_notify_update==0 && sorder_mass_forced==2);ui_thread=GetCurrentThreadId();
     DeleteCriticalSection((CRITICAL_SECTION *)test_so_cache);
     sorder_requests=sorder_cached_hits=sorder_loads=sorder_load_us=sorder_load_max_us=sorder_passed=sorder_alt_keys=sorder_mass_forced=0;
-    sorder_resident=sorder_invalid=sorder_unloaded=sorder_boot_moves=sorder_boot_forced=0;
+    sorder_resident=sorder_invalid=sorder_unloaded=sorder_boot_moves=sorder_boot_forced=sorder_boot_loads=sorder_boot_native=0;
     sorder_mode=SORDER_OFF;sorder_waits=sorder_wait_passes=sorder_wait_us=sorder_wait_max_us=sorder_last_pending=0;
     sorder_installed=0;
     /* Arming refusals on the zero image. */
@@ -236,6 +247,7 @@ static void test_shape_order_native_image(const char *path) {
     /* GetAssetIntern queues and returns NULL during play (r8b=0, loading flag clear); its r8b=1 branch is the
      * synchronous load sorder_request uses: lock 0x6b60ec0, queue 0x14bb1d0 with |0x20, wait on *0x6b60ee8. */
     assert(!memcmp(image+0x14bad02,"\x80\xbd\x60\x46\x10\x00\x00",7) && !memcmp(image+0x14bad0b,"\x45\x84\xff",3) && !memcmp(image+0x14bad10,"\x83\xcf\x40",3));
+    assert(*(uint32_t*)(image+0x14bad04)==SORDER_LOADING);   /* the loading flag the boot frames read (sorder_sync_frame) */
     assert(!memcmp(image+0x14babdb,"\x4c\x8d\x05",3) && 0x14babe2u+*(int32_t*)(image+0x14babde)==SORDER_ASSET_LIMITS);
     assert(!memcmp(image+0x14babf1,"\x48\x05\x68\xad\x00\x00",6) && !memcmp(image+0x14babfb,"\x48\x6b\xf2\x58",4));
     assert(!memcmp(image+0x14bad57,"\x48\x8d\x1d",3) && 0x14bad5eu+*(int32_t*)(image+0x14bad5a)==SORDER_SYNC_LOCK);

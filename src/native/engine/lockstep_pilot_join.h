@@ -138,9 +138,9 @@ static int pjoin_rebuild_slot(unsigned k) {
     const unsigned n=adopt?r->range[PJOIN_CONSTRUCT][1]-r->range[PJOIN_CONSTRUCT][0]:r->n;
     if(!n || n>r->n) {pjoin_resume_why="rebuild_count";return 0;}
     if(!join_ids_replay(r->ids,n)) {pjoin_resume_why="rebuild_ids_arm";return 0;}
-    pslot_adopt=adopt;
+    pslot_adopt=adopt;pchair_hold=1;   /* the save holds this seat's chair state: no chair post (lockstep_pilot_foot_slots.h) */
     const int built=pslot_construct(k) && pslot_seat(k);
-    pslot_adopt=0;
+    pslot_adopt=0;pchair_hold=0;
     const int placed=join_ids_replay_end();
     if(!built) {pjoin_resume_why=pslot_why;return 0;}
     if(!placed) {

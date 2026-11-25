@@ -91,7 +91,19 @@
  * arming (MoveWorker only): long-L17 client 1 kept, from tick 2, a different
  * inverse inertia (rounding-level: 39704e01 vs 39704e20) on the second body of
  * saved fixtures 5 and 6 while body 0 agreed - the sum over children in
- * another order. Waiting and synchronous loads stay in admitted frames.
+ * another order. Waiting stays in admitted frames.
+ *
+ * Synchronous loads also in the snapshot's boot frames after X4's own loading (rk10, 25 Nov, continues of the periodic
+ * save c3-t18300). While the asset manager's loading flag (+0x104660) is set, GetAssetIntern loads a file synchronously
+ * itself (its r8b=1 branch); from LeaveLoadingMode to the first admitted frame (boot event pass 2, the first
+ * UniverseFrameUpdate, attention changes) it queues the file and returns NULL, so a part built then is a stand-in or a
+ * pending append, put in place when the loader thread happens to finish its file: removals 298 or 299 and appends 1737
+ * or 2121 on the two clients of one boot, and at tick 1 six bodies next to player 1 (station BHC-891's build module
+ * 0x3f4bd and storages, the L container ships 0x3ebbc and 0x3ec5f) had their compound children in another order on
+ * each client (PHYSICS_CHILD rows; the step's shape digest apart). Contacts sort by sub-shape ID, so a collision of
+ * those bodies would be solved in another order on each client. So in boot phase 2 with the loading flag clear the
+ * builder's lookups load as in admitted frames (boot_loads=; with the flag set the original runs, X4 loads
+ * synchronously itself: boot_native=): run 014323 booted with removals and appends 0 on both clients.
  * Without this module that race stays live, at about 2 in 100 client boots and
  * with no diagnostics on: the same bits on fixture 6 in full-X90c and play22-soak;
  * stock-J2b client 1 five values on fixtures 2-6, each later fixture further from
@@ -121,6 +133,7 @@
 #define SORDER_ENTRY_TABLE 0xad68u
 #define SORDER_ENTRY_SIZE 0x58u
 #define SORDER_CACHE 0x6cf1518u
+#define SORDER_LOADING 0x104660u   /* the asset manager's loading flag (GetAssetIntern 0x14bad02: set, it loads synchronously) */
 #define SORDER_NOTIFY 0x14061e0u
 #define SORDER_CALLS 6u
 #define SORDER_WAIT_MS 5000u
@@ -170,7 +183,7 @@ static volatile LONG64 sorder_rows,sorder_failures;
 static uint64_t sorder_removals,sorder_moves,sorder_appends,sorder_native,sorder_tick=UINT64_MAX,sorder_frame_moves;
 static uint64_t sorder_waits,sorder_wait_passes,sorder_wait_us,sorder_wait_max_us,sorder_last_pending;
 static uint64_t sorder_requests,sorder_cached_hits,sorder_loads,sorder_load_us,sorder_load_max_us,sorder_passed,sorder_alt_keys,sorder_mass_forced;
-static uint64_t sorder_resident,sorder_invalid,sorder_unloaded,sorder_boot_moves,sorder_boot_forced;
+static uint64_t sorder_resident,sorder_invalid,sorder_unloaded,sorder_boot_moves,sorder_boot_forced,sorder_boot_loads,sorder_boot_native;
 static const char *sorder_stage="idle";
 static int sorder_fail(const char *why) {sorder_stage=why;InterlockedIncrement64(&sorder_failures);return 0;}
 /* In-place moves and mass requests: every frame after arming, MoveWorker only. */
@@ -269,12 +282,23 @@ static unsigned char *sorder_entry(const sorder_loader *loader,uint64_t key) {
     if(!created_read(loader->manager+((size_t)type+SORDER_ENTRY_TABLE)*24u,&entries,8) || !entries) return NULL;
     return entries+index*SORDER_ENTRY_SIZE;
 }
+/* Synchronous loads: admitted frames, and the session snapshot's boot frames (boot phase 2) once X4's own loading is over
+ * (the asset manager's loading flag clear; while it is set X4 loads synchronously itself: boot_native=). */
+static int sorder_sync_frame(const sorder_loader *loader) {
+    if(!sorder_ready()) return 0;
+    if(boot_phase==3) return 1;
+    if(!boot_mode || boot_phase!=2) return 0;
+    uint8_t loading=0;
+    if(!loader->manager || !created_read(loader->manager+SORDER_LOADING,&loading,1)) return 0;   /* the original's own path */
+    if(loading) {++sorder_boot_native;return 0;}
+    return 1;
+}
 /* The builder's file lookup ('sync'): a missing file is loaded through the
  * engine's synchronous load before the original runs, so the original finds
  * it and builds in place. */
 static uint64_t sorder_request_with(sorder_request_fn original,const sorder_loader *loader,unsigned char *cache,unsigned char *desc,
                                     unsigned key_at,unsigned map,void *r8,void *r9,uint64_t a5,uint64_t a6,uint64_t a7,unsigned timeout_ms) {
-    if(sorder_mode!=SORDER_SYNC || !sorder_live() || !cache || !desc) return original(cache,desc,r8,r9,a5,a6,a7);
+    if(sorder_mode!=SORDER_SYNC || !cache || !desc || !sorder_sync_frame(loader)) return original(cache,desc,r8,r9,a5,a6,a7);
     uint64_t key=0;uint8_t null_gen=0,skip_gen=0,mark=0;uint32_t null_low=0,skip_low=0,low=0;
     if(!created_read(desc+key_at,&key,8) || !created_read(image+0x2f529dc,&null_gen,1) || !created_read(image+0x2f529d8,&null_low,4) ||
        !created_read(image+0x31beb04,&skip_gen,1) || !created_read(image+0x31beb00,&skip_low,4)) {sorder_fail("request");return original(cache,desc,r8,r9,a5,a6,a7);}
@@ -303,7 +327,7 @@ static uint64_t sorder_request_with(sorder_request_fn original,const sorder_load
     sorder_load_us+=us;if(us>sorder_load_max_us) sorder_load_max_us=us;
     cached=sorder_cached(cache,map,key);
     if(cached<0) sorder_fail("cache");
-    else if(cached) ++sorder_loads;
+    else if(cached) {++sorder_loads;if(boot_phase!=3) ++sorder_boot_loads;}
     else ++sorder_unloaded;
     return original(cache,desc,r8,r9,a5,a6,a7);
 }
@@ -430,7 +454,7 @@ static int sorder_arm(int mode) {
     sorder_rows=sorder_failures=0;sorder_removals=sorder_moves=sorder_appends=sorder_native=sorder_frame_moves=0;sorder_tick=UINT64_MAX;
     sorder_waits=sorder_wait_passes=sorder_wait_us=sorder_wait_max_us=sorder_last_pending=0;
     sorder_requests=sorder_cached_hits=sorder_loads=sorder_load_us=sorder_load_max_us=sorder_passed=sorder_alt_keys=sorder_mass_forced=0;
-    sorder_resident=sorder_invalid=sorder_unloaded=sorder_boot_moves=sorder_boot_forced=0;
+    sorder_resident=sorder_invalid=sorder_unloaded=sorder_boot_moves=sorder_boot_forced=sorder_boot_loads=sorder_boot_native=0;
     memset(&sorder_cur,0,sizeof(sorder_cur));sorder_restored=0;
     for(unsigned i=SORDER_CALLS;i-->0;) { /* the removal last: every other call passes through until a removal is recorded */
         if(!sorder_call_used(i)) continue;
@@ -467,7 +491,7 @@ static int sorder_status(char *out,size_t cap) {
     int n=snprintf(out,cap,"mode=%s installed=%d frame=%llu last_tick=%llu moves=%llu total_moves=%llu removals=%llu appends=%llu native=%llu rows=%lld "
         "waits=%llu wait_passes=%llu wait_us=%llu max_wait_us=%llu last_pending=%llu requests=%llu cached=%llu loads=%llu load_us=%llu "
         "max_load_us=%llu passed=%llu alt_keys=%llu resident=%llu invalid=%llu unloaded=%llu mass_forced=%llu boot_moves=%llu boot_forced=%llu "
-        "restored=%d stage=%s failures=%lld",sorder_mode_name(),sorder_installed,
+        "restored=%d stage=%s failures=%lld boot_loads=%llu boot_native=%llu",sorder_mode_name(),sorder_installed,
         (unsigned long long)stats.issued,(unsigned long long)(sorder_tick==UINT64_MAX?0:sorder_tick),
         (unsigned long long)sorder_frame_moves,(unsigned long long)sorder_moves,(unsigned long long)sorder_removals,(unsigned long long)sorder_appends,
         (unsigned long long)sorder_native,(long long)sorder_rows,(unsigned long long)sorder_waits,(unsigned long long)sorder_wait_passes,
@@ -476,6 +500,6 @@ static int sorder_status(char *out,size_t cap) {
         (unsigned long long)sorder_load_max_us,(unsigned long long)sorder_passed,(unsigned long long)sorder_alt_keys,
         (unsigned long long)sorder_resident,(unsigned long long)sorder_invalid,(unsigned long long)sorder_unloaded,
         (unsigned long long)sorder_mass_forced,(unsigned long long)sorder_boot_moves,(unsigned long long)sorder_boot_forced,sorder_restored,sorder_stage,
-        (long long)sorder_failures);
+        (long long)sorder_failures,(unsigned long long)sorder_boot_loads,(unsigned long long)sorder_boot_native);
     return n>0 && (size_t)n<cap?n:0;
 }

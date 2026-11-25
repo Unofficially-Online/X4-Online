@@ -19,8 +19,9 @@
  * the addsd of CurTime (its bytes copied from the pinned image) and jumps on to 0x143838a with the
  * stepped state in rax. In admitted frames the state is the Windows keyed one, (tick, the owner's
  * portable key), or for an owner without a key (tick, its class's Windows vtable RVA via the class
- * table, as cam-L1's fallback), and the thread's word is left untouched; otherwise the thread's
- * word steps as the native code would. Pins: the listener's head up to the word and its tail with
+ * table, as cam-L1's fallback), and the thread's word is left untouched; the snapshot's load (boot
+ * phase 2) takes the Windows load stream (tick 0, ERNG_LOAD_STREAM: lockstep_engine_rng.h); otherwise
+ * the thread's word steps as the native code would. Pins: the listener's head up to the word and its tail with
  * the refresh path (lx_sites erng_listener_head/_tail), the word itself original or ours, checked
  * at arm and every gate tick (stop reason 136, as on Windows); restored at stop. */
 #define ERNG_OWN_PLATFORM
@@ -33,15 +34,16 @@ static uint64_t erng_lx_pcg(uint64_t s) {s=s*ERNG_PCG_MUL+ERNG_PCG_INC;return (s
 /* The Windows erng_run's choice of state for one draw (testable): 1 with *state set when the draw
  * is keyed or falls back, 0 when it runs on the thread's word. */
 static int erng_lx_state(const void *ship,uint64_t *state) {
-    if(!(stats.active && boot_phase==3)) {++erng_native;return 0;}
+    uint64_t tick=0,stream=0;   /* an admitted frame or the snapshot's load, as on Windows (erng_frame) */
+    if(!erng_frame(&tick,&stream)) {++erng_native;return 0;}
     uint64_t runtime=0,key=0;unsigned klass=WORLD_KEY_NONE;
     if(ship && read_local((const unsigned char*)ship+8,&runtime,8) && runtime) key=world_identity_key(runtime,&klass);
     if(!key) {
         void *vt=NULL;const lxw_class *c=ship && read_local(ship,&vt,8)?lxw_class_of((uintptr_t)vt):NULL;
-        if(c) {*state=lockstep_seed(ERNG_DOMAIN,stats.issued,0,c->windows_rva,1,WORLD_KEY_NONE);++erng_fallback;return 1;}
+        if(c) {*state=lockstep_seed(ERNG_DOMAIN,tick,0,c->windows_rva,1+stream,WORLD_KEY_NONE);++erng_fallback;return 1;}
         ++erng_unmapped;return 0;
     }
-    *state=lockstep_seed(ERNG_DOMAIN,stats.issued,key,0,0,klass);++erng_keyed;
+    *state=lockstep_seed(ERNG_DOMAIN,tick,key,stream,0,klass);++erng_keyed;
     return 1;
 }
 /* Called from the stub: the stepped state the inline code goes on with. */

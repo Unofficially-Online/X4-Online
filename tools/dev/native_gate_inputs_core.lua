@@ -30,7 +30,7 @@ K.PRIORITY={'join','stock','ui','ffi','pilot','orders','hits','octree','hybrid'}
                                                               -- calls follow the UI events; octree and the hybrid record, which
                                                               -- shrinks to its budget, take the room left)
 K.FFI_VERSION=1
-K.STOCK_VERSION=3
+K.STOCK_VERSION=4
 K.UI_VERSION=1
 K.HYBRID_VERSION=1
 K.JOIN_VERSION=1

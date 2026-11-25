@@ -638,6 +638,22 @@ class MissionsPerPlayerProbeTests(ProbeTests):
                 self.assertEqual(calls[at:at + len(expected)], expected)
                 self.assertTrue(any(f'MPP_STORY tick={start + 60} slot=2 why=window signalled cues={len(expected) // 3 - 1}' in line
                                     for line in c.values('logs')))
+        # Slots 2 and 3 on one start (24 Nov): each plays its own copy of the start's story and of the plot after it
+        # (native_gate_session_start.py build_spec), begun in its own scope, on every client at the same tick. (This
+        # harness is a two-client wire; the begin reads the slots from the story line, not from the clients.)
+        three = dict(cfg, native_gate_story={
+            2: [False, 'GS_Terran1_P2.Start', 'Story_Yaki_P2.Start'], 3: [False, 'GS_Terran1_P3.Start', 'Story_Yaki_P3.Start']})
+        clients = [self.client(k, prelude=story, **three) for k in (1, 2)]
+        run(clients, 1, start + 62)
+        for c in clients:
+            self.assertEqual(c.errors(), [], c.values('logs')[-3:])
+            calls = [call for call in c.values('story_calls') if not call.startswith('bypass')]
+            for k in (2, 3):
+                at = calls.index(f'scope:{k}')
+                self.assertEqual(calls[at:at + 10], [f'scope:{k}', f'generate:{k}', f'story:{k}:GS_Terran1_P{k}.Start',
+                                                     f'signal:x4lan_story:{100 + k}', 'story:0', f'story:{k}:Story_Yaki_P{k}.Start',
+                                                     f'signal:x4lan_story:{200 + k}', 'story:0', 'generate:0', f'unscope:{k}'])
+                self.assertTrue(any(f'MPP_STORY tick={start + 60} slot={k} why=window signalled cues=2' in line for line in c.values('logs')))
         # A slot whose scope cannot be entered: nothing is signalled, the row says so.
         clients = [self.client(k, prelude=story + 'STORY_NO_SCOPE=true', **cfg) for k in (1, 2)]
         run(clients, 1, start + 60)

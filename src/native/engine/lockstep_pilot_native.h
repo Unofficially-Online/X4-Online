@@ -314,6 +314,7 @@ static unsigned char pnat_assist_of(void *controller) {
 }
 /* (5) Cursor and direct mouse steering with flight control for its body. */
 static void ophud_restore(void);   /* lockstep_own_predict_hud.h */
+static void othr_restore(void);    /* lockstep_own_throttle.h */
 static void paim_restore(void);    /* lockstep_pilot_aim.h */
 static void pstk_cursor(void *controller);
 static void pnat_cursor(void *controller) {
@@ -413,6 +414,7 @@ static const char *pdeath_why;
 static int pfbody_armed;static const char *pfbody_why;static int pfbody_pass(uint64_t tick,int phase);static void pfbody_restore(void); /* lockstep_pilot_foot_body.h */
 static int pfbody_guard(uint64_t tick);
 static int pfslot_armed;static const char *pfslot_why;static int pfslot_pass(uint64_t tick);static void pfslot_frame(void);static void pfslot_restore(void); /* lockstep_pilot_foot_slots.h */
+static int ptele_armed;static const char *ptele_why;static int ptele_pass(uint64_t tick);static void ptele_restore(void); /* lockstep_pilot_teleport.h */
 static const char *pslot_why;static int pres_pass(uint64_t tick);static void pres_restore(void);static const char *pres_why;static int vps_pins(void);static int vpl_pins(void);
 static void pnat_dispatch_action(unsigned char *map,int id) {
     InterlockedIncrement64(&pnat_dispatched[PNAT_ACTION]);
@@ -902,6 +904,9 @@ static int pnat_pass(uint64_t tick,unsigned char *controller,pilot_refresh_fn re
     /* Slots 2..N: players built at take-2, seated at take-1, checked, released at stop+1. Their bodies in the tree
      * (lockstep_pilot_foot_body.h): off before the release, on after the seats. */
     if(pnat_mode==PNAT_MODE_STOCK && pfbody_armed && !pfbody_pass(tick,0)) return pnat_fail(pfbody_why);
+    /* X4's move of a slot's player on foot (lockstep_pilot_teleport.h): X4 connected P_k or gave it a camera stops here (222),
+     * before the walking checks would call it slot_moved; its entry back at stop+1 before the release. */
+    if(pnat_mode==PNAT_MODE_STOCK && ptele_armed && !ptele_pass(tick)) return pnat_fail(ptele_why);
     /* Slots 2..N on foot (lockstep_pilot_foot_slots.h): the walking update's call site from take, back at stop+1 before the release. */
     if(pnat_mode==PNAT_MODE_STOCK && pfslot_armed && !pfslot_pass(tick)) return pnat_fail(pfslot_why);
     if(pnat_mode==PNAT_MODE_STOCK && (pstk_slot_mask&~1u) && !pslot_pass(tick)) return pnat_fail(pslot_why);
@@ -964,10 +969,12 @@ static void pnat_restore(void) {
     if(!pnat_armed) return;
     uirep_restore(); /* first: its adapter needs the seats */
     ophud_restore(); /* the HUD's display scope and its UI entry, before the presentation's */
+    othr_restore();  /* the own throttle's join with own_predict */
     paim_restore();  /* the Mindless vtable's aim entry */
     pres_restore();  /* the presentation next: its scope needs the seats */
     pfslot_restore();/* the walking update's call site back */
     pfbody_restore();/* the slots' bodies off their rooms before the seats go */
+    ptele_restore(); /* a P_k that X4 connected: the cameras back, taken off by X4's own call (never NULLed behind X4) */
     pslot_restore(); /* slots 2..N next: their seats use the authority patch */
     if(pdeath_armed) pdeath_restore();
     areaj_restore();   /* lockstep_area_jobs.h: its call site sits on the same near page */

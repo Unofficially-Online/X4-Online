@@ -7,6 +7,8 @@
 static unsigned char *tmo_cue(unsigned char *at,uintptr_t vt,uint64_t id,const void *parent) {
     memset(at,0,0x200);memcpy(at,&vt,8);memcpy(at+MPP_CUE_ID,&id,8);memcpy(at+MPP_CUE_PARENT,&parent,8);return at;
 }
+static uint64_t tmo_active_own_id;static unsigned tmo_active_own_slot=2;   /* the one mission (and slot) the active mission test lets keep it from its guidance */
+static int tmo_active_own(unsigned k,uint64_t id) {return k==tmo_active_own_slot && id==tmo_active_own_id;}
 static unsigned char *test_mpp_live;static uint64_t test_mpp_live_id;
 static void *test_mpp_find(void *map,uint64_t id,unsigned flags) {(void)map;(void)flags;return id==test_mpp_live_id?test_mpp_live:NULL;}
 /* The mission's faction (C3): slot k's faction while its outermost mission scope is open, X4's own again behind it. */
@@ -134,10 +136,48 @@ static void test_mission_owners(void) {
         mpp_active_leave(2,0);assert(mpp_active[2]==0x53 && mpp_active_shown_changed==1 && TMO_ACTIVE(0x52,0));
         /* ...but a change made while X4's Guidance script ran in the scope (client 2's own Plot course) is kept on this
          * client: slot 2's own guidance, as slot 1's is the canonical one on client 1 alone. */
-        {   const LONG64 md_was=script_rng_guidance_frames;mpp_active_guidance=0;
+        {   const LONG64 md_was=script_rng_guidance_frames;mpp_active_guidance=mpp_active_guidance_refused=0;
+            tmo_active_own_id=0x52;mpp_active_own_test=tmo_active_own;   /* 0x52 stands for client 2's own course here */
             mpp_active_enter(2);v=0x52;memcpy(manager+MPP_MGR_ACTIVE,&v,8);script_rng_guidance_frames++;
             mpp_active_leave(2,0);assert(mpp_active[2]==0x52 && mpp_active_guidance==1 && TMO_ACTIVE(0x52,0));
             mpp_active_enter(2);assert(TMO_ACTIVE(0x52,0));mpp_active_leave(2,0);assert(mpp_active[2]==0x52 && mpp_active_guidance==1);
+            /* ...but not what X4's manager made the active one when that course ended (the two-PC game of 24 Nov: player 1's
+             * story): slot 2 has none, and the canonical one stays as it was. */
+            {   const uintptr_t range[2]={(uintptr_t)list,(uintptr_t)list+UIMIS_MISSION_SIZE};uintptr_t was[2];   /* 0x52 gone */
+                memcpy(was,manager+UIMIS_MISSIONS,16);memcpy(manager+UIMIS_MISSIONS,range,16);
+                memcpy(list,&(uint64_t){0x53},8);
+                /* the scope is open on slot 2's course 0x52; X4 ended it and made 0x53, the canonical one, the active one */
+                mpp_active[2]=0x52;mpp_active_open=2;mpp_active_saved=0x53;mpp_active_guidance_at=script_rng_guidance_frames;
+                {uint64_t one=0x53;memcpy(manager+MPP_MGR_ACTIVE,&one,8);one=0;memcpy(manager+MPP_MGR_ACTIVE_INDEX,&one,8);}
+                script_rng_guidance_frames++;
+                mpp_active_leave(2,0);assert(!mpp_active[2] && mpp_active_guidance==1 && mpp_active_guidance_refused==1 && TMO_ACTIVE(0x53,0));
+                /* While slot 2's own mission is still there, it stays slot 2's. */
+                memcpy(manager+UIMIS_MISSIONS,was,16);memcpy(list,&(uint64_t){0x52},8);tmo_active_own_id=0x99;
+                mpp_active[2]=0x53;mpp_active_enter(2);assert(TMO_ACTIVE(0x53,1));
+                v=0x52;memcpy(manager+MPP_MGR_ACTIVE,&v,8);script_rng_guidance_frames++;
+                mpp_active_leave(2,0);assert(mpp_active[2]==0x53 && mpp_active_guidance_refused==2 && TMO_ACTIVE(0x53,1));
+                /* None is always slot 2's own (its course removed, no other mission made active). */
+                mpp_active_enter(2);v=0;memcpy(manager+MPP_MGR_ACTIVE,&v,8);script_rng_guidance_frames++;
+                mpp_active_leave(2,0);assert(!mpp_active[2] && mpp_active_guidance==2 && mpp_active_guidance_refused==2);
+                {char text[1024];assert(mpp_status(text,sizeof(text))>0 && strstr(text," guidance=2/2 "));}
+                /* The same for slots 3 and 8 (every player 2..N): its own course kept, another player's mission refused
+                 * when the course ends. */
+                assert(TMO_ACTIVE(0x53,1));
+                for(unsigned k=3;k<=PILOT_SLOTS;k+=PILOT_SLOTS-3) {
+                    const LONG64 kept_was=mpp_active_guidance,refused_was=mpp_active_guidance_refused;
+                    tmo_active_own_slot=k;tmo_active_own_id=0x52;mpp_active[k]=0;
+                    mpp_active_enter(k);assert(mpp_active_open==k && TMO_ACTIVE(0,0));
+                    v=0x52;memcpy(manager+MPP_MGR_ACTIVE,&v,8);script_rng_guidance_frames++;
+                    mpp_active_leave(k,0);assert(mpp_active[k]==0x52 && mpp_active_guidance==kept_was+1 && TMO_ACTIVE(0x53,1));
+                    {const uintptr_t only[2]={(uintptr_t)list+UIMIS_MISSION_SIZE,(uintptr_t)list+2*UIMIS_MISSION_SIZE};memcpy(manager+UIMIS_MISSIONS,only,16);}
+                    mpp_active_open=k;mpp_active_saved=0x53;mpp_active_guidance_at=script_rng_guidance_frames;
+                    v=0x53;memcpy(manager+MPP_MGR_ACTIVE,&v,8);v=0;memcpy(manager+MPP_MGR_ACTIVE_INDEX,&v,8);script_rng_guidance_frames++;
+                    mpp_active_leave(k,0);assert(!mpp_active[k] && mpp_active_guidance_refused==refused_was+1 && TMO_ACTIVE(0x53,0));
+                    memcpy(manager+UIMIS_MISSIONS,was,16);v=1;memcpy(manager+MPP_MGR_ACTIVE_INDEX,&v,8);   /* 0x53's index again */
+                }
+                tmo_active_own_slot=2;
+                v=0x52;memcpy(manager+MPP_MGR_ACTIVE,&v,8);v=0;memcpy(manager+MPP_MGR_ACTIVE_INDEX,&v,8);}
+            mpp_active_own_test=NULL;mpp_active_guidance=mpp_active_guidance_refused=0;
             mpp_active[2]=0x53;script_rng_guidance_frames=md_was;}
         /* Slot 2's active mission ended outside its scope: none at its next scope, counted. */
         {uintptr_t range[2]={(uintptr_t)list,(uintptr_t)list+UIMIS_MISSION_SIZE};memcpy(manager+UIMIS_MISSIONS,range,16);}
@@ -223,6 +263,23 @@ static void test_mission_owners(void) {
         memcpy(image+UIREP_MAP,&kept,8);pnat_base=base;uirep_fn=fns_was;
         mpp_armed=0;mpp_count=0;mpp_claims=mpp_pruned=0;
     }
+    /* What a client's guidance may leave as its slot's active mission, on X4's cues (the stand-ins of the UI missions test:
+     * IDs 0x9001..0x9003 are cues of the named modules, 0x9100 no cue): none; a Guidance mission nobody owns (the client's
+     * own course); a mission the slot owns. Not a mission nobody owns of another script (player 1's start story), not
+     * another slot's, not an ID that is no cue or unknown. */
+    {   const uirep_fns fns_was=uirep_fn;unsigned char *const base=pnat_base;uint64_t kept=0;unsigned char *const token_was=test_uimis_map_token;
+        static unsigned char token[16];
+        test_uimis_make_cue(0,"Guidance");test_uimis_make_cue(1,"GS_Terran1");test_uimis_make_cue(2,"Guidance");
+        for(unsigned i=0;i<3;i++) {const uint64_t id=0x9001u+i;memcpy(test_uimis_cues[i]+MPP_CUE_ID,&id,8);}
+        test_uimis_map_token=token;uirep_fn.find=test_uimis_find;
+        pnat_base=image;memcpy(&kept,image+UIREP_MAP,8);{void *map=token;memcpy(image+UIREP_MAP,&map,8);}
+        mpp_armed=1;mpp_count=0;assert(!mpp_first_count && !mpp_active_own_test);
+        assert(mpp_active_own(2,0) && mpp_active_own(2,0x9001) && !mpp_active_own(2,0x9002) && !mpp_active_own(2,0x9100) && !mpp_active_own(2,0x5555));
+        assert(mpp_claim_id(2,0x9002) && mpp_claim_id(3,0x9003));
+        assert(mpp_active_own(2,0x9002) && !mpp_active_own(3,0x9002) && !mpp_active_own(2,0x9003) && mpp_active_own(3,0x9003));
+        memcpy(image+UIREP_MAP,&kept,8);pnat_base=base;uirep_fn=fns_was;test_uimis_map_token=token_was;
+        mpp_armed=0;mpp_count=0;mpp_claims=0;
+    }
     /* The join state: the table and the active missions as one line, a joiner's restore in the same order (the same hash
      * and owners); refusals. */
     {   static char line[MPP_OWNERS*24+256];mpp_armed=1;mpp_count=0;
@@ -269,6 +326,12 @@ static void test_mission_owners(void) {
         assert(mpp_slot_of(cue)==1 && !mpp_slot_of(foreign) && !mpp_script_is_first(foreign));
         /* a script named after it was seen is asked again */
         assert(mpp_first_add("Another") && mpp_slot_of(foreign)==1);
+        /* a script named for another slot (a continued session's plot copy): its cues are that slot's, one slot per name */
+        mpp_first_count=0;mpp_first_kept=0;memset(mpp_first_scripts,0,sizeof(mpp_first_scripts));memset(mpp_first_not,0,sizeof(mpp_first_not));
+        assert(mpp_first_add_slot("Plot_Script",2) && mpp_first_add_slot("Plot_Script",2) && !mpp_first_add_slot("Plot_Script",1) &&
+               !mpp_first_add_slot("X",0) && !mpp_first_add_slot("X",PILOT_SLOTS+1) && mpp_first_count==1);
+        assert(mpp_script_is_first(cue)==2 && mpp_slot_of(cue)==2 && mpp_slot_of(instance)==2 && !mpp_slot_of(foreign));
+        assert(mpp_slot_of(cue)==2 && mpp_first_scripts[0]==(uintptr_t)script && mpp_first_script_slot[0]==2);   /* remembered with its slot */
         mpp_first_count=1;memset(mpp_first_scripts,0,sizeof(mpp_first_scripts));memset(mpp_first_not,0,sizeof(mpp_first_not));
         mpp_count=owners;
         for(unsigned i=0;i<MPP_FIRST-1;i++) {char more[16];snprintf(more,sizeof(more),"S%u",i);assert(mpp_first_add(more));}

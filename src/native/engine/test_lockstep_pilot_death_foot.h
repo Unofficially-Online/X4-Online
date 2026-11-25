@@ -12,7 +12,8 @@
  *     it, the pass makes it a loss and no death (no suit, deaths unchanged, the walk ended, the seat's pointers back,
  *     stranded); the respawn seats it in a new ship and it gets up again from the FPC it kept;
  *   - slot 1 walking loses its ship: no death, it keeps walking; X4 killing slot 1 on foot: stop 163 player_killed;
- *   - slot 1 leaving (X4's stand-up pending) when its ship dies with it aboard: a death, the GET_UP void. */
+ *   - slot 1 leaving (X4's stand-up pending) when its ship dies with it aboard: a death, the GET_UP void;
+ *   - slot 2 in its suit goes into another ship (one just claimed): seated there; which ships count, for slots 2, 3, 8. */
 static unsigned test_pdf_spare_calls;
 static unsigned char test_pdf_spare(void *self) {(void)self;++test_pdf_spare_calls;return 0;}
 static void test_pdf_frame(uint64_t tick,unsigned count,unsigned id) {
@@ -25,6 +26,88 @@ static void *test_pdf_fade(double a,double b,double c,double d,uint64_t e,uint64
 }
 static unsigned test_pdf_entered;
 static void test_pdf_enter(void *player,void *suit,void *room,void *fourth,unsigned char fifth) {(void)player;(void)suit;(void)room;(void)fourth;(void)fifth;++test_pdf_entered;}
+/* pvehk_aboard's answer in the pass's boarding case: none, or the ship the test's one ship object plays. */
+static unsigned char test_pdf_room[0x90],*test_pdf_aboard_ship;static unsigned test_pdf_aboard_asked;
+static void *test_pdf_vt[0x11e8/8+1];   /* a component vtable: IsOfClass at +0x11e8 (test_pdf_isa) */
+static unsigned char *test_pdf_aboard(unsigned k,unsigned char *room) {assert(k==2 && room==test_pdf_room);++test_pdf_aboard_asked;return test_pdf_aboard_ship;}
+/* X4's connection lookup (0x4a76a0) as pvehk_entry_target calls it: the slot asked, X4's flags byte and filter; it answers
+ * the found connection in out[1] (out[0] the slot's entry) for the suit whose connections it was given. */
+static unsigned char *test_pdf_connections,*test_pdf_connection;static unsigned test_pdf_finds;
+static void *test_pdf_find(uint64_t *out,void *connections,unsigned slot,unsigned char flags,void *filter) {
+    assert(slot==PVEHK_CONNECTION_SLOT && flags==pnat_base[PVEHK_CONNECTION_FLAGS] && filter==pnat_base+PVEHK_CONNECTION_FILTER);
+    ++test_pdf_finds;out[0]=out[1]=0;
+    if(connections==test_pdf_connections && test_pdf_connection) {out[0]=1;out[1]=(uint64_t)(uintptr_t)test_pdf_connection;}
+    return out;
+}
+/* Which ship X4's room names (pvehk_aboard_of, pveh_ship_from) for suited slots 2, 3 and 8: components whose IsOfClass
+ * (vtable +0x11e8) says ship for the ship class where byte +0x80 is 1; +8 the ID, +0x70 the parent. */
+static unsigned char test_pdf_isa(void *self,int cls) {
+    return (cls==PVEH_SHIP_CLASS && ((unsigned char *)self)[0x80]==1) || (cls==PVEHK_ENTRY_CLASS && ((unsigned char *)self)[0x81]==1);
+}
+static void test_pdf_component(unsigned char *c,void **vtable,uint64_t id,void *parent,unsigned char ship) {
+    memset(c,0,0x90);memcpy(c,&vtable,8);memcpy(c+8,&id,8);memcpy(c+0x70,&parent,8);c[0x80]=ship;
+}
+/* The slot's faction owns the claimed ship and the ship it left, not the NPC's (pvehk_owner_test). */
+static unsigned char *test_pdf_npc;
+static int test_pdf_owned(unsigned char *ship) {return ship!=test_pdf_npc;}
+static void test_pvehk_aboard_slots(void) {
+    static void *vtable[0x11e8/8+1];static _Alignas(16) unsigned char claimed[0x90],deck[0x90],room[0x90],home[0x90],ship1[0x90],ship4[0x90],
+        cabin1[0x90],suits[9][0x90],player1[0x90],loose[0x90];
+    static pslot_slot kept[PILOT_SLOTS+1];static pilot_slot kept_pilot[PILOT_SLOTS];
+    const unsigned count=pilot_slot_count;unsigned char *const p1_was=pslot_p1;
+    _Static_assert(sizeof(kept)==sizeof(pslots) && sizeof(kept_pilot)==sizeof(pilot_slots),"the slot tables as kept");
+    memcpy(kept,pslots,sizeof(kept));memcpy(kept_pilot,pilot_slots,sizeof(kept_pilot));
+    vtable[0x11e8/8]=(void*)test_pdf_isa;
+    test_pdf_component(claimed,vtable,0x3001,NULL,1);test_pdf_component(deck,vtable,0x3002,claimed,0);test_pdf_component(room,vtable,0x3003,deck,0);
+    test_pdf_component(home,vtable,0x2001,NULL,1);test_pdf_component(ship1,vtable,0x1001,NULL,1);test_pdf_component(ship4,vtable,0x4001,NULL,1);
+    test_pdf_component(cabin1,vtable,0x5001,NULL,1);test_pdf_component(player1,vtable,0x5002,cabin1,0);test_pdf_component(loose,vtable,0x3004,NULL,0);
+    /* the room's ship: its first ancestor of the ship class (a ship is its own); a component under none: none */
+    assert(pveh_ship_from(room)==claimed && pveh_ship_from(claimed)==claimed && !pveh_ship_from(NULL) && !pveh_ship_from(loose));
+    memset(pslots,0,sizeof(pslots));memset(pilot_slots,0,sizeof(pilot_slots));pilot_slot_count=8;pslot_p1=player1;
+    pilot_slots[0].resolved=1;pilot_slots[0].runtime=0x1001;                         /* slot 1 seated in ship1 */
+    pslots[4].ship=ship4;pilot_slots[3].resolved=1;pilot_slots[3].runtime=0x4001;   /* slot 4 seated in ship4 */
+    const unsigned suited[3]={2,3,8};
+    for(unsigned i=0;i<3;i++) {
+        const unsigned k=suited[i];
+        test_pdf_component(suits[k],vtable,0x6000+k,claimed,1);                     /* each suit docked at the claimed ship */
+        pslots[k].ship=suits[k];pilot_slots[k-1].resolved=1;pilot_slots[k-1].runtime=0x6000+k;
+    }
+    pvehk_aboard_test=NULL;
+    static _Alignas(16) unsigned char npc[0x90];test_pdf_component(npc,vtable,0x7001,NULL,1);test_pdf_npc=npc;pvehk_owner_test=test_pdf_owned;
+    for(unsigned i=0;i<3;i++) {
+        const unsigned k=suited[i],other=suited[(i+1)%3];
+        assert(!pvehk_aboard_of(k,npc,home));                                        /* an NPC's ship (rk9: X4 let a suit in): no seat */
+        assert(pvehk_aboard_of(k,claimed,home)==claimed);                            /* the ship just claimed */
+        assert(pvehk_aboard_of(k,claimed,NULL)==claimed);                            /* ...also with the ship it left gone */
+        assert(!pvehk_aboard_of(k,home,home) && !pvehk_aboard_of(k,NULL,home));      /* the ship it left: home's way; none */
+        assert(!pvehk_aboard_of(k,suits[k],home) && !pvehk_aboard_of(k,suits[other],home));   /* its suit, another slot's suit */
+        assert(!pvehk_aboard_of(k,ship1,home) && !pvehk_aboard_of(k,ship4,home));    /* slot 1's and slot 4's ships */
+        assert(!pvehk_aboard_of(k,cabin1,home));                                     /* where slot 1's player is */
+        assert(pvehk_aboard(k,room,home)==claimed && !pvehk_aboard(k,loose,home));
+        assert(!pvehk_aboard(k,NULL,home));   /* no room and no target: home's way */
+    }
+    /* X4's own target when its entry names no room (pvehk_entry_target): the suit's connection 14, its component, from
+     * that component's parent on the first ancestor of class 0x6f (here: the claimed ship's deck, byte +0x81); a suit
+     * without connections, a lookup that finds none, no such ancestor: none; without the pinned lookup: none. */
+    {   static _Alignas(16) unsigned char connections[0x20],connection[0x30],holder[0x20],dockcomp[0x90],suit[PVEHK_CONNECTIONS+8];
+        unsigned char *p;const pvehk_find_fn find_was=pvehk_find;
+        test_pdf_component(dockcomp,vtable,0x3005,deck,0);test_pdf_component(suit,vtable,0x6009,NULL,1);
+        p=connections;memcpy(suit+PVEHK_CONNECTIONS,&p,8);
+        p=holder;memcpy(connection+0x20,&p,8);p=dockcomp;memcpy(holder+0x18,&p,8);
+        deck[0x81]=1;   /* the deck answers class 0x6f */
+        pvehk_find=test_pdf_find;test_pdf_connections=connections;test_pdf_connection=connection;test_pdf_finds=0;
+        assert(pvehk_entry_target(suit)==deck && test_pdf_finds==1);
+        assert(pvehk_aboard(2,pvehk_entry_target(suit),home)==claimed && pvehk_aboard(3,pvehk_entry_target(suit),home)==claimed);
+        test_pdf_connection=NULL;assert(!pvehk_entry_target(suit));                                 /* none found */
+        test_pdf_connection=connection;deck[0x81]=0;assert(!pvehk_entry_target(suit));               /* no 0x6f */
+        deck[0x81]=1;memset(suit+PVEHK_CONNECTIONS,0,8);assert(!pvehk_entry_target(suit));           /* no connections */
+        p=connections;memcpy(suit+PVEHK_CONNECTIONS,&p,8);pvehk_find=NULL;assert(!pvehk_entry_target(suit) && !pvehk_entry_target(NULL));
+        pvehk_find=find_was;deck[0x81]=0;test_pdf_connections=test_pdf_connection=NULL;
+    }
+    {uint64_t zero=0;memcpy(claimed+8,&zero,8);assert(!pvehk_aboard_of(2,claimed,home) && !pvehk_aboard_of(3,claimed,home));}   /* no ID yet */
+    pvehk_owner_test=NULL;test_pdf_npc=NULL;
+    memcpy(pslots,kept,sizeof(kept));memcpy(pilot_slots,kept_pilot,sizeof(kept_pilot));pilot_slot_count=count;pslot_p1=p1_was;
+}
 static void *test_pdf_zone_live;static unsigned test_pdf_zone_calls;   /* 0xd9b250 as the hook's original: the zone it would read */
 static void test_pdf_zone_original(void *controller) {(void)controller;memcpy(&test_pdf_zone_live,pnat_base+PVEHK_ZONE_POINTER,8);++test_pdf_zone_calls;}
 static struct {void *player;unsigned vtable;uint64_t was,is;} test_pdf_posts[4];static unsigned test_pdf_post_n;   /* pvehk_event_post */
@@ -272,10 +355,12 @@ static void test_pilot_death_foot_block(unsigned char *region,unsigned char *inp
         *(void**)(test_pslot_ship2+0x70)=parent_was;test_pdeath_ids[2]=0;memset(&pstk_build,0,sizeof(pstk_build));
         /* again; a key within range is no way home any more (the suit not docked anywhere: still out), the docked suit is */
         test_pdf_frame(149,1,PFOOT_GET_UP);assert(pslot_replay(149) && f->walking);
-        /* walking, its dock key is the way out (the airlock without its console); GET_UP is not; a second key is consumed */
+        /* walking, its dock keys are X4's own player's on foot (lockstep_pilot_teleport.h; not armed here: nothing), never
+         * the airlock any more; GET_UP is not one; the way out is the transporter menu's spacesuit (here: asked directly) */
         assert(!pvehk_home_key(2,PFOOT_GET_UP) && !pvehk_home_key(2,0x7b) && !d2->out);
-        test_pdf_frame(149,1,0xd3);assert(pslot_replay(149) && d2->out==1 && d2->suit_tick==149+PDEATH_SUIT_LAG && f->walking && test_pdf_events("out:2"));
-        assert(pvehk_home_key(2,0xaf) && d2->out==1 && test_pdf_events(NULL));
+        test_pdf_frame(149,1,0xd3);assert(pslot_replay(149) && !d2->out && f->walking && test_pdf_events(NULL));
+        assert(pvehk_home_key(2,0xaf) && !d2->out && test_pdf_events(NULL));
+        assert(pvehk_ask(2,149) && d2->out==1 && d2->suit_tick==149+PDEATH_SUIT_LAG && f->walking && test_pdf_events("out:2"));
         *(uint64_t*)(test_pslot_ship2+8)=0x2007;test_pdeath_ids[2]=0x2007;
         /* this suit gets the weapons slot 1's player keeps for a suit (P_2 keeps none): two primary groups (one macro finds
          * no place), no secondary; the active primary group 1, no active secondary */
@@ -310,16 +395,21 @@ static void test_pilot_death_foot_block(unsigned char *region,unsigned char *inp
         *(void**)(test_pslot_ship2+0x70)=NULL;*(uint64_t*)(test_pslot_ship2+8)=0x2005;
         assert(pvehk_range(2,120.0) && pvehk_home_key(2,PFOOT_GET_UP) && !d2->dock_tick && !pvehk_home_key(2,0xd3) && d2->dock_tick &&
                pdeath_pass(149+PDEATH_SUIT_LAG+1,controller) && d2->out==2 && test_pdf_events(NULL));
-        /* X4's own entry (0x710390) of the slot's player is noted, never run; of any other player it is X4's. The noted
-         * arrival is the way home at the next pass (no room named, or a room of the ship it left). */
+        /* Without the board's way (lockstep_pilot_teleport.h not armed here): X4's own entry (0x710390) of the slot's player
+         * is noted, never run; of any other player it is X4's. A noted arrival naming no room is home only where the suit is
+         * docked under the ship it left (crash rk9-suit: an arrival at an NPC capital ship sat the slot in its own fighter
+         * stored there, stop 161); a room of the ship it left is home. */
         {   const pvehk_enter_fn was=pvehk_enter_original;const LONG64 enters=pvehk_enters;
             test_pdf_entered=0;pvehk_enter_original=test_pdf_enter;
             pvehk_enter(test_pnat_ship,NULL,NULL,NULL,0);assert(test_pdf_entered==1 && !d2->arrive && pvehk_enters==enters);
             pvehk_enter(pslots[2].player,NULL,NULL,NULL,0);assert(test_pdf_entered==1 && d2->arrive==1 && pvehk_enters==enters+1);
             pvehk_enter_original=was;
         }
-        assert(pdeath_pass(149+PDEATH_SUIT_LAG+2,controller) && !d2->out && !d2->dock_tick && !d2->arrive && s->seated &&
+        assert(pdeath_pass(149+PDEATH_SUIT_LAG+2,controller) && d2->out==2 && !d2->arrive && test_pdf_events(NULL));   /* the suit elsewhere */
+        *(void**)(test_pslot_ship2+0x70)=test_pslot_ship2;   /* the suit docked under the ship it left (the same test object) */
+        assert(pdeath_pass(149+PDEATH_SUIT_LAG+3,controller) && !d2->out && !d2->dock_tick && !d2->arrive && s->seated &&
                s->runtime==0x2005 && test_pdeath_kills==kills+2 && test_pdf_events("home:2"));
+        *(void**)(test_pslot_ship2+0x70)=NULL;
         {char row[1024];assert(pdeath_status(row,sizeof(row)) && strstr(row," enter=") && strstr(row," fade="));}
         /* the fade of an exit or an entry: shown where the action runs for this client's own slot (outside a scope:
          * slot 1), left out elsewhere with the same answer */
@@ -401,6 +491,48 @@ static void test_pilot_death_foot_block(unsigned char *region,unsigned char *inp
         /* an asked exit whose suit never came: nothing happens */
         test_pdf_frame(159,1,PFOOT_GET_UP);assert(pslot_replay(159) && f->walking);
         assert(pvehk_ask(2,160) && test_pdf_events("out:2") && pdeath_pass(160+PDEATH_SUIT_LAG,controller) && !d2->out && f->walking && test_pdf_events("noout:2"));
+        /* Out through the airlock again, and into another ship from the suit (one just claimed with the suit's repair
+         * laser): X4's own entry names a room there. A room in no ship it may go into: still in its suit, counted. In the
+         * claimed ship (ID 0x2009; the test's one ship object plays it, as it plays the suit and the ship left): the suit
+         * killed, seated there, the slot's runtime its ID, event aboard, nobody home any more. */
+        test_pvehk_aboard_slots();
+        {   const unsigned kills2=test_pdeath_kills;const LONG64 aboards=pvehk_aboards,elsewhere=pvehk_enters_else;const uint64_t homes=pvehk_homes;
+            unsigned char *(*const aboard_was)(unsigned,unsigned char *)=pvehk_aboard_test;char want[96];
+            assert(pvehk_ask(2,166) && d2->out==1 && d2->suit_tick==166+PDEATH_SUIT_LAG && test_pdf_events("out:2"));   /* the spacesuit (the dock key is no airlock now) */
+            *(uint64_t*)(test_pslot_ship2+8)=0x2008;test_pdeath_ids[2]=0x2008;
+            assert(pdeath_suit_ship(2,0x2008) && pdeath_pass(166+PDEATH_SUIT_LAG,controller) && d2->out==2 && d2->home==0x2005 && s->runtime==0x2008 &&
+                   test_pdf_events("suited:2"));
+            *(void**)(test_pslot_ship2+0x70)=NULL;memset(test_pdf_room,0,sizeof(test_pdf_room));
+            pvehk_aboard_test=test_pdf_aboard;test_pdf_aboard_ship=NULL;test_pdf_aboard_asked=0;
+            pvehk_enter(pslots[2].player,NULL,test_pdf_room,NULL,0);
+            assert(pdeath_pass(172,controller) && d2->out==2 && s->runtime==0x2008 && test_pdf_aboard_asked==1 && pvehk_enters_else==elsewhere+1 &&
+                   pvehk_aboards==aboards && test_pdf_events(NULL));
+            assert(pdeath_pass(173,controller) && d2->out==2 && test_pdf_aboard_asked==1);   /* asked once per entry */
+            /* X4's entry once the suit has its dock names no room (0x731560): X4's own target stands for it, noted at
+             * the call (the suit's connection 14, its component's parent: here the room, of class 0x6f) */
+            test_pdf_aboard_ship=test_pslot_ship2;
+            {   static _Alignas(16) unsigned char connections[0x20],connection[0x30],holder[0x20],component[0x90];
+                unsigned char *p,saved[8];const pvehk_find_fn find_was=pvehk_find;void *v=test_pdf_vt;
+                test_pdf_vt[0x11e8/8]=(void*)test_pdf_isa;
+                memset(test_pdf_room,0,sizeof(test_pdf_room));memcpy(test_pdf_room,&v,8);test_pdf_room[0x81]=1;
+                p=test_pdf_room;memcpy(component+0x70,&p,8);p=component;memcpy(holder+0x18,&p,8);p=holder;memcpy(connection+0x20,&p,8);
+                memcpy(saved,test_pslot_ship2+PVEHK_CONNECTIONS,8);p=connections;memcpy(test_pslot_ship2+PVEHK_CONNECTIONS,&p,8);
+                pvehk_find=test_pdf_find;test_pdf_connections=connections;test_pdf_connection=connection;test_pdf_finds=0;
+                pvehk_enter(pslots[2].player,test_pslot_ship2,NULL,NULL,0);
+                assert(d2->arrive && d2->arrive_room==test_pdf_room && test_pdf_finds==1);
+                pvehk_find=find_was;memcpy(test_pslot_ship2+PVEHK_CONNECTIONS,saved,8);test_pdf_connections=test_pdf_connection=NULL;
+            }
+            *(uint64_t*)(test_pslot_ship2+8)=0x2009;test_pdeath_ids[2]=0x2009;
+            assert(pdeath_pass(174,controller) && test_pdf_aboard_asked==2 && !d2->out && !d2->home && !d2->arrive && s->seated && s->runtime==0x2009 && test_pdeath_kills==kills2+1 &&
+                   pvehk_aboards==aboards+1 && pvehk_enters_else==elsewhere+1 && pvehk_homes==homes && !pilot_slots[1].dead && test_pdf_events("aboard:2"));
+            {char row[1024];snprintf(want,sizeof(want)," enter=%d/%lld/%lld/%lld/",pvehk_enter_installed,(long long)pvehk_enters,(long long)pvehk_enters_else,
+                                     (long long)pvehk_aboards);
+             assert(pdeath_status(row,sizeof(row)) && strstr(row,want) && !strstr(row,"/out"));}
+            assert(pdeath_pass(175,controller) && s->runtime==0x2009 && test_pdf_events(NULL));   /* seated there from now on */
+            memset(test_pdf_room,0,sizeof(test_pdf_room));
+            pvehk_aboard_test=aboard_was;test_pdf_aboard_ship=NULL;*(void**)(test_pslot_ship2+0x70)=parent_was;
+            InterlockedExchange64(&pvehk_aboards,aboards);InterlockedExchange64(&pvehk_enters_else,elsewhere);
+        }
     }
     /* 150: slot 1 walking, its ship gone: no death, no ship asked for; it keeps walking (its records still apply). */
     pfoot_state=PFOOT_WALKING;pfoot_transition_tick=149;test_pslot_p1_stood=1;pnat_controller=NULL;pilot_slots[0].found=NULL;pilot_slots[0].resolved=0;

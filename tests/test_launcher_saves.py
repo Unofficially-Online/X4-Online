@@ -50,7 +50,11 @@ class CollectorTests(unittest.TestCase):
         self.assertTrue(self.keeper.line(client, row(tick, body), self.profiles[client]))
 
     def names(self):
-        return sorted(p.name for p in (Path(self.dir.name) / 'run/saves').glob('c*'))
+        """The kept saves; each has its sidecar beside it (x4ls continue --save), pruned with it."""
+        folder = Path(self.dir.name) / 'run/saves'
+        saves = sorted(p.name for p in folder.glob('c*.xml*'))
+        self.assertEqual(sorted(p.name for p in folder.glob('c*.json')), sorted(n.split('.')[0] + '.json' for n in saves))
+        return saves
 
     def test_saves_move_to_the_run_folder_and_the_oldest_go(self):
         self.assertFalse(self.keeper.line(1, '[X4LAN] NATIVE_GATE PERIODIC_SAVE armed tick=18000 at=17970', self.profiles[1]))

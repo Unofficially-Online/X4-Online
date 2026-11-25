@@ -168,6 +168,19 @@
  * would unload and regenerate both sectors' fields every tick; a second
  * sector's fields need a second RegionManager. Field::vfunc10 removes only
  * that content; EffectField/VolumetricCloudField (player object near) the same.
+ * Effects (with the effects group, 24 Nov): EffectObject creation 0xd717a0 culls a short-lived, non-persistent
+ * effect farther from the camera than its visible distance (0xd723e8: 0x9fcb90, the camera's GetOffset; the effect's
+ * position at [rbp-0x80]; counters 0x6adfd28/0x6adfd2c), and the effects group answers that camera with view point
+ * 1's stand-in on every client. So no muzzle flash, impact or short explosion near a player 2..N away from player 1
+ * was ever created, on any client, and with it no sound: a shot's sound is its launch effect's element (live,
+ * one X4 as player 2 in Sol, 24 Nov: 214 creations in 8 s of firing, 199 culled; 19/8 without firing). With the
+ * policy the call 0xd723e8 goes through a stub (mov r8, rbp: 0xd717a0's frame; X4 has the effect's owner in r9 from
+ * 0xd723d9) to rc_effect_camera: an owner that lies in a seated player 2..N's ship (its guns, its hull) answers the
+ * effect's own position (never culled: in stock the player's camera is at its own ship); else an owner in another
+ * view point's sector answers that stand-in camera's GetOffset (0x97a300, as 0x9fcb90 does); else X4's 0x9fcb90
+ * (view point 1's stand-in). Identical on every client: the slots' seats and the latched view points are the
+ * simulation's. Not covered: an effect of another object in view point 1's sector far from player 1 and near a
+ * player 2..N there (one stand-in per sector). Status effect_policy=calls/own/stand-in.
  * Policy rows (native_gate_viewpoint_policy_rows = ticks, diagnostic): one row
  * per policy decision while the tick is within the limit: tick, site (the
  * rc_sites index, 0x100 + call index for the camera-cluster/active-camera
@@ -252,9 +265,21 @@
  *    of the frame's word makes one refresh's jitter every later consumer's in the
  *    frame and each due time depends on what drew before it in the step;
  *  - Body_UpdateShape's call (0xbffb7) goes through a stub that, at the first
- *    call per object key (saved or created) after the install, sets the due
- *    time to the thread's game time, so the due times set while loading (per
- *    client) give way to one refresh at the same step on every client.
+ *    call per body record of an object key (saved or created) after the
+ *    install, sets the due time to the thread's game time, so the due times set
+ *    while loading (per client) give way to one refresh at the same step on
+ *    every client. Per record, not per object (rk10, 25 Nov, continues of the
+ *    periodic save c3-t18300): an object has a holder per body record (its main
+ *    +0x260 and second +0x268 record, and others such as the sensor body of a
+ *    build module); keyed by the object alone only the first record called was
+ *    aligned. Station BHC-891's build module 0x3f4bd (buildmodule_ter_ships_m_
+ *    dockarea_01, next to player 1) has a third record, a sensor with one child
+ *    whose loading-time pose lay 67.8 km off; its refresh kept the loading-time
+ *    due time, came at tick 2 on one client and later on the other, and its
+ *    NotifyShapeChanged moved the body to the module (the centre of mass of the
+ *    refreshed child): PHYSICS_BODY pre apart from tick 2, CONTACT_ORIENT apart
+ *    by 300, the relay at 1389 in half the boots. The record (0: +0x260, 1:
+ *    +0x268, 2: another) goes into the table key (rc_shape_record_key).
  * Status: shape_refresh= the two stubs' calls, aligned=, unmapped= (no key: the
  * due time stays), near= / far= intervals, shape_native= (before the first
  * latch). The key table is insert-only (RC_SHAPE_KEYS); full stops the gate
@@ -489,8 +514,8 @@ _Static_assert(VIEW_MAX==8u && RC_K_BLOCK(VIEW_MAX)==RC_PAGE_SIZE,"one stand-in 
 static const unsigned rc_k_manager[VIEW_MAX]={RC_MANAGER,RC_MANAGER2,0x300u,0x5000u,RC_K_BLOCK(4),RC_K_BLOCK(5),RC_K_BLOCK(6),RC_K_BLOCK(7)},
     rc_k_shadow[VIEW_MAX]={RC_SHADOW,RC_SHADOW2,0xc00u,0x5400u,RC_K_BLOCK(4)+0x400u,RC_K_BLOCK(5)+0x400u,RC_K_BLOCK(6)+0x400u,RC_K_BLOCK(7)+0x400u},
     rc_k_cameras[VIEW_MAX]={RC_CAMERAS,RC_CAMERAS2,0x6000u,0x8000u,RC_K_BLOCK(4)+0x1000u,RC_K_BLOCK(5)+0x1000u,RC_K_BLOCK(6)+0x1000u,RC_K_BLOCK(7)+0x1000u};
-#define RC_THUNKS 0x700u    /* policy thunks on the stub page, RC_THUNK_SIZE apart */
-#define RC_JUMP_STUBS 0xd80u /* jump thunks (rc_jumps) on the stub page, 0x80 apart */
+#define RC_THUNKS 0x740u    /* policy thunks on the stub page, RC_THUNK_SIZE apart (after the calls' 0x20 each) */
+#define RC_JUMP_STUBS 0xe00u /* jump thunks (rc_jumps) on the stub page, 0x80 apart */
 #define RC_MINING_STOP 166u
 #define RC_XS_STOP 167u
 #define RC_PROBE_STOP 168u
@@ -505,7 +530,7 @@ enum {RC_REGION,RC_FIELDS,RC_TRAFFIC,RC_EFFECTS,RC_EFFECT_ROWS,RC_HIGHWAY,RC_SCE
 enum {RC_OBJ_NONE,RC_OBJ_R12,RC_OBJ_R12_TRAFFIC,RC_OBJ_RDI};
 enum {RC_SLOT_MANAGER,RC_SLOT_UNIVERSE,RC_SLOT_MANAGER2};
 #define RC_SITES 25u
-#define RC_CALLS 56u
+#define RC_CALLS 57u
 #define RC_FILL_AREA_CALL 42u      /* 0xee6d32 in the refresh 0xee6a80: 0x78a690, a node's resource area */
 #define RC_FILL_REFRESH_CALL 43u   /* 0xeeb98a in the render pass 0xeeb650: the refresh 0xee6a80 */
 #define RC_VIEW_STEP_CALL 41u     /* 0x9fe48b in UniverseFrameUpdate: Scene::Step of B */
@@ -525,7 +550,7 @@ enum {RC_SLOT_MANAGER,RC_SLOT_UNIVERSE,RC_SLOT_MANAGER2};
 #define RC_COLLECT_CALL 17u     /* 0x8ad25d in 0x8ad220: 0x8afaf0, the zone's objects with cached waypoints */
 #define RC_ZONE_TEST_CALL 12u   /* 0x83f26f in 0x83ef20: 0x3e35d0, component vs camera (view caches) */
 #define RC_LANE_CAMERA_CALL 13u /* 0x8ab419 in 0x8ab1e0: 0x979ef0, the camera in the frame zone (view caches) */
-#define RC_PINS 96u
+#define RC_PINS 99u
 #define RC_THUNK_SITES 10u
 #define RC_CONTEXT_CALL 11u /* index of SetParent's 0x97dff0 call in rc_calls */
 #define RC_EFFECT_ROW_RING 65536u
@@ -588,7 +613,8 @@ static const rc_call_t rc_calls[RC_CALLS]={{0xedc57au,0x9fc950u,RC_FIELDS,{0,0,0
     {0x8ac354u,0x6e59b0u,RC_TRAFFIC_PASS,{0,0,0}},{0x8ac8fcu,0x6e59b0u,RC_TRAFFIC_PASS,{0,0,0}},
     {0x8ac642u,0x8c0180u,RC_TRAFFIC_PASS,{0,0,0}},{0x8acc2cu,0xfb36d0u,RC_TRAFFIC_PASS,{0,0,0}},
     {0x97e4f9u,0xbd410u,RC_VIEW_SCENES,{0,0,0}},
-    {0x8be72au,0x3db8a0u,RC_TRAFFIC_ROWS,{0,0,0}}};
+    {0x8be72au,0x3db8a0u,RC_TRAFFIC_ROWS,{0,0,0}},
+    {0xd723e8u,0x9fcb90u,RC_POLICY,{0x49,0x89,0xe8}}}; /* EffectObject creation's camera: mov r8, rbp (its frame); the owner in r9 */
 /* Jumps (7-byte instructions replaced by jmp rel32 + 66 90 into a thunk that resumes at a later address). */
 typedef struct {unsigned rva,resume;unsigned char original[7],group;} rc_jump_t;
 static const rc_jump_t rc_jumps[RC_JUMPS]={
@@ -620,6 +646,9 @@ static const struct {unsigned rva,size;unsigned char group;const char *sha;} rc_
     {0x979ef0u,0x264u,RC_TRAFFIC,"81de8348fb8fc02d3c34c7a8a35b225a0c29b0a1b2ac668597f57da80ecd88ca"},
     {0x9fcb90u,0x80u,RC_EFFECTS,"e0732e11627447b08a4a04d3685c43021e2e9ea46c2c43ad4e224d43ae85e73f"},
     {0xd72370u,0xf0u,RC_EFFECTS,"7eb648e1190d2199a7c674d9bf8be466bf4b5bfdf78157b3aa407bac6a78344a"},
+    {0xd72370u,0xf0u,RC_POLICY,"7eb648e1190d2199a7c674d9bf8be466bf4b5bfdf78157b3aa407bac6a78344a"}, /* the cull: owner, frame, call */
+    {0x9fcb90u,0x80u,RC_POLICY,"e0732e11627447b08a4a04d3685c43021e2e9ea46c2c43ad4e224d43ae85e73f"},
+    {0x97a300u,0x3dcu,RC_POLICY,"f494c5a2d068a5be0bdf2897a6def0ad99b378c609919e47a7fdc8452374950d"},
     {0x97a300u,0x3dcu,RC_EFFECTS,"f494c5a2d068a5be0bdf2897a6def0ad99b378c609919e47a7fdc8452374950d"},
     {0xd74a62u,0x6eu,RC_EFFECT_ROWS,"9fe08a4b063b13010791612d3b4fb5fe657f441b070e602a1841edc586a3f496"},
     {0xd73060u,0xb0u,RC_EFFECT_ROWS,"08300420ff6118795721ed295170e9850dfd0075be3c4ecc8e6028f3d2c1927f"},
@@ -894,6 +923,40 @@ static void **rc_controllable(unsigned call,void *unused,void **out) {
 static void **rc_controllable_a(void *unused,void **out) {return rc_controllable(4,unused,out);}
 static void **rc_controllable_b(void *unused,void **out) {return rc_controllable(5,unused,out);}
 /* 0x9f9eb0 (the active camera) at 0x8ab40a; the stub puts 0x8ab1e0's traffic object (r12) in rcx. */
+/* EffectObject creation's camera position (0xd723e8, the policy's; 0x9fcb90's form: the 16 bytes of the camera's
+ * GetOffset translation into out, out back): header, Effects. frame is 0xd717a0's rbp (the effect's position at -0x80). */
+#define RC_EFFECT_CAMERA_CALL 56u
+#define RC_GET_OFFSET 0x97a300u
+#define RC_EFFECT_POSROT 0x2cc01d0u   /* 0x9fcb90's three rows for the PosRot it hands GetOffset (+0x10 apart) */
+static volatile LONG64 rc_effect_policy_own,rc_effect_policy_standin;
+static void *(*rc_effect_native)(void *,void *,void *,void *);   /* tests: in place of 0x9fcb90 */
+static void (*rc_get_offset_native)(void *,void *);               /* tests: in place of 0x97a300 */
+static int rc_effect_own_ship(unsigned char *owner) {
+    for(unsigned k=2;k<=PILOT_SLOTS;k++) {
+        const unsigned char *ship=pslots[k].seated?pslots[k].ship:NULL;
+        if(!ship) continue;
+        unsigned char *p=owner;
+        for(unsigned depth=0;p && depth<12;depth++) {if(p==ship) return 1;p=*(unsigned char *volatile *)(p+0x70);}
+    }
+    return 0;
+}
+static void *rc_effect_camera(void *unused,void *out,unsigned char *frame,unsigned char *owner) {
+    InterlockedIncrement64(&rc_stub_calls[RC_EFFECT_CAMERA_CALL]);
+    if(rc_policy && owner && out) {
+        if(frame && rc_effect_own_ship(owner)) {memcpy(out,frame-0x80,16);InterlockedIncrement64(&rc_effect_policy_own);return out;}
+        const int k=rc_object_k(owner,RC_OBJ_R12);
+        void *camera=k==1?*rc_manager2_camera():k>1?*rc_k_manager_camera((unsigned)k):NULL;
+        if(camera) {
+            __attribute__((aligned(16))) unsigned char posrot[0x40];
+            memset(posrot,0,0x10);memcpy(posrot+0x10,image+RC_EFFECT_POSROT,0x30);
+            (rc_get_offset_native?rc_get_offset_native:(void (*)(void *,void *))(void *)(image+RC_GET_OFFSET))(camera,posrot);
+            memcpy(out,posrot,16);InterlockedIncrement64(&rc_effect_policy_standin);
+            if(rc_pick_rows_ticks) rc_pick_note(0x109u,owner,RC_OBJ_R12,k);
+            return out;
+        }
+    }
+    return (rc_effect_native?rc_effect_native:(void *(*)(void *,void *,void *,void *))(void *)(image+rc_calls[RC_EFFECT_CAMERA_CALL].target))(unused,out,frame,owner);
+}
 static void *rc_active_camera(void *object) {
     InterlockedIncrement64(&rc_stub_calls[2]);void *camera=*rc_manager_camera();
     const int k=camera?rc_object_k(object,RC_OBJ_R12_TRAFFIC):0;
@@ -1124,6 +1187,15 @@ static rc_shape_update_fn rc_shape_update_native;     /* tests only: replaces 0x
 static rc_shape_interval_fn rc_shape_interval_native; /* tests only: replaces 0xc2810 */
 static rc_shape_macro_fn rc_shape_macro_native;       /* tests only: replaces 0x7ad890 */
 static rc_shape_rand_fn rc_shape_rand_native;         /* tests only: replaces Random::FloatState 0x14ddc90 */
+/* The table key of one body record of an object: the object key and the record (0: the holder of the object's
+ * +0x260 record, 1: of +0x268, 2: another), mixed; never 0 (an empty slot). */
+static uint64_t rc_shape_record_key(uint64_t key,const unsigned char *owner,const void *holder) {
+    unsigned which=2;unsigned char *records[2]={NULL,NULL};
+    if(owner && read_local(owner+0x260,records,16))
+        for(unsigned i=0;i<2 && which==2;i++) {void *h=NULL;if(records[i] && read_local(records[i]+0x20,&h,8) && h==holder) which=i;}
+    const uint64_t k=lockstep_mix(key*4u+which);
+    return k?k:1;
+}
 /* 1 when the key is new (now recorded), 0 when seen, -1 when the table is full. */
 static int rc_shape_key_first(uint64_t key) {
     unsigned h=(unsigned)(lockstep_mix(key)&(RC_SHAPE_KEYS-1));
@@ -1145,8 +1217,8 @@ static void *rc_shape_sector(unsigned char *p) {
     }
     return NULL;
 }
-/* Body_UpdateShape's refresh call (0xbffb7): the first call per object key after the install refreshes at
- * once (the due time set to the thread's game time); then the native call. */
+/* Body_UpdateShape's refresh call (0xbffb7): the first call per body record of an object key after the install
+ * refreshes at once (the due time set to the thread's game time); then the native call. */
 static char rc_shape_update(void *holder,void *owner,unsigned char force) {
     InterlockedIncrement64(&rc_stub_calls[RC_SHAPE_UPDATE_CALL]);
     if(holder && owner && InterlockedCompareExchange(&rc_shape_count,0,0)>=0) {
@@ -1154,7 +1226,7 @@ static char rc_shape_update(void *holder,void *owner,unsigned char force) {
         const uint64_t key=runtime?world_identity_key(runtime,&klass):0;
         if(!key) InterlockedIncrement64(&rc_shape_unmapped);
         else {
-            const int first=rc_shape_key_first(key);
+            const int first=rc_shape_key_first(rc_shape_record_key(key,(const unsigned char*)owner,holder));
             if(first<0) rc_fail("shape_keys");
             else if(first) {const double now=rc_thread_time();memcpy((unsigned char*)holder+0x28,&now,8);InterlockedIncrement64(&rc_shape_aligned);}
         }
@@ -1797,7 +1869,7 @@ static void *rc_stub_target(unsigned i) {
                                    (void*)vsc_step,(void*)rc_fill_area,(void*)rc_fill_render_refresh,
                                    (void*)tq_sim,(void*)tq_check,(void*)tq_late,(void*)tp_relative_a,(void*)tp_relative_b,(void*)tp_relative_c,
                                    (void*)tp_place_a,(void*)tp_place_b,(void*)tp_filter_call,(void*)tp_draw,(void*)vsc_anchor_call,
-                                   (void*)tq_arrive};
+                                   (void*)tq_arrive,(void*)rc_effect_camera};
     return i<RC_CALLS?targets[i]:NULL;
 }
 /* Bytes before the stub's jump: the call's move, if any. */
@@ -2118,5 +2190,10 @@ static int rc_status(char *out,size_t capacity) {
         (unsigned long long)rc_stub_calls[RC_HWROW_CALL+2],(long long)rc_hw_rows,(unsigned long long)rc_hw_speed_keyed,(unsigned long long)rc_hw_speed_unmapped,
         (unsigned long long)rc_stub_calls[RC_SOUND_CALL],(unsigned long long)rc_stub_calls[RC_SOUND_CALL+1u],
         (unsigned)(rc_two_sectors()?2+rc_more:rc_page && *rc_manager_camera()?1:0),rc_standins_max,(unsigned long long)rc_uncovered_ticks,rc_uncovered_now,(unsigned long long)rc_shape_unkeyed,scenes,fill,rows,pass,rc_stop);
+    if(n>0 && (size_t)n<capacity) {
+        const int more=snprintf(out+n,capacity-(size_t)n," effect_policy=%llu/%llu/%llu",(unsigned long long)rc_stub_calls[RC_EFFECT_CAMERA_CALL],
+            (unsigned long long)rc_effect_policy_own,(unsigned long long)rc_effect_policy_standin);
+        n=more>0 && (size_t)(n+more)<capacity?n+more:-1;
+    }
     return n>0 && (size_t)n<capacity?n:0;
 }

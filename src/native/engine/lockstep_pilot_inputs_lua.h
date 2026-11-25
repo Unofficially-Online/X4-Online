@@ -41,6 +41,31 @@ static int lua_pilot_slots_post(lua_State *L) {
     if(ok) pslot_post_on=(int)on;
     p_lua_pushnumber(L,ok);return 1;
 }
+/* gate.pilot_slots_room_attention(on) (native_gate_pilot_slots_room_attention): a seated slot 2..N's player's room is
+ * inroom, as X4's own player's (lockstep_pilot_room_attention.h); its hooks go in with the slots' hooks at the seat. Every
+ * client, in the probe's config block, before the first tick; a reloaded UI asking again gets the same answer. On: the
+ * pins are checked on the live image here. Answers 1 or 0, and what refused ("-", "pins:<rva>", "rerun"). */
+static int lua_pilot_slots_room_attention(lua_State *L) {
+    const double on=p_lua_tonumber(L,1);
+    const int valid=on==0.0 || on==1.0;
+    const char *why="-";
+    char pins[32];
+    unsigned failed_rva=0;
+    int ok=valid && (!stats.issued || prat_on==(int)on);
+    if(!ok) {
+        why=valid?"rerun":"value";
+    } else if(on==1.0 && !prat_arm_check(image,&failed_rva)) {
+        snprintf(pins,sizeof(pins),"pins:%x",failed_rva);
+        why=pins;
+        ok=0;
+    }
+    if(ok) {
+        prat_on=(int)on;
+    }
+    p_lua_pushnumber(L,ok);
+    p_lua_pushlstring(L,why,strlen(why));
+    return 2;
+}
 static int lua_pilot_seat_live_pose(lua_State *L) {
     double on=p_lua_tonumber(L,1);
     const int ok=accept_ui() && (on==0.0 || on==1.0);
@@ -148,7 +173,10 @@ static int pilot_why_text(char *out,size_t capacity) {
         n+=snprintf(out+n,capacity-(size_t)n," foot_slots=%s foot_slots_why=%s",pfslot_stage,pfslot_why);
         for(unsigned k=2;n>0 && (size_t)n<capacity && k<=PILOT_SLOTS;k++) if(pslot_mask>>(k-1)&1u) n+=snprintf(out+n,capacity-(size_t)n," fs%u=%d",k,pfslots[k].walking);
     }
-    if(n>0 && (size_t)n<capacity && pslot_armed) n+=snprintf(out+n,capacity-(size_t)n," slots=%s slots_why=%s",pslot_stage,pslot_why);
+    if(n>0 && (size_t)n<capacity && ptele_armed)
+        n+=snprintf(out+n,capacity-(size_t)n," teleport=%s teleport_why=%s teleport_slot=%u",ptele_stage,ptele_why,ptele_failed_slot);
+    if(n>0 && (size_t)n<capacity && pslot_armed) n+=snprintf(out+n,capacity-(size_t)n," slots=%s slots_why=%s leave=%s",pslot_stage,pslot_why,
+        pslot_leave_last?pslot_leave_last:"-");
     if(n>0 && (size_t)n<capacity && pdeath_armed) n+=snprintf(out+n,capacity-(size_t)n," death=%s death_why=%s",pdeath_stage,pdeath_why);
     if(n>0 && (size_t)n<capacity && pres_armed) n+=snprintf(out+n,capacity-(size_t)n," present=%s present_why=%s",pres_stage,pres_why);
     if(n>0 && (size_t)n<capacity && uirep_armed) n+=snprintf(out+n,capacity-(size_t)n," replay=%s replay_why=%s",uirep_stage_name,uirep_why);
@@ -287,6 +315,79 @@ static int lua_pilot_present_walk_hud(lua_State *L) {
     if(ok) pres_walk_hud=(int)on;
     p_lua_pushnumber(L,ok);return 1;
 }
+/* gate.pilot_present_walk_camera(on) (native_gate_pilot_present_walk_camera): while this client's own slot walks, the
+ * camera in the presentation scope has no camera chain, as after X4's own stand-up (lockstep_pilot_walk_camera.h). Before
+ * gate.pilot_present; 1 = set (on: the pins hold). */
+static int lua_pilot_present_walk_camera(lua_State *L) {
+    const double on=p_lua_tonumber(L,1);int ok=accept_ui() && (on==0.0 || on==1.0);
+    if(ok && pres_armed) ok=pwcam_asked==(int)on;         /* an identical rerun after a UI reload */
+    else if(ok && on==1.0 && stats.slot>=2) ok=pwcam_pins();   /* client 1 presents as X4 does: nothing to take off */
+    if(ok) {pwcam_asked=(int)on;pwcam_on=(int)on && stats.slot>=2;}
+    p_lua_pushnumber(L,ok);return 1;
+}
+/* gate.pilot_present_seat_camera(on) (native_gate_pilot_present_seat_camera): while this client's own slot sits and the
+ * eye presents its seat, the camera in the presentation scope has no head link on its chain (lockstep_pilot_walk_camera.h).
+ * Before gate.pilot_present; 1 = set (on: the pins hold). */
+static int lua_pilot_present_seat_camera(lua_State *L) {
+    const double on=p_lua_tonumber(L,1);int ok=accept_ui() && (on==0.0 || on==1.0);
+    if(ok && pres_armed) ok=pwcam_seat_asked==(int)on;    /* an identical rerun after a UI reload */
+    else if(ok && on==1.0 && stats.slot>=2) ok=pwcam_pins();   /* client 1 presents as X4 does: nothing to take off */
+    if(ok) {pwcam_seat_asked=(int)on;pwcam_seat_on=(int)on && stats.slot>=2;}
+    p_lua_pushnumber(L,ok);return 1;
+}
+/* gate.pilot_present_sound(on) (native_gate_pilot_present_sound): on client k X4's sound update runs in the presentation
+ * scope (lockstep_pilot_present.h, the sound). Before gate.pilot_present; 1 = set (on: the update, the listener routine
+ * and the vtable entry as pinned). */
+static int lua_pilot_present_sound(lua_State *L) {
+    const double on=p_lua_tonumber(L,1);int ok=accept_ui() && (on==0.0 || on==1.0);
+    if(ok && pres_armed) ok=pres_sound==(int)on;          /* an identical rerun after a UI reload */
+    else if(ok && on==1.0) ok=pres_sound_pins();
+    if(ok) pres_sound=(int)on;
+    p_lua_pushnumber(L,ok);return 1;
+}
+/* gate.sound_source(on) (native_gate_sound_source): on client k a sound whose emitter is its own slot's player (or held by
+ * it) starts at X4's own player (lockstep_pilot_present.h, the sound's source). Before gate.pilot_present; 1 = set. */
+static int lua_sound_source(lua_State *L) {
+    const double on=p_lua_tonumber(L,1);int ok=accept_ui() && (on==0.0 || on==1.0);
+    if(ok && pres_armed) ok=pres_source==(int)on;         /* an identical rerun after a UI reload */
+    else if(ok && on==1.0) ok=pres_source_pins();
+    if(ok) pres_source=(int)on;
+    p_lua_pushnumber(L,ok);return 1;
+}
+/* gate.sound_play_scope(on) (native_gate_sound_play_scope): on client k a positional voice that starts outside the
+ * presentation scope plays first in X4's sound update, in the scope (lockstep_pilot_present.h, a sound's first play).
+ * Before gate.pilot_present; 1 = set (on: the start, the play, the voice update and its loop as pinned). */
+static int lua_sound_play_scope(lua_State *L) {
+    const double on=p_lua_tonumber(L,1);int ok=accept_ui() && (on==0.0 || on==1.0);
+    if(ok && pres_armed) ok=pres_play==(int)on;           /* an identical rerun after a UI reload */
+    else if(ok && on==1.0) ok=pres_play_pins();
+    if(ok) pres_play=(int)on;
+    p_lua_pushnumber(L,ok);return 1;
+}
+/* gate.ship_sound_context(on) (native_gate_ship_sound_context): on client k the ship its slot's player is in has its own
+ * sounds (lockstep_pilot_present.h, the own ship's sound set). Before gate.pilot_present; 1 = set. */
+static int lua_ship_sound_context(lua_State *L) {
+    const double on=p_lua_tonumber(L,1);int ok=accept_ui() && (on==0.0 || on==1.0);
+    if(ok && pres_armed) ok=psctx==(int)on;
+    else if(ok && on==1.0) ok=psctx_pins();
+    if(ok) psctx=(int)on;
+    p_lua_pushnumber(L,ok);return 1;
+}
+/* gate.computer_forward(1) (native_gate_computer_forward): a slot's ship computer's autopilot signals also reach the cues
+ * nobody owns on player 1's computer, in that slot's scope (lockstep_pilot_death.h). After gate.shared_listeners(1). */
+static int lua_computer_forward(lua_State *L) {p_lua_pushnumber(L,p_lua_tonumber(L,1)==1.0 && accept_ui() && pvehk_computer_arm());return 1;}
+/* gate.player_sound_status(): the player sound package in one row (PLAYER_SOUND): the sound's entry and source, the
+ * computer's forward, the tick check's why (stop 221). */
+static int lua_player_sound_status(lua_State *L) {
+    char out[512];int n=snprintf(out,sizeof(out),"why=%s installed=%d",psnd_why,psnd_installed());
+    if(n>0 && (size_t)n<sizeof(out)) {const int more=pres_sound_status(out+n,sizeof(out)-(size_t)n);n=more?n+more:0;}
+    if(n>0 && (size_t)n<sizeof(out)) {const int more=pres_source_status(out+n,sizeof(out)-(size_t)n);n=more?n+more:0;}
+    if(n>0 && (size_t)n<sizeof(out)) {const int more=pvehk_computer_status(out+n,sizeof(out)-(size_t)n);n=more?n+more:0;}
+    if(n>0 && (size_t)n<sizeof(out)) {const int more=pres_play_status(out+n,sizeof(out)-(size_t)n);n=more?n+more:0;}
+    if(n>0 && (size_t)n<sizeof(out)) {const int more=psctx_status(out+n,sizeof(out)-(size_t)n);n=more?n+more:0;}
+    if(n>0 && (size_t)n+24<sizeof(out)) n+=snprintf(out+n,sizeof(out)-(size_t)n," context_why=%s",psctx_check_why);
+    if(n>0 && (size_t)n<sizeof(out)) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);return 1;
+}
 /* gate.cutscene_ready(): a cutscene is ready 2.0 s of game time after the first pass that sees it
  * (lockstep_cutscene_ready.h, stop reason 170). Before the first tick, with serial pathing. */
 static int lua_cutscene_ready(lua_State *L) {p_lua_pushnumber(L,accept_ui() && cr_arm());return 1;}
@@ -368,6 +469,30 @@ static int lua_pilot_foot_slots(lua_State *L) {
     p_lua_pushnumber(L,ok);
     if(ok) return 1;
     p_lua_pushlstring(L,pstk_arm_why,strlen(pstk_arm_why));return 2;
+}
+/* gate.pilot_chair(): the pilot chair of slots 2..N plays at their sit-downs and get-ups as X4's own player's does
+ * (lockstep_pilot_foot_slots.h, stop reason 226). After gate.pilot_foot_slots, before the first tick. 1, or 0 and the reason. */
+static int lua_pilot_chair(lua_State *L) {
+    pstk_arm_refuse("thread");
+    int ok=accept_ui() && pchair_arm();
+    p_lua_pushnumber(L,ok);
+    if(ok) return 1;
+    p_lua_pushlstring(L,pstk_arm_why,strlen(pstk_arm_why));return 2;
+}
+/* gate.pilot_teleport(): X4's move of a slot 2..N player on foot to its ship's bridge runs in that slot's scope as for X4's own
+ * player, and a P_k that X4 connected stops the session safely (lockstep_pilot_teleport.h, stop reason 222). After
+ * gate.pilot_foot_slots and gate.pilot_foot_bodies, before the first tick. 1, or 0 and the reason. */
+static int lua_pilot_teleport(lua_State *L) {
+    pstk_arm_refuse("thread");
+    int ok=accept_ui() && ptele_arm();
+    p_lua_pushnumber(L,ok);
+    if(ok) return 1;
+    p_lua_pushlstring(L,pstk_arm_why,strlen(pstk_arm_why));return 2;
+}
+/* gate.pilot_teleport_frame(): the PILOT_TELEPORT rows since the last call, nil if none. */
+static int lua_pilot_teleport_frame(lua_State *L) {
+    const char *text=accept_ui()?ptele_take_rows():NULL;
+    if(text) p_lua_pushlstring(L,text,strlen(text));else p_lua_pushnil(L);return 1;
 }
 /* gate.pilot_death_frame(): what changed since the last call ("die:1,create:1,live:1"), nil if nothing. */
 static int lua_pilot_death_frame(lua_State *L) {
@@ -476,7 +601,7 @@ static int lua_pilot_death_out(lua_State *L) {
     return 1;
 }
 static int lua_pilot_death_status(lua_State *L) {
-    char out[1024];int n=accept_ui() && pdeath_armed?pdeath_status(out,sizeof(out)):0;
+    char out[2048];int n=accept_ui() && pdeath_armed?pdeath_status(out,sizeof(out)):0;
     if(n) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);return 1;
 }
 /* gate.pilot_present_diff(): once after the start, what a player's presence set on a ship (PILOT_PRESENT_DIFF). */

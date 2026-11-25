@@ -203,6 +203,12 @@ class LobbyBackend(netplay.Backend):
         return lines
 
     def host_session(self, players, progress, cancelled, open_slots=()):
+        if getattr(self.o, 'milestone', None):   # x4ls host --milestone: the game goes on from that save (no X4 needed for it)
+            self.log(f'lobby: the game continues from {self.o.milestone}')
+            return netkit.milestone_session(self.kit, self.o.milestone, players, open_slots, progress, self.log,
+                                            session=getattr(self.o, 'milestone_session', None),
+                                            overlay=getattr(self.o, 'milestone_overlay', None),
+                                            keep_flight=bool(getattr(self.o, 'milestone_keep_flight', False)))
         mode = self.o.mode or netkit.HOST_SESSION_MODE
         base_start = self.o.base_start or netkit.HOST_SESSION_START
         cached = netkit.cached_session(self.kit, players, mode, base_start, open_slots)

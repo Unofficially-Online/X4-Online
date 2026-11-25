@@ -76,14 +76,20 @@ python tools/x4ls.py play --overlay .local/overlays/play-1 --snapshot <the same 
 
 - X4 shows an info line ("... refused" or "... is off during a lockstep session") and nothing happens.
 - Each refusal is one row in `errors.log`.
-- Pausing and saving are refused this way. The options menu and the ship configuration menu then open without
-  pausing. Since 11 Nov the Pause key, F5 (quick save) and F9 (quick load) are refused too ("no pause, save or
-  load in a session"): in run inv1 the Pause key, which does not go through `Pause()`, stopped the pressing
-  client and the session stood still for everyone; in run inv2 all three keys were refused on both clients and
-  the session ran to its end in sync.
+- Pausing and loading are refused this way. The options menu and the ship configuration menu then open without
+  pausing. Since 11 Nov the Pause key and F9 (quick load) are refused too: in run inv1 the Pause key, which does not
+  go through `Pause()`, stopped the pressing client and the session stood still for everyone; in run inv2 the keys
+  were refused on both clients and the session ran to its end in sync. Saving (the menu's Save game, F5) was refused
+  the same way until 25 Nov; it is now a save for every player ("Saving yourself" below).
 - The session saves by itself: every ten minutes each client's game stands still for about three seconds while
-  its gate writes the world (`build_play_overlay.py --save-every`, docs/LAUNCHER.md Periodic saves). These saves
-  are for looking into desyncs (`x4ls resume`); they are not saves a player can load.
+  its gate writes the world (`build_play_overlay.py --save-every`, docs/LAUNCHER.md Periodic saves), and once more each
+  time a player completes a mission chapter of their story ("Milestones" below). Since 25 Nov any of them can be
+  continued with every player kept (`x4ls continue --save`).
+- **Saving yourself** (since 25 Nov): Save game in the menu (any slot or a new save) and the quick save key work. They save
+  the game for every player at once, a few seconds later: you see "saving the game for every player..." and then
+  "game saved (<name>)"; the others see their game stand still for about three seconds. The save waits while player 1
+  is on foot. The run folder keeps it as `saves/player/<name>-t<tick>.xml.gz`; go on from it with `x4ls continue --save`.
+  Load game stays off during a session (said once); a game is loaded by starting a session from the save.
 - Why they are refused: X4's `Pause()` stops the gate on that client at once. In smoke play-sA (8 Nov), client 2
   paused at tick 900 and stopped with reason 3; the relay dropped it after 15 s and client 1 played on. A save
   pauses the same way. In smoke play-sB, with the refusal, the same `Pause()` left the game running and the session
@@ -98,6 +104,26 @@ python tools/x4ls.py play --overlay .local/overlays/play-1 --snapshot <the same 
 **Other players' ships** are drawn between the last two steps, about 33 ms behind (`render_motion`
 'interpolate'). The default 'extrapolate' draws them ahead, and the map then shows their icons flicking back and
 forth.
+
+**Bullets and the HUD radar** move with the picture between the steps (`render_shots`, `render_radar`, both on by
+default, display only): a bullet is drawn where its last two steps put it at the frame's time, your own shots leave
+the guns of your drawn ship, and the radar turns with the heading you see. `RENDER_SHOTS` and `RENDER_RADAR` in the
+client log say what ran.
+
+**Your shots at other ships** (24 Nov, every player): a bullet that meets a ship is X4's own hit on every client, so a
+friendly or neutral ship takes the damage too, and the attack counts as yours the way X4 counts its player's
+(`event_player_attacked_object`: the relation loss, the warning, the police), from your ship's guns, turrets and
+missiles. Only a hit on another player's ship is still decided by a claim (the player being hit decides).
+`HIT_CLAIMS_STATUS native_out=` (your hits on other ships) and `PILOT_FIRE_STATUS attacks=` (`slots=`: the attacks
+counted per player, `told=`: those the shared scripts heard) say what ran.
+
+**Making a pilot bail, claiming the ship, going aboard** (24 Nov, every player): shoot a ship until its shields are
+down and its hull is below 75 %, and every 30 s while you keep hitting it X4 rolls whether its crew bails out (about
+one in three for a fighter against a corvette, the same chance as player 1's: the roll counts your own ship as the
+attacker). Once the pilot is gone, get out in your suit, hold the crosshair on the claim signal and use the repair
+laser: the ship becomes yours. Ask it for docking and fly the suit to its spacesuit dock: you sit down at its
+controls (player 1 lands on foot inside and walks to the seat). `PILOT_FIRE_STATUS owner=` (bail rolls heard),
+`LEAK_CLAIMED` rows of the test script and `PILOT_DEATH ... enter=` (the last number: ships boarded) say what ran.
 
 **Avoid:**
 
@@ -904,6 +930,234 @@ python tools/x4ls.py new-session --base-start x4ep1_gamestart_discover --players
   stories keep reading player 1's plot (they are player 1's or the group's); `x4ls resume` still gives players
   2..N their start's library again.
 
+### Several players on one start, and the story after a start's story (built 24 Nov; offline tests only, not run in the game yet)
+
+The stock scripts keep one state per story, so a start's story script can be one player's only. Until 24 Nov a second
+player on a start with `--story` was refused ("another player has the story"), and a session whose base start was that
+start could give its story to player 1 only. Now each further player on that start plays the story as their own copy of
+the script, for any players 2 to 8:
+
+- Player 1 plays the base start's story with the stock scripts, as before. A player 2..N whose start is another start
+  claims that start's stock script, as before, when they are the first player on it. Any player 2..N whose start is
+  the base start or an earlier player's start gets a copy named after them, e.g. `GS_Terran1_P3`. Every PC makes the
+  copy from its own installed game when it composes its client. The overlay and a kit carry only the recipe
+  (`md-copies.json`: file, player, hashes), never Egosoft's text. These are the same rules as for the headquarters plot
+  copies above.
+- A copy is the stock script with these changes. It gets its own name, and its references to itself follow the name.
+  Its root cue waits for its own signal (begun inside that player's scope 60 ticks into the session, or 30 ticks after a
+  join) instead of the start's setup cue. It has no `module=` test, so it runs in a session of any base start. The
+  start's other root cues that carry `module=` are left out: in the cadet script that is a fix for relations in old
+  saves at every load, which the stock script runs once for the game when the base start is the cadet start. The other
+  root cues wait until the copy has begun. Debug force names are removed. In factions mode the copy names the player's
+  own faction where the script names the player faction. `player.module` is written as the player's start, so every
+  test of "the game's start" in the copy is answered for that player.
+- What a copy does not run: the gamestart's setup cues in `md.Setup_Gamestarts`. For the cadet start these are the
+  Terran headquarters' protection in cluster 114 and the flag that tells the headquarters plot it is a Terran game.
+  They belong to the game and run once for the base start. In a session whose base start is not the cadet start they
+  never run. They are among the start's `world_omitted` parts.
+- **The Terran story after the cadet story** (`Story_Yaki`, the Solborn militia and the Yaki, with the cadet's
+  wingmate). In the 24 Nov playtest player 2 finished the cadet story, but this story never offered its first mission.
+  Its stock script asks whether the game's start is the cadet start, and that is the session base start, player 1's.
+  It then waits for player 1 in a Terran sector, and it listens for the stock cadet script's last step. Now a player who
+  takes the cadet start with `--story K` also gets `Story_Yaki_P<K>`, by default. In that case the cadet story is
+  always the player's own copy, even for the first player on the start, so that the two copies can name each other:
+  `GS_Terran1_P<K>` takes the actors and the wingmate from `Story_Yaki_P<K>`, and `Story_Yaki_P<K>` waits for
+  `GS_Terran1_P<K>`'s last step. The copy then offers its first mission when player K enters a Terran sector with
+  enough Terran reputation, or ten minutes after the story is activated if player K is already in one.
+  `--omit K=yaki` leaves it out. That player then has the story alone, and the first such player claims the stock
+  cadet script.
+- The stock scripts of every copy in the session (`GS_Terran1`, `Story_Yaki`) are player 1's alone (the overlay's
+  `native_gate_plot_first`). Their missions appear in player 1's list only, what they show and say plays on client 1,
+  and what players 2..N do no longer advances them. A stock script that a player 2..N claims stays that player's. In a
+  session on the cadet start, client 2 therefore no longer hears player 1's wingmate once player 2 has a copy.
+- Diagnostic without playing the cadet story through: `--set "native_gate_plot_debug={{900,202}}"` signals the
+  activation step of player 2's `Story_Yaki_P2` at tick 900, the step that the cadet story's end signals. The code is
+  the player's slot + 100 × the copy's place in that player's list: the story is 1, `Story_Yaki` is 2. For player 3 the
+  code is 203. Code 101 is the stock script's, player 1's (201 with a headquarters copy in the session). The offer
+  then comes at player K's next Terran sector. The same code plus 1000 (1202, 1203; 1101 for player 1's stock
+  script) runs the story's own wingmate setup: the wingmate is made or brought to that player's ship and protects it.
+- **The cadet's wingmate for players 2..N** (fixed 24 Nov, `tools/dev/native_gate_player_escort.xml`). The
+  wingmate protects its player's ship with X4's ProtectShip order (`aiscripts/order.fight.protect.ship.xml`), and
+  the copy gives it the right ship (player K's). But the order reads the protected ship's pilot: with a pilot the
+  wingmate flies in formation behind the ship, keeps an escort group on the pilot and joins in when "the player's
+  ship" attacks something. A stock player's ship holds its player in its pilot post all the time; a player 2..N's
+  ship holds its player only inside that player's scope, and the wingmate's script runs outside every scope. So
+  player 2's wingmate had a ship without a pilot: it flew loosely after it, never answered player 2's shots,
+  attacked every armed enemy it saw (X4's rule for a ship without a pilot) and logged "Property lookup failed:
+  $leaderpilot" at sector changes (rk8, on both clients). Now the session's player groups also keep, on every
+  player's entity, which player controls which object (`$X4LAN_Pilots`), and the patch takes that player as the
+  ship's pilot and that ship as "the player's ship" where the stock order has none. Player 1's ship has its own
+  pilot, so its wingmate does what it did; without the gate the table is never set. The wingmate's colour does not
+  change: X4 colours a target green only when the player's faction owns it (`GetRelationStatus4`, "own property"),
+  and the cadet's wingmate is the Terran faction's ship in the stock game too (player 1's wingmate in the rk7 and
+  rk8 saves: `owner="terran"`), so it is blue ("Friendly") for player 1 as well. Player 1's own ship is green on
+  player 2's screen because in coop it belongs to the shared player faction.
+  Test ops (in a slot's plan, `native_gate_ui_replay_script`): `escort_look` (canonical, MD `EscortLook`) logs
+  `ESCORT_LOOK slot= ship= pilot= pilots= guards= guard=<id>/<owner>/<order>/<wingman|loose>/<leader>/<distance>/<target>`
+  for every slot's ship; `escort_target` puts a Xenon scout without a pilot 500 m ahead of this player's ship as
+  this player's target (`ESCORT_TARGET`); `escort_colour` (this client's HUD) logs X4's relation status of each slot's
+  ship and its protectors (5 own property = green, 4 allied, 3 friendly, 2 neutral = blue), the flags the map's lists
+  colour by (`own=`, `mission=`, `enemy=`, `hostile=`) and the HUD's faction-colour option (`factioncolour=`);
+  `escort_front` (canonical, MD `EscortFront`) puts a slot's protectors 150 m ahead of its ship, so its player's camera
+  shows them; `escort_select` makes this player's first protector the target (target box, target monitor);
+  `escort_map` (the open map, read only) logs the colour the map's lists and info header give that protector, after
+  closing the question the map may open with.
+  Live (24 Nov, one X4: `x4ls play --solo 2` on the rk8 session, both players on the cadet start, plot debug 1202 and
+  1101 at tick 900): outside every scope player 2's ship had `pilot=null` and the table named player 2
+  (`pilots=0x1639b0`); after the setup both wingmates protected their own player's ship as formation wingmen
+  (`guard=.../terran/ProtectShip/wingman/leader=ship/...`); player 2 flew off and its wingmate stayed 220 to 650 m
+  away in formation; a Xenon scout put ahead of player 2 and shot by player 2's guns (`aim_fire`) made player 2's
+  wingmate attack it (`guard=.../Attack/loose/leader=null/343.495/RER-226`) and then go back to the formation; on
+  player 2's HUD both wingmates were status 3 (Friendly, blue: `guard:...=3/terran`), both players' ships 5. No X4
+  script error.
+  Player 1's own view, X4's own player with the stock scripts (24 Nov, `x4ls play --solo 1`, the same session): the
+  stock wingmate "Velvet Thunder" put 150 m ahead (`escort_front`) and made the target (`escort_select`) has an azure
+  target box, azure icons and azure distance and speed text on the HUD (RGB about 64,176,240), and an azure name in
+  the target monitor; `escort_colour` gives `guard:252391=3/terran/own=false/mission=false/enemy=false/hostile=false`
+  with `factioncolour=-1` (relation colours). The target monitor names it "Terran Protectorate, Friendly +10". On the
+  map its icon is blue beside the two players' green ones, and `escort_map` (the map's own colour functions) gives it
+  `list=255,255,255 info=255,255,255` (white) against the map's `player=77,255,77`. The stock game shows the cadet's
+  wingmate blue, so player K's blue wingmate is the stock look.
+
+```
+# player 1 on discover, player 2 on the Terran cadet start with its story and the Terran story after it
+python tools/x4ls.py new-session --base-start x4ep1_gamestart_discover --players 2 --mode coop \
+    --start 2=x4ep1_gamestart_terran1 --omit 2=world --story 2 --gate-dll <x4lan_gate_64.dll> --out .local/sessions/cadet-p2
+# players 1 and 2 both on the Terran cadet start, each with the cadet story (and each with the Terran story after it)
+python tools/x4ls.py new-session --base-start x4ep1_gamestart_terran1 --players 2 --mode coop \
+    --start 2=x4ep1_gamestart_terran1 --omit 2=world --story 2 --gate-dll <x4lan_gate_64.dll> --out .local/sessions/cadet-both
+# three players on the cadet start (players without --start take the session start's ship and, with --story, its story)
+python tools/x4ls.py new-session --base-start x4ep1_gamestart_terran1 --players 3 --mode coop --story 2,3 \
+    --gate-dll <x4lan_gate_64.dll> --out .local/sessions/cadet-three
+```
+
+Each one ends by printing its `x4ls play` line. The `new-session` log names each player's copies
+(`its own copies: story=GS_Terran1_P2, yaki=Story_Yaki_P2`). In the game, look for `STORY_MD slot=K plot=story` and
+`plot=yaki` rows, `MPP_STORY ... signalled cues=2` and, on every client, the copies' cues claimed for player K.
+
+What only a live run can show: that X4 loads the copies beside the stock scripts; that the cadet copy's wingmate is the
+one `Story_Yaki_P<K>` hands over; that player K's sector change reaches the copy's offer cue; that the offer is in
+client K's list only; and that two cadet stories in one session stay in sync. Open: some state is still one per game.
+The copy writes its contact actor into the global table of persistent characters, and the stock script writes the same
+entry. The two "do not disturb" lists of the Terran story are global, and so is the game's own story state "Yaki story
+complete". Later chapters of each copy make the story's own objects again for their player (the Terran outpost, the
+Yaki leader and their ships) and repeat its faction-wide steps (Yaki jobs switched off, relations set), as the
+headquarters copies make a second station. Whether that is what a group wants has to come from a playtest. The
+scripts that read the Terran story's state go on reading the stock one, player 1's:
+`Story_Covert_Operations` (after the Terran story's chapter 9), `Story_HQ_Discovery` and `Story_Terraforming`.
+`x4ls resume` keeps the copies with the saved world but does not claim them for their players again (the same as the
+headquarters copies).
+
+Other start stories that other stock plots continue, found in the scripts (not built). Each would need a plot entry
+with `follows` in `tools/dev/native_gate_plot_copies.py`, and some need more than that:
+
+- Pioneer start (`x4ep1_gamestart_terran2`; players 2..N cannot take it yet, because it starts on foot):
+  `Story_HQ_Discovery` (it and `GS_Terran2` name each other; it tests the start) and `Story_Terraforming` (tests the
+  start). The headquarters discovery hands over the galaxy's one Terran headquarters, so a copy would also need its own
+  station.
+- Boron starts (`boron1`, a full-screen cutscene; `boron2`, on foot): `Story_Boron` (36 references from `GS_Boron2`;
+  `GS_Boron1` and it name each other; it tests the start) and `Story_Boron_Prelude`. `boron2` also uses the
+  headquarters plot.
+- Pirate starts: `pirate1` (a cutscene) with `Story_Pirate_Prelude` and `Story_Thefan`, which read `GS_Pirate1` and
+  test the start; `pirate2` (on foot) with `Story_Criminal` (the two name each other) and `Setup_DLC_Pirate`.
+- Split starts (`split1`, in a spacesuit; `split2`): `Story_Split` tests the start (three tests); there is no direct
+  reference between the scripts.
+- `x4ep1_gamestart_hyperion`: `Story_Hyperion` (one test of the start). `x4ep1_gamestart_dlc_mini_02`:
+  `Story_Unbihexium` (twelve tests and one root cue tied to the start). `x4ep1_gamestart_scientist`: the
+  headquarters plot.
+- The cadet start is also tested by `Story_Boron`, `Story_Thefan`, `Story_HQ_Discovery` and `Story_Terraforming`.
+  Those stay player 1's answers.
+
+### Milestones: go on from the last completed mission (built 24 Nov; offline tests only, not run in the game yet)
+
+A story is long: the Terran cadet story and the Terran story after it are 25 chapters. Every time a player completes a
+chapter, every client saves the game at the same moment (an info line "milestone terran_cadet-M3-slot2 saved"), and
+the next game can start from there with every player where they were.
+
+- Which ones: `python tools/dev/native_gate_milestones.py list`. M1 is the cadet's satellites (the distress call
+  begins), M2 the cadet story complete, M3 to M25 the chapters of the Terran story (escort, mines, patrol, ... the Yaki
+  trade mission). The name says whose: `terran_cadet-M3-slot2` is player 2's third.
+- The save waits while player 1 is on foot (it is made when player 1 sits again), and briefly while others are; X4 may
+  hold it during a call. It is not made in a game with a Linux PC or open slots.
+- After the game the run folder has `saves/milestones/<name>.xml.gz` and `<name>.json`. Keep both. To go on:
+
+```
+python tools/x4ls.py continue --milestone .local/runs/<time>/saves/milestones/terran_cadet-M2-slot2.xml.gz \
+    --gate-dll <x4lan_gate_64.dll> --out .local/sessions/cadet-m2
+python tools/x4ls.py play --clients 2 --overlay .local/sessions/cadet-m2/overlay --snapshot .local/sessions/cadet-m2/session-save.xml.gz
+# netplay: host the continued game (joiners need nothing else)
+python tools/x4ls.py host --milestone .local/runs/<time>/saves/milestones/terran_cadet-M2-slot2.xml.gz
+```
+
+- Every player's ship starts at rest: travel drive and boost off, no speed, the ship computer's autopilot off (a game
+  saved on the way somewhere does not fly on before the player looks; `--keep-flight` keeps it flying).
+- What comes back: player 1 exactly as saved. Players 2..N in the ship they flew (or last sat in), with their
+  inventory (and in factions mode their research and blueprints), their story where it was and their missions their
+  own again (by their scripts' names, before the first tick). What does not: the mission each player 2..N had selected
+  (select it again in the mission menu), a mission a player 2..N had taken from a shared script such as a generic
+  mission (everyone's after a continue: open, LAUNCHER.md), and what a player 2..N had learned in the encyclopedia and
+  on the map of their own. The gate must be one that names a story for its slot (built 24 Nov or later: the probe
+  refuses an older one at load, `native_gate_plot_owned: this gate names scripts for slot 1 only`).
+- Any other save of the session goes the same way: a periodic one (`--save .local/runs/<time>/saves/c1-t18000.xml.gz`)
+  or one a player made (`--save .local/runs/<time>/saves/player/<name>-t<tick>.xml.gz`). A periodic save from before
+  25 Nov has no `.json` beside it: give the session's `session.json` and a folder with its overlay's `play-recipe.json`.
+  Its players 2..N come back from their saved player objects (when they sat in a ship) and their stories by name:
+
+```
+# rk8 (24 Nov): player 2 had finished the cadet story; the periodic save of tick 18000 of player 2's client
+python tools/x4ls.py continue --save .local/rk8/c3-t18000.xml.gz --session .local/rk8/session.json     --overlay .local/rk8/overlay --gate-dll <x4lan_gate_64.dll> --out .local/sessions/rk8-t18000
+```
+
+Live (24 Nov, two clients on one PC): rk8's save continued in sync for 10,841 ticks (player 2 in its saved ship
+SIS-084 with its two wares, identity applied, a person's save and three periodic saves collected with their sidecars);
+a periodic save of that game continued again with the stories named for slot 2 (`PLOT_OWNED_ARMED ...
+GS_Terran1_P2=2,Story_Yaki_P2=2 ... owned=2` on both clients, 7,241 ticks in sync).
+
+**Live check for the coordinator** (steps 4 to 6 run on 24 Nov with rk8's save, see above; every row named here is
+written by this build):
+
+1. A session with player 2 on the cadet start and its story:
+   `python tools/x4ls.py new-session --base-start x4ep1_gamestart_discover --players 2 --mode coop --start 2=x4ep1_gamestart_terran1 --omit 2=world --story 2 --gate-dll <dll> --out .local/sessions/ms1`.
+   Its overlay must have `md/x4lan_milestones.xml` and `native_gate_milestones = {save=true,...}`.
+2. Play to M1 as player 2: `python tools/x4ls.py play --solo 2 --overlay .local/sessions/ms1/overlay --snapshot .local/sessions/ms1/session-save.xml.gz`
+   (or two clients without `--solo`). Shortcut for the test: the cadet's first chapter is the four satellites;
+   play them through.
+3. Rows that prove the save (`client2/x4ls-c2.log`; with two clients the same on both): `MILESTONE_MD name=terran_cadet-M1-slot2`,
+   `MILESTONE reached name=terran_cadet-M1-slot2 ... due=C save=T` (the same C and T on every client), `SAVE_SLOT
+   ... slot=2 player=... ship=... inventory=...`, `SAVE_OWNERS name=... kept=N failed=0` (N >= 2: the two story
+   roots), `MILESTONE_SAVE armed` and `MILESTONE_SAVE saved name=terran_cadet-M1-slot2 tick=T`, then on the console
+   `milestone terran_cadet-M1-slot2 (tick T), client 2: kept as terran_cadet-M1-slot2.xml.gz`. No `MILESTONE_SAVE_FAILED`
+   or `MILESTONE_LATE` in `errors.log`, and no desync in `desyncs.log` after T. With two clients the sidecar lists both
+   clients' hashes (they may differ in view-local parts: `tools/dev/checkpoint_diff.py`).
+4. Continue: `python tools/x4ls.py continue --milestone <run>/saves/milestones/terran_cadet-M1-slot2.xml.gz --gate-dll <dll> --out .local/sessions/ms1-m1`,
+   then `play` it as in 2. Rows that prove each player kept what was theirs:
+   - ship: the plan's ship step `slot=2 ship=<the slot's ship from the sidecar>` and player 2 in its ship at its saved place;
+   - stories: `PLOT_OWNED_ARMED ... scripts=GS_Terran1_P2=2,Story_Yaki_P2=2 ... owned=2` before the first tick;
+     player 2's mission list shows its story's mission, player 1's does not;
+   - other missions: `SAVE_OWNERS dump ... signalled at=2`, `SAVE_OWNERS_MD dumped=N`, `SAVE_OWNERS restored
+     ... heard=N of=N claimed=C refused=0 unreadable=U` at tick 32 (N = 0 from a save without a snapshot; U: the saved
+     cues X4 gives Lua without an ID, open, see LAUNCHER.md);
+   - story state: no `STORY_MD` begin row (the story is not begun again), `MILESTONE_MD` rows only for chapters after
+     M1, and the next chapter's speech plays on client 2 only;
+   - inventory: `CONTINUE_INVENTORY ... slot=2 ... applied=1 now=<the sidecar's wares>`;
+   - player 1: its own ship, money and inventory as at the save (X4's own save).
+   A `SAVE_OWNERS_FAILED` row (`heard` < `of`, or a readable entry `refused`) names what came in
+   `first=<slot>:<type>:<value>:<id>:<claimed>`.
+5. A person's save (any session overlay built since 25 Nov): in a two-client game press F5 on client 2 (or Escape,
+   Save game, a slot). Rows on client 2: `PLAYER_SAVE asked from=key file=quicksave name=quicksave slot=2 ok=true`
+   (`from=menu file=save_00N name=<typed>` for the menu). On every client: `SAVE_REQUEST_MD request=2|quicksave|quicksave`,
+   `PLAYER_SAVE reached name=quicksave slot=2 ... due=C save=T` (the same C and T on both), `SAVE_SLOT name=quicksave-tT`,
+   `SAVE_OWNERS name=quicksave-tT ... failed=0`, `PLAYER_SAVE armed`, `PLAYER_SAVE saved name=quicksave-tT tick=T ... slot=2
+   save=quicksave`; the console line `save quicksave-tT (tick T), client 1: kept as quicksave-tT.xml.gz`; and the run's
+   `saves/player/quicksave-tT.json` with `asked_by: 2`. Client 2 alone shows "game saved (quicksave)"; no desync after
+   T. A `PLAYER_SAVE asked ... ok=false why=not_local` row means the key's request was not taken as a click: the probe's
+   frame is not in a local phase there (S.click), and the key path needs another way in. Then
+   `x4ls continue --save <run>/saves/player/quicksave-tT.xml.gz ...` as in 4. F9 and Load game in the menu: one line
+   "loading a saved game is off during a session", nothing loads.
+6. The periodic saves are prepared the same way (`SAVE_SLOT name=periodic-t18000`, `SAVE_OWNERS name=periodic-t18000`
+   before `PERIODIC_SAVE armed tick=18000`) and have `saves/c<K>-t18000.json` beside them: `x4ls continue --save
+   <run>/saves/c1-t18000.xml.gz` works without anything else.
+
 ### A joiner picks a start (built 10 Nov; not in lockstep yet)
 
 A player who joins a running game takes one of the session's open slots, and each open slot plays the start the host
@@ -1004,7 +1258,7 @@ python tools/x4ls.py join --relay <host>:<port> --token <t> --overlay <copy of t
 The run folder `.local/runs/<time>/`:
 
 - small files: `summary.json`, `errors.log`, `desyncs.log`, `desync-status.json`, `relay.log`
-- the client logs: `clientK/engine-output.log` (play mode: about 5 MB per client-minute; `--full-logs` overlays
+- the client logs: `clientK/engine-output.log` (play mode: about 2 MB per client-minute, 24 Nov; `--full-logs` overlays
   write about 120 MB more for each world capture, every 1800 ticks)
 
 `python tools/x4ls.py triage .local/runs/<time>` reruns a diverged session with diagnostic windows before its
@@ -1043,15 +1297,104 @@ steering, as in single player, and a gun turns as far as its mount allows.
 - aim1 (two X4 on one PC, 900 ticks, a scripted aim for both players): the guns' mounts turned to the aim on both PCs
   with the same readings every 30 ticks, and back to rest when the aim ended; 0 desyncs, 0 errors. The second window had
   the focus, and its player's guns followed the real cursor there on both PCs.
-- Aim assist: without X4's manual aim (no mouse steering) and with X4's aim assist option on, a player's guns track
-  that player's selected target while it is in the gun's range (`native_gate_pilot_aim_assist`, a default). It is X4's
-  own aim on a target, lead included. aim3 (with X4's range limit): the target was 13.8 km away against a reach of
+- Aim assist (`native_gate_pilot_aim_assist`, a default) uses each player's own X4 option, Settings > Game > Aim assist.
+  Without mouse steering, a player's guns track that player's selected target while it is in the gun's range. It is
+  X4's own aim on a target, lead included. aim3 (with X4's range limit): the target was 13.8 km away against a reach of
   10.1 km and the guns stayed at rest. aim4 (the two players flew to each other first, 1700 ticks): with the target
   1.9 km away the guns turned to it and tracked it for the 800 ticks of the assist, the same readings on both PCs;
   0 desyncs, 0 errors.
-- Not yet: the mounts follow the aim point only, not the target's speed, so fast crossing targets may be tracked a
-  little late; fixed guns and turrets are as before.
+- Not yet: fixed guns and turrets are as before.
 - Host and joiners need the same kit: the input records changed.
+
+### Locking onto the target with mouse steering (built 24 Nov)
+
+Player 2 reported that the guns did not lock onto a target ship. With mouse steering on, no player's guns ever locked: the
+multiplayer aim sent the aim assist only without mouse steering. In single player, with Aim assist "On", the guns lock
+onto the target's lead mark as soon as the crosshair is within about 10 degrees of the target, mouse steering or not.
+The third choice of the option assists only without mouse steering. Now it works the same for every player, players 2
+to 8 included, each with their own target and their own option:
+
+- With mouse steering and the crosshair near the selected target, the guns swing to the lead mark and follow it.
+  Further away they follow the crosshair. X4's other rules apply as well: some targets do not take the aim assist,
+  and a large ship closer than 50 m does not lock.
+- The HUD's aim assist icon shows "active" while the guns are locked, as in single player.
+- The mounts now take the target's speed into their turn, as in single player, so the guns no longer lag behind a
+  fast crossing target.
+- The aim that arrives a few ticks late on a ship that crosses the view is turned by that ship's motion, when the
+  crosshair is near the selected target. It shows with the aim assist off: the shots land where the crosshair was on
+  the target, about 1.7 degrees better on a ship crossing at 300 m/s 1 km away.
+- Tested in C only so far (synthetic memory, slots 2, 3 and 4 aiming in the same tick). The live check is in the
+  hand-over notes. Host and joiners need the same kit: the record changed (version 4).
+
+### The guns' aim dots and the lead mark (built 24 Nov, after rk8)
+
+Player 2 reported with rk8 that the guns still did not point at the lead mark of the target, and that the small dots
+that show where locked guns aim were missing from the HUD. Player 2's log
+showed the lock working (about 12,900 locks in the game) but nothing on the screen showed it:
+
+- **The dots.** In single player X4 draws a small dot for each gimballed gun of the player's ship, where that gun
+  points at the target's distance. Locked, the dots sit on the lead mark. X4 draws them only for a gun whose controller
+  is the player's own, and in multiplayer every player's guns, player 1's included, are fired through another controller
+  class (the fire lease), so no player ever saw a dot. Now each PC draws the dots of its own player's guns as X4 does:
+  along each gun's barrel, as far as the selected target, in the in-range colour when the target is in range.
+- **The lead.** The lock and the HUD's lead mark took X4's lead for AI pilots, not the player's: X4 makes an AI's lead
+  worse against an evading target (a longer time of flight), and the HUD's mark also wrote that evasion clock into the
+  target on that PC alone. Now both use X4's player lead: the guns go to the mark the player sees.
+- **Not as in single player:** the dot's short pulse when the target comes into range is missing. A dot whose barrel
+  points at something nearer than the target stays at the target's distance, where X4 puts it on that object.
+- Every player, 2 to 8 included; nothing changes in the simulation except the lead of a locked gun, the same on every
+  PC. Host and joiners need the same kit.
+- Live (24 Nov, one X4 as player 2, `play --solo 2`, scripted aim at player 1's ship 688 m ahead): with the guns
+  locked, one dot sat in the middle of the lead mark and the HUD's aim assist icon was lit; with the guns at rest, the
+  dots of the outer guns sat left and right of the mark and the icon was dim. X4 asked for 16,506 dots by tick 1800 and
+  drew each one, all on the frame thread; the HUD's lead mark took the player lead 1,505 times; no gate stop.
+
+### Own guns without the input delay (built 24 Nov, after rk9)
+
+Player 2 reported with rk9 that the drawn aim lagged behind the cursor, and asked for the same presentation without
+the input delay that the own ship's movement has. The guns follow the aim a few ticks late on every PC, so that every PC fires the same shots;
+the dots, the gun barrels and the aim assist icon showed that delay. Now each PC draws its own player's guns at that
+player's latest aim, as it draws its own ship (`native_gate_pilot_aim_present`, a default; `false` turns it off):
+
+- The dots, the barrels of the gimballed guns and the aim assist icon follow the cursor at once, with X4's own lock
+  rule on the cursor now: near the target the dots jump onto the lead mark and the icon lights in the same frame.
+- The shots and the hits keep the replayed aim, the same on every PC: a shot fired while the cursor is moving leaves
+  along the barrel as it was a few ticks ago. Other players' guns are drawn as simulated.
+- Not as in single player: the drawn barrel goes straight to the aim, without X4's turn rate.
+- Every player, 1 to 8.
+- Live (24 Nov, one X4 as player 2, `play --solo 2`, a scripted cursor jump from the lock on player 1's ship to 14
+  degrees aside at tick 700): the drawn gimbal at its 10 degree limit from tick 701, the simulated one still on the
+  lead until 703 and at the limit about tick 713; in the window grabbed at tick 702 the dots already sat left of the
+  target with the feature on, and still on the lead mark with it off. The dots followed each scripted cursor, the icon
+  went dim at the jump; every gun solved (no refusal), the DOF limits read as +-0.1745 rad. Not checked yet: two PCs
+  (the census), the gun models themselves (not visible from the cockpit).
+
+### Boxes and targets around players 2..N (built 24 Nov, after rk9)
+
+Player 2 reported with rk9, in a game continued from a save, that ships could not be targeted and the blue boxes
+around nearby objects were missing, while gates and some objects, such as the mission's target ship, still had
+them. With rk8, in a fresh session, player 2 targeted ships fine.
+
+- **Why.** X4's HUD draws a box for the objects of ONE zone and its neighbouring zones: the zone of the UI's player,
+  which is X4's own player, player 1, on every PC. Gates and mission objectives come from other lists, which do not
+  depend on the zone, so they kept their boxes. Player 2's HUD listed the ships around player 1. In rk8's fresh
+  session both players started 300 m apart in one zone, so it did not show; the continued game put the two players
+  in two zones of the sector, and player 2 then flew to another system.
+- **Now** (`native_gate_pilot_present_hud_zone`, on by default, `lockstep_pilot_hud_zone.h`): each PC of player 2..8
+  keeps those lists on its own player's zone, with X4's own routine, every frame its player's view is drawn. When
+  player 1 changes zone X4 moves them to player 1's zone for one frame; they come back at the next. Only that PC's HUD
+  changes; nothing in the game world does.
+- **Not covered:** a section change on a highway inside one zone (X4 refreshes the list there; here the zone is the
+  same, so the list stays until the next zone).
+- Status: `hud_zone=on/passes/rescans/scanners/faults/other/nozone[/zone before>after]` in the `PILOT_INPUTS` row of
+  that PC's log.
+- Live (24 Nov, one X4 as player 2, `play --solo 2` of rk9's continued save `c3-t18000`, player 1 idle in its zone,
+  player 2's ship on its way in travel mode): at the second frame the three lists held player 1's zone and were moved
+  to player 2's (the zone X4 itself names for player 2 there); then they followed player 2 through 60 more zones
+  (63 moves by tick 14,700, no fault). The same run with the module off: the 9 world hashes, the 8 world census files
+  and the shared ID counter equal, so the game world does not change; two runs with it on: equal too. On the screen
+  the ships around player 2 had boxes at the start with and without the fix (the two players' zones are neighbours
+  there); far from player 1 the solo run's ship crossed empty space, so the boxes there are still to be seen in play.
 
 ## Mission types, tested without a person (built 16 Nov; two clients on one PC)
 
@@ -1775,9 +2118,48 @@ python tools/dev/action_tests.py plan trade
     signals the ship computer that a course ended or moved: the course is one client's, the autopilot listening there
     runs on every client, and that signal on one client alone would stop or turn it there only. An autopilot started
     for a course flies on to its target and ends there; a new course while it flies wants Shift+A again.
+    Fixed 24 Nov: a player 2..N's autopilot no longer ends unheard at a zone change. Its ship computer took its attention
+    from the cockpit, which follows its ship; some zone changes dip the ship's attention below visible for one tick, and
+    move.autopilot (which runs only from visible) then switched to an empty block and ended without its own end:
+    autopilot on, the drop out of travel, the gate and the arrival unheard until Shift+A (the user's rk7 and rk8
+    flights; the mission sweep's gm:GM_DeployInPlace at tick 3280 every time). X4 keeps the room of its own player
+    inroom, so player 1 never had it; now a player 2..N's room is inroom too (`native_gate_pilot_slots_room_attention`,
+    on by default, `lockstep_pilot_room_attention.h`; status `rat=` in PILOT_INPUTS). Run of 24 Nov on the diagnostic
+    branch (gm:GM_DeployInPlace, both players, 9,763 ticks, 0 mismatches): player 2's computer inroom from tick 37, no
+    dip at 3280, its script heard the approach at 4627 and ended the flight itself.
     `guidance` (run of 21 Nov): each player plots a course to a different station (player 1 to NLN-075, player 2 to
     MMJ-623), sees it on its own client, flies it by Shift+A (147 and 158 km), the course ends by itself at the
     station, a second course is cleared by Remove course; in sync at all 3,841 ticks.
+  - When a player 2..N's own course ends, X4 makes another mission the active one; that could be another player's
+    (two-PC game of 24 Nov: player 2's course ended and player 1's Terran Cadet story became player 2's active
+    mission, so player 2's next Shift+A flew to player 1's story target). Now the course's end keeps only that
+    player's own missions, or none (`guidance=kept/refused` in MISSIONS_PER_PLAYER). Unit-tested; not yet run live.
+  - A travel drive an autopilot left running (same game: player 2 stopped the autopilot while it charged the drive,
+    the drive took the ship to 1,420 m/s with no autopilot, and the travel key only "started" the travel it already
+    had). With no autopilot and no activity of the player's own, the travel key now ends such a drive at once
+    (`travel_left=` in UI_REPLAY_STATUS). Why the drive outlives the autopilot for players 2..N is the ship
+    computer's missing AI frames (PILOT_AI rows, open). Unit-tested; not yet run live.
+  - Open: player 2's HUD showed player 1's active mission while player 2 had none (same game, before the course
+    above). The HUD's mission panel (ui/core monitors.lua) reads GetMissionInfo3, which reads the manager's active
+    mission (swapped in the presentation scope), only when X4 sends a mission update. Likely cause, not confirmed:
+    a panel drawn before the first presentation scope and not updated since.
+  - Ship Interactions for players 2..N (fixed 24 Nov; scenario `interact`). In the two-PC games of 24 Nov (rk7, rk8)
+    player 2's click on the HUD's top level bar's Ship Interactions in flight did nothing: the bar (or the map)
+    closed and no menu opened (`UI_DOCKED_MENU kept=N ... scope=false` right after each click). The probe keeps X4's
+    automatic opens of that menu (after a conversation, a cinematic camera, a menu closing) to the client whose own
+    player is docked or sits at a post; it asked that question of every open, also a person's, and in flight the
+    answer is no. The Enter key opened the menu all along (X4 opens it natively, not through the Lua `OpenMenu`).
+    Now the two routes a person takes, the top level bar or tabs (`Helper.closeMenuAndOpenNewMenu`) and Back from a
+    menu opened out of it (`Helper.closeMenu` 'back' with its return record), open it as in stock on that player's
+    own client (`UI_DOCKED_MENU kept=0 passed=0 person=N via=tab|back`; `UI_DOCKED_MENU_ARMED slot=K helper=true`
+    at the start). What the menu then does (flight assist, modes, deployables, autopilot, Dock, Get Up, weapons) goes
+    through the calls the replay already shares, as for player 1. `interact`: each player opens it from the bar,
+    presses its Flight Assist, opens it from the map's tabs, goes to Ship Information and Back, presses Flight Assist
+    again, while the other client's dock menu is watched to stay closed. Unit-tested for slots 2, 3 and 8; run live
+    as player 2 alone (`x4ls play --solo 2` of a coop session, 24 Nov): the `interact` chain passed through every step
+    (the menu on player 2's own ship, flight assist off and on by the replay, Back to it), and window-message clicks on
+    the HUD bar's and the map's Ship Interactions, the menu's Flight Assist and the map's Back did what they do for
+    player 1. The two-client `interact` run (the other client's menu kept closed) is not run yet.
   - Not shared, so refused to every player (from the session's list of calls, not run): a wing's formation, a
     fleet's planned ships (fleet units), a group's protected position, boarding. Shared since 19 Nov: the
     settings of a wing's groups and a fleet's name.
@@ -1822,6 +2204,14 @@ python tools/dev/action_tests.py plan trade
     at most. The stock HUD's soft-target lock (it keeps your target while you steer hard at a small ship) was refused
     102 times in that session with an info line each few seconds; it only touches the UI's own target manager and
     now runs. The HUD's own encyclopedia entries (AddKnownItem) are still not shared, but no longer print an info line.
+  - Throttle, boost and travel drive (24 Nov, user report: speed changes and engaging or disengaging travel mode
+    answered late). The speed bar asked the simulation (Lua's GetPlayerSpeed): its arrow, number and
+    boost/travel colour came the input delay after the key, and a wheel step or a stop moved the drawn ship that late
+    too. The bar now answers from your own latest inputs, in the frame of the key: the set speed by X4's throttle rules
+    (step sizes fitted from the simulation), boost and travel at once, a refused one (no boost energy, a jammed drive)
+    gone again within a few ticks; the speed number is the speed of the ship on the screen, and the drawn ship takes the
+    predicted throttle (`native_gate_own_throttle`, a default; `false` turns it off; lockstep_own_throttle.h). Still on
+    the simulation's time: the boost energy bar, the travel charge sound, tint and messages, engine sounds and effects.
   - The cursor (fixed 9 Nov, the focus rule in `lockstep_pilot_stock.h`). X4 reads the PC's one cursor in the
     unfocused window too. When the cursor is in the other window, X4 sees it at this window's edge. Before the fix,
     that edge position steered this window's ship on every client (cursor steering), aimed its guns there, and turned
@@ -1851,7 +2241,8 @@ python tools/dev/action_tests.py plan trade
   start's story; a player in slots 2..N who took, say, the Terran cadet start got its ship and place and none of its
   missions. `x4ls new-session ... --start K=<start> --omit K=world --story K` gives slot K the start's own script
   (`x4ls starts`: `player-start=ship+story`): X4's script runs unchanged as that player, 60 ticks into the session (30
-  ticks after the join for a slot that joins). One story per start and session (the first slot with that start).
+  ticks after the join for a slot that joins). Since 24 Nov a further player on the same start plays their own
+  copy of the story ("Several players on one start" above).
   Run on 11 Nov (two X4 on one PC, discover as the session's start, slot 2 on the Terran cadet start, 3 minutes, the
   same result twice): the cadet mission began for player 2 on both clients, was player 2's active mission and listed on
   client 2 only, the wingmate's lines were spoken on client 2 only, and it went from part 1 to part 2 when player 2's
@@ -1898,10 +2289,14 @@ python tools/dev/action_tests.py plan trade
     runtime IDs equal. A Linux client still films the hull (the port is owed), and a player who joins while a call runs
     does not get that call's picture.
   - Known and open: the call's monitor and subtitles also appear on the other players' screens (the voice does not);
-    "Autopilot Activated" is shown on every screen when one player engages theirs; with the autopilot engaged the ship
-    does not answer the stick as it does in the stock game; the computer pilot still takes the seat when a player gets
-    up, the start's relation changes are announced one by one, and the cockpit HUD stays while walking (all three are
-    built and wait for their runs).
+    "Autopilot Activated" is shown on every screen when one player engages theirs; the computer pilot still takes the
+    seat when a player gets up, the start's relation changes are announced one by one, and the cockpit HUD stays while
+    walking (all three are built and wait for their runs).
+  - The stick while the autopilot flies (24 Nov, action test `apsteer` on the diagnostic branch, the stick's yaw axis
+    held for 3 s three times): it turns neither player 1's ship (X4's own player) nor player 2's while the autopilot is
+    engaged, before travel and in it, and turns both after Shift+A. X4 9.00 hands the ship to its pathing while the
+    autopilot is on (the PlayerController's flight targets come from the agent, the HUD's steering strength reads 0),
+    so player 2 flies as player 1 does here.
 - **Not built yet:** stories other scripts run for the whole game (faction plots) per player; they stay the
   session's (player 1's). The headquarters plot has a first form per player in factions mode (`--plot K=hq`,
   "A headquarters and research per player faction" above).

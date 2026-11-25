@@ -69,7 +69,10 @@ compare world captures object by object to name the class that parted.
 split and reports the first differing row of each family; soaks keep always-on
 attributions (lazy station updates per call site, every drawing actor scope) for
 splits that depend on timing and do not come back in a rerun. Checkpoints
-(`--checkpoint-at`) save every client's world at one tick for `checkpoint_diff.py`.
+(`--checkpoint-at`) save every client's world at one tick for `checkpoint_diff.py`. In a
+play session, where the log has the census roots only, each client keeps the per-object
+rows of its last eight captures beside its log (`native_gate_world_record`), and
+`tools/dev/census_record_diff.py` names the objects of a split from two clients' files.
 Joining a running game (hot join: a joiner loads the session's save, its package
 carries the state the save does not, and it replays to the session) is equal in
 native tests on one PC; recovery (resync from a mid-game save) is the next milestone.

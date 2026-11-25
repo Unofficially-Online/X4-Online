@@ -111,5 +111,44 @@ class NewSessionTests(unittest.TestCase):
                 self.assertEqual(capture.call_args.kwargs['overlay'], Path(d) / 'out/capture-overlay')
 
 
+class OwnStartTests(unittest.TestCase):
+    """Every slot 2..N without --start starts in the session start's own ship beside slot 1 (24 Nov: in a two-PC game at
+    the Terran cadet start, player 2 flew one of the capture fixture's Argon fighters instead)."""
+
+    def options(self, d, **kwargs):
+        return newsession.NewSessionOptions(**{'base_start': 'war_start', 'players': 4, 'mode': 'coop', 'out': Path(d) / 'out',
+                                               'gate_dll': Path('x.dll'), 'game': Path(d) / 'game', 'cache': Path(d) / 'cache',
+                                               **kwargs})
+
+    def test_slots_without_a_start_take_the_base_start_ship(self):
+        with tempfile.TemporaryDirectory() as d:
+            fake_game(Path(d) / 'game')
+            cat = newsession.catalog(Path(d) / 'game', Path(d) / 'cache', log=lambda *_: None)
+            starts, omit = newsession.own_starts(self.options(d, starts={2: 'beta_start'}, omit={3: 'reputation'}, open='4'), cat)
+            self.assertEqual(starts, {2: 'beta_start', 3: 'war_start'})   # open slot 4: its joiner picks
+            self.assertEqual(omit, {3: 'reputation,world'})
+            self.assertEqual(newsession.own_starts(self.options(d, fixture_ships=True), cat), ({}, {}))
+            lines = []
+            gamestarts, _ = newsession.tools()
+            with mock.patch.object(gamestarts, 'per_player_refusal', return_value='no ship'):
+                self.assertEqual(newsession.own_starts(self.options(d), cat, log=lines.append), ({}, {}))
+            self.assertEqual(lines, ['slots 2, 3, 4: fixture ships (no ship)'])
+
+    def test_the_spec_gives_every_player_a_hull_and_no_fixture(self):
+        import json
+        with tempfile.TemporaryDirectory() as d:
+            fake_game(Path(d) / 'game')
+            with mock.patch('lockstep.launcher.session.capture_snapshot', return_value='failed'):
+                with self.assertRaisesRegex(SystemExit, 'nothing registered'):
+                    newsession.new_session(self.options(d, players=3), log=lambda *_: None)
+            spec = json.loads((Path(d) / 'out/spec.json').read_text(encoding='utf-8'))
+            self.assertEqual(sorted(spec['slots']), ['2', '3'])
+            self.assertEqual({s['gamestart'] for s in spec['slots'].values()}, {'war_start'})
+            self.assertEqual(spec['fixture'], 'none')
+            spawn = (Path(d) / 'out/capture-overlay/md/native_gate_battle.xml').read_text(encoding='utf-8').partition('<cue name="Engage">')[0]
+            self.assertNotIn('<warp', spawn)
+            self.assertIn('<do_all exact="0" counter="$i">', spawn)   # no fixture ships
+
+
 if __name__ == '__main__':
     unittest.main()

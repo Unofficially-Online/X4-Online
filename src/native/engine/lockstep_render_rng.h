@@ -56,6 +56,16 @@ static void rdisp_follow_leave(int entered);
 /* The other cameras (a cutscene's, the comm monitor's) follow a displaced object they hang from (lockstep_render_display.h). */
 static int rdisp_others_enter(void);
 static void rdisp_others_leave(int entered);
+/* Bullets drawn moving between the steps (lockstep_render_shots.h): the step's sample after rdisp_sample, the swaps after the
+ * other cameras; the HUD radar's camera turned with the drawn own ship (lockstep_render_radar.h), last in, first out. */
+static void rshot_sample(void);
+static int rshot_enter(void);
+static void rshot_leave(int entered);
+static int rradar_enter(void);
+static void rradar_leave(int entered);
+/* This client's own guns at its latest aim, not the replayed one (lockstep_pilot_aim_present.h): last in, first out. */
+static int paimp_enter(void);
+static void paimp_leave(int entered);
 /* Slot 10 inside the presentation scope (lockstep_pilot_present.h); the original alone when off. */
 static void pres_render_call(render_rng_fn original,void *self);
 static volatile LONG render_rng_active;
@@ -83,10 +93,14 @@ static void render_rng_execute(render_rng_fn original,void *self,volatile uint64
     render_rng_entry=caller;++render_rng_calls;++render_rng_frame_calls;
     LARGE_INTEGER slot_begin,slot_end;QueryPerformanceCounter(&slot_begin); /* slot 10's time (gate.render_split) */
     rdisp_sample();
+    rshot_sample();
     const int presented=predict_present_enter();
     const int displayed=rdisp_enter();
     const int followed=rdisp_follow_enter(displayed);
     const int others=rdisp_others_enter();
+    const int shots=rshot_enter();
+    const int radar=rradar_enter();
+    const int aimed=paimp_enter();
     __try {
         if(split) *word=start;
         InterlockedExchange(&render_rng_in_slot,1);
@@ -94,6 +108,9 @@ static void render_rng_execute(render_rng_fn original,void *self,volatile uint64
     } __finally {
         DWORD error=GetLastError();
         InterlockedExchange(&render_rng_in_slot,0);
+        paimp_leave(aimed);
+        rradar_leave(radar);
+        rshot_leave(shots);
         rdisp_others_leave(others);
         rdisp_follow_leave(followed);
         rdisp_leave(displayed);

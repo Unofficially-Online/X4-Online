@@ -406,6 +406,8 @@ static void test_pfbody_cameras_back(void) {
     memcpy(test_pnat_universe+PFBODY_CAMERAS,test_pfbody_cameras_at,16);memset(test_pslot_p2+PFBODY_CAMERA,0,8);test_pfbody_cameras=0;
 }
 static void test_pilot_foot_slots_block(unsigned char *region,unsigned char *input,unsigned char *p1,unsigned char *p2);   /* test_lockstep_pilot_foot_slots.h */
+static void test_pilot_chair_slots(unsigned char *region,unsigned char *p1);   /* test_lockstep_pilot_foot_slots.h */
+static void test_pilot_teleport_slots(unsigned char *region,unsigned char *p1);   /* test_lockstep_pilot_teleport.h */
 static void test_pilot_death_foot_block(unsigned char *region,unsigned char *input,unsigned char *p1,unsigned char *p2);   /* test_lockstep_pilot_death_foot.h */
 static void test_pilot_death_foot_stop(unsigned char *region,unsigned char *input,unsigned char *p1,unsigned char *p2);
 /* One stock record of capture tick c for slot k, staged as the wire does at c (lockstep_pilot_stock.h pstk_stage). */
@@ -1537,11 +1539,16 @@ static void test_pilot_slots(void) {
             memcpy(&parent,p1+PRES_PARENT,8);memcpy(&view,p1+PRES_VIEW_CACHE,8);assert(parent==room3 && view==room3);
             pres_leave();memcpy(&parent,p1+PRES_PARENT,8);memcpy(&view,p1+PRES_VIEW_CACHE,8);
             assert(parent==parent1 && view==view1 && region[0x2f4b750]==0x11 && pslot_hash()==canonical3);}
+        /* The sound update on client 3 and on client 2 in that slot's scope (test_lockstep_player_sound.h). */
+        test_player_sound_present(region,p1,test_pslot3_room[0],test_pslot3_room[1]);
+        assert(pslot_hash()==canonical3 && test_pslot_singleton()==p1);
         pres_slot=0;pres_active=0;
         assert(pslot_release_all() && !pslots[2].seated && !pslots[3].seated && !strcmp(pslot_stage,"released") && !pview_slot_player);
         assert(!*(void**)(test_pslot3_p[0]+0x70) && !*(void**)(test_pslot3_p[1]+0x70) && !memcmp(region+PSLOT_CALL_SITE,pslot_call_bytes,5));
         memset(&pilot_slots[2],0,sizeof(pilot_slots[2]));
         vps_create=test_pslot_factory;pnat_fn.controller=test_pslot_controller_of;}
+    test_pilot_chair_slots(region,p1);   /* the pilot chair of slots 2 and 3 (test_lockstep_pilot_foot_slots.h) */
+    test_pilot_teleport_slots(region,p1);   /* X4's move of slots 2 and 3 to a carrier's bridge (test_lockstep_pilot_teleport.h) */
     test_pilot_slots_absent(region,input,p1);
     printf("pilot stock slots 2..N arming/construct/seat/vtable copy/routes/authority/update hook/capture/staging/replay/release/fail-closed tests PASS\n");
     test_pslot_reset();
@@ -1697,6 +1704,26 @@ static void test_pilot_slots_image(const char *path) {
     for(unsigned i=0;i<PSLOT_PIN_COUNT;i++) {
         assert(pslot_pin_table[i].size<=sizeof(bytes) && test_pnat_file_bytes(f,sections,count,pslot_pin_table[i].rva,pslot_pin_table[i].size,bytes));
         assert(hash_ok(bytes,pslot_pin_table[i].size,pslot_pin_table[i].sha));
+    }
+    /* X4's entry of a suited player (lockstep_pilot_death.h pvehk_enter): its pin and its connection lookup's, and the
+     * no-room branch pvehk_entry_target reads as X4 does: the connections at suit+0xc0, 0x4a76a0(out, them, 14, the
+     * flags byte, the filter), the connection out[1], +0x20, +0x18, then from +0x70 the first ancestor of class 0x6f. */
+    {   static const struct {unsigned rva;unsigned char n,b[8];} entry[]={
+            {0x7103e7u,7,{0x48,0x8b,0x92,0xc0,0x00,0x00,0x00}},{0x710406u,6,{0x41,0xb8,0x0e,0x00,0x00,0x00}},
+            {0x710423u,5,{0x48,0x8b,0x44,0x24,0x58}},{0x710428u,4,{0x48,0x8b,0x58,0x20}},{0x710431u,4,{0x48,0x8b,0x5b,0x18}},
+            {0x71044cu,4,{0x48,0x8b,0x5b,0x70}},{0x710458u,5,{0xba,0x6f,0x00,0x00,0x00}}};
+        int32_t rel;
+        assert(test_pnat_file_bytes(f,sections,count,PVEHK_ENTER,PVEHK_ENTER_SIZE,bytes) && hash_ok(bytes,PVEHK_ENTER_SIZE,PVEHK_ENTER_SHA));
+        assert(test_pnat_file_bytes(f,sections,count,PVEHK_CONNECTION_FIND,PVEHK_CONNECTION_FIND_SIZE,bytes) &&
+               hash_ok(bytes,PVEHK_CONNECTION_FIND_SIZE,PVEHK_CONNECTION_FIND_SHA));
+        for(unsigned i=0;i<sizeof(entry)/sizeof(*entry);i++)
+            assert(test_pnat_file_bytes(f,sections,count,entry[i].rva,entry[i].n,bytes) && !memcmp(bytes,entry[i].b,entry[i].n));
+        assert(test_pnat_file_bytes(f,sections,count,0x7103f7u,8,bytes) && bytes[0]==0x44 && bytes[1]==0x0f && bytes[2]==0xb6 && bytes[3]==0x0d);
+        memcpy(&rel,bytes+4,4);assert(0x7103ffu+(unsigned)rel==PVEHK_CONNECTION_FLAGS);
+        assert(test_pnat_file_bytes(f,sections,count,0x7103ffu,7,bytes) && bytes[0]==0x48 && bytes[1]==0x8d && bytes[2]==0x05);
+        memcpy(&rel,bytes+3,4);assert(0x710406u+(unsigned)rel==PVEHK_CONNECTION_FILTER);
+        assert(test_pnat_file_bytes(f,sections,count,0x710416u,5,bytes) && bytes[0]==0xe8);
+        memcpy(&rel,bytes+1,4);assert(0x71041bu+(unsigned)rel==PVEHK_CONNECTION_FIND);
     }
     /* The call site in one 16-byte block, the only d95180 call; slot 1's controller in rdi, game time in xmm1. */
     assert(((PSLOT_CALL_SITE+4)&~15u)==(PSLOT_CALL_SITE&~15u));

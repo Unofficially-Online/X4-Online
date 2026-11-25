@@ -63,7 +63,7 @@
  * slot scope replays it (pstk_slot_replay) with slot k's player as the singleton
  * and slot k's bank; d88a10's outputs and the view answer per scope. */
 #define PSTK_STOP_REASON 155u
-#define PSTK_VERSION 3u
+#define PSTK_VERSION 4u   /* 4 (24 Nov): the steering byte's assist bit also with the manual bit (lockstep_pilot_aim.h) */
 #define PSTK_HEAD 43u
 #define PSTK_EVENT 6u
 #define PSTK_EVENTS_MAX 31u
@@ -274,10 +274,11 @@ static int pstk_handler_ok(const void *handler) {
     return 0;
 }
 
-/* Record v2, little endian: 0 version | 1 flags | 2..3 low 16 bits of the capture
+/* Record (PSTK_VERSION), little endian: 0 version | 1 flags | 2..3 low 16 bits of the capture
  * tick | 4..15 cursor outputs, three float32 (zero bits without the cursor flag) |
- * 16..27 aim point in the ship's frame, three float32, and 28 the mouse steering
- * flag 0|1 (zero without the aim flag) | 29 view bits (1 cockpit, 2 floating),
+ * 16..27 aim point in the ship's frame, three float32, and 28 the steering byte: bit 0
+ * the mouse steering flag, bits 1 and 2 the manual aim and the aim assist of
+ * lockstep_pilot_aim.h (zero without the aim flag) | 29 view bits (1 cockpit, 2 floating),
  * 30..33 FOV factor float32, 34..41 soft target u64 (portable ID, 1 = unportable,
  * 0 = none; all zero without the view flag) | 42 event count n (0..31) | then n
  * events of 6 bytes: u16 kind<<14|id (id < 512), u32 value (action 0, state and
@@ -929,6 +930,7 @@ static int pdeath_status(char *out,size_t capacity);                       /* lo
 static int pslot_armed;static int pslot_status(char *out,size_t capacity); /* lockstep_pilot_slots.h */
 static int pres_armed;static int pres_status(char *out,size_t capacity);   /* lockstep_pilot_present.h */
 static int pfbody_armed;static int pfbody_status(char *out,size_t capacity); /* lockstep_pilot_foot_body.h */
+static int ptele_armed;static int ptele_status(char *out,size_t capacity); /* lockstep_pilot_teleport.h */
 static int pstk_status(char *out,size_t capacity) {
     char keys[PSTK_LOCAL_KEYS*32+2];pstk_local_keys_text(keys,sizeof(keys));
     int n=snprintf(out,capacity," stock=%s slot=%u slots=%x flight=%u/%u capture_start=%llu first_apply=%llu recorded=%lld dropped=%lld "
@@ -954,5 +956,6 @@ static int pstk_status(char *out,size_t capacity) {
     if(pfoot_armed) {more=pfoot_status(out+n,capacity-(size_t)n);if(!more) return 0;n+=more;}
     if(pfbody_armed) {more=pfbody_status(out+n,capacity-(size_t)n);if(!more) return 0;n+=more;}
     if(pfslot_armed) {more=pfslot_status(out+n,capacity-(size_t)n);if(!more) return 0;n+=more;}
+    if(ptele_armed) {more=ptele_status(out+n,capacity-(size_t)n);if(!more) return 0;n+=more;}
     return n;
 }

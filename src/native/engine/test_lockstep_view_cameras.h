@@ -60,7 +60,19 @@ static void test_view_cameras(void) {
     view_mode=VIEW_OFF;view_installed=1;assert(!vcam_arm() && !strcmp(vcam_why,"view_points"));
     view_mode=VIEW_PLAYERS;stats.issued=1;assert(!vcam_arm() && !strcmp(vcam_why,"late_or_thread"));stats.issued=0;
     vcam_pins_checked=-1;assert(!vcam_arm() && !strcmp(vcam_why,"pins"));vcam_pins_checked=1;
+    assert(!vcam_animated_arm() && !strcmp(vcam_why,"animated_late"));   /* animated shots: only after the cameras */
     assert(vcam_arm() && vcam_armed && vcam_arm());vcam_find=test_vc_find;
+    assert(!vcam_animated_arm() && !strcmp(vcam_why,"animated_pins") && !vcam_animated);vcam_why="-";   /* this image is not X4's */
+    /* An animated shot's site (CameraAnimated::vfunc2): nobody's while animated shots are off; then noted as a camera
+     * shot is, the shot from r14 of the site's frame, one entry per shot; its end is the shots' common end. */
+    test_vc_lists(1,0);
+    vcam_note(VCAM_SITE_ANIMATED);assert(!vcam_adds && !vcam_animated_notes && !vcam_no_shot);
+    vcam_animated=1;vcam_note(VCAM_SITE_ANIMATED);
+    assert(vcam_adds==1 && vcam_animated_notes==1 && test_vc_frame_site==VCAM_SITE_ANIMATED && test_vc_frame_r14==1 && vcams[0].shot==test_vc_shot && vcams[0].id==0x7001);
+    vcam_note(VCAM_SITE_ANIMATED);assert(vcam_adds==1 && vcam_animated_notes==2);
+    {char status[512];assert(vcam_status(status,sizeof(status))>0 && strstr(status," animated=1/2 why=-"));}
+    vcam_note(VCAM_SITE_END);assert(vcam_ends==1 && vcams[0].ended);
+    memset(vcams,0,sizeof(vcams));vcam_adds=vcam_ends=0;vcam_animated=0;vcam_animated_notes=0;test_vc_lists(0,0);
     /* A shot of a cutscene in no list, then in the manager's other list: counted, not noted. Other sites: nothing. */
     vcam_note(VCAM_SITE_SHOT);assert(vcam_other==1 && !vcam_adds && test_vc_frame_site==VCAM_SITE_SHOT && test_vc_frame_r14==1);
     test_vc_lists(0,1);vcam_note(VCAM_SITE_SHOT);assert(vcam_local==1 && !vcam_adds);
