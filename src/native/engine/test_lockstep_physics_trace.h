@@ -305,3 +305,29 @@ static void test_physics_trace_native_image(const char *path) {
     assert(VirtualFree(image,0,MEM_RELEASE));image=prior;
     puts("physics trace native pins, Update call, listener slots and serial job system verified");
 }
+/* native_gate_body_watch (lockstep_body_watch_win.h): configuration, the body taken from the step list's identities, and
+ * the real hardware watch on this process: a write to the watched x word traps into the handler, which keeps the row
+ * (tick, thread, the writer's RVA chain, the words written); after the last tick the registers are cleared. */
+static __attribute__((noinline)) void test_bdw_write(volatile float *at,float value) {*at=value;}
+static void test_body_watch(void) {
+    uint64_t saved_issued=stats.issued;
+    assert(!bdw_configure(0,2,1,4) && !bdw_configure(0x3f4bd,3,1,4) && !bdw_configure(0x3f4bd,2,0,4) && !bdw_configure(0x3f4bd,2,4,4) &&
+           !bdw_configure(0x3f4bd,2,1,700));
+    assert(bdw_configure(0x3f4bd,2,1,3) && bdw_configure(0x3f4bd,2,1,3) && !bdw_configure(0x3f4bd,1,1,3) && !strcmp(bdw_stage,"configured"));
+    static __attribute__((aligned(64))) float body[32];memset(body,0,sizeof(body));
+    bdw_step_end(1);assert(!bdw_armed && !strcmp(bdw_stage,"unresolved"));   /* no body in the step list yet */
+    bdw_note((unsigned char*)body,0x3f4bd,1);bdw_note((unsigned char*)body,0x3f4be,2);assert(!bdw_body);
+    bdw_note((unsigned char*)body,0x3f4bd,2);assert(bdw_body==(unsigned char*)body);
+    stats.issued=1;bdw_step_end(1);assert(bdw_armed && bdw_threads>=1 && !strcmp(bdw_stage,"armed"));
+    test_bdw_write(&body[0],-69246.7f);test_bdw_write(&body[1],303.8f);test_bdw_write(&body[2],150.7f);   /* x and z trap, y does not */
+    assert(bdw_count==2);
+    char row[320];assert(bdw_text(0,row,sizeof(row))>0 && strstr(row,"index=0 tick=1 ") && strstr(row," word=0 ") && strstr(row," chain="));
+    assert(bdw_text(1,row,sizeof(row))>0 && strstr(row," word=2 ") && strstr(row,"pos=-69246.703/303.800/150.700"));
+    assert(bdw_rows[0].thread==GetCurrentThreadId() && bdw_rows[0].count>=1 && !bdw_text(2,row,sizeof(row)));
+    stats.issued=2;bdw_step_end(2);assert(bdw_armed);
+    stats.issued=3;bdw_step_end(3);assert(!bdw_armed && !bdw_configured && !strcmp(bdw_stage,"done"));
+    test_bdw_write(&body[0],1.0f);assert(bdw_count==2);   /* disarmed */
+    char status[256];assert(bdw_status(status,sizeof(status))>0 && strstr(status," writes=2 ") && strstr(status," stage=done"));
+    bdw_restore();assert(!bdw_veh);bdw_count=0;bdw_body=NULL;bdw_stage="idle";stats.issued=saved_issued;
+    puts("body watch: configuration, step-list body, hardware write trap with the writer's chain, disarm PASS");
+}

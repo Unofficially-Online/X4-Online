@@ -276,6 +276,7 @@ static int ptrace_begin(unsigned char *system) {
         if(index>=slots || !created_read(bodies+index,&body,8) || !body || ((uintptr_t)body&1) ||
            !created_read(body+0x70,&actual,4) || actual!=ptrace_ids[i]) {++r->missing;continue;}
         ptrace_identity(body,&b->id);
+        bdw_note(body,b->id.key,b->id.which);   /* native_gate_body_watch (lockstep_body_watch_win.h) */
         if(!ptrace_state(body,b)) return ptrace_fail("body");
         b->body=body;++r->bodies;
         if(!b->id.key) {++r->local;continue;}
@@ -310,6 +311,7 @@ static void ptrace_end(uint32_t result) {
     }
     r->cforeign=(uint32_t)(InterlockedCompareExchange64(&ptrace_foreign,0,0)-ptrace_cur.foreign);
     ptrace_push_step(r);++ptrace_steps;
+    bdw_step_end(r->tick);
 }
 static uint32_t ptrace_update(void *system,float dt,int steps,void *allocator,void *jobs) {
     ptrace_update_fn original=(ptrace_update_fn)(void *)(image+PTRACE_UPDATE);

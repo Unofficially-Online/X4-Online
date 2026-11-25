@@ -51,6 +51,7 @@ jobs:
           --allow-skip 'the pinned X4.exe is not at hand'
           --allow-skip 'the stock md.xsd'
           --allow-skip 'resolved stock data'
+          --allow-skip 'X4LAN_GAMEDATA'
           --allow-skip 'no released lane tool on this machine'
           --allow-skip 'cross-check from Windows with Zig'
           --allow-skip 'named pipes: Windows'

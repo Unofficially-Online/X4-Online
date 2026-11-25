@@ -110,6 +110,17 @@
  * the usual one, as the files finished while the fixtures were built (the same on
  * body 0 would part the simulation: contacts sort by sub-shape ID).
  *
+ * Every body's pose at the first admitted step ('wait' and 'sync'; rk10, 25 Nov, continues of the periodic save c3-t18300).
+ * Scene::Step's post-step write-back 0xbfb00 (each body, call at 0xbb03d) syncs a static body (record +0x39 set) to its
+ * owner's transform (GetTransformRelativeTo at the thread's time, then SetPositionAndRotation 0x14066f0) only when the
+ * scene's flag +0x4b is set; the loop clears it (0xbb04f). The scene anchor routine 0xbd410 sets it (0xbda10) after a
+ * re-anchor, and the load anchors the scenes in its own frames, so whether a static body loaded off its owner is put
+ * right at tick 1 depended on whether a boot step had already used the flag on that client. Station BHC-891's build
+ * module 0x3f4bd (next to player 1) has such a body, a sensor loaded 67.8 km off: run 20261125-025211's body watch has
+ * the write at tick 1 through that branch on both clients, the split runs on one client only (2 of 5 rk10 continues and
+ * most later ones parted at 1389 from it). So the pre-pass of each scene's first admitted step sets the flag (the
+ * engine's own full sync, the one every re-anchor asks for), on every client at the session's first tick (a hot
+ * joiner's first tick is not its present clients', so not there): scene_syncs= counts it.
  * SHAPE_ORDER status per tick, SHAPE_ORDER_ROW per moved child. Pins: the
  * apply 0xc7f30 and its caller 0xc7e30, AddShape, RemoveShape,
  * CalculateSubShapeBounds; with 'wait' the pre-pass, both ready-list
@@ -156,7 +167,8 @@ static const struct {unsigned rva,size;const char *sha;} sorder_wait_pins[]={
     {0xbdc80u,0x8ceu,"c4133b41f4e9cb76c1da194ed74afb47da251a8cde0ea4050ebbbb262c641f42"},  /* the pre-pass */
     {0xbdac0u,0xd5u,"d6bd613ed0f3cc4f7ea2681c1cb36a82b70a6927253b7fc6deb3cf06259ffdc4"},   /* ready list +0x740 */
     {0xbdba0u,0xd5u,"21dc99edeed3e587ca0771485a93c9f5bacf1fb5d2743cafd82cb8f5c2edbc85"},   /* ready list +0x1750 */
-    {0xba640u,0x28u,"d21fe222fce5a3c59cd5ecab8a6d1a828dc6ec75c4cc94d429dce72cb89a4381"}};  /* Scene::Step's pre-pass call */
+    {0xba640u,0x28u,"d21fe222fce5a3c59cd5ecab8a6d1a828dc6ec75c4cc94d429dce72cb89a4381"},   /* Scene::Step's pre-pass call */
+    {0xbb031u,0x23u,"93a1306fd130506d7cdf9ccdad4251fa0f0941a1cab5e068fc5915cee82b7a5a"}};  /* the write-back's flag +0x4b: read, call, clear */
 static const struct {unsigned rva,size;const char *sha;} sorder_sync_pins[]={
     {0xb1d40u,0x311u,"e8a4d750c189f2f79e28f8ace27e45b2c8f3ecf49fd4e78350dd89a46f32e87c"},   /* shape file lookup/request */
     {0xb2060u,0x319u,"057b39a5bdccb2e0957d9e7de4dfe56e4c8fe8e208cdf5eed2cf29fac76f6f11"},   /* mesh file lookup/request */
@@ -184,6 +196,12 @@ static uint64_t sorder_removals,sorder_moves,sorder_appends,sorder_native,sorder
 static uint64_t sorder_waits,sorder_wait_passes,sorder_wait_us,sorder_wait_max_us,sorder_last_pending;
 static uint64_t sorder_requests,sorder_cached_hits,sorder_loads,sorder_load_us,sorder_load_max_us,sorder_passed,sorder_alt_keys,sorder_mass_forced;
 static uint64_t sorder_resident,sorder_invalid,sorder_unloaded,sorder_boot_moves,sorder_boot_forced,sorder_boot_loads,sorder_boot_native;
+#define SORDER_SCENE_SYNC 0x4bu       /* a scene's flag: the next step's write-back syncs every body to its owner (0xbb031) */
+#define SORDER_SCENES 16u
+static void *sorder_scenes_seen[SORDER_SCENES];
+static unsigned sorder_scenes_count;
+static uint64_t sorder_scene_syncs,sorder_sync_tick;
+static int sorder_sync_tick_set;
 static const char *sorder_stage="idle";
 static int sorder_fail(const char *why) {sorder_stage=why;InterlockedIncrement64(&sorder_failures);return 0;}
 /* In-place moves and mass requests: every frame after arming, MoveWorker only. */
@@ -231,10 +249,21 @@ static int sorder_pending(const unsigned char *system,uint64_t *count) {
        !created_read(system+0x6e8,&counts[0],8) || !created_read(system+0x728,&counts[1],8)) return -1;
     *count=counts[0]+counts[1];return roots[0] || roots[1];
 }
+/* The session's first admitted step (not a hot joiner's: its present clients made theirs at their own first tick):
+ * each scene's write-back syncs every body to its owner (SORDER_SCENE_SYNC); 1 when set now. */
+static int sorder_scene_first(unsigned char *scene) {
+    if(!sorder_sync_tick_set) {sorder_sync_tick_set=1;sorder_sync_tick=stats.issued;}
+    if(stats.issued!=sorder_sync_tick || join_tick_base()) return 0;
+    for(unsigned i=0;i<sorder_scenes_count;i++) if(sorder_scenes_seen[i]==scene) return 0;
+    if(sorder_scenes_count>=SORDER_SCENES) return 0;
+    sorder_scenes_seen[sorder_scenes_count++]=scene;
+    *(volatile unsigned char *)(scene+SORDER_SCENE_SYNC)=1;++sorder_scene_syncs;return 1;
+}
 /* The pre-pass of a step, repeated until no request waits (wait mode). */
 static void sorder_prepass_with(sorder_pass_fn original,unsigned char *scene,unsigned timeout_ms) {
     original(scene);
     if(sorder_mode<SORDER_WAIT || !sorder_live()) return;
+    if(scene) sorder_scene_first(scene);
     unsigned char *system=NULL;uint64_t count=0;
     if(!created_read(scene+0x20,&system,8) || !system) {sorder_fail("scene");return;}
     int pending=sorder_pending(system,&count);
@@ -455,6 +484,7 @@ static int sorder_arm(int mode) {
     sorder_waits=sorder_wait_passes=sorder_wait_us=sorder_wait_max_us=sorder_last_pending=0;
     sorder_requests=sorder_cached_hits=sorder_loads=sorder_load_us=sorder_load_max_us=sorder_passed=sorder_alt_keys=sorder_mass_forced=0;
     sorder_resident=sorder_invalid=sorder_unloaded=sorder_boot_moves=sorder_boot_forced=sorder_boot_loads=sorder_boot_native=0;
+    memset(sorder_scenes_seen,0,sizeof(sorder_scenes_seen));sorder_scenes_count=0;sorder_scene_syncs=0;sorder_sync_tick_set=0;
     memset(&sorder_cur,0,sizeof(sorder_cur));sorder_restored=0;
     for(unsigned i=SORDER_CALLS;i-->0;) { /* the removal last: every other call passes through until a removal is recorded */
         if(!sorder_call_used(i)) continue;
@@ -491,7 +521,7 @@ static int sorder_status(char *out,size_t cap) {
     int n=snprintf(out,cap,"mode=%s installed=%d frame=%llu last_tick=%llu moves=%llu total_moves=%llu removals=%llu appends=%llu native=%llu rows=%lld "
         "waits=%llu wait_passes=%llu wait_us=%llu max_wait_us=%llu last_pending=%llu requests=%llu cached=%llu loads=%llu load_us=%llu "
         "max_load_us=%llu passed=%llu alt_keys=%llu resident=%llu invalid=%llu unloaded=%llu mass_forced=%llu boot_moves=%llu boot_forced=%llu "
-        "restored=%d stage=%s failures=%lld boot_loads=%llu boot_native=%llu",sorder_mode_name(),sorder_installed,
+        "restored=%d stage=%s failures=%lld boot_loads=%llu boot_native=%llu scene_syncs=%llu",sorder_mode_name(),sorder_installed,
         (unsigned long long)stats.issued,(unsigned long long)(sorder_tick==UINT64_MAX?0:sorder_tick),
         (unsigned long long)sorder_frame_moves,(unsigned long long)sorder_moves,(unsigned long long)sorder_removals,(unsigned long long)sorder_appends,
         (unsigned long long)sorder_native,(long long)sorder_rows,(unsigned long long)sorder_waits,(unsigned long long)sorder_wait_passes,
@@ -500,6 +530,6 @@ static int sorder_status(char *out,size_t cap) {
         (unsigned long long)sorder_load_max_us,(unsigned long long)sorder_passed,(unsigned long long)sorder_alt_keys,
         (unsigned long long)sorder_resident,(unsigned long long)sorder_invalid,(unsigned long long)sorder_unloaded,
         (unsigned long long)sorder_mass_forced,(unsigned long long)sorder_boot_moves,(unsigned long long)sorder_boot_forced,sorder_restored,sorder_stage,
-        (long long)sorder_failures,(unsigned long long)sorder_boot_loads,(unsigned long long)sorder_boot_native);
+        (long long)sorder_failures,(unsigned long long)sorder_boot_loads,(unsigned long long)sorder_boot_native,(unsigned long long)sorder_scene_syncs);
     return n>0 && (size_t)n<cap?n:0;
 }

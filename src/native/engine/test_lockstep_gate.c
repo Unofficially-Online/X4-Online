@@ -1342,6 +1342,7 @@ int main(int argc,char **argv) {
     test_motion_doors();
     test_motion_spline();
     test_physics_trace();
+    test_body_watch();
     test_body_order();
     test_shape_order();
     test_nav_octree();

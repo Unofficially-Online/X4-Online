@@ -24,7 +24,7 @@ static uint64_t test_so_add(void *compound,void *position,void *rotation,void *s
 static void test_so_bounds(void *compound,uint32_t start,uint32_t count) {(void)compound;test_so_bounds_start=start;test_so_bounds_count=count;++test_so_bounds_calls;}
 /* A step's system with two request maps (root +8, count +0x28 of +0x6c0 and
  * +0x700): the synthetic pre-pass applies one file per call. */
-static __attribute__((aligned(16))) unsigned char test_so_system[0x800],test_so_scene[0x40];
+static __attribute__((aligned(16))) unsigned char test_so_system[0x800],test_so_scene[0x80];
 static unsigned test_so_pass_calls,test_so_files;
 static void test_so_pass(void *scene) {
     assert(scene==test_so_scene);++test_so_pass_calls;
@@ -100,15 +100,25 @@ static void test_shape_order(void) {
     /* Wait mode: the pass repeats until no request waits; place mode never waits; a file that never finishes times out. */
     unsigned char *system=test_so_system;memcpy(test_so_scene+0x20,&system,8);memset(test_so_system,0,sizeof(test_so_system));
     sorder_mode=SORDER_PLACE;test_so_files=3;test_so_pass_calls=0;sorder_prepass_with(test_so_pass,test_so_scene,1000);
-    assert(test_so_pass_calls==1 && !sorder_waits);
+    assert(test_so_pass_calls==1 && !sorder_waits && !test_so_scene[SORDER_SCENE_SYNC] && !sorder_scene_syncs);   /* place: no sync */
     sorder_mode=SORDER_WAIT;test_so_files=4;test_so_pass_calls=0;sorder_prepass_with(test_so_pass,test_so_scene,1000);
     assert(test_so_pass_calls==4 && !test_so_files && sorder_waits==1 && sorder_wait_passes==3 && sorder_last_pending==3 && !sorder_failures);
+    /* The scene's first admitted step asks its write-back to sync every body (+0x4b), once per scene. */
+    assert(test_so_scene[SORDER_SCENE_SYNC]==1 && sorder_scene_syncs==1);test_so_scene[SORDER_SCENE_SYNC]=0;   /* the step clears it */
     test_so_pass_calls=0;sorder_prepass_with(test_so_pass,test_so_scene,1000);assert(test_so_pass_calls==1 && sorder_waits==1);
+    assert(!test_so_scene[SORDER_SCENE_SYNC] && sorder_scene_syncs==1);
+    static unsigned char other_scene[0x80];memset(other_scene,0,sizeof(other_scene));memcpy(other_scene+0x20,&system,8);
+    assert(sorder_scene_first(other_scene) && other_scene[SORDER_SCENE_SYNC]==1 && sorder_scene_syncs==2);   /* same tick */
+    other_scene[SORDER_SCENE_SYNC]=0;sorder_scenes_count=1;++stats.issued;   /* a scene first stepping at a later tick: no sync */
+    assert(!sorder_scene_first(other_scene) && !other_scene[SORDER_SCENE_SYNC] && sorder_scene_syncs==2);
+    --stats.issued;sorder_scene_syncs=1;
     void *busy=test_so_system;memcpy(test_so_system+0x708,&busy,8); /* the second map */
     test_so_files=UINT32_MAX;sorder_prepass_with(test_so_pass,test_so_scene,20);
     assert(sorder_failures==1 && !strcmp(sorder_stage,"load_timeout") && sorder_waits==2);
     sorder_failures=0;test_so_files=0;memset(test_so_system+0x708,0,8);
     boot_phase=2;test_so_files=5;test_so_pass_calls=0;sorder_prepass_with(test_so_pass,test_so_scene,1000);assert(test_so_pass_calls==1);boot_phase=3;
+    char sync_status[1024];assert(sorder_status(sync_status,sizeof(sync_status)) && strstr(sync_status," scene_syncs=1"));
+    memset(sorder_scenes_seen,0,sizeof(sorder_scenes_seen));sorder_scenes_count=0;sorder_scene_syncs=0;
     char status[1024];assert(sorder_status(status,sizeof(status)) && strstr(status,"mode=wait installed=1 ") && strstr(status," total_moves=2 ") &&
                             strstr(status," waits=2 ") && strstr(status," boot_moves=1 "));
     /* Sync: a missing file goes through the engine's synchronous load (queued with 0x21 under its lock, the

@@ -1797,7 +1797,15 @@ local function drain_constraints()
 end
 -- The Steering flight integration's calls (native_gate_fit_rows = {first,last}, both gates): FIT_ROW lines as they come.
 local fit_cursor,bank_watch_cursor=0,0
+local body_watch_cursor=0
 local function drain_fit_rows()
+ if cfg.native_gate_body_watch then -- hardware write watches on one physics body's position (Windows gate)
+  for _=1,1024 do
+   local row=gate.body_watch_row(body_watch_cursor)
+   if not row then break end
+   log('BODY_WATCH_ROW '..row);body_watch_cursor=body_watch_cursor+1
+  end
+ end
  if cfg.native_gate_bank_watch then -- hardware write watches on a ship's pathing banks (Windows gate)
   for _=1,4096 do
    local row=gate.bank_watch_row(bank_watch_cursor)
@@ -5947,6 +5955,14 @@ local function frame()
   -- fixture ship as the velocity solve's sort leaves it (normal, masses, each point's three axis parts, the warm-start
   -- lambdas) with the lambdas the solve stored in the contact cache. Through the island order's stub (installed here
   -- when the island order is off: Jolt's own keys then). Diagnostic, default off.
+  -- native_gate_body_watch = {'<saved ID>', which, first, last}: hardware write watches on that owner's physics body
+  -- (record which: 0 +0x260, 1 +0x268, 2 another) from tick first's step to tick last's; needs the physics trace.
+  if cfg.native_gate_body_watch then
+   local w=cfg.native_gate_body_watch
+   assert(type(w)=='table' and #w==4 and cfg.native_gate_physics_trace and gate.body_watch and gate.body_watch_row and
+    gate.body_watch(w[1],w[2],w[3],w[4])==1,'body watch refused '..tostring(gate.body_watch_status and gate.body_watch_status()))
+   log('BODY_WATCH_CONFIGURED '..tostring(gate.body_watch_status()))
+  end
   if cfg.native_gate_bank_watch then
    local w=cfg.native_gate_bank_watch
    assert(type(w)=='table' and #w==3 and gate.bank_watch and gate.bank_watch_row and gate.bank_watch(w[1],w[2],w[3])==1,
