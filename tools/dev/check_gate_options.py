@@ -95,6 +95,7 @@ PROBE_OPTIONS = {
     'native_gate_sound_play_scope': (('true',), (), None),
     'native_gate_ship_sound_context': (('true',), (), None),
     'native_gate_view_cameras_animated': (('true',), (), None),
+    'native_gate_md_fullscreen': (('true',), (), None),
     'native_gate_computer_forward': (('true',), (), None),
     'native_gate_spline_phase': (('true',), (), None),
     'native_gate_faction_present': (('true',), (), None),

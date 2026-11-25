@@ -5,6 +5,7 @@ import copy
 import os
 from pathlib import Path
 import sys
+import tempfile
 import unittest
 import xml.etree.ElementTree as ET
 
@@ -56,11 +57,50 @@ class CatalogueTests(unittest.TestCase):
     @unittest.skipUnless(GAMEDATA and Path(GAMEDATA, 'ego_dlc_terran/md/story_yaki.xml').is_file(), 'needs X4LAN_GAMEDATA (unpacked game data)')
     def test_every_milestone_is_in_the_game_data(self):
         self.assertEqual(milestones.check(GAMEDATA), [])
-        # a wrong line is named: Ch1_Clean_Up does not cancel Ch2_Mines, and Ch1_Clean_Up completes no mission
+        # a wrong line is named: Ch1_Clean_Up does not cancel Ch2_Mines, completes no mission and is signalled outside it
         stories = copy.deepcopy(milestones.STORIES)
         stories['terran_cadet']['milestones'][3].update(end='Ch1_Clean_Up', mission=True)
         wrong = milestones.check(GAMEDATA, stories)
-        self.assertEqual([n for _, n, _ in wrong], [4, 4], wrong)
+        self.assertEqual([n for _, n, _ in wrong], [4, 4, 4], wrong)
+        self.assertIn('signalled from outside Ch2_Mines', wrong[2][2])
+        # Ch22's clean-up has no signal (the chapter's cancel is its marker); Ch1's has one (its cancel is not)
+        self.assertEqual([m['on'] for m in milestones.STORIES['terran_cadet']['milestones']].count('cancel'), 1)
+        stories = copy.deepcopy(milestones.STORIES)
+        stories['terran_cadet']['milestones'][2]['on'] = 'cancel'
+        self.assertEqual([n for _, n, _ in milestones.check(GAMEDATA, stories)], [3])
+
+    def test_the_success_path_is_checked(self):
+        """Synthetic script: a clean-up signalled from outside its chapter, through a failure parameter, one that fails
+        its mission on its signal, one that is right (its abort a branch on that event), and a cancel marker of a
+        signalled clean-up."""
+        script = """<mdscript name="Plot"><cues><cue name="Start"><cues>
+ <cue name="Outside"><actions><signal_cue cue="A_Clean_Up"/></actions></cue>
+ <cue name="A"><cues><cue name="A_Step"><actions><signal_cue cue="A_Clean_Up"/></actions></cue>
+  <cue name="A_Clean_Up"><conditions><event_cue_signalled/></conditions><actions><cancel_cue cue="A"/></actions></cue></cues></cue>
+ <cue name="B"><cues><cue name="B_Speak" ref="md.LIB_Dialog.Speak_Actor"><param name="FailureSignalCue" value="B_Clean_Up"/></cue>
+  <cue name="B_Clean_Up"><conditions><event_cue_signalled/></conditions><actions><cancel_cue cue="B"/></actions></cue></cues></cue>
+ <cue name="C"><cues><cue name="C_Step"><actions><signal_cue cue="C_Clean_Up"/></actions></cue>
+  <cue name="C_Clean_Up"><conditions><event_cue_signalled/></conditions><actions><remove_mission cue="$M" type="completed"/>
+   <remove_mission cue="$M" type="failed"/><cancel_cue cue="C"/></actions></cue></cues></cue>
+ <cue name="D"><cues><cue name="D_Step" ref="md.LIB_Generic.ApproachObject_Handler"><param name="SuccessSignalCue" value="D_Clean_Up"/></cue>
+  <cue name="D_Clean_Up"><conditions><check_any><event_cue_signalled/><event_mission_aborted cue="$M"/></check_any></conditions>
+   <actions><do_if value="event.name == 'event_mission_aborted'"><remove_mission cue="$M" type="aborted"/></do_if>
+   <do_else><remove_mission cue="$M" type="completed"/></do_else><cancel_cue cue="D"/></actions></cue></cues></cue>
+ <cue name="E"><cues><cue name="E_Step"><actions><signal_cue cue="E_Clean_Up"/></actions></cue>
+  <cue name="E_Clean_Up"><conditions><event_cue_signalled/></conditions><actions><cancel_cue cue="E"/></actions></cue></cues></cue>
+</cues></cue></cues></mdscript>"""
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / 'ego_x/md').mkdir(parents=True)
+            (Path(tmp) / 'ego_x/md/plot.xml').write_text(script, encoding='utf-8')
+            rows = [{'plot': 'p', 'cue': c, 'end': f'{c}_Clean_Up', 'mission': c in 'CD', 'title': c, 'on': 'cancel' if c == 'E' else 'signal'}
+                    for c in 'ABCDE']
+            stories = {'synthetic': {'what': '-', 'gamestart': 'x', 'milestones': rows,
+                                     'plots': {'p': {'extension': 'ego_x', 'file': 'plot.xml', 'script': 'Plot', 'cue': 'Start'}}}}
+            wrong = milestones.check(tmp, stories)
+        self.assertEqual([(n, text.split(' is ')[-1].split(' ends ')[-1]) for _, n, text in wrong],
+                         [(1, 'signalled from outside A (signal_cue)'), (2, 'signalled on a failure (param FailureSignalCue)'),
+                          (3, 'its mission otherwise than completed on its signal'),
+                          (5, 'signalled (1x): use its signal, not the chapter\'s cancel')])
 
 
 class WatchTests(unittest.TestCase):
@@ -99,7 +139,12 @@ class WatchTests(unittest.TestCase):
         cues = {c.get('name'): c for c in root.find('cues')}
         cue = cues['terran_cadet_M1_S2']
         self.assertIsNone(cue.get('instantiate'))   # once per game: complete in every later save
-        self.assertEqual(cue.find('conditions/event_cue_cancelled').get('cue'), 'md.GS_Terran1_P2.Ch1_Maintenance')
+        # its success: the chapter's clean-up signalled (not the chapter's cancel alone)
+        self.assertEqual(cue.find('conditions/event_cue_signalled').get('cue'), 'md.GS_Terran1_P2.Ch1_Clean_Up')
+        self.assertIsNone(cue.find('conditions/event_cue_cancelled'))
+        self.assertIn('on=signal:Ch1_Clean_Up', cue.find('actions/debug_text').get('text'))
+        ch22 = cues['terran_cadet_M24_S2']   # the one chapter whose clean-up is never signalled
+        self.assertEqual(ch22.find('conditions/event_cue_cancelled').get('cue'), 'md.Story_Yaki_P2.Ch22_Decide_Outcome')
         index = next(r['index'] for r in rows if r['name'] == 'terran_cadet-M1-slot2')
         self.assertEqual(cue.find('actions/raise_lua_event').get('name'), f"'X4LAN_Milestones.Reached{index}'")
         self.assertEqual(cue.find('actions/raise_lua_event').get('param'), 'player.age')

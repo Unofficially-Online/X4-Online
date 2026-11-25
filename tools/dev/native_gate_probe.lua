@@ -3378,7 +3378,7 @@ function pilot_view.arm_ui_replay(slot,window)
   local d64=ConvertIDTo64Bit(dock)
   local p=ffi.C.GetPositionalOffset(ship,d64)
   local c=ffi.C.GetPositionalOffset(ffi.C.GetContextByClass(d64,'container',false),d64)
-  return string.format('%.0f/%.0f/%.0f centre=%.0f/%.0f/%.0f',p.x,p.y,p.z,c.x,c.y,c.z)
+  return string.format('%.0f/%.0f/%.0f centre=%.0f/%.0f/%.0f ypr=%.0f/%.0f/%.0f',p.x,p.y,p.z,c.x,c.y,c.z,math.deg(p.yaw),math.deg(p.pitch),math.deg(p.roll))
  end
  -- The frames a hop steers by (K.dock_fly's hop): this client's own ship and the station's centre in the frame of the
  -- dock assigned to it, the dock and the station's centre in the ship's frame ({x,y,z} each: right, up, ahead for the
@@ -3803,6 +3803,15 @@ function pilot_view.arm_ui_replay(slot,window)
   end
   return best,bd,#list,me
  end
+ -- Where X4's landing check wants each slot's ship before it lands on its assigned dock (MD DockApproach, the op
+ -- dock_approach): tools.dock_approach[k] = {pos={x,y,z}, rot={yaw,pitch,roll} (degrees), here={x,y,z}} in the dock's
+ -- frame, the latest answer for slot k.
+ tools.dock_approach={}
+ RegisterEvent('X4LAN_UiReplay.DockApproach',function(_,text)
+  local k,a,b,c=tostring(text):match('^(%d+);([^;]*);([^;]*);(.*)$')
+  local function v(t) local x,y,z=tostring(t):match('^([^,]*),([^,]*),(.*)$');return {tonumber(x),tonumber(y),tonumber(z)} end
+  if k then tools.dock_approach[tonumber(k)]={pos=v(a),rot=v(b),here=v(c)} end
+ end)
  -- The room a slot's figure was sent to by the guide (MD AvatarGuide, room tests), and that room's player transporter
  -- among the slot's (tools.transporters): where the player following the figure ends its walk.
  tools.guide_room={}
@@ -4471,8 +4480,13 @@ do
   local T,name=q.T,M.name_of(q)
   if again then q.tries=q.tries+1;q.T=q.T+K.AGAIN;M.order()
   else for i,x in ipairs(M.queue) do if x==q then table.remove(M.queue,i);break end end end
-  ticklog.loud(q.kind=='player' and 'PLAYER_SAVE_FAILED' or 'MILESTONE_SAVE_FAILED','name='..name..' tick='..T..' state='..tostring(state)..
-   ' why='..tostring(why)..' retry='..(again and q.T or 0)..' tries='..q.tries..' at='..tick,false)
+  -- One ERROR row a save: its first refusal (overnight 25 Nov: 90 rows of one milestone X4 would not save in a fight).
+  -- Each retry after it is a WARN row, and running out of retries is said once more (ERROR ..._GAVE_UP).
+  local kind=q.kind=='player' and 'PLAYER_SAVE' or 'MILESTONE_SAVE'
+  local row='name='..name..' tick='..T..' state='..tostring(state)..' why='..tostring(why)..' retry='..(again and q.T or 0)..' tries='..q.tries..' at='..tick
+  if not q.failed then q.failed=true;ticklog.loud(kind..'_FAILED',row,false)
+  elseif again then ticklog.write('WARN '..kind..'_RETRY '..row)
+  else ticklog.loud(kind..'_GAVE_UP',row,false) end
   if q.kind=='player' and q.slot==M.own and not again then ticklog.notice('the game could not be saved ('..tostring(why)..')') end
  end
  function M.slot_rows(name,T,tick)
@@ -6883,6 +6897,14 @@ local function frame()
     'md media refused '..tostring(gate.md_media_status and gate.md_media_status()))
    log('MD_MEDIA_ARMED '..tostring(gate.md_media_status()))
   end
+  -- A mission's full-screen cutscene (lockstep_md_fullscreen.h; a session default with md media, Windows gate): shown,
+  -- with its camera, the hidden HUD and its input context, on its owner's screen only; the others keep their own view,
+  -- HUD and controls while the cutscene's simulation runs the same on every client.
+  if cfg.native_gate_md_fullscreen and gate.md_fullscreen then
+   assert(cfg.native_gate_md_fullscreen==true and cfg.native_gate_md_media and gate.md_fullscreen_status and gate.md_fullscreen(1)==1,
+    'md fullscreen refused '..tostring(gate.md_fullscreen_status and gate.md_fullscreen_status()))
+   log('MD_FULLSCREEN_ARMED '..tostring(gate.md_fullscreen_status()))
+  end
   -- MD must not read this client's own screen (lockstep_md_presentation.h, the menu state): player.isinfullscreenmenu
   -- answers false on every client while the session runs. A map open on one client made a stock script queue a crew use case
   -- there and start it on the other: runtime IDs apart from then on (a person's session, 11 Nov). Every session, no key.
@@ -7948,6 +7970,7 @@ local function frame()
   if cfg.native_gate_interrupt_diag then log('INTERRUPT_STOP calls='..s.interrupt_calls..' restored='..s.interrupt_restored..' failures='..s.interrupt_failures) end
   if cfg.native_gate_missions_per_player and gate.mpp_status then log('MISSIONS_PER_PLAYER_STOP '..gate.mpp_status()) end
   if cfg.native_gate_md_media and gate.md_media_status then log('MD_MEDIA_STOP '..gate.md_media_status()) end
+  if cfg.native_gate_md_fullscreen and gate.md_fullscreen_status then log('MD_FULLSCREEN_STOP '..gate.md_fullscreen_status()) end
   if cfg.native_gate_interrupt_diag then log('INTERRUPT_STEP_STOP calls='..s.interrupt_step_calls..' restored='..s.interrupt_step_restored..' failures='..s.interrupt_failures) end
   if cfg.native_gate_interrupt_diag and gate.interrupt_faults then log('INTERRUPT_FAULTS_STOP '..tostring(gate.interrupt_faults())) end
   if gate.observer_status then log('OBSERVERS_STOP '..tostring(gate.observer_status())) end
@@ -8651,6 +8674,9 @@ local function frame()
  if cfg.native_gate_md_media and gate.md_media_frame then
   gate.md_media_frame()   -- every step, on every client: a timeout that is over, notifications that are gone
   ticklog.status('MD_MEDIA',tick,gate.md_media_status,'md media status unavailable')
+ end
+ if cfg.native_gate_md_fullscreen and gate.md_fullscreen_status then
+  ticklog.status('MD_FULLSCREEN',tick,gate.md_fullscreen_status,'md fullscreen status unavailable')
  end
  if cfg.native_gate_speech_clock then ticklog.status('SPEECH_CLOCK',tick,gate.speech_clock_status,'speech clock status unavailable') end
  if cfg.native_gate_world_nav_stride then ticklog.status('WORLD_NAV',tick,gate.world_nav_status,'world nav hash status unavailable') end

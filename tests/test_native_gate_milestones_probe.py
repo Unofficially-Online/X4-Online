@@ -111,6 +111,25 @@ class MilestoneProbeTests(unittest.TestCase):
         self.to(1116)
         self.assertEqual(list(self.lua.globals().calls.values())[-1], '1141,fake/45841/save,0')
 
+    def test_a_save_x4_keeps_refusing_has_one_error_row_and_one_when_it_gives_up(self):
+        self.lua.execute("X4LAN_CONFIG.native_gate_milestones={save=true,watch={{'terran_cadet',3,2}}}")
+        self.start()
+        self.lua.execute("events['X4LAN_Milestones.Reached1'](nil,10)")
+        for i in range(91):   # every try refused (the overnight run, 25 Nov): X4 answers each armed save so
+            T = 541 + 300 * i
+            self.to(T)
+            self.lua.execute(f"save_text='failed|{T}|0|-|0|is_saving_possible'")
+            self.to(T + 1)
+        self.to(541 + 300 * 92)
+        self.assertEqual(len(self.rows('ERROR MILESTONE_SAVE_FAILED')), 1)
+        self.assertTrue(self.rows('ERROR MILESTONE_SAVE_FAILED name=terran_cadet-M3-slot2 tick=541 state=failed why=is_saving_possible retry=841 tries=1'))
+        self.assertEqual(len(self.rows('NATIVE_GATE WARN MILESTONE_SAVE_RETRY')), 89)
+        self.assertTrue(self.rows('WARN MILESTONE_SAVE_RETRY name=terran_cadet-M3-slot2 tick=841 state=failed why=is_saving_possible retry=1141 tries=2'))
+        gave_up = self.rows('ERROR MILESTONE_SAVE_GAVE_UP')
+        self.assertEqual(len(gave_up), 1)
+        self.assertIn('name=terran_cadet-M3-slot2 tick=27541 state=failed why=is_saving_possible retry=0 tries=90', gave_up[0])
+        self.assertEqual(len(self.lua.globals().calls), 91)   # the first try and 90 more, then no more
+
     def test_a_periodic_save_near_a_milestone_save_is_left_out(self):
         self.lua.execute("X4LAN_CONFIG.native_gate_milestones={save=true,watch={{'terran_cadet',1,2}}};"
                          "X4LAN_CONFIG.native_gate_save_every=300")

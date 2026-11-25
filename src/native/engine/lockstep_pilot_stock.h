@@ -27,6 +27,11 @@
  *   local    a client that does not capture runs no control id of the replay or
  *            refused sets (counted as dropped); every client keeps the input
  *            object side of its own SPACE edges and its own d9cc30 refresh.
+ *   cutscene the cutscene's keys (STOP_CUTSCENE, letterbox, cinematic camera; X4's
+ *            handler 0x10f2180) with lockstep_md_fullscreen.h: replay ids whose
+ *            local dispatch runs the id's other handlers and records the
+ *            handler's part only where the scene is presented; their replay
+ *            runs that handler alone, on every client.
  * Refused everywhere (logged): fire and weapon groups (aim is the camera pick,
  * 717ed0), match speed and scan mode (they follow the soft target, which is
  * still local), autopilot, guidance, dock/undock, get up, squad orders, deploys,
@@ -212,7 +217,13 @@ static int pstk_release_due(unsigned slot,uint64_t tick) {
     if(pilot_slot_dropped(slot,c)) return c==pilot_drop_from[slot-1];
     return pilot_slot_absent(slot) && pilot_until[slot-1]!=UINT64_MAX && c==pilot_until[slot-1] && pilot_from[slot-1]<c;
 }
+/* lockstep_md_fullscreen.h: the cutscene's keys (X4's handler 0x10f2180) ride the record; this client's dispatch of one runs
+ * the id's other handlers and records the handler's part when it presents the scene; the replay runs the handler alone. */
+static int mfs_key_replayed(unsigned kind,int id);
+static int mfs_key_local(unsigned char *map,int id,int scripted);
+static void mfs_key_apply(int id);
 static unsigned pstk_verdict(unsigned kind,int id) {
+    if(mfs_key_replayed(kind,id)) return PSTK_REPLAY;
     /* Slot 1 on foot (lockstep_pilot_foot.h): the walking ids and GET_UP ride the record; mouselook too, split at the
      * local dispatch (pstk_dispatch_split); the pick's interaction click is refused everywhere. */
     if(pfoot_armed) {
@@ -477,6 +488,7 @@ static void pstk_walk(unsigned char *header,unsigned kind,int id,uint32_t value)
 /* A replayed id: every handler, except the camera's under a mouselook range of slot 1 walking; X4's walking state handler
  * with the session's clock as its real time (the run's double-tap, lockstep_pilot_foot.h). */
 static void pstk_replay_walk(unsigned char *header,unsigned kind,int id,uint32_t value) {
+    if(mfs_key_replayed(kind,id)) {mfs_key_apply(id);return;}   /* a cutscene's key: X4's handler once, on every client */
     pnat_node *upper=NULL,*n=pnat_first((pnat_node*)header,id,&upper);
     if(!n) return;
     while(n!=upper) {
@@ -489,6 +501,7 @@ static void pstk_replay_walk(unsigned char *header,unsigned kind,int id,uint32_t
 }
 /* Every handler a replayed id reaches must be a stock one (or the camera's, skipped above). */
 static int pstk_replay_handlers_ok(unsigned char *map,const pstk_event *x) {
+    if(mfs_key_replayed(x->kind,x->id)) return 1;   /* not walked: its handler alone (pstk_replay_walk) */
     pnat_node *upper=NULL,*n=pnat_first((pnat_node*)(map+0x40*x->kind),x->id,&upper);
     for(;n && n!=upper;n=pnat_next(n))
         if(!pstk_handler_ok(n->handler) && !pfoot_handler_ok(x->kind,x->id,n->handler) && !pfoot_replay_skips(x->kind,x->id,n->handler)) return 0;
@@ -590,6 +603,7 @@ static void pstk_dispatch_split(unsigned char *map,int id,uint32_t value) {
  * capturing client) or dropped, refused ids are logged. map = 1255xx0's argument. */
 static void pstk_dispatch(unsigned kind,unsigned char *map,int id,uint32_t value) {
     if(pfoot_armed && pnat_is_live() && pfoot_id(kind,id)==PFOOT_SPLIT_ID) {pstk_dispatch_split(map,id,value);return;}
+    if(pnat_is_live() && mfs_key_replayed(kind,id)) {(void)mfs_key_local(map,id,0);return;}   /* a cutscene's key */
     unsigned verdict=pnat_is_live()?pstk_verdict_slot(kind,id,pstk_capturing?pstk_capture_slot:1):PSTK_LOCAL;
     if(verdict==PSTK_LOCAL) {
         if(pstk_engages(kind,value) && !pstk_focused()) {InterlockedIncrement64(&pstk_local_unfocused);return;}   /* focus rule, a release runs */
@@ -765,7 +779,7 @@ static struct {unsigned kind,id;uint32_t value;} pstk_local_queue[PSTK_LOCAL_QUE
 static unsigned pstk_local_queued;
 static int pstk_local_press(unsigned kind,unsigned id,uint32_t value) {
     if(!pnat_is_live() || GetCurrentThreadId()!=ui_thread || kind>PSTK_RANGE || id>=512 || pstk_local_queued>=PSTK_LOCAL_QUEUE) return 0;
-    if(pstk_verdict_slot(kind,(int)id,pstk_capturing?pstk_capture_slot:1)!=PSTK_LOCAL) return 0;
+    if(pstk_verdict_slot(kind,(int)id,pstk_capturing?pstk_capture_slot:1)!=PSTK_LOCAL && !mfs_key_replayed(kind,(int)id)) return 0;
     if((kind==PSTK_ACTION && value) || (kind==PSTK_STATE && value>1)) return 0;
     if(kind==PSTK_RANGE) {float f;memcpy(&f,&value,4);if(!isfinite(f)) return 0;}
     pstk_local_queue[pstk_local_queued].kind=kind;pstk_local_queue[pstk_local_queued].id=id;pstk_local_queue[pstk_local_queued].value=value;
@@ -778,6 +792,9 @@ static void pstk_local_drain(void) {
     for(unsigned i=0;i<n;i++) {
         /* A presenting client whose slot is dead and not in a suit has no player to act as (as pstk_dispatch). */
         if(pres_slot && pilot_slots[pres_slot-1].dead && !pres_has_seat()) {InterlockedIncrement64(&pstk_dropped);continue;}
+        if(mfs_key_replayed(pstk_local_queue[i].kind,(int)pstk_local_queue[i].id)) {   /* a cutscene's key, as this client's own */
+            (void)mfs_key_local(pnat_input+0x63e0,(int)pstk_local_queue[i].id,1);InterlockedIncrement64(&pstk_local_pressed);continue;
+        }
         pstk_local_note(pstk_local_queue[i].kind,(int)pstk_local_queue[i].id,1);
         pstk_local_run(pstk_local_queue[i].kind,pnat_input+0x63e0,(int)pstk_local_queue[i].id,pstk_local_queue[i].value);
         InterlockedIncrement64(&pstk_local_pressed);

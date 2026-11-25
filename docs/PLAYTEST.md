@@ -1127,7 +1127,8 @@ written by this build):
    ... slot=2 player=... ship=... inventory=...`, `SAVE_OWNERS name=... kept=N failed=0` (N >= 2: the two story
    roots), `MILESTONE_SAVE armed` and `MILESTONE_SAVE saved name=terran_cadet-M1-slot2 tick=T`, then on the console
    `milestone terran_cadet-M1-slot2 (tick T), client 2: kept as terran_cadet-M1-slot2.xml.gz`. No `MILESTONE_SAVE_FAILED`
-   or `MILESTONE_LATE` in `errors.log`, and no desync in `desyncs.log` after T. With two clients the sidecar lists both
+   (one row when X4 first refuses the save; `WARN MILESTONE_SAVE_RETRY` rows after it are not in `errors.log`),
+   `MILESTONE_SAVE_GAVE_UP` or `MILESTONE_LATE` in `errors.log`, and no desync in `desyncs.log` after T. With two clients the sidecar lists both
    clients' hashes (they may differ in view-local parts: `tools/dev/checkpoint_diff.py`).
 4. Continue: `python tools/x4ls.py continue --milestone <run>/saves/milestones/terran_cadet-M1-slot2.xml.gz --gate-dll <dll> --out .local/sessions/ms1-m1`,
    then `play` it as in 2. Rows that prove each player kept what was theirs:
@@ -1538,6 +1539,25 @@ In the integration branch since 17 Nov. Run with scripted input, not by people.
   - Fixed 21 Nov: a player 2..N could open a transporter's menu only at its own ship's keypad. A station's
     transporter booth (its button beside the door: "Use Transporter Room") now opens X4's menu for every player,
     and X4's own check decides as for player 1 (the player must stand in the booth).
+  - Fixed 25 Nov: in a game with an open slot, a dropped player or a `--solo` run, docking by the autopilot stopped
+    short. A station's navigation octree showed only once every slot had reported it built, and a slot nobody
+    plays never reports, so no octree showed for the rest of the game. X4's autopilot to the dock it was given
+    then ended 230 to 470 m in front of the dock (its last leg, to the dock's own approach point 31 m over the pad,
+    needs the station's octree) and nothing landed; player 1 and player 2 measured alike at the trade station IDJ-703
+    with the same fighter and the same dock. (The "500 m over the dock" of the claim runs of 24 Nov was the test
+    tool's own climb after that stall.) The octrees now wait for the slots that play only (`lockstep_nav_octree.h`):
+    the same runs then flew to the dock's approach point and landed, player 1 1,263 ticks after its grant and player 2
+    1,254 ticks after its own, both on the same spot of the pad (runs p1d and p2d of 25 Nov, `NAV_OCTREE_STOP ...
+    shown=9 agreed=9 waiting=0 ... silent=2 unheard=9` for player 1). X4's own docking order (the debug tool
+    `--ai-dock`, order.dock) needs no shown octree: it docked both players there on the release gate and on the
+    fixed one, player 1 2,977 ticks and player 2 3,012 ticks after the start (runs p1f, p2f, p2g). Its stop of the
+    autopilot within 9 km leaves the travel drive on for a few seconds, for either player alike (720 to 760 m in
+    the next half second); that is the likely carry of the claimed corvette of 24 Nov past its station, not
+    reproduced with the own fighter.
+    How X4 lands a player's ship, for every slot the same: U::Player's update docks the ship once it is within the
+    docking computer's reach of its pad (`libraries/parameters.xml`, an S dock with the Mk2 computer: 50 m along
+    each of the pad's axes, pitch below 89 degrees). Put 30 m over the pad by the test fixture `dock_warp`, player 1
+    and player 2 landed at the same tick, on the same spot (runs p1c and p2c of 25 Nov).
   - Fixed 17 Nov: when player 1 had docked and stood up while player 2 was still flying in on its autopilot, player
     2's ship stopped 2.5 km out and never docked, and the clients' world check differed five minutes later. While
     anyone is on foot the other players' player objects are held outside X4's room tree, and X4 then ran them as

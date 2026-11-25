@@ -60,8 +60,9 @@
  *            pinned; on another build the conversation's picture stays the UI's (conv=0 in the status).
  * One notification cutscene at a time stays X4's rule: a second call ends the first one's picture (its lines go on,
  * on their owner's client). Not covered: the owner's monitor that takes the notification up after its ready event (it
- * shows the caption over noise), a joiner during a call (the join package does not carry notifications), full-screen
- * cutscenes of a mission (they still play on every client), the answer of slots 2+ to a notification's question. */
+ * shows the caption over noise), a joiner during a call (the join package does not carry notifications), the answer of
+ * slots 2+ to a notification's question. A mission's full-screen cutscene: lockstep_md_fullscreen.h (its owner noted in
+ * the action here). */
 #define MDV_ACTION_VTABLE 0x2c6d730u     /* Cutscenes::PlayCutsceneAction */
 #define MDV_ACTION 0x10d25e0u            /* ...its execute (vtable slot 3) */
 #define MDV_ACTION_SIZE 0xe7eu
@@ -207,13 +208,18 @@ static void mdv_begin(unsigned char *note,unsigned owner) {
     if(seconds>0 && mdv_fn.now && mdv_fn.now(&now)) e->end=now+(double)seconds;
     e->used=1;InterlockedIncrement64(&mdv_started);
 }
+/* lockstep_md_fullscreen.h: the list before X4's action, then the owner of each full-screen cutscene it made. */
+static int mfs_before(void);
+static void mfs_after(int marked,unsigned owner);
 /* Cutscenes::PlayCutsceneAction's execute (its vtable slot). */
 static void mdv_action(void *node,void *exec,void *frame) {
     const mdv_action_fn original=mdv_fn.action;
     if(!mdv_live()) {original(node,exec,frame);return;}
     unsigned char *const outer=mdv_made;mdv_made=NULL;
     InterlockedIncrement64(&mdv_actions);
+    const int marked=mfs_before();
     original(node,exec,frame);
+    mfs_after(marked,mpp_show_slot());
     unsigned char *const made=mdv_made;mdv_made=outer;
     if(made) mdv_begin(made,mpp_show_slot());
 }

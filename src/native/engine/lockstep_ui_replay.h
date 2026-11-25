@@ -1498,6 +1498,7 @@ static int uirep_status(char *out,size_t capacity) {
 #include "lockstep_mission_owners.h"   /* personal missions per player: slot k's calls and owned cue trees in slot k's scope */
 #include "lockstep_md_presentation.h"   /* what an owned cue shows (help, notifications, menus, music): on its owner's client only */
 #include "lockstep_md_media.h"          /* a mission's picture on the target monitor: started by the simulation, shown by its owner */
+#include "lockstep_md_fullscreen.h"     /* a mission's full-screen cutscene: presented on its owner's screen only */
 #include "lockstep_conversation_owner.h" /* a conversation belongs to the slot that started it */
 /* The trade family of the replay (native_gate_ui_replay lists trade, default off). */
 #include "lockstep_ui_trade.h"

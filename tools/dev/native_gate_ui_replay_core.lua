@@ -1170,7 +1170,7 @@ function K.station_call(what)
 end
 -- A canonical op is the probe's own call, not a person's click: a test fixture that every client's plan holds at the same
 -- tick (MD runs it on every client alike, nothing is captured).
-K.CANONICAL={panel_look=true,refit_why=true,station_blueprints=true,mis_fixture=true,mt_offer=true,gm_limit=true,slot_kill=true,slot_airlock=true,launch_stock=true,hold_stock=true,hull_set=true,marines_stock=true,abandon=true,dock_kit=true,wallet=true,probe_far=true,groups_look=true,escort_look=true,escort_front=true,inv_seed=true,inv_look=true,inv_join_state=true,inv_join_give=true,transporter_find=true}
+K.CANONICAL={panel_look=true,refit_why=true,dock_approach=true,dock_warp=true,station_blueprints=true,mis_fixture=true,mt_offer=true,gm_limit=true,slot_kill=true,slot_airlock=true,launch_stock=true,hold_stock=true,hull_set=true,marines_stock=true,abandon=true,dock_kit=true,wallet=true,probe_far=true,groups_look=true,escort_look=true,escort_front=true,inv_seed=true,inv_look=true,inv_join_state=true,inv_join_give=true,transporter_find=true}
 -- Refused entries the stock HUD calls by itself, not on a person's action: logged, no info line. AddKnownItem: the
 -- encyclopedia entry the HUD adds for whatever comes into view (45 refusals and their info lines in a playtest of 9 Nov).
 K.GUARD_QUIET={AddKnownItem=true}
@@ -1284,7 +1284,14 @@ end
 -- the outer face of its module: from the station's side X4's autopilot to that dock, and to a ship docked beside it,
 -- runs the ship into the module's wall 200 m up and stops (picture and dock-frame rows of runs 20261120-004252 and
 -- -005618); the first ship's approach crosses the module from above and lands from 56 m over the pad.
--- A table for `hop`: the route's points instead, in the dock's frame ('here': the ship's own value at the hop's start).
+-- A table for `hop`: the route's points instead, in the dock's frame ('here': the ship's own value at the hop's start;
+-- {'approach',dx,dy,dz}: that far from where X4's landing check wants the ship, the answer of the op dock_approach, which
+-- the hop waits for). hold=true in it: where the route ends the ship stays and waits for X4's landing (no dock key, no
+-- approach again); {hold=true,after=N} without points: from step N the autopilot is stopped and never started again
+-- (for the canonical fixture dock_warp at that time). X4 lands a player's ship when it is within the docking
+-- computer's reach of its pad (U::Player's update; libraries/parameters.xml: an S dock with the Mk2 computer, 50 m along
+-- each of the pad's axes); in a game whose stations' navigation octrees never showed (an open or dropped slot before
+-- 25 Nov, lockstep_nav_octree.h) the autopilot to the dock ended 230-470 m in front of it, for player 1 as for player 2.
 -- tools.dock_frames(): the ship's and the station centre's places in the dock's frame, the dock's and the station
 -- centre's places in the ship's frame, and (when a detour chose one) the other ship's place in both, for a check.
 K.DETOUR_NEAR=120
@@ -1354,6 +1361,14 @@ function K.dock_fly(tools,saved,limit,via,detour,hop)
   local d=tools.dock_state(saved)
   if d.docked then F.done=true;F.docked_at=i;return 'docked after='..i..' asked='..F.asked end
   if i>=limit then F.done=true;release();return 'limit stage='..F.stage..' distance='..tostring(d.distance and math.floor(d.distance))..' asked='..F.asked..gap() end
+  -- {hold=true,after=N} for `hop`: from step N the autopilot is stopped and never started again (a test that puts
+  -- the ship at its dock by a canonical fixture at that time, the op dock_warp, and waits for X4's landing)
+  if type(hop)=='table' and hop.hold and hop.after and i>=hop.after and F.stage~='hold' then
+   release()
+   if tools.env.StopAutoPilot then tools.env.StopAutoPilot() end
+   F.stage,F.hold_at='hold',i
+   return 'hold after='..i..gap()
+  end
   if F.stage=='fly' and d.distance and d.distance<(tools.dock_range or 9000) and i%30==0 then
    F.asked=F.asked+1
    if tools.C.RequestDockAt(tools.saved_id(saved),false) then F.stage='asked';F.granted=i;return 'asked after='..i..' distance='..math.floor(d.distance)..' asked='..F.asked end
@@ -1410,11 +1425,18 @@ function K.dock_fly(tools,saved,limit,via,detour,hop)
     release()
     -- after a route: the ship stands where the first ship's approach ended (X4's docking takes a ship within range of
     -- the dock's approach point); three seconds, then the dock key, five seconds, then the approach as before
+    -- a route with hold=true: the ship stays where the route ended (a person who flew to the docking location and
+    -- waits for X4's landing); the approach is not started again
+    if type(hop)=='table' and hop.hold then F.stage,F.hold_at='hold',i;return 'hold'..gap() end
     if type(hop)=='table' then F.stage,F.settle_at='settle',i;return nil end
     F.stage='granted';F.granted=i-4;F.approach_gap=nil;return nil
    end
    local up,down=F.throttle<0,F.throttle>0     -- (held for this tick, let go at the next: every count is a tick held)
    key(13,up);key(14,down);F.throttle=F.throttle+(up and 1 or down and -1 or 0)
+   return nil
+  end
+  if F.stage=='hold' then
+   if (i-F.hold_at)%60==0 then return 'stage=hold after='..(i-F.hold_at)..gap() end
    return nil
   end
   if F.stage=='settle' then
@@ -1451,8 +1473,17 @@ function K.dock_fly(tools,saved,limit,via,detour,hop)
    end
    local g=gap_value()
    -- Within a kilometre and no nearer: the hop over whatever stands between (up, across to the dock's far side)
-   if hop and hop~=0 and F.hops<(type(hop)=='table' and 1 or 2) and g and g<=1000 and F.approach_gap and g>F.approach_gap-20 and tools.dock_frames then
+   if hop and hop~=0 and (type(hop)~='table' or #hop>0) and F.hops<(type(hop)=='table' and 1 or 2) and g and g<=1000 and F.approach_gap and g>F.approach_gap-20 and tools.dock_frames then
     local seen,p,err,c=hop_delta({0,0,0})
+    -- a route that starts from X4's landing pose waits until that pose is known
+    local wait=false
+    if seen and type(hop)=='table' and not (tools.dock_approach and tools.dock_approach[tonumber(tools.own_slot)]) then
+     for _,q in ipairs(hop) do if q[1]=='approach' then wait=true end end
+    end
+    if wait then
+     F.approach_gap=g;tools.env.StartAutoPilot(dock)
+     return 'hop_wait why=no_approach'..gap()
+    end
     if seen then
      F.hops=F.hops+1
      if tools.env.StopAutoPilot then tools.env.StopAutoPilot() end
@@ -1464,7 +1495,16 @@ function K.dock_fly(tools,saved,limit,via,detour,hop)
      -- or up and across to the far side
      if type(hop)=='table' then
       F.hop_points={}
-      for k,q in ipairs(hop) do F.hop_points[k]={q[1]=='here' and p[1] or q[1],q[2]=='here' and p[2] or q[2],q[3]=='here' and p[3] or q[3]} end
+      -- {'approach',dx,dy,dz}: that far from where X4's landing check wants the ship (tools.dock_approach, the op
+      -- dock_approach, read beforehand)
+      local a=tools.dock_approach and tools.dock_approach[tonumber(tools.own_slot)]
+      for k,q in ipairs(hop) do
+       if q[1]=='approach' then
+        F.hop_points[k]=a and {a.pos[1]+(q[2] or 0),a.pos[2]+(q[3] or 0),a.pos[3]+(q[4] or 0)} or nil
+       else
+        F.hop_points[k]={q[1]=='here' and p[1] or q[1],q[2]=='here' and p[2] or q[2],q[3]=='here' and p[3] or q[3]}
+       end
+      end
      else
       F.hop_points={{p[1],K.HOP_HEIGHT,p[3]},{ox*K.HOP_OUT,K.HOP_HEIGHT,oz*K.HOP_OUT}}
      end
@@ -2793,6 +2833,16 @@ function K.script(plan,start,tools)
   -- of its ship trader's test for starting an upgrade (rows UI_REPLAY_REFIT_WHY*).
   elseif op=='refit_why' then call=function()
     tools.env.AddUITriggeredEvent('X4LAN_UiReplay','RefitWhy',{station=tools.saved_lua(e[3])});return 'lua' end
+  -- Test only, read only (MD DockApproach, canonical): {tick,'dock_approach',SLOT}: where X4's landing check wants that
+  -- slot's ship before it lands on its assigned dock (get_docking_approach_pos) and where the ship is, in the dock's
+  -- frame; the probe keeps the answer (tools.dock_approach[SLOT]) for dock_station's route.
+  elseif op=='dock_approach' then call=function()
+    tools.env.AddUITriggeredEvent('X4LAN_UiReplay','DockApproach',{ship=tools.slot_lua(e[3]),slot=e[3]});return 'lua' end
+  -- Test fixture (MD DockWarp, canonical): {tick,'dock_warp',SLOT[,UP[,AHEAD]]}: that slot's ship UP metres (30) over the
+  -- dock it was assigned and AHEAD metres (0) along the dock's z, facing along it, at rest, as if a person had flown
+  -- it there (within the docking computer's reach; X4's own check then lands it).
+  elseif op=='dock_warp' then call=function()
+    tools.env.AddUITriggeredEvent('X4LAN_UiReplay','DockWarp',{ship=tools.slot_lua(e[3]),slot=e[3],up=e[4] or 30,ahead=e[5] or 0});return 'lua' end
   elseif op=='hull_set' then call=function()
     local lua=type(e[3])=='number' and tools.slot_lua(e[3]) or tools.saved_lua(e[3])
     tools.env.AddUITriggeredEvent('X4LAN_UiReplay','Hull',{ship=lua,percent=e[4]});return 'lua' end

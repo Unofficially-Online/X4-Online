@@ -3,12 +3,25 @@
 User request, 24 Nov: milestones through the story, one per completed mission, so that a playthrough can go on from a
 save instead of playing the whole mission chain again each time.
 
-The catalogue (STORIES) lists, per story, its milestones in order. A milestone is one chapter of a stock story script that
-is over: the chapter's root cue is cancelled by the chapter's own clean-up cue, which is also where X4 completes the
-chapter's mission (remove_mission type="completed") when the chapter ends one. Egosoft waits for the same thing in the
-stock scripts (Story_Yaki's Ch22 clean-up: event_cue_cancelled of its sub-chapters), so the marker is X4's own:
+The catalogue (STORIES) lists, per story, its milestones in order. A milestone is one chapter of a stock story script
+that is over with success: the chapter's own clean-up cue was signalled, which its success path alone does, and the
+clean-up is also where X4 completes the chapter's mission (remove_mission type="completed") when the chapter ends one,
+signals the next chapter and cancels this one. So the marker is (the coordinator, 25 Nov: a milestone is a success,
+never a failure or a time-out):
+    event_cue_signalled cue="md.<script>.<clean-up>"
+check() proves it for every milestone against the game data: every signal of the clean-up (signal_cue, a library's
+EndSignalCue or SuccessSignalCue parameter) comes from inside the chapter, none from a failure parameter, and a
+clean-up that X4 also runs for another event (Ch5_Clean_Up on event_mission_aborted, Ch23_Clean_Up_Mission when the
+Yaki lose their stations) keeps its other outcome in a branch on that event, which no signal takes. A chapter whose
+clean-up is not signalled at all waits for its outcomes' own cues and completes the mission for every one of them
+(Story_Yaki's Ch22: event_cue_cancelled of its seven outcome cues); there the marker is the chapter's cancel by that
+clean-up (on='cancel'):
     event_cue_cancelled cue="md.<script>.<chapter>"
-A chapter cue is cancelled once per game (each one has a single canceller in the stock files; check() reads them).
+The cancel alone was the marker of every milestone until 25 Nov. In the stock files it comes only from the success
+path as well, so the overnight milestone of 25 Nov (rk9 continued and left idle, Ch1_Escort over) was a success by
+X4's own rules. The convoy reached the Terran outpost under the escort squad, and Ch1_4's 1-minute failsafe ended the
+escort. Player 2's ship stood within the 5 km of Ch1_5's approach step, and the wingmate's lines 30225049-52 then
+signalled Ch1_Clean_Up.
 
 A session runs the scripts of a story for its players in three forms (tools/dev/native_gate_session_start.py,
 tools/dev/native_gate_plot_copies.py): slot 1 the stock scripts of its start (the base start's story runs for slot 1 by
@@ -72,8 +85,11 @@ MAX_SLOTS = 8
 # The story of the Terran cadet start (ego_dlc_terran): GS_Terran1 (the cadet's own two chapters), then Story_Yaki (the
 # Terran story, which the cadet story's last step activates). Read from ego_dlc_terran/md/gs_terran1.xml and story_yaki.xml
 # of game 9.00 (check() confirms each line): 'cue' is the chapter's root cue under Start, 'end' its clean-up cue (it cancels
-# the chapter: the milestone's moment), 'mission' True where 'end' completes the chapter's mission (remove_mission
-# type="completed"); the other chapters are steps of the mission that a later chapter completes.
+# the chapter), 'mission' True where 'end' completes the chapter's mission (remove_mission type="completed"); the other
+# chapters are steps of the mission that a later chapter completes. The milestone's moment is 'end' signalled (its
+# success path); Ch22's clean-up has no signal (its seven outcomes' cancels run it, each one a completed mission), so its
+# moment is the chapter's cancel (ON_CANCEL).
+ON_CANCEL = {('yaki', 'Ch22_Decide_Outcome')}
 TERRAN_CADET = [
     ('story', 'Ch1_Maintenance', 'Ch1_Clean_Up', False, 'cadet part 1: the satellites (Ch2_Distress begins)'),
     ('story', 'Ch2_Distress', 'Ch2_Clean_Up_Terran_Cadet_Gamestart_Mission', True, 'cadet complete: the distress call (25,000 Cr)'),
@@ -109,7 +125,8 @@ STORIES = {
         # the plot ids of native_gate_plot_copies.py: 'story' is the start's own script, 'yaki' the plot that follows it
         'plots': {'story': {'extension': 'ego_dlc_terran', 'file': 'gs_terran1.xml', 'script': 'GS_Terran1', 'cue': 'Start'},
                   'yaki': {'extension': 'ego_dlc_terran', 'file': 'story_yaki.xml', 'script': 'Story_Yaki', 'cue': 'Start'}},
-        'milestones': [{'plot': p, 'cue': c, 'end': e, 'mission': m, 'title': t} for p, c, e, m, t in TERRAN_CADET],
+        'milestones': [{'plot': p, 'cue': c, 'end': e, 'mission': m, 'title': t, 'on': 'cancel' if (p, c) in ON_CANCEL else 'signal'}
+                       for p, c, e, m, t in TERRAN_CADET],
     },
 }
 
@@ -131,6 +148,8 @@ def check_catalogue(stories=None):
         for n, m in enumerate(story.get('milestones') or [], 1):
             if m.get('plot') not in plots or not NAME.fullmatch(m.get('cue') or '') or not NAME.fullmatch(m.get('end') or ''):
                 raise MilestoneError(f'{story_id} M{n}: plot, cue and end cue')
+            if m.get('on', 'signal') not in ('signal', 'cancel'):
+                raise MilestoneError(f"{story_id} M{n}: on={m.get('on')!r} (signal: its clean-up signalled; cancel: the chapter cancelled)")
             key = (plots[m['plot']]['script'], m['cue'])
             if key in seen:
                 raise MilestoneError(f'{story_id} M{n}: {key[0]}.{key[1]} twice')
@@ -225,7 +244,8 @@ def watches(session, stories=None):
                 if not NAME.fullmatch(script):
                     raise MilestoneError(f'slot {k}: script name {script!r}')
                 out.append({'index': len(out) + 1, 'story': story_id, 'n': n, 'slot': k, 'script': script, 'cue': m['cue'],
-                            'end': m['end'], 'mission': m['mission'], 'title': m['title'], 'name': save_name(story_id, n, k)})
+                            'end': m['end'], 'mission': m['mission'], 'title': m['title'], 'name': save_name(story_id, n, k),
+                            'on': m.get('on', 'signal')})
     return out
 
 
@@ -257,14 +277,18 @@ def milestones_md(rows, roots=(), players=MAX_SLOTS):
         # A root cue, not instantiated: once per game, complete in every later save (a continued session never hears a
         # milestone of its past again: the chapter's cancel was before the save).
         cue = ET.SubElement(cues, 'cue', {'name': f"{w['story']}_M{w['n']}_S{w['slot']}"})
-        ET.SubElement(ET.SubElement(cue, 'conditions'), 'event_cue_cancelled', {'cue': f"md.{w['script']}.{w['cue']}"})
+        # the chapter's success: its clean-up signalled (a chapter without that signal: cancelled by its clean-up)
+        on = w.get('on', 'signal')
+        marker = w['end'] if on == 'signal' else w['cue']
+        ET.SubElement(ET.SubElement(cue, 'conditions'), 'event_cue_signalled' if on == 'signal' else 'event_cue_cancelled',
+                      {'cue': f"md.{w['script']}.{marker}"})
         actions = ET.SubElement(cue, 'actions')
         new = ET.SubElement(actions, 'do_if', {'value': 'not md.$X4LAN_Milestones?'})
         ET.SubElement(new, 'set_value', {'name': 'md.$X4LAN_Milestones', 'exact': '[]'})
         ET.SubElement(actions, 'append_to_list', {'name': 'md.$X4LAN_Milestones',
                                                   'exact': f"['{w['story']}', {w['n']}, {w['slot']}, player.age]"})
         ET.SubElement(actions, 'debug_text', {'text': f"'[X4LAN] MILESTONE_MD name={w['name']} script={w['script']} cue={w['cue']} "
-                                                      f"time=%s'.[player.age]"})
+                                                      f"on={on}:{marker} time=%s'.[player.age]"})
         ET.SubElement(actions, 'raise_lua_event', {'name': f"'{REACHED}{w['index']}'", 'param': 'player.age'})
     # The gate's mission owners as cue values, for the saves (see the module text): reset, then one entry per claim.
     reset = ET.SubElement(cues, 'cue', {'name': 'OwnersReset', 'instantiate': 'true'})
@@ -423,23 +447,72 @@ def _cues(tree):
     return by_name, parent
 
 
+SIGNALS = ('signal_cue', 'signal_cue_instantly', 'force_cue')
+FAILURE_PARAM = re.compile(r'fail|abort|cancel|timeout|time_out', re.I)
+
+
+def _under(element, ancestor):
+    """element is ancestor or inside it (cue elements; a library ref's parameters count as its cue's)."""
+    return any(e is element for e in ancestor.iter())
+
+
+def _signallers(tree, cue):
+    """(element, kind) of every signal of a cue in a script: its signal actions and library parameters naming it."""
+    out = []
+    for e in tree.iter():
+        if e.tag in SIGNALS and e.get('cue') == cue:
+            out.append((e, e.tag))
+        elif e.tag == 'param' and e.get('value') == cue and 'signal' in (e.get('name') or '').lower():
+            out.append((e, f"param {e.get('name')}"))
+    return out
+
+
+def _branches_on_event(end):
+    """Every remove_mission of the end cue's actions that is not type="completed" sits in a do_if or do_else whose
+    condition reads event.name: the outcome of another event than the signal."""
+    ok = True
+
+    def walk(element, guarded):
+        nonlocal ok
+        last = None
+        for child in element:
+            here = guarded
+            if child.tag == 'do_if' or child.tag == 'do_elseif':
+                here = guarded or 'event.name' in (child.get('value') or '')
+                last = here
+            elif child.tag == 'do_else':
+                here = guarded or bool(last)
+            if child.tag == 'remove_mission' and child.get('type') != 'completed' and not guarded:
+                ok = False
+            if child.tag != 'cues':
+                walk(child, here)
+    for part in end:
+        if part.tag == 'actions':
+            walk(part, False)
+    return ok
+
+
 def check(root, stories=None):
     """Every milestone against this PC's unpacked game data (gamedata.unpack, X4LAN_GAMEDATA): its chapter cue is a cue of
     the stock script, its end cue exists and cancels that chapter (in its actions or its sub-cues'), it is the chapter's
-    only canceller, and 'mission' says whether the end completes a mission. Returns [(story, n, text)] of what is wrong."""
+    only canceller, and 'mission' says whether the end completes a mission. The success marker: for on='signal' the end
+    waits for its signal, every signal of it comes from inside the chapter and none through a failure parameter, and a
+    mission outcome other than completed is a branch on another event; for on='cancel' the end has no signal at all (its
+    every run is the chapter's outcome). Returns [(story, n, text)] of what is wrong."""
     stories = check_catalogue(stories)
     wrong = []
     for story_id, story in stories.items():
         trees = {}
         for plot_id, plot in story['plots'].items():
             try:
-                trees[plot_id] = _cues(_tree(root, plot))
+                tree = _tree(root, plot)
+                trees[plot_id] = (tree, _cues(tree))
             except plot_copies.PlotError as error:
                 wrong.append((story_id, 0, str(error)))
         for n, m in enumerate(story['milestones'], 1):
             if m['plot'] not in trees:
                 continue
-            by_name, _ = trees[m['plot']]
+            tree, (by_name, _) = trees[m['plot']]
             chapter, end = by_name.get(m['cue']), by_name.get(m['end'])
             if chapter is None or end is None:
                 wrong.append((story_id, n, f"{m['cue'] if chapter is None else m['end']}: no such cue"))
@@ -452,6 +525,23 @@ def check(root, stories=None):
             completes = any(a.get('type') == 'completed' for part in end if part.tag == 'actions' for a in part.iter('remove_mission'))
             if completes != bool(m['mission']):
                 wrong.append((story_id, n, f"{m['end']} {'completes' if completes else 'completes no'} mission"))
+            signals = _signallers(tree, m['end'])
+            if m.get('on', 'signal') == 'cancel':
+                if signals:
+                    wrong.append((story_id, n, f"{m['end']} is signalled ({len(signals)}x): use its signal, not the chapter's cancel"))
+                continue
+            conditions = [e.tag for part in end if part.tag == 'conditions' for e in part.iter()]
+            if 'event_cue_signalled' not in conditions:
+                wrong.append((story_id, n, f"{m['end']} waits for no signal"))
+            if not signals:
+                wrong.append((story_id, n, f"{m['end']} is never signalled"))
+            for element, kind in signals:
+                if not _under(element, chapter):
+                    wrong.append((story_id, n, f"{m['end']} is signalled from outside {m['cue']} ({kind})"))
+                if kind.startswith('param') and FAILURE_PARAM.search(kind):
+                    wrong.append((story_id, n, f"{m['end']} is signalled on a failure ({kind})"))
+            if not _branches_on_event(end):
+                wrong.append((story_id, n, f"{m['end']} ends its mission otherwise than completed on its signal"))
     return wrong
 
 
@@ -471,7 +561,8 @@ def main(argv=None):
                 print(f"{story_id}: {story['what']} (start {story['gamestart']})")
                 for n, ms in enumerate(story['milestones'], 1):
                     script = story['plots'][ms['plot']]['script']
-                    print(f"  M{n:<2} {script}.{ms['cue']} cancelled by {ms['end']}{' (mission complete)' if ms['mission'] else ''}: {ms['title']}")
+                    how = f"{ms['end']} signalled" if ms.get('on', 'signal') == 'signal' else f"cancelled by {ms['end']}"
+                    print(f"  M{n:<2} {script}.{ms['cue']} over: {how}{' (mission complete)' if ms['mission'] else ''}: {ms['title']}")
         elif args.command == 'check':
             if not args.gamedata:
                 p.error('--gamedata (or X4LAN_GAMEDATA) is required')

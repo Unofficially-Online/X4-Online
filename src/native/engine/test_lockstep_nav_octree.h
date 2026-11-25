@@ -81,7 +81,7 @@ static void test_nav_octree(void) {
     assert(!noct_join_with(test_noct_cache,NULL,0,30) && !strcmp(noct_stage,"join_timeout") && noct_failures==1 && !noct_closed);
     assert(!noct_join_with(test_noct_cache,NULL,0,30)); /* failed: no further joins */
     InterlockedExchange(&test_noct_slow,0);test_noct_settle();assert(test_noct_built_count==8);
-    char status[768];assert(noct_status(status,sizeof(status)) && strstr(status,"mode=sync installed=1 ") && strstr(status," builds=8 ") &&
+    char status[1536];assert(noct_status(status,sizeof(status)) && strstr(status,"mode=sync installed=1 ") && strstr(status," builds=8 ") &&
                             strstr(status," stage=join_timeout failures=1"));
     /* Restore opens a closed gate: a waiting build proceeds. */
     noct_failures=0;noct_stage="armed";assert(noct_join_with(test_noct_cache,NULL,0,2000) && noct_closed);
@@ -267,7 +267,7 @@ static void test_nav_octree_agreed(void) {
     noct_request_with(test_nd_request,test_nd_cache,0xa01,0);noct_request_with(test_nd_request,test_nd_cache,0xa02,1);
     noct_request_with(test_nd_request,test_nd_cache,0xa03,0);noct_request_with(test_nd_request,test_nd_cache,0xa04,0);
     assert(!*test_na_report_now()); /* nothing numbered yet */
-    char receipt[160];assert(!noct_agree_text(22,3,",,",receipt,sizeof(receipt)) || 1);
+    char receipt[160];assert(!noct_agree_text(22,3,",,",0,receipt,sizeof(receipt)) || 1);
     assert(noct_join_with(test_nd_cache,test_nd_build,22,1000) && noct_enumerated && noct_next_index==3 && noct_local_records==1);
     assert(noct_entry(0)->key==0xa02*2+1 && noct_entry(1)->key==0xa03*2 && noct_entry(2)->key==0xa01*2 && test_nd_builds==0);
     assert(!strcmp(test_na_report_now(),"00000000" "00000000000000000000000000000000"));
@@ -278,7 +278,7 @@ static void test_nav_octree_agreed(void) {
     /* Admission of tick 23: slot 2 has built everything, slots 1 and 3 only index 1: index 1 is agreed. */
     char payloads[200];snprintf(payloads,sizeof(payloads),"%s,%s,%s","0000000001000000000000000000000000000000",
                                 "0300000000000000000000000000000000000000","0000000001000000000000000000000000000000");
-    int n=noct_agree_text(23,3,payloads,receipt,sizeof(receipt));assert(n>0);
+    int n=noct_agree_text(23,3,payloads,0,receipt,sizeof(receipt));assert(n>0);
     assert(!strncmp(receipt,"OCT_1|23|0|1|3|",15) && strlen(receipt)==15+16 && noct_agreed_total==1);
     uint64_t keys=noct_keys_hash;
     assert(noct_join_with(test_nd_cache,test_nd_build,23,1000) && noct_published==1 && noct_shown_index==0 && test_nd_builds==2);
@@ -287,9 +287,9 @@ static void test_nav_octree_agreed(void) {
                           strstr(text," index=1 assigned=22"));
     /* The rest builds here; slot 3 sends nothing at 24 (its last report stands), all of them at 25. */
     assert(test_nd_builder(0xa02,1) && test_nd_builder(0xa01,0) && !strcmp(test_na_report_now(),"03000000" "00000000000000000000000000000000"));
-    assert(noct_agree_text(24,3,"0300000000000000000000000000000000000000,0300000000000000000000000000000000000000,",receipt,sizeof(receipt)));
+    assert(noct_agree_text(24,3,"0300000000000000000000000000000000000000,0300000000000000000000000000000000000000,",0,receipt,sizeof(receipt)));
     assert(noct_agreed_total==1 && noct_join_with(test_nd_cache,test_nd_build,24,1000) && noct_published==1);
-    assert(noct_agree_text(25,3,",,0300000000000000000000000000000000000000",receipt,sizeof(receipt)) && !strncmp(receipt,"OCT_1|25|0|3|3|",15));
+    assert(noct_agree_text(25,3,",,0300000000000000000000000000000000000000",0,receipt,sizeof(receipt)) && !strncmp(receipt,"OCT_1|25|0|3|3|",15));
     assert(noct_join_with(test_nd_cache,test_nd_build,25,1000) && noct_published==3 && noct_shown_index==3 && !noct_live && !noct_hidden_count);
     stats.issued=26;assert(test_nd_lookup(&a1,0,0) && test_nd_lookup(&a2,1,0) && !*test_na_report_now() && noct_keys_hash==keys);
     /* An invalidated request needs no build: its index counts as done here and shows nothing. */
@@ -297,7 +297,7 @@ static void test_nav_octree_agreed(void) {
     assert(noct_keys_hash!=keys && !strcmp(test_na_report_now(),"03000000" "00000000000000000000000000000000"));
     noct_invalidate_with(test_nd_invalidate,4,&a5);assert(!strcmp(test_na_report_now(),"04000000" "00000000000000000000000000000000"));
     assert(noct_agree_text(27,3,"0400000000000000000000000000000000000000,0400000000000000000000000000000000000000,"
-                                "0400000000000000000000000000000000000000",receipt,sizeof(receipt)));
+                                "0400000000000000000000000000000000000000",0,receipt,sizeof(receipt)));
     assert(noct_join_with(test_nd_cache,test_nd_build,27,1000) && noct_shown_index==4 && noct_published==3);
     /* A no-op build (the root-keyed octree was already made, e.g. for a request an invalidation dropped, hidden
      * since) shows that octree when its own index is agreed. */
@@ -307,14 +307,52 @@ static void test_nav_octree_agreed(void) {
     assert(noct_build_with(test_na_noop_build,test_nd_cache,0xa06,0) && noct_find(0xa06*2)->state==NOCT_R_NOOP && noct_find(0xa06*2)->octree==&test_na_shared);
     assert(noct_hidden_find(&test_na_shared)>=0 && !strcmp(test_na_report_now(),"05000000" "00000000000000000000000000000000"));
     assert(noct_agree_text(28,3,"0500000000000000000000000000000000000000,0500000000000000000000000000000000000000,"
-                                "0500000000000000000000000000000000000000",receipt,sizeof(receipt)));
+                                "0500000000000000000000000000000000000000",0,receipt,sizeof(receipt)));
     assert(noct_join_with(test_nd_cache,test_nd_build,28,1000) && noct_hidden_find(&test_na_shared)<0 && noct_shown_index==5 && test_na_shared.refs==1);
     /* Refusals: a malformed payload, a wrong slot count, another mode. Joins never build. */
-    assert(!noct_agree_text(28,3,"04000000000000000000000000000000000000zz,,",receipt,sizeof(receipt)));
-    assert(!noct_agree_text(28,3,",",receipt,sizeof(receipt)) && !noct_agree_text(28,3,",,,",receipt,sizeof(receipt)));
-    assert(!noct_agree_text(28,3,"0400,,",receipt,sizeof(receipt)) && test_nd_builds==4 && !noct_inline);
+    assert(!noct_agree_text(28,3,"04000000000000000000000000000000000000zz,,",0,receipt,sizeof(receipt)));
+    assert(!noct_agree_text(28,3,",",0,receipt,sizeof(receipt)) && !noct_agree_text(28,3,",,,",0,receipt,sizeof(receipt)));
+    assert(!noct_agree_text(28,3,"0400,,",0,receipt,sizeof(receipt)) && test_nd_builds==4 && !noct_inline);
     char status[1536];assert(noct_status(status,sizeof(status)) && strstr(status,"mode=agreed installed=1 ") && strstr(status," assigned=5 shown=5 agreed=5 waiting=0 local=1 ") &&
-                             strstr(status," reports=12 ") && strstr(status," max_wait=3 ") && strstr(status," published=4 "));
+                             strstr(status," reports=12 ") && strstr(status," max_wait=3 silent=0 unheard=0 ") && strstr(status," published=4 "));
+    /* Silent slots (25 Nov): a slot whose blob is the relay's stand-in (dropped, --solo's other slots, absent before its
+     * handover) is not waited for; before, one such slot held every later octree hidden for good. */
+    stats.issued=29;noct_request_with(test_nd_request,test_nd_cache,0xb01,0);
+    assert(noct_join_with(test_nd_cache,test_nd_build,29,1000) && noct_next_index==6 && noct_entry(5)->key==0xb01*2);
+    assert(test_nd_builder(0xb01,0) && !strcmp(test_na_report_now(),"06000000" "00000000000000000000000000000000"));
+    /* Slots 2 and 3 play but have not built it: it waits, as before. */
+    assert(noct_agree_text(30,3,"0600000000000000000000000000000000000000,,",0,receipt,sizeof(receipt)) && noct_agreed_total==5);
+    /* Slots 2 and 3 silent (a --solo 1 run of three): slot 1's own report agrees it. */
+    assert(noct_agree_text(31,3,"0600000000000000000000000000000000000000,,",6u,receipt,sizeof(receipt)) && noct_agreed_total==6 &&
+           !strncmp(receipt,"OCT_1|31|5|6|6|",15));
+    assert(noct_join_with(test_nd_cache,test_nd_build,31,1000) && noct_shown_index==6 && noct_published==5);
+    /* Slots 1 and 3 silent (--solo 2): slot 2's report alone, though this client (slot 1) has not built it. */
+    stats.issued=32;noct_request_with(test_nd_request,test_nd_cache,0xb02,0);
+    assert(noct_join_with(test_nd_cache,test_nd_build,32,1000) && noct_next_index==7 && noct_entry(6)->key==0xb02*2);
+    assert(noct_agree_text(33,3,",0700000000000000000000000000000000000000,",5u,receipt,sizeof(receipt)) && noct_agreed_total==7);
+    assert(noct_status(status,sizeof(status)) && strstr(status," agreed=7 ") && strstr(status," silent=5 unheard=2 "));
+    /* Nobody plays: refused. Bits above the clients are ignored. */
+    assert(!noct_agree_text(34,3,",,",7u,receipt,sizeof(receipt)) && noct_agree_text(34,3,",,",0xfffffff8u,receipt,sizeof(receipt)));
+    assert(noct_status(status,sizeof(status)) && strstr(status," silent=0 "));
+    /* The gate's mask: slots the relay stands in for at the blobs' proposal tick (tick-1-k). Slot 3 dropped from proposal
+     * 40, slot 8 absent (never handed over), slot 2 playing: tick 41 (k=0) carries proposal 40. */
+    {
+        unsigned saved_dropped=pilot_dropped,saved_absent=pilot_absent,saved_lookahead=wire_lookahead;
+        uint64_t saved_from[PILOT_SLOTS],saved_until[PILOT_SLOTS];memcpy(saved_from,pilot_from,sizeof(saved_from));memcpy(saved_until,pilot_until,sizeof(saved_until));
+        pilot_dropped=0;pilot_absent=0;wire_lookahead=0;
+        assert(noct_silent_slots(8,41)==0 && noct_silent_slots(8,0)==0);
+        pilot_drop_note(1u<<2,40);
+        assert(noct_silent_slots(8,40)==0 && noct_silent_slots(8,41)==4u && noct_silent_slots(3,41)==4u && noct_silent_slots(2,41)==0);
+        wire_lookahead=2;assert(noct_silent_slots(8,42)==0 && noct_silent_slots(8,43)==4u);   /* k=2: tick 43 carries proposal 40 */
+        pilot_absent=1u<<7;pilot_from[7]=pilot_until[7]=UINT64_MAX;
+        assert(noct_silent_slots(8,43)==(4u|128u) && noct_silent_slots(7,43)==4u);
+        pilot_from[7]=50;assert(noct_silent_slots(8,52)==(4u|128u) && noct_silent_slots(8,53)==4u);   /* handed over: its rows from 50 */
+        /* --solo 2 of 2: the relay stands in for slot 1 from proposal 0 */
+        pilot_dropped=0;pilot_absent=0;wire_lookahead=1;pilot_drop_note(1u,0);
+        assert(noct_silent_slots(2,1)==0 && noct_silent_slots(2,2)==1u && noct_silent_slots(2,500)==1u);
+        pilot_dropped=saved_dropped;pilot_absent=saved_absent;wire_lookahead=saved_lookahead;
+        memcpy(pilot_from,saved_from,sizeof(saved_from));memcpy(pilot_until,saved_until,sizeof(saved_until));
+    }
     /* Lookup and invalidation rows, per frame: the hidden lookup at 23, the pending miss at 24, the invalidation at 26. */
     char look[256];int hidden_row=0,miss_row=0,inval_row=0;
     for(uint64_t i=0;noct_look_text(i,look,sizeof(look));i++) {

@@ -296,6 +296,57 @@
     </do_else>
    </actions>
   </cue>
+  <!-- Test only, read only (script op dock_approach, in every client's plan at the same tick): where X4 wants a slot's
+       ship before it lands on the dock it was assigned, the pose X4's own landing check measures the ship against
+       (get_docking_approach_pos, the same pose U::Player's update compares with the docking computer's limits), and
+       where the ship is, both in the dock's frame. Row UI_REPLAY_DOCK_APPROACH; the probe keeps the answer per slot
+       (event X4LAN_UiReplay.DockApproach: slot;x,y,z;yaw,pitch,roll;x,y,z of the ship). -->
+  <cue name="DockApproach" instantiate="true">
+   <conditions><event_ui_triggered screen="'X4LAN_UiReplay'" control="'DockApproach'"/></conditions>
+   <actions>
+    <set_value name="$Ship" exact="event.param3.$ship"/>
+    <set_value name="$Slot" exact="event.param3.$slot"/>
+    <set_value name="$Dock" exact="@$Ship.assigneddock"/>
+    <do_if value="@$Ship.isoperational and @$Dock.exists">
+     <get_docking_approach_pos dock="$Dock" ship="$Ship" position="$Pos" rotation="$Rot"/>
+     <create_position name="$Here" object="$Ship" space="$Dock"/>
+     <debug_text text="'[X4LAN] UI_REPLAY_DOCK_APPROACH slot=%s ship=%s dock=%s pos=%s,%s,%s rot=%s,%s,%s here=%s,%s,%s speed=%s todock=%s time=%s'.[$Slot, $Ship.idcode, $Dock, $Pos.x / 1m, $Pos.y / 1m, $Pos.z / 1m, $Rot.yaw / 1deg, $Rot.pitch / 1deg, $Rot.roll / 1deg, $Here.x / 1m, $Here.y / 1m, $Here.z / 1m, $Ship.speed / 1m, @$Dock.todockpos, player.age]"/>
+     <raise_lua_event name="'X4LAN_UiReplay.DockApproach'" param="'%s;%s,%s,%s;%s,%s,%s;%s,%s,%s'.[$Slot, $Pos.x / 1m, $Pos.y / 1m, $Pos.z / 1m, $Rot.yaw / 1deg, $Rot.pitch / 1deg, $Rot.roll / 1deg, $Here.x / 1m, $Here.y / 1m, $Here.z / 1m]"/>
+    </do_if>
+    <do_else>
+     <debug_text text="'[X4LAN] UI_REPLAY_DOCK_APPROACH slot=%s ship=%s dock=none time=%s'.[$Slot, @$Ship.idcode, player.age]"/>
+    </do_else>
+   </actions>
+  </cue>
+  <!-- Test fixture (script op dock_warp, canonical): a slot's ship ($ship) $up metres over the dock it was assigned and
+       $ahead metres along the dock's z, facing along it, at rest, as if a person had flown it there; what lands it is
+       X4's own check of every player's update (the docking computer's limits, libraries/parameters.xml). Rows
+       UI_REPLAY_DOCK_WARP / UI_REPLAY_DOCK_WARP_REFUSED. -->
+  <cue name="DockWarp" instantiate="true">
+   <conditions><event_ui_triggered screen="'X4LAN_UiReplay'" control="'DockWarp'"/></conditions>
+   <actions>
+    <set_value name="$Ship" exact="event.param3.$ship"/>
+    <set_value name="$Dock" exact="@$Ship.assigneddock"/>
+    <do_if value="@$Ship.isoperational and @$Dock.exists and not $Ship.dock">
+     <set_value name="$Up" exact="event.param3.$up * 1m"/>
+     <set_value name="$Ahead" exact="event.param3.$ahead * 1m"/>
+     <create_position name="$At" object="$Dock" space="$Dock.zone" value="position.[0m, $Up, $Ahead]"/>
+     <create_position name="$To" object="$Dock" space="$Dock.zone" value="position.[0m, $Up, $Ahead + 1km]"/>
+     <create_orientation name="$Look" orientation="look_at" refposition="$To">
+      <position value="$At"/>
+     </create_orientation>
+     <warp object="$Ship" zone="$Dock.zone">
+      <position value="$At"/>
+      <rotation value="$Look"/>
+     </warp>
+     <create_position name="$Here" object="$Ship" space="$Dock"/>
+     <debug_text text="'[X4LAN] UI_REPLAY_DOCK_WARP slot=%s ship=%s dock=%s here=%s,%s,%s speed=%s time=%s'.[event.param3.$slot, $Ship.idcode, $Dock, $Here.x / 1m, $Here.y / 1m, $Here.z / 1m, $Ship.speed / 1m, player.age]"/>
+    </do_if>
+    <do_else>
+     <debug_text text="'[X4LAN] UI_REPLAY_DOCK_WARP_REFUSED slot=%s ship=%s dock=%s docked=%s time=%s'.[event.param3.$slot, @$Ship.idcode, @$Dock, @$Ship.dock, player.age]"/>
+    </do_else>
+   </actions>
+  </cue>
   <!-- Test only, read only (script op refit_why, in every client's plan at the same tick): a station's queued builds,
        each with the parts of the test by which the station's ship trader starts a queued upgrade (aiscripts/
        build.shiptrader.xml; tools/dev/native_gate_player_refit.xml): its Equip order and that order's state, the

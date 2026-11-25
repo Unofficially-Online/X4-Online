@@ -88,6 +88,19 @@
  *   cumulative: a tick dropped from a full blob loses nothing;
  * - on admission (every client, identical blobs) an index is agreed when
  *   every slot's latest report covers it; the join of that tick shows it.
+ *   A slot whose blob is not its own client's (the relay stands in for it:
+ *   dropped, --solo's other slots; or absent before its hot join's handover
+ *   and after its ABORT; lockstep_pilot_inputs.h pilot_slot_present at the
+ *   blobs' proposal tick, the same on every client) reports nothing and is
+ *   not waited for: until 25 Nov such a slot held every octree hidden for
+ *   good. Seen in --solo runs of 24-25 Nov (NAV_OCTREE_STOP assigned=15
+ *   shown=0 waiting=15): with the trade station's octree never shown, X4's
+ *   autopilot to its dock ended 230-470 m in front of the dock (the last
+ *   leg to the dock's to-dock position needs the station's octree) for slot
+ *   1 and slot 2 alike, and the ship never came within the docking
+ *   computer's reach of its pad. The same held for every game with an open
+ *   slot or a dropped player. Status silent=<mask> unheard=<indices agreed
+ *   while some slot was silent>.
  *   The receipt OCT_1|tick|published|agreed|assigned|keys joins the declared
  *   state (keys: a hash of every assigned (class, key, flag) in index order),
  *   so diverging requests stop the session instead of drifting.
@@ -264,7 +277,8 @@ typedef struct {uint64_t key,gen,assigned;uint8_t agreed,shown;} noct_order_entr
 static noct_order_entry noct_order[NOCT_ORDER];
 static uint64_t noct_fresh[NOCT_FRESH];static unsigned noct_fresh_count;
 static uint64_t noct_next_index,noct_shown_index,noct_local_w,noct_agreed_total,noct_keys_hash=0xcbf29ce484222325ull,noct_local_records,
-                noct_reports,noct_max_wait,noct_held_id;
+                noct_reports,noct_max_wait,noct_held_id,noct_unheard;
+static unsigned noct_silent;   /* the last admission's slots without a report of their own (bit k-1: slot k) */
 static uint32_t noct_held_flag;
 static int noct_enumerated;
 typedef struct {uint64_t w;unsigned char bits[NOCT_REPORT_BITS/8];int seen;} noct_slot_report;
@@ -899,10 +913,13 @@ static int noct_hex_byte(const char *h,unsigned char *v) {
     *v=(unsigned char)x;return 1;
 }
 /* Admission of tick A, every client with the identical blobs: payloads are the slots' octree
- * sections, comma separated ('' for none). An index every slot covers is agreed and shows at the
- * join of A. The receipt joins the declared state. MoveWorker. */
-static int noct_agree_text(uint64_t tick,unsigned clients,const char *payloads,char *out,size_t cap) {
+ * sections, comma separated ('' for none). silent: bit k-1 for a slot whose blob is not its own
+ * client's (a stand-in carries nothing; header). An index every other slot covers is agreed and shows
+ * at the join of A. The receipt joins the declared state. MoveWorker. */
+static int noct_agree_text(uint64_t tick,unsigned clients,const char *payloads,unsigned silent,char *out,size_t cap) {
     if(noct_mode!=NOCT_AGREED || !noct_installed || !noct_lock_ready || !payloads || clients<1 || clients>GATE_CLIENTS_MAX) return 0;
+    silent&=clients>=32?~0u:(1u<<clients)-1u;
+    if(silent==(clients>=32?~0u:(1u<<clients)-1u)) return 0;   /* nobody plays: no admission to agree on */
     noct_slot_report parsed[GATE_CLIENTS_MAX];int has[GATE_CLIENTS_MAX];memset(has,0,sizeof(has));
     const char *at=payloads;
     for(unsigned k=0;k<clients;k++) {
@@ -921,10 +938,11 @@ static int noct_agree_text(uint64_t tick,unsigned clients,const char *payloads,c
     for(unsigned k=0;k<clients;k++) if(has[k] && (!noct_slot_reports[k].seen || parsed[k].w>=noct_slot_reports[k].w)) {
         noct_slot_reports[k]=parsed[k];++noct_reports;
     }
+    noct_silent=silent;
     for(uint64_t i=noct_shown_index;i<noct_next_index;i++) {
         noct_order_entry *e=noct_entry(i);if(e->agreed) continue;
-        int all=1;for(unsigned k=0;k<clients && all;k++) all=noct_slot_covers(&noct_slot_reports[k],i);
-        if(all) {e->agreed=1;++noct_agreed_total;}
+        int all=1;for(unsigned k=0;k<clients && all;k++) all=(silent>>k&1u) || noct_slot_covers(&noct_slot_reports[k],i);
+        if(all) {e->agreed=1;++noct_agreed_total;if(silent) ++noct_unheard;}
     }
     int n=snprintf(out,cap,"OCT_1|%llu|%llu|%llu|%llu|%016llx",(unsigned long long)tick,(unsigned long long)noct_shown_index,
                    (unsigned long long)noct_agreed_total,(unsigned long long)noct_next_index,(unsigned long long)noct_keys_hash);
@@ -1162,7 +1180,8 @@ static void noct_reset_counters(void) {
     memset(noct_records,0,sizeof(noct_records));noct_record_count=noct_live=0;noct_hidden_count=0;noct_next_due=NOCT_NEVER;
     noct_gen=noct_serial=noct_inval_count=noct_visible_tick=0;noct_restored=0;
     memset(noct_order,0,sizeof(noct_order));memset(noct_slot_reports,0,sizeof(noct_slot_reports));noct_fresh_count=0;
-    noct_next_index=noct_shown_index=noct_local_w=noct_agreed_total=noct_local_records=noct_reports=noct_max_wait=noct_held_id=0;
+    noct_next_index=noct_shown_index=noct_local_w=noct_agreed_total=noct_local_records=noct_reports=noct_max_wait=noct_held_id=noct_unheard=0;
+    noct_silent=0;
     noct_keys_hash=0xcbf29ce484222325ull;noct_enumerated=0;noct_held_flag=0;
     noct_look_frame_count=0;noct_looks=0;noct_look_overflow=0;
     noct_snap_clear();noct_snap_captured=noct_snap_gone=noct_snap_used=noct_snap_live=noct_snap_waits=noct_snap_max_parts=noct_snap_us=0;
@@ -1283,7 +1302,7 @@ static int noct_status(char *out,size_t cap) {
         "build_us=%llu max_build_us=%llu joins=%llu join_passes=%llu join_us=%llu max_join_us=%llu last_pending=%llu max_pending=%llu "
         "held_deferred=%llu held=%d closed=%d requested=%llu published=%llu records=%u live=%u max_records=%llu hidden=%u max_hidden=%llu hides=%llu "
         "rerequests=%llu invalidations=%llu stale=%llu unrecorded=%llu inline=%llu inline_us=%llu max_inline_us=%llu postponed=%llu "
-        "drain_us=%llu assigned=%llu shown=%llu agreed=%llu waiting=%llu local=%llu reports=%llu max_wait=%llu "
+        "drain_us=%llu assigned=%llu shown=%llu agreed=%llu waiting=%llu local=%llu reports=%llu max_wait=%llu silent=%x unheard=%llu "
         "looks=%lld look_overflow=%llu snapshot=%d snaps=%u snap_captured=%llu snap_gone=%llu snap_used=%llu snap_live=%llu snap_waits=%llu "
         "snap_dropped=%llu snap_parts=%llu snap_us=%llu max_snap_us=%llu builder_view=%ld main_view=%ld "
         "rows=%lld restored=%d stage=%s failures=%lld",noct_mode_name(),noct_installed,
@@ -1297,7 +1316,8 @@ static int noct_status(char *out,size_t cap) {
         (unsigned long long)noct_inline,(unsigned long long)noct_inline_us,(unsigned long long)noct_max_inline_us,(unsigned long long)noct_postponed,
         (unsigned long long)noct_drain_us,(unsigned long long)noct_next_index,(unsigned long long)noct_shown_index,
         (unsigned long long)noct_agreed_total,(unsigned long long)(noct_next_index-noct_shown_index),(unsigned long long)noct_local_records,
-        (unsigned long long)noct_reports,(unsigned long long)noct_max_wait,(long long)noct_looks,(unsigned long long)noct_look_overflow,
+        (unsigned long long)noct_reports,(unsigned long long)noct_max_wait,noct_silent,(unsigned long long)noct_unheard,
+        (long long)noct_looks,(unsigned long long)noct_look_overflow,
         noct_snapshot,noct_snap_count,(unsigned long long)noct_snap_captured,(unsigned long long)noct_snap_gone,(unsigned long long)noct_snap_used,
         (unsigned long long)noct_snap_live,(unsigned long long)noct_snap_waits,(unsigned long long)noct_snap_dropped,
         (unsigned long long)noct_snap_max_parts,(unsigned long long)noct_snap_us,(unsigned long long)noct_snap_max_us,

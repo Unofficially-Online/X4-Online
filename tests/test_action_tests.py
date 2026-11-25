@@ -283,6 +283,81 @@ class ChainTests(unittest.TestCase):
         self.assertNotIn(' hop', text)
         self.assertIn('1300 dock_station true limit stage=granted distance=2800 asked=1 dock_gap=300', text)
 
+    def test_a_route_from_x4s_landing_pose_waits_for_it_and_holds_where_it_ends(self):
+        # dock_station's route of points from where X4's landing check wants the ship ({'approach',dx,dy,dz}: the MD
+        # answer of the op dock_approach, tools.dock_approach[own slot]); hold=true: no dock key, no approach after it
+        lua, g = self.client()
+        world = '''DS={docked=false};POS={64,43,-271};VEL={0,0,0};HELD={};THROTTLE=0
+          gate.pilot_stock_inject=function(kind,id,on) HELD[id]=on end
+          tools.dock_state=function()
+            if HELD[13]==1 then THROTTLE=THROTTLE+1 end;if HELD[14]==1 then THROTTLE=THROTTLE-1 end
+            local acc={((HELD[7]==1) and 2 or 0)-((HELD[6]==1) and 2 or 0),((HELD[8]==1) and 2 or 0)-((HELD[9]==1) and 2 or 0)}
+            for k=1,2 do if acc[k]~=0 then VEL[k]=VEL[k]+acc[k] else VEL[k]=VEL[k]*0.9 end end
+            VEL[3]=VEL[3]+(THROTTLE-VEL[3])*0.2
+            for k=1,3 do POS[k]=POS[k]+VEL[k]/30 end
+            return {docked=DS.docked,distance=550}
+          end
+          tools.C.RequestDockAt=function() return true end
+          tools.C.QuickDock=function() calls[#calls+1]='quickdock';return true end
+          tools.assigned_dock=function() return 'dock1' end
+          tools.dock_gap=function() return 280 end
+          tools.dock_rel=function() return string.format('%.0f/%.0f/%.0f centre=393/-73/188',POS[1],POS[2],POS[3]) end
+          tools.dock_frames=function()
+            local p,c={POS[1],POS[2],POS[3]},{393,-73,188}
+            return p,c,{-p[1],-p[2],-p[3]},{c[1]-p[1],c[2]-p[2],c[3]-p[3]}
+          end
+          tools.env.StopAutoPilot=function() calls[#calls+1]='stop' end
+          tools.env.StartAutoPilot=function(x) calls[#calls+1]='autopilot:'..tostring(x) end
+          tools.dock_approach={}
+          '''
+        route = "{{'approach',0,30,-200},{'approach',0,0,0},hold=true}"
+        # not known yet: the approach goes on and the hop waits
+        lua.execute(world + "rows=run({{0,'dock_station','aa',1900,false,false,false,%s}},1900)" % route)
+        text = '\n'.join(values(g.rows))
+        self.assertIn('dock_station true hop_wait why=no_approach dock_gap=280', text)
+        self.assertNotIn(' hop n=', text)
+        # known (slot 2's own answer): the route to 34 m over the pad, then the ship stays; no dock key, no approach
+        lua.execute('calls={}\n' + world + "tools.dock_approach[2]={pos={4,34,2},rot={0,0,0},here={64,43,-271}}\n"
+                    "rows=run({{0,'dock_station','aa',5000,false,false,false,%s}},5000)" % route)
+        text = '\n'.join(values(g.rows))
+        self.assertRegex(text, r'hop n=1 check=none dock_seen=-64/-43/271 points=2 to=4/34/2 ')
+        self.assertRegex(text, r'\n\d+ dock_station true hold dock_gap=280 rel=')
+        self.assertRegex(text, r'dock_station true stage=hold after=60 ')
+        end = re.search(r'\n(\d+) dock_station true hop_end n=1 .*rel=(-?\d+)/(-?\d+)/(-?\d+)', text)
+        self.assertLessEqual(abs(int(end.group(2)) - 4) + abs(int(end.group(3)) - 34) + abs(int(end.group(4)) - 2), 21, end.group(0))
+        calls = values(g.calls)
+        self.assertNotIn('quickdock', calls)
+        self.assertEqual(calls[calls.index('stop'):].count('autopilot:dock1'), 0)
+        self.assertEqual(lua.eval('THROTTLE'), 0)
+        # {hold=true,after=N} without points: from step N the autopilot is stopped once and never started again
+        lua.execute('calls={}\n' + world + "rows=run({{0,'dock_station','aa',3000,false,false,false,{hold=true,after=1500}}},3000)")
+        text = '\n'.join(values(g.rows))
+        self.assertIn('1500 dock_station true hold after=1500 dock_gap=280', text)
+        self.assertNotIn(' hop', text)
+        calls = values(g.calls)
+        self.assertEqual(calls.count('stop'), 1)
+        self.assertEqual(calls[calls.index('stop'):].count('autopilot:dock1'), 0)
+        self.assertIn('3000 dock_station true limit stage=hold', text)
+
+    def test_the_landing_pose_and_the_warp_to_the_dock_are_canonical_ui_events_for_any_slot(self):
+        # dock_approach / dock_warp (MD DockApproach / DockWarp): test fixtures in every client's plan, for slot 2, 3 or 8
+        lua, g = self.client()
+        lua.execute('''tools.env.AddUITriggeredEvent=function(screen,control,v)
+            calls[#calls+1]=screen..':'..control..':'..tostring(v.ship)..':'..tostring(v.slot)..':'..tostring(v.up)..':'..tostring(v.ahead) end
+          by=X4LAN_UI_REPLAY_CORE.script({{0,'dock_approach',2},{1,'dock_warp',3},{2,'dock_warp',8,20,-10}},0,tools)
+          CANON={}
+          for t=0,2 do for _,e in ipairs(by[t]) do CANON[#CANON+1]=tostring(e.canonical);e.call() end end''')
+        self.assertEqual(values(g.calls), ['X4LAN_UiReplay:DockApproach:ship2:2:nil:nil', 'X4LAN_UiReplay:DockWarp:ship3:3:30:0',
+                                           'X4LAN_UiReplay:DockWarp:ship8:8:20:-10'])
+        self.assertEqual(values(g.CANON), ['true', 'true', 'true'])
+        md = (ROOT/'tools/dev/native_gate_ui_replay.xml').read_text(encoding='utf-8')
+        for cue, row in (('DockApproach', 'UI_REPLAY_DOCK_APPROACH'), ('DockWarp', 'UI_REPLAY_DOCK_WARP')):
+            self.assertIn('<cue name="%s" instantiate="true">' % cue, md)
+            self.assertIn("control=\"'%s'\"" % cue, md)
+            self.assertIn(row, md)
+        self.assertIn('<get_docking_approach_pos dock="$Dock" ship="$Ship" position="$Pos" rotation="$Rot"/>', md)
+        self.assertIn("<raise_lua_event name=\"'X4LAN_UiReplay.DockApproach'\"", md)
+
     def test_a_step_that_never_answers_ends_the_chain_and_says_which(self):
         lua, g = self.client()
         lua.execute('''rows=run({{0,'chain',100,{{'a','op','cargo','ore'},{'never','poll','^amount=5 ',2,10,'cargo','ore'},{'b','op','cargo'}}}},120)''')

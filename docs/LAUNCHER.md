@@ -82,6 +82,14 @@ overlay and snapshot are the session's own (`x4ls new-session` or `tools/build_p
   neutral: no input, no view, no trigger, its hits native, its ship still watched for death. Slot 1 is X4's own player
   (MD's player). It sits idle in its ship, and the stock path replays nothing for it. Slots 2..N other than K are
   built and seated at the take as in every session, and then idle.
+- **Navigation octrees.** X4 shows a station's or ship's navigation octree once every slot that plays has built it
+  (`native_gate_nav_octree` 'agreed', `lockstep_nav_octree.h`); a stood-in slot reports nothing and is not waited for.
+  Until 25 Nov the stood-in slots held every octree of a solo run hidden to its end (`NAV_OCTREE_STOP ... shown=0
+  agreed=0 waiting=15`): X4's autopilot to a station's dock then ended 230 to 470 m in front of the dock, for player 1
+  and player 2 alike, and the ship never came within the docking computer's reach of its pad (runs of 25 Nov at the
+  trade station IDJ-703 of the terran1 start). The same held for every game with an open slot or a dropped player.
+  The status's `silent=` names the slots not waited for at the last admission, `unheard=` counts the octrees agreed
+  without them.
 - **No gate or probe change.** The slot is per client (`@X4LANE_SLOT@`). The overlay does not say who else plays.
   Client K's pilot window, presentation scope (`lockstep_pilot_present.h`, client local) and per-player missions are
   the same as in an N-client session. The other slots' players exist in the world, so other players' ships and figures
@@ -398,20 +406,28 @@ pilots). Switches: `--window`, `--play-mode`, `--no-pace`, `--long`, `--world-sc
 - **Milestones.** A play session from a session with a story (`x4ls new-session`, `--session`) saves the world at every
   completed mission chapter of it, so a playthrough goes on from its last chapter instead of from its start (user
   request, 24 Nov). The catalogue is `tools/dev/native_gate_milestones.py` (`list`, `check --gamedata`): per story its
-  chapters in order, each the stock chapter cue that its own clean-up cancels (where X4 also completes the chapter's
-  mission); the Terran cadet start's story is `terran_cadet`, M1 and M2 the cadet's own two chapters (`GS_Terran1`
+  chapters in order, each the stock chapter cue and its own clean-up, which only the chapter's success path signals
+  (there X4 completes the chapter's mission, begins the next chapter and cancels this one); the Terran cadet start's
+  story is `terran_cadet`, M1 and M2 the cadet's own two chapters (`GS_Terran1`
   `Ch1_Maintenance`: Ch2_Distress begins; `Ch2_Distress`: the cadet mission complete), M3..M25 `Story_Yaki` Ch1_Escort
-  .. Ch23_Yaki_Trade (`check` reads every one in the game data: 25 milestones, 0 wrong on 9.00). A player 2..N plays it
+  .. Ch23_Yaki_Trade (`check` reads every one in the game data: 25 milestones, 0 wrong on 9.00; every signal of each
+  clean-up comes from inside its chapter, none through a failure parameter, and Ch5's abort and Ch23's failure are
+  branches on another event, which no signal takes). A player 2..N plays it
   in its own copies (`GS_Terran1_P<k>`, `Story_Yaki_P<k>`) or a stock script it claims; player 1 in the stock scripts.
-  - **In the game.** The overlay's `md/x4lan_milestones.xml` has a root cue per (slot, milestone): `event_cue_cancelled`
-    of that slot's chapter cue. Its frame runs at the same tick on every client; it records the milestone in
+  - **In the game.** The overlay's `md/x4lan_milestones.xml` has a root cue per (slot, milestone): `event_cue_signalled`
+    of that slot's clean-up cue (25 Nov: the chapter's success; Ch22, whose clean-up has no signal and completes the
+    mission for each of its outcomes: `event_cue_cancelled` of the chapter). Its frame runs at the same tick on every
+    client; it records the milestone in
     `md.$X4LAN_Milestones` and raises `X4LAN_Milestones.Reached<i>` with `player.age`. The probe (native_gate_milestones)
     turns that game time into one save tick T on every client (the first tick 5 s later, counted from the client's
     first tick and its game time, plus 60 ticks) and saves through the periodic save's gate routine
     (`lockstep_periodic_save.h`, no C change). At T-25 a player on foot postpones T by 300 ticks (player 1 until it sits:
     a session starts it in its ship; players 2..N at most 20 times); then one `SAVE_SLOT` row per slot (player and
     ship IDs, on foot, and for 2..N their inventory and research), then the gate's mission owner table into the MD (see
-    below). X4's refusals (a call of the simulation) retry 300 ticks on, 90 times. A periodic save within 90 ticks of a
+    below). X4's refusals (a call of the simulation) retry 300 ticks on, 90 times: the first refusal is one ERROR row
+    (`MILESTONE_SAVE_FAILED`), each retry after it a `WARN MILESTONE_SAVE_RETRY` row, and running out of retries one
+    more ERROR row (`MILESTONE_SAVE_GAVE_UP ... tries=90`); the same for a person's save (`PLAYER_SAVE_...`). A
+    periodic save within 90 ticks of a
     milestone save is left out. Not with `--mixed-platform` or `--open` (`--milestone-saves off`: logged only), as the
     periodic saves; on otherwise, also with `--save-every 0`.
   - **Collected** by `x4ls play` (`saves.py`): `RUN/saves/milestones/<story>-M<n>-slot<k>.xml.gz` (the lowest local

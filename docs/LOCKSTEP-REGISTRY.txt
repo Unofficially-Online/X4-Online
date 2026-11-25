@@ -205,6 +205,22 @@ function's entry, must agree with its owner first)
   0xb113b0                                                                                        notification or descriptor of a
                                                                                                    simulation-started picture is
                                                                                                    answered here; all else is X4's
+  0x10f1974  the cutscene manager's frame update 0x10f1930:     lockstep_md_fullscreen.h mfs_    call re-pointed (slots' near page
+             call 0x10ea140, a cutscene's full-screen           enter (native_gate_md_fullscreen) +0x8a0): X4's presentation, or for
+             presentation (cameras, HUD, input, cursor)                                           another slot's scene its shots'
+                                                                                                   cameras off and +0x4ec set
+  0x10f1c00  a list's pass 0x10f1a50: the presentation's end    lockstep_md_fullscreen.h mfs_    E9 -> stub (slots' near page
+  0x10f1d98  (mov edx,2, its first instruction; mov             leave / mfs_leave_done           +0x640, +0x720): jumped over for
+             [r15+0x450],rdi, its last)                                                           another slot's scene; the
+                                                                                                   owner's with the RNG word held
+  0x9f9f42   the listener's camera 0x9f9ee0: call 0x10f2110     lockstep_md_fullscreen.h mfs_    E9 -> stub (slots' near page
+                                                                listener                         +0x7e0, rax..r11 kept): none for
+                                                                                                   another slot's scene
+  0x9fbed0   0x9fbd40 (deactivate_cinematic_camera): call       lockstep_md_fullscreen.h mfs_    call re-pointed (slots' near page
+             UI::LuaEventSink_Raise 0xb3af30                    raise                            +0x8c0): not raised while another
+                                                                                                   slot's cutscene key is applied
+  Not patched: the cutscene's keys (0x10f2180's ids 0x71, 0xa5, 0x164..0x168, 0x16a) are replay ids of the stock record
+  while native_gate_md_fullscreen runs (lockstep_pilot_stock.h pstk_verdict); their replay calls 0x10f2180 alone.
   0x561a10   U::EntitySpeakData's request to speak (the         lockstep_speech_local.h spl_     E9 -> stub (slots' near page
              speak action, an entity's own lines)               queue (native_gate_speech_local)  +0x420, trampoline +0x440): the
                                                                                                    speaker of a request made in a
@@ -221,6 +237,7 @@ function's entry, must agree with its owner first)
   handlers, now also on client 1: lockstep_pilot_present.h pres_plan_canon), 0x70ecf0 / 0x70ed50 (the UI's first-person half,
   now also on client 1: lockstep_pilot_foot.h),
   0x730df0 (the UNDOCK key context's keeper, asked again with each client's own player, same file),
+  0xa4deb0 / 0x9829f0 (a camera's activity entry and its recompute; lockstep_md_fullscreen.h, another slot's scene's cameras),
   0x10f1310 / 0x10f1630 (the cutscene manager's start and its stop by ID), 0x317ae0 (a render target's ID from its name),
   0x151dc0 / 0x157860 (a notification by its ID; its removal): lockstep_md_media.h, the start of a mission's picture on
   the target monitor in the UI's place and the end of its timeout,
