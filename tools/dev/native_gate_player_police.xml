@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Police traffic searches every player's own inventory as it searches player 1's (native_gate_player_groups, a
+     session default: this patch ships with md/setup.xml's, tools/dev/native_gate_player_groups.xml).
+
+     X4's police traffic (aiscripts/masstraffic.police.xml) scans the ships in front of it and attacks one whose cargo
+     or whose pilot's inventory holds wares the sector's police forbids. The pilot of a stock player's ship is the
+     player, so the player's own inventory is searched. The script is the police ship's and runs outside every player's
+     scope, where a player 2..N's own ship holds no pilot (it holds its player only inside that player's scope): that
+     player's inventory was never searched, only the cargo. Here the player who controls the ship is also its pilot for
+     the search ($X4LAN_Pilots on every player's entity, kept by the player groups at the same ticks on every client).
+     A ship with a pilot, player 1's included, is searched by the stock clause; without the gate nothing sets the table
+     and the line is the stock one. What follows a find is the same for every ship (the attack), so nothing else
+     changes. Our own clause only; the stock script is patched in memory by X4's own diff loading, never on disk. -->
+<diff>
+ <replace sel="//do_if[@value='@$target.pilot.inventory.illegalto.{this.zone.policefaction} or @$target.cargo.illegalto.{this.zone.policefaction}']/@value">@$target.pilot.inventory.illegalto.{this.zone.policefaction} or @player.entity.$X4LAN_Pilots.{$target}.inventory.illegalto.{this.zone.policefaction} or @$target.cargo.illegalto.{this.zone.policefaction}</replace>
+</diff>

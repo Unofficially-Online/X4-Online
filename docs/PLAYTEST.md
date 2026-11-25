@@ -1446,6 +1446,61 @@ with both players in one game.
 - **Open:** a pending "Entering" line of player 1 can still be cancelled by another player's sector change within its
   two seconds.
 
+### Enemies and police treat players 2..N as player 1 (built 25 Nov, after rk9)
+
+Player 2 reported that enemies seemed to act differently against them. X4 has no combat difficulty setting and
+no damage or accuracy factor for the player's ship (9.00: `parameters.xml`'s `aicombat` has none, and the damage
+path asks only the weapon and the target's defaults); its NPC flight and gun code does not look at the player
+either. What differs is in the stock AI scripts: where they ask for "the ship the player flies" they run outside
+every player's scope, where that is player 1's ship, and a player 2..N's own ship holds its player as its pilot
+only inside that player's scope. Six stock AI scripts are now patched (X4's own diff loading, our clauses only,
+`tools/dev/native_gate_player_*.xml`, with the player groups, on by default) so that any player's own ship counts
+where they take player 1's; the players and what they control come from the player groups' tables on every
+player's entity (`$X4LAN_Pilots`, `$X4LAN_Controlled`), set at the same ticks on every client:
+
+- **Hunters of given purposes** (`move.seekenemies.xml`: Plunder pirates and Yaki raiders hunting trade and mining
+  ships for the wares of their basket, Recon and Police with target purposes): X4 lets the ship the player flies
+  pass the purpose test whatever it is. A hunter that picks straight from what its radar found (a basket hunter, a
+  recon) then takes it; one that ranks its targets (`lib.target.selection.xml`) filters by purpose again, for player
+  1 too. Player 2's ship never passed; now any player's does.
+- **The first minute's grace** in an NPC's target choice (`lib.target.selection.xml`): while the game is younger
+  than a minute and other targets are there, the ship the player flies ranks last.
+- **A disguise seen by an attacker** (`interrupt.disengage.xml`): the attacker blows the cover of a player's ship
+  instead of breaking off.
+- **Traffic at war with a player** (`masstraffic.generic.xml`): a lane ship within 250 m of a player 2..N's ship
+  now attacks, evades or flees as it does near player 1's.
+- **A station's police watchdog** (`masstraffic.watchdog.xml`): it prefers a player's ship one time in five, and
+  it and police traffic (`masstraffic.police.xml`) also search that player's own inventory for contraband.
+
+Not changed (open): the Police order's halt, scan and contraband conversation with the player's ship
+(`order.move.recon.xml`), the pirate's "drop your cargo" conversation (`order.plunder.xml`), the watchdog's and
+police's voice lines to the player, the player's own ship's turrets in assist mode (they follow `player.target`,
+player 1's target), and combat music and kill notices on the player (native, presentation).
+
+Test op (in a slot's plan, `native_gate_ui_replay_script`): `hostile` (MD `Hostile`) puts armed ships of a faction
+with X4's Patrol (or Recon) order ahead of a slot's ship, optionally looking for trade ships only and with the slot's
+ship first put in a fixed place (its protectors wait behind), and logs `HOSTILE_SETUP` (with what the player groups
+name: `pilots=`, `near_player=`), `HOSTILE_WATCH` (each ship's order, command, target, `target_slot`, action and its
+target), `HOSTILE_ENGAGE`/`HOSTILE_ACTS` (`after=` seconds), `HOSTILE_HIT` and `HOSTILE_SLOT`.
+
+Live (25 Nov, one X4 per run: `play --solo 1` and `--solo 2` of the ff1 session, the player sitting idle; each
+player's ship first put at the same place in `cluster_101_sector001`, two Xenon fighters spawned 3 km ahead):
+
+- **First minute, a plain Patrol, a pilotless Terran corvette 1 km behind the player's ship as another target**
+  (the session is younger than a minute there): stock, player 1's ship was never attacked (one Xenon took the
+  corvette, the other a Terran fighter); player 2's was attacked by the second Xenon 11 s after it came (926 m,
+  2 hits). With the patch the second Xenon took another target at that same second and player 2's ship was not
+  attacked in that minute either; player 1's patched run gave the stock rows.
+- **A plain Patrol later on** (four stock runs per player): the player's ship was the Xenon's first target in two
+  of player 1's runs (after 5 s) and in one of player 2's (after 11 s, both Xenon); in the others they took a nearby
+  ship first (a Terran fighter, or the ships spawned before them), with the same ranking for both players; the
+  patched and the stock runs of player 2 gave the same rows for the Patrol. No difficulty factor exists to measure.
+- **Trade-only Patrol and Recon** (Xenon, Terran, Teladi): no ship of either player was picked in any run, stock or
+  patched (the ranking filters a fighter out for player 1 too; the recon found other things first).
+- Two X4 (`play` with both clients, the patched scripts on both, player 2 in the fight): 12,641 ticks, 0 desync
+  ticks, the seven census records equal (`census_record_diff.py`); `HOSTILE_SETUP` on both clients named player 2
+  as the one who controls player 2's ship (`pilots=2 near_player=<player 2>`, `occupied=` player 1's ship).
+
 ## Mission types, tested without a person (built 16 Nov; two clients on one PC)
 
 `tools/dev/mission_matrix.py` runs X4's own mission libraries (`md/rml_*.xml`) once per player, one after the

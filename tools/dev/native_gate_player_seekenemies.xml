@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- An NPC that hunts ships of certain purposes takes every player's own ship as a target as it takes player 1's
+     (native_gate_player_groups, a session default: this patch ships with md/setup.xml's,
+     tools/dev/native_gate_player_groups.xml).
+
+     X4's search for enemies (aiscripts/move.seekenemies.xml) serves the hunters that look for ships of given purposes:
+     pirates of the Plunder order and Yaki raiders (trade and mining ships carrying their basket's wares), recon and
+     police with target purposes. Its rule for "the ship the player flies" is that it always has a valid purpose, since
+     nobody knows what the player does with it. A hunter that takes its target straight from what its radar found (a
+     basket hunter, a recon) then takes the player's ship; one that ranks its targets (lib.target.selection.xml) filters
+     by purpose again, for player 1 too. The script is the hunter's and runs outside every player's scope, where
+     `player` is player 1, so a player 2..N's own ship had to pass the purpose test: in a fighter or a miner with a
+     pirate's wares on board it was never picked (24 Nov playtest, player 2: the enemies seemed to act differently).
+     Two sites: the gravidar condition that wakes the hunter, and the filter of what it found.
+     Here the ship any player controls is also "the ship the player flies" (the player groups keep that table on every
+     player's entity on every client at the same ticks: $X4LAN_Pilots, from each player's controlled object to that
+     player's entity; X4 keeps no script variables on a ship, and AI scripts read no MD globals). Player 1's own ship
+     passes by the stock clause as before; without the gate nothing sets the table and every line is the stock one.
+     Our own clauses only; the stock script is patched in memory by X4's own diff loading, never on disk. -->
+<diff>
+ <replace sel="//check_value[@value='@$detected.{$i} == player.occupiedship']/@value">@$detected.{$i} == player.occupiedship or @player.entity.$X4LAN_Pilots.{$detected.{$i}}</replace>
+ <replace sel="//do_elseif[@value='$targetpurposes.count and not $targetpurposes.indexof.{$locobject.primarypurpose} and ($locobject != player.occupiedship)']/@value">$targetpurposes.count and not $targetpurposes.indexof.{$locobject.primarypurpose} and ($locobject != player.occupiedship) and not @player.entity.$X4LAN_Pilots.{$locobject}</replace>
+</diff>

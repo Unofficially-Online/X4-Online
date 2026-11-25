@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A station's police watchdog picks and searches every player's own ship as it picks and searches player 1's
+     (native_gate_player_groups, a session default: this patch ships with md/setup.xml's,
+     tools/dev/native_gate_player_groups.xml).
+
+     X4's watchdog (aiscripts/masstraffic.watchdog.xml, the police drones around a station) looks over the ships near
+     its station, and among the unknown ones it takes the ship the player flies with a chance of one in five even when
+     an earlier one would do. Then it searches the target's cargo and its pilot's inventory for wares the sector's police
+     forbids: the pilot of a stock player's ship is the player, so the player's own inventory is searched. The script is
+     the station's and runs outside every player's scope, where `player` is player 1: a player 2..N's own ship was never
+     preferred, and it holds its player as its pilot only inside that player's scope, so that player's inventory was
+     never searched (only the cargo). Five sites: the choice, and the four searches that decide the watchdog's next step
+     (observe the offender, raise the alarm); the voice lines the stock script has for the player's ship stay player 1's
+     (presentation, open).
+     Here the ship any player controls is also "the ship the player flies", and that player is also the ship's pilot for
+     the search ($X4LAN_Pilots on every player's entity, kept by the player groups at the same ticks on every client).
+     Player 1's ship passes by the stock clauses; without the gate nothing sets the table and every line is the stock
+     one. Our own clauses only; the stock script is patched in memory by X4's own diff loading, never on disk. -->
+<diff>
+ <replace sel="//do_if[@value='$target == player.occupiedship'][@chance='20']/@value">$target == player.occupiedship or @player.entity.$X4LAN_Pilots.{$target}</replace>
+ <replace sel="//set_value[@name='$observeillegal'][@chance]/@exact">@$target.pilot.inventory.illegalto.{$homebase.zone.policefaction} or @player.entity.$X4LAN_Pilots.{$target}.inventory.illegalto.{$homebase.zone.policefaction} or @$target.cargo.illegalto.{$homebase.zone.policefaction}</replace>
+ <replace sel="/aiscript/attention[@min='nearby']//do_elseif[@value='@$target.pilot.inventory.illegalto.{$homebase.zone.policefaction} or @$target.cargo.illegalto.{$homebase.zone.policefaction}'][set_value/@name='$viewaborttime']/@value">@$target.pilot.inventory.illegalto.{$homebase.zone.policefaction} or @player.entity.$X4LAN_Pilots.{$target}.inventory.illegalto.{$homebase.zone.policefaction} or @$target.cargo.illegalto.{$homebase.zone.policefaction}</replace>
+ <replace sel="/aiscript/attention[@min='nearby']//do_elseif[@value='@$target.pilot.inventory.illegalto.{$homebase.zone.policefaction} or @$target.cargo.illegalto.{$homebase.zone.policefaction}'][add_to_group]/@value">@$target.pilot.inventory.illegalto.{$homebase.zone.policefaction} or @player.entity.$X4LAN_Pilots.{$target}.inventory.illegalto.{$homebase.zone.policefaction} or @$target.cargo.illegalto.{$homebase.zone.policefaction}</replace>
+ <replace sel="/aiscript/attention[@min='visible']//do_elseif[@value='@$target.pilot.inventory.illegalto.{$homebase.zone.policefaction} or @$target.cargo.illegalto.{$homebase.zone.policefaction}']/@value">@$target.pilot.inventory.illegalto.{$homebase.zone.policefaction} or @player.entity.$X4LAN_Pilots.{$target}.inventory.illegalto.{$homebase.zone.policefaction} or @$target.cargo.illegalto.{$homebase.zone.policefaction}</replace>
+</diff>

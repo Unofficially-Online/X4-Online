@@ -428,6 +428,41 @@ class SessionTests(unittest.TestCase):
         logs = values(g.logs)
         self.assertTrue(any('UI_REPLAY_SCRIPT tick=45 op=undock ok=true result=granted' in l for l in logs))
 
+    def test_the_hostile_fixture_op_sends_short_keys_that_fit_one_replay_event(self):
+        """hostile (enemy AI per player, MD Hostile): the slot's ship and the name always, every other key only when it
+        differs from the MD's default and macros without 'ship_', 'cluster_' and '_macro', so the UI event fits one replay event (UIREP_EVENT_FIT,
+        160 bytes, the global's id byte included; a longer one is refused natively and the fixture never comes)."""
+        lua, g = client()
+        lua.execute('''
+          sent={};sizes={}
+          ctx={ref=function(u) return gate.ui_replay_ref(ids[u]) end}
+          env.AddUITriggeredEvent=function(screen,control,v)
+            local keys={};for k,x in pairs(v) do keys[#keys+1]=k..'='..(type(x)=='userdata' and 'id:'..ids[x] or tostring(x)) end
+            table.sort(keys);sent[#sent+1]=screen..'/'..control..':'..table.concat(keys,',')
+            local hex=assert(X4LAN_UI_REPLAY_CORE.encode_call({screen,control,v},3,ctx))
+            sizes[#sizes+1]=1+#hex/2
+          end
+          plan={{0,'hostile',2,'HP'},
+                {1,'hostile',1,'HS','terran','ship_ter_s_fighter_01_a_macro',3000,2,1,'cluster_101_sector001_macro',50,'recon'},
+                {2,'hostile',2,'HQ','scaleplate','ship_pir_s_fighter_01_a_macro',3000,2,0},
+                {3,'hostile',2,'HX','xenon','ship_xen_s_fighter_02_a_macro',3000,2,1,'cluster_101_sector001_macro',50,'patrol'}}
+          tools={gate=gate,C=C,env=env,own_slot=2,slot_id=function(s) return s+1000ULL end,slot_lua=function(s) return make_id('100') end}
+          S=new_session({script=X4LAN_UI_REPLAY_CORE.script(plan,40,tools)})
+          for t=40,43 do S.frame(t) end
+        ''')
+        self.assertEqual(values(g.sent), ['X4LAN_UiReplay/Hostile:a=HP,n=id:100',
+                                          'X4LAN_UiReplay/Hostile:a=HS,f=terran,k=50,m=ter_s_fighter_01_a,n=id:100,o=recon,u=1,w=101_sector001',
+                                          'X4LAN_UiReplay/Hostile:a=HQ,f=scaleplate,m=pir_s_fighter_01_a,n=id:100',
+                                          'X4LAN_UiReplay/Hostile:a=HX,k=50,n=id:100,u=1,w=101_sector001'])
+        self.assertLessEqual(max(values(g.sizes)), 160, values(g.sizes))
+        md = (ROOT / 'tools/dev/native_gate_ui_replay.xml').read_text(encoding='utf-8')
+        for key in ('$n', '$a', '$f?', '$m?', '$d?', '$c?', '$u?', '$w?', '$k?', '$o?'):
+            self.assertIn('$p.' + key if key != '$n' else 'event.param3.$n', md)
+        self.assertIn("macro.{'ship_' + (if $p.$m? then $p.$m else 'xen_s_fighter_02_a') + '_macro'}", md)
+        self.assertIn("macro.{'cluster_' + $p.$w + '_macro'}", md)
+        self.assertIn("<create_order id=\"'Patrol'\" object=\"$h\" default=\"true\">", md)
+        self.assertIn("<create_order id=\"'Recon'\" object=\"$h\" default=\"true\">", md)
+
     def test_the_spacesuit_ops_make_the_stock_menus_calls(self):
         """suit_out: the transporter menu's TransportPlayerToTarget with its spacesuit target; dock_home: the ship menu's
         RequestDockAt on the ship left; target_home: that ship as the soft target, in the presentation scope."""

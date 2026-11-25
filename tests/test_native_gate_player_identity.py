@@ -51,6 +51,8 @@ MD_XSD = RE / 'gamescripts/resolved/base/libraries/md.xsd'
 X4RE_SHIPTRADER = RE / 'gamescripts/resolved/base/aiscripts/build.shiptrader.xml'   # read only, when present
 X4RE_PROTECT = RE / 'gamescripts/resolved/base/aiscripts/order.fight.protect.ship.xml'   # read only, when present
 X4RE_NOTIFICATIONS = RE / 'gamescripts/resolved/base/md/notifications.xml'   # read only, when present
+COMBAT_AI_PATCHES = ('aiscripts/move.seekenemies.xml', 'aiscripts/lib.target.selection.xml', 'aiscripts/interrupt.disengage.xml',
+                     'aiscripts/masstraffic.generic.xml', 'aiscripts/masstraffic.watchdog.xml', 'aiscripts/masstraffic.police.xml')
 L = identity.lua_literal
 
 S1, S2, S3, S4 = identity.DEFAULT_SHIPS[:4]
@@ -540,7 +542,10 @@ class MdScriptTests(unittest.TestCase):
         self.assertIsNone(steps["$a.$step == 'reputation'"].find('.//add_licence'))   # a pool faction: no player licences
         # The two patches: one condition each on a stock cue, nothing else, and every overlay gets them under the stock names.
         import native_gate_defaults as defaults
-        self.assertEqual(sorted(defaults.MD_PATCHES), ['aiscripts/build.shiptrader.xml', 'aiscripts/order.fight.protect.ship.xml', 'md/guidance.xml',
+        self.assertEqual(sorted(defaults.MD_PATCHES), ['aiscripts/build.shiptrader.xml', 'aiscripts/interrupt.disengage.xml',
+                                                       'aiscripts/lib.target.selection.xml', 'aiscripts/masstraffic.generic.xml',
+                                                       'aiscripts/masstraffic.police.xml', 'aiscripts/masstraffic.watchdog.xml',
+                                                       'aiscripts/move.seekenemies.xml', 'aiscripts/order.fight.protect.ship.xml', 'md/guidance.xml',
                                                        'md/notifications.xml', 'md/playerreputation.xml', 'md/setup.xml', 'md/tutorial_global.xml'])
         cues = {'md/playerreputation.xml': "/mdscript/cues/cue[@name='TrackPlayerReputation']/cues/cue[@name='Base']/conditions",
                 'md/notifications.xml': "/mdscript/cues/cue[@name='Init']/cues/cue[@name='PlayerDiscountCommission']/conditions"}
@@ -649,7 +654,7 @@ class MdScriptTests(unittest.TestCase):
         self.assertNotIn('player.entity.hascontext', text)
         for name, source in defaults.MD_PATCHES.items():
             if name in ('md/tutorial_global.xml', 'md/setup.xml', 'aiscripts/build.shiptrader.xml', 'md/guidance.xml',
-                        'aiscripts/order.fight.protect.ship.xml'):
+                        'aiscripts/order.fight.protect.ship.xml') or name in COMBAT_AI_PATCHES:   # the last: test_native_gate_player_combat_ai.py
                 continue
             diff = ET.fromstring((DEV / source).read_text(encoding='utf-8'))
             self.assertEqual(diff.tag, 'diff')

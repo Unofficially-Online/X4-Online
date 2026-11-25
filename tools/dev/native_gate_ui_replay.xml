@@ -216,6 +216,148 @@
     </cue>
    </cues>
   </cue>
+  <!-- Test only (script op hostile; enemy AI per player, 25 Nov): COUNT armed ships of FACTION with their own pilots and
+       X4's Patrol order (ORDER 'recon': its Recon order) for the sector of slot SLOT's ship, METRES ahead of it, called
+       NAME 1..COUNT, so a scripted run shows which ships the stock enemy AI picks and when. PURPOSE 1: they look for trade
+       ships only (the order's target purposes, as a pirate's Plunder looks for trade and mining ships; X4 lets the ship
+       the player flies pass that test whatever it is). WARP (a sector macro): the slot's ship is first put at 100 km, 0, -56 km in that sector, so every
+       slot meets the same enemies in the same place, and the ships that protect it (a start's wingmate) get X4's Wait
+       order where they are, so the slot meets them alone. FLOOR: the slot ship's minimum hull percentage (its player
+       sits idle).
+       Rows: HOSTILE_WARP, HOSTILE_SETUP (occupied=: the ship of player.occupiedship outside every scope, pilots=: the
+       players' controlled objects the player groups name, near_player=: who controls the slot's ship by them), HOSTILE_WATCH per ship when its order, command, target or action changed
+       (target_slot=1: it attacks the slot's ship; action_slot=1: its action, a scan say, is on the slot's ship),
+       HOSTILE_ENGAGE the first time a ship attacks the slot's ship and HOSTILE_ACTS the first time its action is on it
+       (after= seconds since the setup), HOSTILE_HIT the slot ship's hits by them, HOSTILE_SLOT its hull and shield when
+       they changed; for 300 s. -->
+  <cue name="Hostile" instantiate="true" namespace="this">
+   <conditions><event_ui_triggered screen="'X4LAN_UiReplay'" control="'Hostile'"/></conditions>
+   <actions>
+    <set_value name="$near" exact="event.param3.$n"/>
+    <set_value name="$p" exact="event.param3"/>
+    <set_value name="$ships" exact="[]"/>
+    <do_if value="@$near.isoperational and $p.$k?">
+     <set_object_min_hull object="$near" exact="$p.$k"/>
+    </do_if>
+    <do_if value="@$near.isoperational and $p.$w?">
+     <find_sector name="$s" macro="macro.{'cluster_' + $p.$w + '_macro'}"/>
+     <find_ship name="$guards" space="$near.sector" multiple="true">
+      <match_distance object="$near" max="30km"/>
+     </find_ship>
+     <set_value name="$held" exact="0"/>
+     <do_all exact="$guards.count" counter="$i">
+      <do_if value="$guards.{$i} != $near and @$guards.{$i}.order.id == 'ProtectShip' and @$guards.{$i}.order.$target == $near">
+       <cancel_all_orders object="$guards.{$i}"/>
+       <create_order id="'Wait'" object="$guards.{$i}" default="true"/>
+       <set_value name="$held" operation="add"/>
+      </do_if>
+     </do_all>
+     <do_if value="@$s.exists">
+      <!-- the move takes effect after this action block: the ships come 3 s later -->
+      <warp object="$near" sector="$s">
+       <position x="100km" y="0m" z="-56km"/>
+       <rotation yaw="0deg" pitch="0deg" roll="0deg"/>
+      </warp>
+     </do_if>
+     <debug_text text="'[X4LAN] HOSTILE_WARP ship=%s sector=%s found=%s protectors_held=%s time=%s'.[$near.idcode, $p.$w, @$s.exists, $held, player.age]"/>
+    </do_if>
+   </actions>
+   <cues>
+    <cue name="HostileSpawn">
+     <delay exact="3s"/>
+     <actions>
+      <do_if value="@$near.isoperational">
+       <set_value name="$faction" exact="faction.{if $p.$f? then $p.$f else 'xenon'}"/>
+       <set_value name="$count" exact="if $p.$c? then $p.$c else 2"/>
+       <set_value name="$ahead" exact="(if $p.$d? then $p.$d else 3000) * 1m"/>
+       <set_value name="$purposes" exact="if $p.$u? then [purpose.trade] else []"/>
+       <do_all exact="$count" counter="$i">
+        <transform_position name="$At" refposition="$near.position" refrotation="$near.rotation">
+         <position x="($i - 1) * 150m" y="0m" z="$ahead"/>
+        </transform_position>
+        <create_ship name="$h" macro="macro.{'ship_' + (if $p.$m? then $p.$m else 'xen_s_fighter_02_a') + '_macro'}" zone="$near.zone">
+         <owner exact="$faction" overridenpc="true"/>
+         <pilot>
+          <select faction="$faction" tags="tag.aipilot"/>
+         </pilot>
+         <loadout>
+          <level exact="1.0"/>
+         </loadout>
+         <position value="$At"/>
+        </create_ship>
+        <set_object_name object="$h" name="$p.$a + ' ' + $i"/>
+        <do_if value="$p.$o? and $p.$o == 'recon'">
+         <create_order id="'Recon'" object="$h" default="true">
+          <param name="targetspace" value="$near.sector"/>
+          <param name="targetpurposes" value="$purposes"/>
+         </create_order>
+        </do_if>
+        <do_else>
+         <create_order id="'Patrol'" object="$h" default="true">
+          <param name="space" value="$near.sector"/>
+          <param name="targetpurposes" value="$purposes"/>
+         </create_order>
+        </do_else>
+        <append_to_list name="$ships" exact="$h"/>
+       </do_all>
+       <set_value name="$t0" exact="player.age"/>
+       <set_value name="$until" exact="player.age + 300s"/>
+       <set_value name="$last" exact="table[]"/>
+       <set_value name="$engaged" exact="table[]"/>
+       <set_value name="$acted" exact="table[]"/>
+       <set_value name="$slotlast" exact="''"/>
+       <set_value name="$hits" exact="0"/>
+       <debug_text text="'[X4LAN] HOSTILE_SETUP name=%s order=%s count=%s faction=%s purposes=%s near=%s near_macro=%s near_purpose=%s sector=%s distance=%s relation=%s pilot=%s occupied=%s pilots=%s near_player=%s time=%s'.[$p.$a, @$ships.{1}.order.id, $ships.count, $faction.id, $purposes, $near.idcode, $near.macro.id, @$near.primarypurpose, $near.sector.macro.id, (@$ships.{1}.distanceto.{$near})i, $faction.relationto.{faction.player}, @$ships.{1}.pilot.exists, @player.occupiedship.idcode, @player.entity.$X4LAN_Pilots.keys.count, @player.entity.$X4LAN_Pilots.{$near}.knownname, player.age]"/>
+      </do_if>
+      <do_else>
+       <debug_text text="'[X4LAN] HOSTILE_REFUSED time=%s'.[player.age]"/>
+      </do_else>
+     </actions>
+     <cues>
+      <cue name="HostileWatch" instantiate="true" checkinterval="1s">
+       <conditions><check_value value="$ships.count gt 0 and player.age lt $until"/></conditions>
+       <actions>
+        <do_all exact="$ships.count" counter="$i">
+         <set_value name="$h" exact="$ships.{$i}"/>
+         <set_value name="$tgt" exact="@$h.pilot.command.param"/>
+         <set_value name="$act" exact="@$h.pilot.commandaction.param"/>
+         <set_value name="$line" exact="'order=%s command=%s target=%s target_class=%s target_slot=%s action=%s action_target=%s action_slot=%s alive=%s'.[@$h.order.id, @$h.pilot.command.value, @$tgt.idcode, @$tgt.class, @$tgt == $near, @$h.pilot.commandaction.value, @$act.idcode, @$act == $near, @$h.isoperational]"/>
+         <do_if value="$line != @$last.{$i}">
+          <set_value name="$last.{$i}" exact="$line"/>
+          <debug_text text="'[X4LAN] HOSTILE_WATCH name=%s i=%s time=%s distance=%s %s'.[$p.$a, $i, player.age, (@$h.distanceto.{$near})i, $line]"/>
+         </do_if>
+         <do_if value="@$tgt == $near and not $engaged.{$i}?">
+          <set_value name="$engaged.{$i}" exact="player.age"/>
+          <debug_text text="'[X4LAN] HOSTILE_ENGAGE name=%s i=%s after=%s distance=%s time=%s'.[$p.$a, $i, player.age - $t0, (@$h.distanceto.{$near})i, player.age]"/>
+         </do_if>
+         <do_if value="@$act == $near and not $acted.{$i}?">
+          <set_value name="$acted.{$i}" exact="player.age"/>
+          <debug_text text="'[X4LAN] HOSTILE_ACTS name=%s i=%s after=%s action=%s distance=%s time=%s'.[$p.$a, $i, player.age - $t0, @$h.pilot.commandaction.value, (@$h.distanceto.{$near})i, player.age]"/>
+         </do_if>
+        </do_all>
+        <set_value name="$line" exact="'hull=%s shield=%s'.[(@$near.hullpercentage)i, (@$near.shieldpercentage)i]"/>
+        <do_if value="$line != $slotlast">
+         <set_value name="$slotlast" exact="$line"/>
+         <debug_text text="'[X4LAN] HOSTILE_SLOT name=%s time=%s hits=%s %s'.[$p.$a, player.age, $hits, $line]"/>
+        </do_if>
+       </actions>
+      </cue>
+      <cue name="HostileHit" instantiate="true">
+       <conditions>
+        <event_object_attacked object="$near"/>
+        <check_value value="$ships.indexof.{event.param}"/>
+       </conditions>
+       <actions>
+        <set_value name="$hits" operation="add"/>
+        <do_if value="$hits le 3 or ($hits / 25) * 25 == $hits">
+         <debug_text text="'[X4LAN] HOSTILE_HIT name=%s n=%s attacker=%s after=%s time=%s'.[$p.$a, $hits, $ships.indexof.{event.param}, player.age - $t0, player.age]"/>
+        </do_if>
+       </actions>
+      </cue>
+     </cues>
+    </cue>
+   </cues>
+  </cue>
   <!-- Test only (script op hold_stock, in every client's plan at the same tick): wares into a slot ship's hold, so a
        scripted run has cargo to drop. has= is what the ship then holds of it. -->
   <cue name="Hold" instantiate="true">

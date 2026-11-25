@@ -69,14 +69,26 @@ MD_FILES = ('md/native_gate_battle.xml', 'md/native_gate_player_identity.xml', '
 # wharf refits every player's own ship, not only player 1's (native_gate_player_refit.xml, with the player groups), and a
 # ship that protects a player's own ship (the Terran cadet's wingmate) takes that player as the ship's pilot, as it takes
 # player 1: it flies in formation, answers that player's shots and keeps the stock rule for enemies it sees
-# (native_gate_player_escort.xml, with the player groups).
+# (native_gate_player_escort.xml, with the player groups). Six more stock AI scripts take every player's own ship where
+# they take "the ship the player flies", for the NPCs that fight or police the players (with the player groups): hunters
+# of given purposes take it whatever its purpose (native_gate_player_seekenemies.xml), a target choice gives it
+# the first minute's grace (native_gate_player_targets.xml), an attacker blows its cover (native_gate_player_cover.xml),
+# traffic at war with its player attacks, evades or flees (native_gate_player_masstraffic.xml), a station's watchdog
+# prefers it and police traffic and watchdogs search that player's own inventory (native_gate_player_watchdog.xml,
+# native_gate_player_police.xml).
 MD_PATCHES = {'md/playerreputation.xml': 'native_gate_quiet_playerreputation.xml',
               'md/notifications.xml': 'native_gate_quiet_notifications.xml',
               'md/tutorial_global.xml': 'native_gate_hint_timeout.xml',
               'md/setup.xml': 'native_gate_player_groups.xml',
               'md/guidance.xml': 'native_gate_player_guidance.xml',
               'aiscripts/build.shiptrader.xml': 'native_gate_player_refit.xml',
-              'aiscripts/order.fight.protect.ship.xml': 'native_gate_player_escort.xml'}
+              'aiscripts/order.fight.protect.ship.xml': 'native_gate_player_escort.xml',
+              'aiscripts/move.seekenemies.xml': 'native_gate_player_seekenemies.xml',
+              'aiscripts/lib.target.selection.xml': 'native_gate_player_targets.xml',
+              'aiscripts/interrupt.disengage.xml': 'native_gate_player_cover.xml',
+              'aiscripts/masstraffic.generic.xml': 'native_gate_player_masstraffic.xml',
+              'aiscripts/masstraffic.watchdog.xml': 'native_gate_player_watchdog.xml',
+              'aiscripts/masstraffic.police.xml': 'native_gate_player_police.xml'}
 
 TABLE = load()
 ON_KEYS = [e[0] for e in TABLE['on']]

@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Traffic near a player's own ship that is at war with that player attacks, evades or flees as it does near player
+     1's (native_gate_player_groups, a session default: this patch ships with md/setup.xml's,
+     tools/dev/native_gate_player_groups.xml).
+
+     X4's generic traffic (aiscripts/masstraffic.generic.xml, the small ships of the traffic lanes) waits for one of two
+     things: a call to attack, or a radar sweep of its own that finds the ship the player flies within 250 m while the
+     traffic ship (or the zone's owner it is friends with) is at war with the player's faction. On a sweep it leaves the
+     lane and attacks the player's ship (one in two, if it is armed), evades (seven in ten of the rest) or flees. The
+     script is the traffic ship's and runs outside every player's scope, where `player` is player 1, so traffic at war
+     with a player 2..N flew on beside that player's ship. The traffic lanes and their attention follow every player's
+     view point (native_gate_mass_traffic_camera), so the traffic is there; it only never looked.
+     Here, as a third way into the same wait, the same sweep takes the first ship in slot order that a player 2..N
+     controls (player 1's is the stock way) and that meets the same three tests, with that player's entity and faction
+     where the stock lines read the player's; the traffic ship then attacks that ship. The players' controlled objects
+     and who controls each are kept on every player's entity by the player groups at the same ticks on every client
+     ($X4LAN_Controlled in slot order, $X4LAN_Pilots; X4 keeps no script variables on a ship, and AI scripts read no MD
+     globals). Without the gate nothing sets them: the new way never opens and the target is the stock one.
+     Our own lines only; the stock script is patched in memory by X4's own diff loading, never on disk. -->
+<diff>
+ <add sel="/aiscript/attention[@min='nearby']/actions/wait/interrupt/conditions/check_any/check_all[event_gravidar_has_scanned]" pos="after">
+  <check_all>
+   <event_gravidar_has_scanned object="this.ship"/>
+   <check_value value="player.entity.$X4LAN_Controlled?"/>
+   <check_any exact="if player.entity.$X4LAN_Controlled? then player.entity.$X4LAN_Controlled.count else 0" counter="$X4LAN_I">
+    <check_all>
+     <check_value value="player.entity.$X4LAN_Controlled.{$X4LAN_I} != player.occupiedship"/>
+     <check_value value="@player.entity.$X4LAN_Controlled.{$X4LAN_I}.isclass.ship"/>
+     <check_value value="@player.entity.$X4LAN_Pilots.{player.entity.$X4LAN_Controlled.{$X4LAN_I}}.exists"/>
+     <check_value value="this.ship.distanceto.{player.entity.$X4LAN_Pilots.{player.entity.$X4LAN_Controlled.{$X4LAN_I}}}" max="250m"/>
+     <check_any>
+      <check_value value="this.hasrelation.kill.{player.entity.$X4LAN_Pilots.{player.entity.$X4LAN_Controlled.{$X4LAN_I}}.owner}"/>
+      <check_all>
+       <check_value value="this.zone.owner"/>
+       <check_value value="this.zone.owner.hasrelation.kill.{player.entity.$X4LAN_Pilots.{player.entity.$X4LAN_Controlled.{$X4LAN_I}}.owner}"/>
+       <check_value value="this.hasrelation.friend.{this.zone.owner}"/>
+      </check_all>
+     </check_any>
+    </check_all>
+   </check_any>
+  </check_all>
+ </add>
+ <add sel="/aiscript/attention[@min='nearby']/actions/wait/interrupt/actions" pos="prepend">
+  <!-- the ship the sweep found: player 1's by the stock test, else the first player 2..N's that meets it -->
+  <set_value name="$X4LAN_Target" exact="player.occupiedship"/>
+  <do_if value="event.name == 'event_gravidar_has_scanned' and player.entity.$X4LAN_Controlled? and not (player.occupiedship and this.ship.distanceto.{player.entity} le 250m and (this.hasrelation.kill.{player.entity.owner} or (this.zone.owner and this.zone.owner.hasrelation.kill.{player.entity.owner} and this.hasrelation.friend.{this.zone.owner})))">
+   <do_all exact="player.entity.$X4LAN_Controlled.count" counter="$X4LAN_I">
+    <set_value name="$X4LAN_S" exact="player.entity.$X4LAN_Controlled.{$X4LAN_I}"/>
+    <set_value name="$X4LAN_E" exact="@player.entity.$X4LAN_Pilots.{$X4LAN_S}"/>
+    <do_if value="$X4LAN_S != player.occupiedship and @$X4LAN_S.isclass.ship and @$X4LAN_E.exists and this.ship.distanceto.{$X4LAN_E} le 250m and (this.hasrelation.kill.{$X4LAN_E.owner} or (this.zone.owner and this.zone.owner.hasrelation.kill.{$X4LAN_E.owner} and this.hasrelation.friend.{this.zone.owner}))">
+     <set_value name="$X4LAN_Target" exact="$X4LAN_S"/>
+     <break/>
+    </do_if>
+   </do_all>
+   <remove_value name="$X4LAN_I"/>
+   <remove_value name="$X4LAN_S"/>
+   <remove_value name="$X4LAN_E"/>
+  </do_if>
+ </add>
+ <replace sel="/aiscript/attention[@min='nearby']//set_value[@name='$target'][@exact='player.occupiedship']/@exact">$X4LAN_Target</replace>
+</diff>

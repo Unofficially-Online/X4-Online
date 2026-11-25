@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- An NPC's target choice gives every player's own ship the grace X4 gives player 1's (native_gate_player_groups, a
+     session default: this patch ships with md/setup.xml's, tools/dev/native_gate_player_groups.xml).
+
+     X4's target ranking (aiscripts/lib.target.selection.xml, every fight order's choice among the enemies it sees)
+     puts the ship the player flies last during the first minute of a game when there are other targets: a new game
+     does not start with every enemy in range on the player. The script is the attacker's and runs outside every
+     player's scope, where `player` is player 1, so a player 2..N's own ship had no grace. Here the ship any player
+     controls is also "the ship the player flies" ($X4LAN_Pilots on every player's entity, kept by the player groups at
+     the same ticks on every client). Player 1's ship passes by the stock clause; without the gate nothing sets the
+     table and the line is the stock one. Our own clause only; the stock script is patched in memory by X4's own diff
+     loading, never on disk. -->
+<diff>
+ <replace sel="//do_if[@value='player.age le 1min and ($target == player.occupiedship) and $targets.count gt 1 and $priority gt 1']/@value">player.age le 1min and ($target == player.occupiedship or @player.entity.$X4LAN_Pilots.{$target}) and $targets.count gt 1 and $priority gt 1</replace>
+</diff>

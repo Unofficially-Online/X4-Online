@@ -2861,6 +2861,25 @@ function K.script(plan,start,tools)
     if e[10] then t.h=e[10] end
     if e[12] then t.k=e[12] end
     tools.env.AddUITriggeredEvent('X4LAN_UiReplay','Friendly',t);return 'lua' end
+  -- Test only (MD Hostile, canonical by its UI event; enemy AI per player, 25 Nov):
+  -- {tick,'hostile',SLOT,NAME[,FACTION[,MACRO[,METRES[,COUNT[,PURPOSE[,WARP[,FLOOR[,ORDER]]]]]]]]}: COUNT (2) armed ships
+  -- of FACTION (xenon, MACRO ship_xen_s_fighter_02_a_macro) with their pilots and X4's Patrol order (ORDER 'recon':
+  -- Recon), METRES (3000) ahead of slot SLOT's ship, called NAME 1..COUNT; PURPOSE 1: they look for trade ships only; WARP: a sector macro the slot's
+  -- ship is first put in (100 km, 0, -56 km; its protectors wait where they were); FLOOR: the slot ship's minimum hull
+  -- percentage.
+  elseif op=='hostile' then call=function()
+    -- macros travel without 'ship_'/'cluster_' and '_macro' (MD puts them back), defaults not at all
+    local function short(m) return type(m)=='string' and (m:gsub('^ship_',''):gsub('^cluster_',''):gsub('_macro$','')) or m end
+    local t={n=tools.slot_lua(e[3]),a=e[4]}
+    if e[5] and e[5]~='xenon' then t.f=e[5] end
+    if e[6] and short(e[6])~='xen_s_fighter_02_a' then t.m=short(e[6]) end
+    if e[7] and e[7]~=3000 then t.d=e[7] end
+    if e[8] and e[8]~=2 then t.c=e[8] end
+    if e[9]==1 then t.u=1 end
+    if e[10] then t.w=short(e[10]) end
+    if e[11] then t.k=e[11] end
+    if e[12] and e[12]~='patrol' then t.o=e[12] end
+    tools.env.AddUITriggeredEvent('X4LAN_UiReplay','Hostile',t);return 'lua' end
   -- {tick,'leak_goto',NAME[,OWNER[,METRES]]}: test fixture (canonical by its UI event): this player's ship (its spacesuit)
   -- METRES (4) in front of the claim signal of the ship of that name and owner (ownerless: abandoned), looking at it (MD
   -- LeakGoto). {tick,'dock_named',NAME[,OWNER]}: this player asks to dock at that ship (RequestDockAt, the ship menu's

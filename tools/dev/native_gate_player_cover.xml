@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- An attacker that sees a player's own ship take or drop a faction's cover blows that cover as it does for player 1
+     (native_gate_player_groups, a session default: this patch ships with md/setup.xml's,
+     tools/dev/native_gate_player_groups.xml).
+
+     X4's disengage handler (aiscripts/interrupt.disengage.xml, part of every attack) hears the target change owner.
+     For the ship the player flies, seen by the attacker, a change of the cover owner means the player put on or took off
+     a disguise in sight of the enemy: the attacker signals LoseCover to that ship (md/cover.xml takes it from the group
+     of the players' ships) and keeps attacking. Any other target gets its relation boost reset, and the attack stops
+     when the new owner may not be attacked. The script is the attacker's and runs outside every player's scope, where
+     `player` is player 1, so a player 2..N in disguise could drop an attacker by putting the cover on. Here the ship any
+     player controls is also "the ship the player flies" ($X4LAN_Pilots on every player's entity, kept by the player
+     groups at the same ticks on every client). Player 1's ship passes by the stock clause; without the gate nothing sets
+     the table and the line is the stock one. Our own clause only; the stock script is patched in memory by X4's own diff
+     loading, never on disk. -->
+<diff>
+ <replace sel="//do_if[@value='$target == player.occupiedship and this.assignedcontrolled.cansee.{$target}']/@value">($target == player.occupiedship or @player.entity.$X4LAN_Pilots.{$target}) and this.assignedcontrolled.cansee.{$target}</replace>
+</diff>
