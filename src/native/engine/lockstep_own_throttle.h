@@ -103,6 +103,10 @@
 #define OTHR_PATH_MAX 30u            /* = OPRED_HORIZON_MAX */
 #define OTHR_DV_MIN 0.5              /* m/s */
 #define OTHR_ACCEL_MIN 0.2           /* m/s per tick: the simulated ship speeds up or slows down */
+#define OTHR_DV_SPEED_MAX 800.0      /* m/s: the lead's speed only below travel speeds (own_predict draws none above) */
+#define OTHR_RESP_REACHED 0.005      /* of the max speed: the response has reached the setpoint's speed */
+#define OTHR_RESP_GRACE 15u          /* ticks after the last pending input before a response that does not speed up ends */
+#define OTHR_RESP_MAX 900u           /* ticks (30 s) a response lasts at most after its last pending input */
 enum {OTHR_FIT_UP,OTHR_FIT_DOWN,OTHR_FIT_WHEEL,OTHR_FIT_AXIS,OTHR_FITS};
 static const char *const othr_fit_names[OTHR_FITS]={"up","down","wheel","axis"};
 static const unsigned othr_fit_dims[OTHR_FITS]={4,4,3,2};
@@ -137,6 +141,13 @@ static othr_level othr_levels[OTHR_CHANNELS][OTHR_RING];   /* the simulation's b
 static uint64_t othr_refused_at[OTHR_CHANNELS];static unsigned char othr_refused_state[OTHR_CHANNELS];
 static unsigned othr_grace=6,othr_lag_max;
 static double othr_slope[4];static unsigned char othr_slope_known[4];   /* fraction per m/s: reverse, 0..1, 1..2, 2..3 */
+/* The response to an own throttle change: opened at a tick whose pending input moves the predicted setpoint (target = the
+ * setpoint it predicts, last = that tick), it lasts while the simulated ship goes to the target's speed; the speed number
+ * leads only inside it (rel16 release check, player 2 at the end of a travel stop: the ship slowed down by itself with
+ * the throttle steady at 1, own_predict drew it 25 m/s slower and on below the normal top speed, the number read 137 at
+ * 162 m/s for 9 ticks; player 1 within 2%). */
+static struct {uint64_t last;double target;int active;} othr_resp;
+static uint64_t othr_resp_opened,othr_resp_led;
 static double othr_smooth_err,othr_motion_err;static uint64_t othr_smooth_samples,othr_motion_samples;
 /* vfunc33 (desired = the setpoint, then the smoothing) runs between the handlers of path_release and the key step of
  * d95180, or after both: seen in the key ramps (desired one key step behind the setpoint, or level with it). */
@@ -165,7 +176,8 @@ static uint64_t othr_calls,othr_adjusted,othr_outside,othr_stale,othr_frames,oth
     othr_confirmed[OTHR_CHANNELS],othr_refused[OTHR_CHANNELS],othr_unseen[OTHR_CHANNELS],
     othr_motion_paths,othr_motion_refused,othr_rows_written;
 /* The last call's answer, for the row. */
-static struct {uint64_t tick;double s_sim,s_shown,t_sim,t_shown,actual_sim,actual_shown,mps_sim,mps_shown,dv;int b_sim,b_shown,tr_sim,tr_shown,valid;} othr_last;
+static struct {uint64_t tick;double s_sim,s_shown,t_sim,t_shown,actual_sim,actual_shown,mps_sim,mps_shown,dv;int b_sim,b_shown,tr_sim,tr_shown,valid;
+    unsigned calls;double mps_lo,mps_hi,shown_lo,shown_hi;int resp;double resp_target;} othr_last;
 /* The code this reads the meaning of (SHA-256 of the 9.00 bytes). */
 static const struct {unsigned rva,size;const char *sha;} othr_pin_table[]={
     {0xb0c0a0u,0x38eu,"61b187dcbf063f8453093a013fb57e1a927f95f21e83a8531e8f37088bab2646"},   /* GetPlayerSpeed: its eight answers */
@@ -582,37 +594,68 @@ static int othr_speed(const double in[5],double out[5]) {
     else if(why==OTHR_ABSTAINS) targeted=s_pred;
     else if((tr_sim || b_sim) && why!=OTHR_ABSTAIN_READ) targeted=b.desired;   /* shown off: vfunc13's answer without it */
     out[1]=othr_clamp(targeted,-1.0,3.0);out[3]=b_shown;out[4]=tr_shown;
-    /* The speed of the drawn ship while it speeds up or slows down: only in the direction the predicted setpoint moves, or
-     * at a steady one the direction the simulated ship accelerates (own_predict's response model drifts at rest, rk9 live
-     * t3: -1.6 m/s for a ship standing still, the number read -1), and from half a metre per second (the finite
-     * differences' noise). The m/s answer is a whole number: it moves by whole numbers. */
+    /* The speed of the drawn ship only where it makes an own throttle change immediate: inside the response (below), from
+     * half a metre per second (the finite differences' noise); elsewhere the number is the simulation's, as player 1's
+     * (own_predict's response model drifts at rest, rk9 live t3: -1.6 m/s for a ship standing still; it draws a ship that
+     * slows down by itself after a travel stop on below the top speed, rel16). Never with the travel drive charging or
+     * running (simulated or shown) and never from travel speeds (rk15, the user in travel: the speed "pulsing"; this module
+     * had changed no answer in that cruise, adjusted=338 from 7800 to 8400). The m/s answer moves by whole numbers. */
     double dv=0.0,accel=0.0;
     const double trend=why==OTHR_ABSTAINS?s_pred-(double)b.s:0.0;
-    const int have_dv=othr_display_dv(k,T,&dv,&accel),
-        direction=fabs(trend)>=OTHR_ZERO?(trend>0?1:-1):fabs(accel)>=OTHR_ACCEL_MIN?(accel>0?1:-1):0;
-    if(have_dv && fabs(dv)>=OTHR_DV_MIN && direction && (dv>0?1:-1)==direction) {
-        const unsigned seg=othr_segment(in[0]);
-        if(othr_slope_known[seg]) out[0]=othr_clamp(in[0]+dv*othr_slope[seg],-1.0,3.0);
+    const int have_dv=!tr_sim && !tr_shown && fabs(in[2])<OTHR_DV_SPEED_MAX && othr_display_dv(k,T,&dv,&accel);
+    /* The response: only an own pending input opens it; boost, travel, a setpoint this module does not predict (the
+     * autopilot, matching speed, ...), a setpoint that moved otherwise (a refused input), the target's speed reached, no
+     * speeding up towards it OTHR_RESP_GRACE ticks after the last input, or OTHR_RESP_MAX ticks end it. */
+    const double gap=othr_resp.target-in[0];
+    const int toward=fabs(gap)>=OTHR_RESP_REACHED?(gap>0?1:-1):0;
+    if(why!=OTHR_ABSTAINS || tr_sim || tr_shown || b_sim || b_shown) othr_resp.active=0;
+    else if(fabs(trend)>=OTHR_ZERO) {
+        if(!othr_resp.active) ++othr_resp_opened;
+        othr_resp.active=1;othr_resp.last=T;othr_resp.target=s_pred;
+    } else if(othr_resp.active && (fabs((double)b.s-othr_resp.target)>=OTHR_ZERO || !toward || T>othr_resp.last+OTHR_RESP_MAX ||
+        (T>othr_resp.last+OTHR_RESP_GRACE && accel*toward<OTHR_ACCEL_MIN))) othr_resp.active=0;
+    /* Inside it, the drawn ship's speed towards the target's and never past it, within the throttle's range (the actual
+     * answer -1..1, where the learnt slope converts): the number reaches the simulation's as the ship reaches the target. */
+    const double gap_now=othr_resp.target-in[0];
+    const int direction=othr_resp.active && fabs(gap_now)>=OTHR_RESP_REACHED?(gap_now>0?1:-1):0;
+    const unsigned seg=in[0]<0?0u:1u;
+    if(have_dv && direction && in[0]>=-1.0 && in[0]<=1.0 && othr_slope_known[seg] && othr_slope[seg]>0 && fabs(dv)>=OTHR_DV_MIN &&
+       (dv>0?1:-1)==direction) {
+        const double room=gap_now/othr_slope[seg];   /* m/s to the target's speed */
+        if(direction>0 && dv>room) dv=room;
+        if(direction<0 && dv<room) dv=room;
+        out[0]=othr_clamp(in[0]+dv*othr_slope[seg],-1.0,1.0);
         out[2]=in[2]+nearbyint(dv);
+        ++othr_resp_led;
     }
     int changed=0;
     for(unsigned i=0;i<5;i++) if(out[i]!=in[i]) changed=1;
     if(changed) ++othr_adjusted;
+    if(othr_last.tick!=T) {othr_last.calls=0;othr_last.mps_lo=othr_last.mps_hi=in[2];othr_last.shown_lo=othr_last.shown_hi=out[2];}
+    ++othr_last.calls;
+    if(in[2]<othr_last.mps_lo) othr_last.mps_lo=in[2];
+    if(in[2]>othr_last.mps_hi) othr_last.mps_hi=in[2];
+    if(out[2]<othr_last.shown_lo) othr_last.shown_lo=out[2];
+    if(out[2]>othr_last.shown_hi) othr_last.shown_hi=out[2];
     othr_last.tick=T;othr_last.s_sim=b.s;othr_last.s_shown=s_pred;othr_last.t_sim=in[1];othr_last.t_shown=out[1];
     othr_last.actual_sim=in[0];othr_last.actual_shown=out[0];othr_last.mps_sim=in[2];othr_last.mps_shown=out[2];othr_last.dv=dv;
     othr_last.b_sim=b_sim;othr_last.b_shown=b_shown;othr_last.tr_sim=tr_sim;othr_last.tr_shown=tr_shown;othr_last.valid=changed||bi||ti;
+    othr_last.resp=othr_resp.active;othr_last.resp_target=othr_resp.target;
     return 1;
 }
 
 /* ---- the probe's frame, once per admitted tick after own_predict's ---- */
 /* The bank as tick T left it, the held key, and what the HUD's latest call showed against the simulation's answer (hud= its
- * tick: T when the HUD ran before the probe's frame, T-1 when after it, as live in slot 6). */
+ * tick: T when the HUD ran before the probe's frame, T-1 when after it, as live in slot 6), with that tick's calls and the
+ * range of the simulated and shown m/s over them (calls=, range=). Every N ticks (native_gate_own_throttle_rows = N). */
 static int othr_row(const othr_bank *b,int key,uint64_t T,char *out,size_t capacity) {
     int n=snprintf(out,capacity,"tick=%llu s=%.4g desired=%.4g smoothed=%.4g key=%d",(unsigned long long)T,b->s,b->desired,b->smoothed,key);
     if(n>0 && (size_t)n<capacity && othr_last.tick && othr_last.tick+1>=T)
-        n+=snprintf(out+n,capacity-(size_t)n," hud=%llu shown=%.4g targeted=%.4g/%.4g boost=%d/%d travel=%d/%d actual=%.4g/%.4g mps=%.6g/%.6g dv=%.3g",
+        n+=snprintf(out+n,capacity-(size_t)n," hud=%llu shown=%.4g targeted=%.4g/%.4g boost=%d/%d travel=%d/%d actual=%.4g/%.4g mps=%.6g/%.6g dv=%.3g"
+            " calls=%u range=%.6g..%.6g/%.6g..%.6g response=%d/%.4g",
             (unsigned long long)othr_last.tick,othr_last.s_shown,othr_last.t_sim,othr_last.t_shown,othr_last.b_sim,othr_last.b_shown,othr_last.tr_sim,
-            othr_last.tr_shown,othr_last.actual_sim,othr_last.actual_shown,othr_last.mps_sim,othr_last.mps_shown,othr_last.dv);
+            othr_last.tr_shown,othr_last.actual_sim,othr_last.actual_shown,othr_last.mps_sim,othr_last.mps_shown,othr_last.dv,othr_last.calls,
+            othr_last.mps_lo,othr_last.mps_hi,othr_last.shown_lo,othr_last.shown_hi,othr_last.resp,othr_last.resp_target);
     else if(n>0 && (size_t)n<capacity) n+=snprintf(out+n,capacity-(size_t)n," hud=-");
     return n>0 && (size_t)n<capacity?n:0;
 }
@@ -645,7 +688,8 @@ static int othr_frame(uint64_t T,char *row,size_t capacity,const char **why) {
     const int key=othr_held_state(&after,OTHR_ID_ACCELERATE)-othr_held_state(&after,OTHR_ID_DECELERATE);
     const int moved=readable && (!had || b.s!=last.s || b.desired!=last.desired || b.smoothed!=last.smoothed);
     int n=0;
-    if(othr_rows && T%othr_rows==0 && readable && ((othr_last.tick+1>=T && othr_last.valid) || key || moved) && (n=othr_row(&b,key,T,row,capacity))>0)
+    (void)moved;
+    if(othr_rows && T%othr_rows==0 && readable && (n=othr_row(&b,key,T,row,capacity))>0)
         ++othr_rows_written;
     return n;
 }
@@ -729,6 +773,7 @@ static void othr_clear(void) {
     othr_calls=othr_adjusted=othr_outside=othr_stale=othr_frames=othr_partial=0;memset(othr_abstains,0,sizeof(othr_abstains));
     memset(othr_confirmed,0,sizeof(othr_confirmed));memset(othr_refused,0,sizeof(othr_refused));
     memset(othr_unseen,0,sizeof(othr_unseen));othr_motion_paths=othr_motion_refused=othr_rows_written=0;memset(&othr_last,0,sizeof(othr_last));
+    memset(&othr_resp,0,sizeof(othr_resp));othr_resp_opened=othr_resp_led=0;
 }
 /* rows: a row every N ticks while the screen shows something the simulation does not yet (0 none); motion: own_predict's
  * command path takes the predicted throttle. After gate.own_predict('present', ...); an identical rerun succeeds. */
@@ -754,8 +799,9 @@ static void othr_restore(void) {
 }
 static int othr_status(char *out,size_t capacity) {
     int n=snprintf(out,capacity,"armed=%d why=%s slot=%u rows=%u motion=%d calls=%llu adjusted=%llu outside=%llu stale=%llu frames=%llu partial=%llu "
-        "grace=%u lag=%u dt=%.4g",othr_armed,othr_why,othr_slot,othr_rows,othr_motion,(unsigned long long)othr_calls,(unsigned long long)othr_adjusted,
-        (unsigned long long)othr_outside,(unsigned long long)othr_stale,(unsigned long long)othr_frames,(unsigned long long)othr_partial,othr_grace,othr_lag_max,othr_tick_dt());
+        "grace=%u lag=%u dt=%.4g response=%llu/%llu",othr_armed,othr_why,othr_slot,othr_rows,othr_motion,(unsigned long long)othr_calls,
+        (unsigned long long)othr_adjusted,(unsigned long long)othr_outside,(unsigned long long)othr_stale,(unsigned long long)othr_frames,
+        (unsigned long long)othr_partial,othr_grace,othr_lag_max,othr_tick_dt(),(unsigned long long)othr_resp_opened,(unsigned long long)othr_resp_led);
     for(unsigned i=0;n>0 && (size_t)n<capacity && i<OTHR_FITS;i++) {
         const othr_fit *f=&othr_fits[i];
         int more=snprintf(out+n,capacity-(size_t)n," %s=%llu/%d/%.3g/%.3g",othr_fit_names[i],(unsigned long long)f->samples,othr_fit_ready(f),

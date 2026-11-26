@@ -1211,7 +1211,11 @@ end
 -- ship the player controls (ui/core/messageconfigurationgraph.xml: untargetableconditions is_playercontrolled), and in
 -- the probe's canonical frame that is slot 1's ship on every client, so slot k could not target it. The other ops keep
 -- the canonical frame their live runs (U5, U7) passed with. Guidance is set and ended where the map's click runs too.
-K.SCOPED={hud_weapons=true,cover_ui=true,cover_button=true,stance_set=true,place=true,suit_to=true,dock_named=true,panel_find=true,hack_yes=true,inv_total=true,trader_pick=true,trader_look=true,itemtrader_buy=true,foot_where=true,transport_list=true,transport_to=true,transport_named=true,target_slot=true,target_none=true,target_home=true,dock_home=true,suit_home=true,guidance_slot=true,guidance_end=true,guidance_set=true,guidance_look=true,inv_read=true,inv_drop=true,inv_research_seen=true,inv_research_hqs=true,toplevel_tab=true,menu_back=true,escort_colour=true,escort_select=true,escort_map=true,aim_look=true}
+-- ap_toggle too (25 Nov): ToggleAutoPilot chooses stop or start by X4's player's autopilot (0x2f4b7d8, IsAutoPilotActive's
+-- read; per slot), so in the canonical frame client k's toggle read slot 1's autopilot (off), took the start branch for
+-- slot 1's player and answered false before any capture: player k's autopilot stayed on. The docked menu's button and
+-- the map's Shift+A (C.ToggleAutoPilot(false)) run in client k's presentation scope and stop slot k's (live, rk16).
+K.SCOPED={ap_toggle=true,hud_weapons=true,cover_ui=true,cover_button=true,stance_set=true,place=true,suit_to=true,dock_named=true,panel_find=true,hack_yes=true,inv_total=true,trader_pick=true,trader_look=true,itemtrader_buy=true,foot_where=true,transport_list=true,transport_to=true,transport_named=true,target_slot=true,target_none=true,target_home=true,dock_home=true,suit_home=true,guidance_slot=true,guidance_end=true,guidance_set=true,guidance_look=true,inv_read=true,inv_drop=true,inv_research_seen=true,inv_research_hqs=true,toplevel_tab=true,menu_back=true,escort_colour=true,escort_select=true,escort_map=true,aim_look=true}
 -- The stock calls of the station overview and the station menu's trade settings, by what their names hold.
 function K.station_call(what)
  local name=tostring(what):match('^[%w_]+') or ''
@@ -2202,6 +2206,7 @@ function K.script(plan,start,tools)
   -- The autopilot to any saved object, as the map's "Autopilot" on a station (e.g. to get within docking range first).
   elseif op=='ap_obj' then call=function() return tools.env.StartAutoPilot(tools.saved_lua(e[3])) end
   elseif op=='ap_stop' then call=function() return tools.env.StopAutoPilot() end
+  -- The HUD's and the map's toggle (menu_docked.lua buttonAutoPilot, menu_map.lua Shift+A), scoped (K.SCOPED).
   elseif op=='ap_toggle' then call=function() return tools.C.ToggleAutoPilot(false) end
   -- Plot course (the map's menu.plotCourse: SetGuidance with no offset) to a saved object for this client's own
   -- player, {tick,'guidance_set',SAVED} (Remove course: guidance_end below). A guidance is its client's
@@ -3730,8 +3735,9 @@ function K.script(plan,start,tools)
   elseif X4LAN_UI_TRADE and X4LAN_UI_TRADE.SCRIPT_OPS[op] then call=X4LAN_UI_TRADE.script_call(e,tools)   -- the trade family's ops
   elseif X4LAN_UI_FACTION and X4LAN_UI_FACTION.SCRIPT_OPS[op] then call=X4LAN_UI_FACTION.script_call(e,tools)   -- the faction family's ops
   elseif X4LAN_UI_INVENTORY_CORE and X4LAN_UI_INVENTORY_CORE.SCRIPT_OPS[op] then call=X4LAN_UI_INVENTORY_CORE.script_call(e,tools)   -- the inventory family's
+  elseif X4LAN_RELEASE_CHECK and X4LAN_RELEASE_CHECK.SCRIPT_OPS[op] then call=X4LAN_RELEASE_CHECK.script_call(e,tools)   -- tools/dev/release_check.py's ops
   else error('unknown ui replay script op '..tostring(op)) end
-  by[at]=by[at] or {};by[at][#by[at]+1]={op=op,call=call,scoped=K.SCOPED[op] or nil,canonical=K.CANONICAL[op] or nil}
+  by[at]=by[at] or {};by[at][#by[at]+1]={op=op,call=call,scoped=K.SCOPED[op] or (X4LAN_RELEASE_CHECK and X4LAN_RELEASE_CHECK.SCOPED[op]) or nil,canonical=K.CANONICAL[op] or nil}
  end
  return by
 end
@@ -4442,4 +4448,354 @@ function F.script_call(e,tools)
    else error('ui faction script: unknown setting '..tostring(what)) end
    return 'ffi' end end
  error('unknown faction script op '..tostring(op))
+end
+
+-- ---------------------------------------------------------------------------------------------------------------------
+-- Release check ops (tools/dev/release_check.py; docs/PLAYTEST.md "Release check"). In a slot's plan like any op. Every
+-- answer stays under X4's log line (about 500 characters): long lists are cut and counted.
+--  {tick,'rc_look'} (scoped, read only): what this client's own player sees of its missions, as its menus and HUD ask:
+--    'slot=K active=ID/OWNER ap=0|1 guidance=ID target=ID distance=M step=S/N listed=N[ID/OWNER,...] all=N[ID/OWNER,...]
+--    own=[NAME,...] objective=TEXT menus=MENU:MODE'. listed: the wrapped mission list the stock menus walk (this slot's
+--    missions and nobody's); all: every mission of the world's mission manager, unwrapped; OWNER: gate.mpp_owner (the
+--    slot that claimed it, 0 nobody); active: the manager's active mission inside this client's presentation scope, the
+--    one the HUD's mission panel reads; guidance: X4's guidance component (the yellow objective); target: the active
+--    mission's first objective target; step: its briefing step of the steps; objective: the HUD's objective line
+--    (GetMissionObjective of the unwrapped index); own: the names of the listed missions this slot owns.
+--  {tick,'rc_offers'[,TEXT]} (scoped, read only): 'n=N story=[OWNER/NAME,...] other=K': every offer the lists show; story:
+--    the plot offers and the offers any slot owns, and the offers whose name holds TEXT; other: how many of them another
+--    slot owns.
+--  {tick,'rc_mm',open|close}: the mission manager as its hotkey opens it (the map in its mission mode), closed as Escape.
+--  {tick,'rc_activate',TEXT}: the mission manager's "set active" on this player's mission whose name holds TEXT
+--    (SetActiveMission, the missions family's capture as a click); once per mission.
+--  {tick,'rc_accept',TEXT} (unscoped, as offer_accept_named): the first offer of this player's or nobody's whose name holds
+--    TEXT, accepted as the stock menus accept an offer, once; nothing while there is none.
+--  {tick,'rc_drive'[,TEXT]} (scoped): one step of a player flying the Terran cadet's first chapter by its own inputs: its
+--    story mission (the first listed mission that is this slot's, or whose name holds TEXT) made active as above; Shift+A
+--    (input action 0xb3 as this client's own key: X4's local dispatch, whose autopilot start the autopilot family
+--    captures as a click) while the autopilot is off and the objective is away; the satellite launched by
+--    the ship menu's call at a deploy objective; at the repair objective the get-up key, "Use Spacesuit", the suit put
+--    12 m from the satellite, looking at it (the test placement MtGoto: the flight there is not the test), the satellite
+--    as the target and the repair laser fired at it (a manual aim straight ahead) until the objective moves on. One row
+--    per call (the state and what it did).
+X4LAN_RELEASE_CHECK={SCRIPT_OPS={rc_look=true,rc_offers=true,rc_mm=true,rc_activate=true,rc_accept=true,rc_drive=true,rc_ship=true}}
+local RC=X4LAN_RELEASE_CHECK
+RC.SCOPED={rc_look=true,rc_offers=true,rc_mm=true,rc_activate=true,rc_drive=true}
+RC.SATELLITE='eq_arg_satellite_01_macro'
+RC.AUTOPILOT_KEY,RC.GET_UP_KEY=0xb3,0x115
+RC.FAR=900          -- metres: an objective further away than this is flown to by the autopilot
+RC.RETRY=240        -- ticks between two Shift+A while the autopilot stays off
+RC.NEAR,RC.NEAR_AT=480,300   -- metres: an objective the autopilot left further than NEAR, put NEAR_AT from it
+RC.LIST_MAX=10      -- entries of a list in one answer
+RC.REPAIR_AT=12     -- metres from the repair target: the suit's repair laser reaches it there (live 25 Nov: at 40 m it did not)
+local function word(v) return (tostring(v):gsub('[%s,;|%[%]/]+','_')) end
+-- A mission's or component's ID as decimal digits: X4 hands Lua IDs ('ID: 1416125'), 64-bit cdata ('1416125ULL'), strings.
+local function decimal(v) return tostring(v):match('(%d+)') or '0' end
+RC.word,RC.decimal=word,decimal
+for _,line in ipairs({'uint64_t GetActiveMissionID(void);','bool IsAutoPilotActive(void);','bool SetActiveMission(uint64_t missionid);',
+  'UniverseID GetMissionIDObjectiveTarget(uint64_t,size_t);','UniverseID GetPlayerOccupiedShipID(void);'}) do pcall(ffi.cdef,line) end
+function RC.owner(tools,id)
+ if not (tools.gate and tools.gate.mpp_owner) then return '-' end
+ local ok,o=pcall(tools.gate.mpp_owner,decimal(id))
+ return ok and tostring(o) or '?'
+end
+-- The missions a list reader gives: {id, name, index, details} (the wrapped globals, or the stock ones the wrapper keeps).
+-- GetMissionDetails(i): ID, name, description, difficulty, thread type, main type, subtype, subtype name, faction,
+-- reward, reward text, briefing objectives ({step, text, failed, ...}), active briefing step, ...
+function RC.list(num,details)
+ local out={}
+ if not (num and details) then return out end
+ for i=1,tonumber(num()) or 0 do
+  local d={details(i)}
+  if d[1] then out[#out+1]={id=decimal(d[1]),name=tostring(d[2]),index=i,details=d} end
+ end
+ return out
+end
+function RC.stock(env)
+ local stock=env.X4LAN_UI_REPLAY_STOCK or {}
+ return RC.list(stock.GetNumMissions or env.GetNumMissions,stock.GetMissionDetails or env.GetMissionDetails)
+end
+-- The active mission's step, its steps and the HUD's objective line ('?' where X4 has none).
+function RC.objective(tools,active)
+ local env=tools.env
+ if not active or active=='0' or active=='?' then return '-','-','-' end
+ for _,m in ipairs(RC.stock(env)) do
+  if m.id==active then
+   local objectives,current=m.details[12],m.details[13]
+   local steps=type(objectives)=='table' and #objectives or '?'
+   local ok,o=pcall(function() return {env.GetMissionObjective(m.index)} end)
+   local text=ok and o and o[1] and word(o[1]) or '?'
+   if text=='?' and type(objectives)=='table' then
+    for _,ob in ipairs(objectives) do if ob.step==current then text=word(ob.text) end end
+   end
+   return tostring(current or '?'),tostring(steps),text
+  end
+ end
+ return '?','?','?'
+end
+function RC.target(tools,active)
+ if not active or active=='0' or active=='?' then return '0' end
+ local ok,t=pcall(function() return decimal(tools.C.GetMissionIDObjectiveTarget(tools.env.ConvertStringTo64Bit(active),1)) end)
+ return ok and t or '?'
+end
+function RC.guidance(tools)
+ local env=tools.env
+ local ok,g=pcall(function() return env.GetActiveGuidanceMissionComponent and env.GetActiveGuidanceMissionComponent() end)
+ if not ok or not g or decimal(g)=='0' then return 'none' end
+ return decimal(g)
+end
+function RC.distance(tools,target)
+ if not target or target=='0' or target=='?' then return nil end
+ local ok,d=pcall(function()
+  local C,env=tools.C,tools.env
+  local ship=decimal(C.GetPlayerOccupiedShipID())
+  if ship=='0' then return nil end
+  if tostring(env.GetComponentData(env.ConvertStringToLuaID(ship),'sectorid'))~=tostring(env.GetComponentData(env.ConvertStringToLuaID(target),'sectorid')) then return nil end
+  local p,q=C.GetObjectPositionInSector(env.ConvertStringTo64Bit(ship)),C.GetObjectPositionInSector(env.ConvertStringTo64Bit(target))
+  return math.sqrt((q.x-p.x)^2+(q.y-p.y)^2+(q.z-p.z)^2)
+ end)
+ return ok and tonumber(d) or nil
+end
+local function capped(items)
+ local out={}
+ for i=1,math.min(#items,RC.LIST_MAX) do out[i]=items[i] end
+ return #items..'['..table.concat(out,',')..(#items>RC.LIST_MAX and ',+' or '')..']'
+end
+RC.capped=capped
+function RC.look(tools)
+ local env,C=tools.env,tools.C
+ local own=tostring(tools.own_slot or 1)
+ local ok,active=pcall(function() return decimal(C.GetActiveMissionID()) end)
+ active=ok and active or '?'
+ local listed,names,all={},{},{}
+ for _,m in ipairs(RC.list(env.GetNumMissions,env.GetMissionDetails)) do
+  local owner=RC.owner(tools,m.id)
+  listed[#listed+1]=m.id..'/'..owner
+  if owner==own then names[#names+1]=word(m.name):sub(1,24) end
+ end
+ for _,m in ipairs(RC.stock(env)) do all[#all+1]=m.id..'/'..RC.owner(tools,m.id) end
+ local target=RC.target(tools,active)
+ local step,steps,text=RC.objective(tools,active)
+ local okA,ap=pcall(function() return C.IsAutoPilotActive() and 1 or 0 end)
+ local distance=RC.distance(tools,target)
+ local menus={}
+ for _,name in ipairs({'MapMenu','MissionOverviewMenu','MissionBriefingMenu'}) do
+  local m=tools.menu and tools.menu(name)
+  if m and m.shown then menus[#menus+1]=name..':'..tostring(m.infoTableMode or m.mode) end
+ end
+ return table.concat({'slot='..own,'active='..active..'/'..RC.owner(tools,active),'ap='..(okA and ap or '?'),'guidance='..RC.guidance(tools),
+  'target='..target,'distance='..(distance and string.format('%.0f',distance) or '-'),'step='..step..'/'..steps,'listed='..capped(listed),
+  'all='..capped(all),'own=['..table.concat(names,',',1,math.min(#names,4))..']','menus='..(#menus>0 and table.concat(menus,',') or '-'),
+  'objective='..text:sub(1,60)},' ')
+end
+function RC.offers(tools,text)
+ local listed,other=0,0
+ local story={}
+ local own=tostring(tools.own_slot or 1)
+ for _,o in ipairs(tools.missions.offers()) do
+  listed=listed+1
+  local owner=RC.owner(tools,o.id)
+  local name=word(o.name)
+  if o.kind:find('plot') or (owner~='0' and owner~='-') or (text and name:find(tostring(text),1,true)) then
+   story[#story+1]=owner..'/'..name:sub(1,24)
+   if owner~='0' and owner~='-' and owner~=own then other=other+1 end
+  end
+ end
+ return 'n='..listed..' story='..capped(story)..' other='..other
+end
+-- This slot's mission by a part of its name; without one its story: the first listed mission this slot owns that is no
+-- upkeep job (GetMissionDetails' main type), for slot 1 (the stock scripts' player) also a plot mission nobody claimed.
+function RC.own_mission(tools,text)
+ local own=tostring(tools.own_slot or 1)
+ local fallback
+ for _,m in ipairs(RC.list(tools.env.GetNumMissions,tools.env.GetMissionDetails)) do
+  local owner=RC.owner(tools,m.id)
+  local kind=tostring(m.details[6])
+  if text and text~='' then
+   if word(m.name):find(tostring(text),1,true) then return m end
+  elseif kind~='upkeep' then
+   if owner==own then return m end
+   if own=='1' and owner=='0' and kind=='plot' then fallback=fallback or m end
+  end
+ end
+ return fallback
+end
+function RC.activate(tools,text)
+ local m=RC.own_mission(tools,text)
+ if not m then return 'no_mission' end
+ local active=decimal(tools.C.GetActiveMissionID())
+ if active==m.id then return 'active '..m.id end
+ RC.activated=RC.activated or {}
+ if RC.activated[m.id] then return 'asked '..m.id..' active='..active end
+ RC.activated[m.id]=true
+ tools.C.SetActiveMission(tools.env.ConvertStringTo64Bit(m.id))
+ return 'set '..m.id..' '..word(m.name):sub(1,40)
+end
+-- Only an offer of this player's or nobody's: the lists show every player's offers (offers stay the session's), and a
+-- story copy's offer belongs to its player.
+function RC.accept(tools,text)
+ RC.accepted=RC.accepted or {}
+ local own=tostring(tools.own_slot or 1)
+ for _,o in ipairs(tools.missions.offers()) do
+  local name=word(o.name)
+  local owner=RC.owner(tools,o.id)
+  if name:find(tostring(text),1,true) and (owner==own or owner=='0' or owner=='-') then
+   if RC.accepted[o.id] then return 'accepted_before '..o.id end
+   if not o.actor then return 'talk '..name end
+   RC.accepted[o.id]=true
+   tools.env.SignalObject(o.actor,'accept',tools.env.ConvertStringToLuaID(o.id))
+   return 'accepted '..o.id..' '..o.kind..' '..o.faction..' '..name
+  end
+ end
+ return nil   -- nothing yet: no row
+end
+function RC.mm(tools,what)
+ if what=='close' then
+  local m=tools.menu('MapMenu')
+  if not m then return 'no_menu' end
+  tools.env.Helper.closeMenu(m,'close')
+  if type(m.cleanup)=='function' then m.cleanup() end
+  return 'closed'
+ end
+ tools.env.OpenMenu('MapMenu',{0,0,true,nil,nil,'mission'},nil)
+ return 'opened'
+end
+-- The cadet's first chapter, one step per call (state RC.d, this client's). Phases: fly (Shift+A to the objective),
+-- deploy (the satellite launched once at the deploy objective), suit (get up, out in the suit, near the satellite, the
+-- repair laser on it), done (the mission is no longer the chapter's).
+function RC.drive(tools,text,tick)
+ local d=RC.d or {phase='fly',ap_at=-1e9,step_at=0,fired=false}
+ RC.d=d
+ local C,env,gate=tools.C,tools.env,tools.gate
+ local m=RC.own_mission(tools,text)
+ if not m then return 'phase='..d.phase..' no_mission' end
+ local active=decimal(C.GetActiveMissionID())
+ if active~=m.id then return 'phase='..d.phase..' activate '..RC.activate(tools,text) end
+ local target=RC.target(tools,active)
+ local step,steps,objective=RC.objective(tools,active)
+ local distance=RC.distance(tools,target)
+ local ap=C.IsAutoPilotActive()
+ local lower=objective:lower()
+ local out='phase='..d.phase..' step='..tostring(step)..'/'..tostring(steps)..' objective='..objective:sub(1,48)..' target='..target..
+  ' distance='..(distance and string.format('%.0f',distance) or '-')..' ap='..tostring(ap)
+ if lower:find('deploy') or lower:find('satellit') and lower:find('place') then
+  if not d.launched then
+   d.launched=true
+   C.LaunchSatellite(tools.slot_id(tools.own_slot),RC.SATELLITE)
+   return out..' did=launch'
+  end
+  return out..' did=wait_deploy'
+ end
+ if lower:find('repair') then
+  d.phase='suit'
+  local suit=C.IsComponentClass(C.GetPlayerOccupiedShipID(),'spacesuit')
+  if not suit and not d.ship then d.ship=tostring(C.GetPlayerOccupiedShipID()) end   -- the ship it leaves (rc_ship)
+  if not suit then
+   if not d.got_up then d.got_up=tick;gate.pilot_stock_inject('action',RC.GET_UP_KEY,0);return out..' did=get_up' end
+   if tick-d.got_up<90 then return out..' did=wait_up' end
+   if not d.out then
+    d.out=tick
+    local ok,why=pcall(function() local t=tools.suit_target();C.TransportPlayerToTarget(t) end)
+    return out..' did=suit_out '..tostring(ok)..(ok and '' or ' '..tostring(why))
+   end
+   return out..' did=wait_suit'
+  end
+  if not d.placed and target~='0' and target~='?' then
+   d.placed=tick
+   env.SignalObject(env.ConvertStringTo64Bit(tostring(C.GetPlayerGalaxyID())),'x4lan_goto',env.ConvertStringToLuaID(target),RC.REPAIR_AT)
+   return out..' did=place'
+  end
+  if d.placed and tick-d.placed>=60 and not d.fired then
+   d.fired=tick
+   C.SetSofttarget(env.ConvertStringTo64Bit(target),'')
+   -- a manual aim at the target straight ahead (the placement looks at it): the suit's laser has no aim assist
+   gate.pilot_aim_script(1,0,0,RC.REPAIR_AT,1)
+   return out..' did=fire'
+  end
+  -- a suit that drifts off (live 25 Nov: player 1's went from 12 to 45 m in 20 s) is put back, looking at it again,
+  -- and the laser aimed at the new distance
+  if d.placed and distance and distance>RC.REPAIR_AT+8 and tick-d.placed>=120 then
+   d.placed=tick
+   env.SignalObject(env.ConvertStringTo64Bit(tostring(C.GetPlayerGalaxyID())),'x4lan_goto',env.ConvertStringToLuaID(target),RC.REPAIR_AT)
+   if d.fired then gate.pilot_aim_script(1,0,0,RC.REPAIR_AT,1) end
+   return out..' did=place_again'
+  end
+  return out..' did=repairing'
+ end
+ if d.fired then d.fired=false;gate.pilot_aim_script(0,0,0,1000,0);return out..' did=cease_fire' end
+ if d.phase=='suit' then d.phase='done';return out..' did=chapter_done' end
+ -- an objective the autopilot left just out of the step's reach (live 25 Nov, three players on one cadet start: it
+ -- stopped 541..761 m from the wingmates, and that step goes on inside about 500 m): after RETRY ticks without getting
+ -- closer the ship is put NEAR_AT metres from it, looking at it (the test placement MtGoto, as for the suit)
+ if not ap and distance and distance>RC.NEAR and distance<=RC.FAR and target~='0' and target~='?' then
+  if not d.still or distance<d.still_d-5 then d.still,d.still_d=tick,distance
+  elseif tick-d.still>=RC.RETRY then
+   d.still=tick
+   env.SignalObject(env.ConvertStringTo64Bit(tostring(C.GetPlayerGalaxyID())),'x4lan_goto',env.ConvertStringToLuaID(target),RC.NEAR_AT)
+   return out..' did=place_near'
+  end
+ end
+ if not ap and (distance==nil or distance>RC.FAR) and tick-d.ap_at>=RC.RETRY then
+  d.ap_at=tick
+  return out..' did=shift_a '..tostring(gate.pilot_stock_local('action',RC.AUTOPILOT_KEY,0))
+ end
+ return out..' did=fly'
+end
+-- The ship the driver's player left for the spacesuit, as it is now: speed, position in the sector, its pilot's AI
+-- command, its order queue (count, current, the first two orders' definition and state) and the player's flight
+-- assist and autopilot ({tick,'rc_ship'}; 'ship=none' before the get-up).
+function RC.ship_state(tools)
+ local d=RC.d
+ if not d or not d.ship or d.ship=='0' then return 'ship=none' end
+ if not RC.ship_declared then
+  RC.ship_declared=true
+  if not pcall(ffi.typeof,'Order3') then
+   pcall(ffi.cdef,[[typedef struct { size_t queueidx; const char *state,*statename,*orderdef; size_t actualparams;
+    bool enabled,isinfinite,issyncpointreached,istemporder,isoverride,ispriority; } Order3;]])
+  end
+  for _,line in ipairs({'uint32_t GetNumOrders(UniverseID);','uint32_t GetOrders3(Order3*,uint32_t,UniverseID);',
+    'size_t GetOrderQueueCurrentIdx(UniverseID);','bool IsFlightAssistActive(void);','bool IsAutoPilotActive(void);'}) do pcall(ffi.cdef,line) end
+ end
+ local C,env=tools.C,tools.env
+ local ship=env.ConvertStringToLuaID(d.ship)
+ local id=env.ConvertStringTo64Bit(d.ship)
+ local parts={'ship='..d.ship}
+ local function add(name,f)
+  local ok,v=pcall(f)
+  parts[#parts+1]=name..'='..(ok and tostring(v) or 'err'):gsub('%s+','_')
+ end
+ add('speed',function() return string.format('%.2f',tonumber(env.GetComponentData(ship,'speed')) or -1) end)
+ add('pos',function() local q=C.GetObjectPositionInSector(id);return string.format('%.1f,%.1f,%.1f',q.x,q.y,q.z) end)
+ add('ai',function()
+  local pilot=env.GetComponentData(ship,'assignedpilot')
+  if not pilot then return 'nopilot' end
+  local command,action=env.GetComponentData(pilot,'aicommand','aicommandaction')
+  return tostring(command)..'/'..tostring(action)
+ end)
+ add('orders',function()
+  local n=tonumber(C.GetNumOrders(id)) or 0
+  local text=tostring(n)
+  if n>0 and pcall(ffi.typeof,'Order3') then
+   local buf=ffi.new('Order3[?]',n)
+   local got=tonumber(C.GetOrders3(buf,n,id)) or 0
+   text=text..'/cur'..tostring(tonumber(C.GetOrderQueueCurrentIdx(id)))
+   for i=0,math.min(got,2)-1 do
+    text=text..'/'..ffi.string(buf[i].orderdef or '?')..':'..ffi.string(buf[i].state or '?')..(buf[i].enabled and '' or ':off')
+   end
+  end
+  return text
+ end)
+ add('fa',function() return C.IsFlightAssistActive() and 1 or 0 end)
+ add('ap',function() return C.IsAutoPilotActive() and 1 or 0 end)
+ return table.concat(parts,' ')
+end
+function RC.script_call(e,tools)
+ local op=e[2]
+ if op=='rc_look' then return function() return RC.look(tools) end end
+ if op=='rc_offers' then return function() return RC.offers(tools,e[3]) end end
+ if op=='rc_mm' then return function() return RC.mm(tools,e[3]) end end
+ if op=='rc_activate' then return function() return RC.activate(tools,e[3]) end end
+ if op=='rc_accept' then return function() return RC.accept(tools,e[3]) end end
+ if op=='rc_drive' then return function(S) return RC.drive(tools,e[3],S and S.tick or 0) end end
+ if op=='rc_ship' then return function() return RC.ship_state(tools) end end
+ error('unknown release check op '..tostring(op))
 end

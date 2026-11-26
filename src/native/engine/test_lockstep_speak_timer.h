@@ -1,6 +1,6 @@
 /* native_gate_speak_timer: arming refusals, CAS patch/restore, tick checks and the pinned speech code. */
 static void test_speak_timer_reset(void) {
-    speak_timer_installed=speak_timer_restored=speak_timer_patched=0;speak_timer_failures=0;speak_timer_stage="idle";
+    speak_timer_installed=speak_timer_restored=speak_timer_patched=speak_lipsync_patched=0;speak_timer_failures=0;speak_timer_stage="idle";
 }
 static void test_speak_timer(void) {
     uint64_t saved_issued=stats.issued;DWORD saved_ui=ui_thread;uint32_t saved_active=stats.active;
@@ -64,14 +64,29 @@ static void test_speak_timer_native_image(const char *path) {
     for(unsigned i=0;i<sizeof(others)/sizeof(*others);i++) {image[others[i]]^=1;assert(speak_timer_pins());image[others[i]]^=1;}
     const unsigned tamper[]={0x561340,0x5617d0,0x561a05,0x563d30,0x563e7f,0x563e90,0x563faf,0x563fc0,0x564342,0x5625a0,0x562ac2,0x1263650,0x1263712};
     for(unsigned i=0;i<sizeof(tamper)/sizeof(*tamper);i++) {image[tamper[i]]^=1;assert(!speak_timer_pins());image[tamper[i]]^=1;}
+    /* The lipsync site: the entity's speak data, the comparisons, the jnc over the store of the animation's length. */
+    assert(!memcmp(image+0x37caeb,"\x48\x8b\x83\x78\x03\x00\x00\x48\x85\xc0\x74\x12",12) && speak_lipsync_site()==SPEAK_LIPSYNC_ORIGINAL);
+    assert(!memcmp(image+0x37caf7,"\x66\x0f\x2f\xf7\x76\x0c\x66\x0f\x2f\x78\x18",11) && !memcmp(image+0x37cb04,"\xf2\x0f\x11\x70\x18",5));
+    assert(0x37cb02u+2u+image[0x37cb03]==0x37cb09u && ((SPEAK_LIPSYNC_SITE+1u)&~15u)==(SPEAK_LIPSYNC_SITE&~15u));
+    assert(speak_site_swap(SPEAK_LIPSYNC_SITE,SPEAK_LIPSYNC_ORIGINAL,SPEAK_LIPSYNC_PATCHED) && speak_timer_pins());
+    assert(speak_site_swap(SPEAK_LIPSYNC_SITE,SPEAK_LIPSYNC_PATCHED,SPEAK_LIPSYNC_ORIGINAL) && speak_timer_pins());
+    {const unsigned lip[]={0x37cac0,0x37cb04,0x37cb1f};
+     for(unsigned i=0;i<sizeof(lip)/sizeof(*lip);i++) {image[lip[i]]^=1;assert(!speak_timer_pins());image[lip[i]]^=1;}}
     /* A full arm/check/restore cycle on the mapped image. */
     uint64_t saved_issued=stats.issued;DWORD saved_ui=ui_thread;uint32_t saved_active=stats.active;
     test_speak_timer_reset();stats.active=1;stats.issued=0;ui_thread=GetCurrentThreadId();
     assert(speak_timer_arm() && speak_timer_installed && speak_timer_patched && speak_timer_site()==SPEAK_TIMER_PATCHED && speak_timer_check() && speak_timer_owned());
+    assert(speak_lipsync_patched && speak_lipsync_site()==SPEAK_LIPSYNC_PATCHED);
+    {const uint16_t back=SPEAK_LIPSYNC_ORIGINAL,lip=SPEAK_LIPSYNC_PATCHED;memcpy(image+SPEAK_LIPSYNC_SITE,&back,2);
+     assert(!speak_timer_check() && !strcmp(speak_timer_stage,"lipsync_changed"));memcpy(image+SPEAK_LIPSYNC_SITE,&lip,2);speak_timer_failures=0;}
     assert(speak_timer_pins() && speak_timer_arm()); /* identical rerun */
     image[0x5617d0]^=1;assert(!speak_timer_check() && !strcmp(speak_timer_stage,"block_changed"));image[0x5617d0]^=1;
     speak_timer_failures=0;assert(speak_timer_check());
     speak_timer_restore();assert(speak_timer_restored && !speak_timer_installed && speak_timer_site()==SPEAK_TIMER_ORIGINAL && speak_timer_pins());
+    assert(!speak_lipsync_patched && speak_lipsync_site()==SPEAK_LIPSYNC_ORIGINAL);
+    /* A lipsync site already changed: no arm, and the timer site back as it was. */
+    test_speak_timer_reset();{const uint16_t lip=SPEAK_LIPSYNC_PATCHED,back=SPEAK_LIPSYNC_ORIGINAL;memcpy(image+SPEAK_LIPSYNC_SITE,&lip,2);
+     assert(!speak_timer_arm() && !strcmp(speak_timer_stage,"lipsync_site") && speak_timer_site()==SPEAK_TIMER_ORIGINAL);memcpy(image+SPEAK_LIPSYNC_SITE,&back,2);}
     test_speak_timer_reset();const uint16_t patched=SPEAK_TIMER_PATCHED,original=SPEAK_TIMER_ORIGINAL;
     memcpy(image+SPEAK_TIMER_SITE,&patched,2);assert(!speak_timer_arm() && !strcmp(speak_timer_stage,"site"));memcpy(image+SPEAK_TIMER_SITE,&original,2);
     test_speak_timer_reset();stats.issued=saved_issued;ui_thread=saved_ui;stats.active=saved_active;

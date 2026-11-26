@@ -193,12 +193,22 @@ class Installer(unittest.TestCase):
             run = '"[INSTALLDIR]python\\pythonw.exe" "[INSTALLDIR]helper.pyw"'
             self.assertEqual(self.rows(db, 'SELECT `Root`, `Key`, `Name`, `Value` FROM `Registry`'),
                              [('1', RUN_KEY, 'X4Online', run + ' --quiet')])
-            self.assertEqual(sorted(self.rows(db, 'SELECT `Name`, `Target`, `Arguments` FROM `Shortcut`')),
-                             [('X4ONLINE|X4 Online', '[INSTALLDIR]python\\pythonw.exe', '"[INSTALLDIR]helper.pyw"'),
-                              ('X4ONSEC|X4 Online (second window)', '[INSTALLDIR]python\\pythonw.exe', '"[INSTALLDIR]second.pyw"')])
+            pythonw = '[INSTALLDIR]python\\pythonw.exe'
+            self.assertEqual(sorted(self.rows(db, 'SELECT `Directory_`, `Name`, `Target`, `Arguments` FROM `Shortcut`')),
+                             [('DesktopFolder', 'X4ONLINE|X4 Online', pythonw, '"[INSTALLDIR]helper.pyw" --play'),   # zero restarts
+                              ('INSTALLDIR', 'X4FIRST|X4 Online (first start)', pythonw, '"[INSTALLDIR]helper.pyw" --play --first'),
+                              ('ProgramMenuFolder', 'X4ONLINE|X4 Online', pythonw, '"[INSTALLDIR]helper.pyw"'),
+                              ('ProgramMenuFolder', 'X4ONPLAY|X4 Online (play)', pythonw, '"[INSTALLDIR]helper.pyw" --play'),
+                              ('ProgramMenuFolder', 'X4ONSEC|X4 Online (second window)', pythonw, '"[INSTALLDIR]second.pyw"')])
             self.assertEqual(sorted(self.rows(db, 'SELECT `Action`, `Target` FROM `CustomAction`')),
                              [('StartHelper', '"[WindowsFolder]explorer.exe" "[ProgramMenuFolder]X4 Online.lnk"'),
-                              ('StopHelper', run + ' --remove')])
+                              ('StartPlay', '"[WindowsFolder]explorer.exe" "[INSTALLDIR]X4 Online (first start).lnk"'),
+                              ('StopHelper', run + ' --remove'),
+                              ('UninstallHelper', run + ' --remove --uninstall')])
+            sequence = dict((action, condition) for action, condition in
+                            self.rows(db, 'SELECT `Action`, `Condition` FROM `InstallExecuteSequence`'))
+            self.assertEqual((sequence['StopHelper'], sequence['UninstallHelper'], sequence['StartPlay']),
+                             ('REMOVE="ALL" AND UPGRADINGPRODUCTCODE', 'REMOVE="ALL" AND NOT UPGRADINGPRODUCTCODE', 'NOT REMOVE'))
             names = sorted(name.split('|')[-1] for (name,) in self.rows(db, 'SELECT `FileName` FROM `File`'))
             self.assertIn('release.json', names)
             self.assertIn('master.json', names)

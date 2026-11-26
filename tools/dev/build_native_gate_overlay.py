@@ -718,9 +718,15 @@ def main():
     if args.join or args.join_package or args.join_early:
         # Hot join: the JOIN input section and the probe state providers (native_gate_join_core.lua).
         shutil.copy2(root/'tools/dev/native_gate_join_core.lua', args.out/'ui/native_gate_join_core.lua')
-        # The shipyard diagnostic's cue (native_gate_join_shipyards = {ticks}); it acts only on the probe's event.
-        shutil.copy2(root/'tools/dev/native_gate_join_shipyards.xml', args.out/'md/native_gate_join_shipyards.xml')
         ui_files = 'ui/native_gate_join_core.lua\n'+ui_files
+    if args.join or args.join_package or args.join_early or args.session_clients:
+        # The shipyard diagnostic's and the build refresh's cues (native_gate_join_shipyards = {ticks},
+        # native_gate_join_refresh_builds); they act only on the probe's events, which only a join raises. Every play
+        # overlay carries the file, joins or not: X4 reads md/ only at its own start, so a session, a drop-in session and a
+        # joiner's overlay of one release have the same start-time files, and an X4 that waits with one of them takes
+        # another in place, no restart (src/lockstep/launcher/netlobby.py start_parts; 25 Nov: this file was the only
+        # start-time file that differed).
+        shutil.copy2(root/'tools/dev/native_gate_join_shipyards.xml', args.out/'md/native_gate_join_shipyards.xml')
     if args.session_clients:
         # Protocol 3 input multiplexer (pilot, orders and hit claim sections share one blob).
         shutil.copy2(root/'tools/dev/native_gate_inputs_core.lua',args.out/'ui/native_gate_inputs_core.lua')

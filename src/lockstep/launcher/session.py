@@ -122,6 +122,12 @@ class JoinOptions:
     focus: bool = True           # False: the window gives the keyboard focus back while the client starts
     never_focus: bool = False    # with focus False: for the whole session (a scripted client beside a person at work)
     tile_skip: int = 0           # the window's cell on the tiling grid (other sessions' windows hold the cells before it)
+    running: object = None       # the slot is played by an X4 that already runs (join_running): no X4 starts
+
+
+class NotInPlace(SystemExit):
+    """join_running: the running X4 cannot take this overlay without a restart (its start-time files or seed differ);
+    nothing was changed, and the caller starts an X4 of its own instead."""
 
 
 def free_udp_port(tcp_bind=None):
@@ -707,6 +713,8 @@ def run(o: Options, log=print):
 def join(o: JoinOptions, log=print):
     """x4ls join: start this PC's client for slot o.slot against the relay on another PC, log as x4ls play does (errors
     in errors.log, nothing ends the session early) and collect into .local/runs/<time>-join<slot>/ when X4 is closed."""
+    if o.running is not None:
+        return join_running(o, log)
     host, _, port = o.relay.rpartition(':')
     if not IPV4.fullmatch(host) or not port.isdigit() or not 0 < int(port) < 65536:
         raise SystemExit('--relay must be HOST:PORT with a dotted IPv4 host')
@@ -783,6 +791,41 @@ def join(o: JoinOptions, log=print):
             steam.restore(o.state / 'steam-fix.json')
     result.update(overlay=str(o.overlay), snapshot=str(o.snapshot) if o.snapshot else None, slot=o.slot, relay=o.relay,
                   run_dir=str(run_dir))
+    (run_dir / 'summary.json').write_text(json.dumps(result, indent=2) + '\n')
+    log(f"{result['outcome']}: {run_dir}")
+    return result
+
+
+def join_running(o: JoinOptions, log=print):
+    """join's slot played by an X4 that already runs: x4ls lobby's X4 in the multiplayer profile, waiting on its
+    Multiplayer page with a session of the same release (netlobby.InPlaceJoin). o.running gives:
+      take(overlay, slot, port, token, clients, relay_host, seed) -> bool: the overlay's runtime files and the session's
+        config into its extension (False: its start-time files or its seed differ: NotInPlace, nothing changed);
+      started(): the page runs the config and the overlay's files (the probe, in the start menu);
+      view, profile_id, proc, lane: what the early join and the monitor need (its log is x4ls-c<lane>.log).
+    No X4 starts, no view is made and none is removed: the lobby owns them. An early join only (o.early): the probe waits
+    in the start menu for the staged join files."""
+    host, _, port = o.relay.rpartition(':')
+    if not IPV4.fullmatch(host) or not port.isdigit() or not 0 < int(port) < 65536:
+        raise SystemExit('--relay must be HOST:PORT with a dotted IPv4 host')
+    if not re.fullmatch(r'[0-9a-f]{32}', o.token):
+        raise SystemExit('--token must be the 32 hex digits the host printed')
+    if not 2 <= o.slot <= o.clients <= len(profile.PROFILES) or o.early is None or o.seed is None:
+        raise NotInPlace("an X4 that runs already takes an early join of a slot 2..clients with the session's seed only")
+    running = o.running
+    extension.verify_overlay(o.overlay)
+    if not running.take(o.overlay, o.slot, int(port), o.token, o.clients, host, o.seed):
+        raise NotInPlace('the running X4 cannot take this overlay in place')
+    run_dir = o.run_dir or o.runs / (time.strftime('%Y%m%d-%H%M%S') + f'-join{o.slot}')
+    run_dir.mkdir(parents=True, exist_ok=True)
+    play = Options(clients=o.clients, overlay=o.overlay, snapshot=o.snapshot, tick_hz=o.tick_hz, width=o.width,
+                   height=o.height, timeout=o.timeout, play=True, close_when_over=o.close_when_over)
+    log(f'client {o.slot}: the running X4 pid {running.proc.pid} (profile {running.profile_id}) plays it, relay '
+        f'{host}:{port}; it waits in its start menu for the join files')
+    running.started()
+    o.early(running.view, running.profile_id, running.proc, log)
+    result = monitor_play(play, run_dir, None, [(running.lane, running.profile_id, running.proc)], log)
+    result.update(overlay=str(o.overlay), snapshot=None, slot=o.slot, relay=o.relay, run_dir=str(run_dir), in_place=True)
     (run_dir / 'summary.json').write_text(json.dumps(result, indent=2) + '\n')
     log(f"{result['outcome']}: {run_dir}")
     return result

@@ -790,16 +790,28 @@ static int world_controller_row(unsigned index,uint64_t tick,char *out,size_t si
     if(index>=world_hash_watch_count || !world_hash_scans || world_hash_failures || !size) return 0;
     const world_hash_watch *watch=&world_hash_watches[index];
     world_hash_find_fn find=world_health_find?world_health_find:(world_hash_find_fn)(image+0xced70);
-    uint64_t id;void *map=NULL;unsigned char *controller=NULL,bytes[0xc0];void *vt=NULL;int n;
+    uint64_t id;void *map=NULL;unsigned char *controller=NULL,bytes[0xf0],*agent=NULL,extra[4+32+2*16];void *vt=NULL;int n;
+    unsigned extra_length=0;
     if(!world_hash_reader(image+0x6cf1500,&map,8)) return 0;
     unsigned char *object=map && watch->runtime?find(map,watch->runtime,4):NULL;
     if(object && (!world_hash_reader(object+8,&id,8) || id!=watch->runtime)) object=NULL;
     if(object && (!world_hash_reader(object+0x200,&controller,8) || (controller && (!world_hash_reader(controller,&vt,8) ||
        !world_hash_reader(controller,bytes,sizeof(bytes)))))) return 0;
+    /* After the controller (0xf0 bytes: the whole NavigationController): the object's attention (+0x1ec), the
+     * Agent's two pending entries (+0xed0) and both banks' timing words (+0xad0 + i*0x1a0 + 0x150, 16 bytes each),
+     * the census's timing preimage beside the controller's +0xc0..+0xd8. */
+    if(object && controller && world_hash_reader(object+0x1ec,extra,4)) {
+        extra_length=4;
+        if(world_hash_reader(controller+0x40,&agent,8) && agent && !((uintptr_t)agent&7) &&
+           world_hash_reader(agent+0xed0,extra+4,32) && world_hash_reader(agent+0xad0+0x150,extra+36,16) &&
+           world_hash_reader(agent+0xad0+0x1a0+0x150,extra+52,16)) extra_length=sizeof(extra);
+    }
     n=snprintf(out,size,"tick=%llu id=%016llx present=%d ctl=%08x bytes=",(unsigned long long)tick,(unsigned long long)watch->saved,
         object!=NULL,controller?(unsigned)((unsigned char*)vt-image):0u);
     static const char digits[]="0123456789abcdef";
-    if(n<0 || (size_t)n+sizeof(bytes)*2>=size) return 0;
+    if(n<0 || (size_t)n+sizeof(bytes)*2+8+sizeof(extra)*2>=size) return 0;
     for(unsigned i=0;controller && i<sizeof(bytes);i++) {out[n++]=digits[bytes[i]>>4];out[n++]=digits[bytes[i]&15];}
+    if(extra_length) {memcpy(out+n," extra=",7);n+=7;}
+    for(unsigned i=0;i<extra_length;i++) {out[n++]=digits[extra[i]>>4];out[n++]=digits[extra[i]&15];}
     out[n]=0;return n;
 }

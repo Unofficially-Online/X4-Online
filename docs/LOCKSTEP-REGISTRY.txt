@@ -229,6 +229,21 @@ function's entry, must agree with its owner first)
                                                                                                    while the speech diagnostic
                                                                                                    (lockstep_npc_enqueue.h) holds
                                                                                                    the entry
+  0x562212   the request's cut of another line in progress     lockstep_speech_local.h spl_     call re-pointed (slots' near page
+             (call 0x562ba0 on the first speak data its walk   cut (native_gate_speech_local,   +0xaa0): of the lines X4's walk
+             of the set 0x2f57660 meets: the heap's order)     with spl_queue)                  accepts, the requesting player's
+                                                                                                   with the lowest speaker key is
+                                                                                                   ended through 0x562ba0; another
+                                                                                                   player's line is never ended
+  0x562590   U::EntitySpeakData::OnSpeakFinished's entry        lockstep_speech_local.h spl_     E9 -> stub (slots' near page
+             (every line's end: ticker, cut, interruptions)     finish (native_gate_speech_local) +0xac0, trampoline +0xae0):
+                                                                                                   rows only (SPEECH_END: caller,
+                                                                                                   chain, clock, start, duration);
+                                                                                                   not installed while the speech
+                                                                                                   diagnostic holds the entry
+  0x37cb02   U::BodyClass::StartLipsyncAnim's jnc over the     lockstep_speak_timer.h           73 05 -> EB 05: a lipsync's length
+             store of the animation's length into the          (native_gate_speak_timer)        never becomes the speaker's line
+             speaker's line duration (speak data +0x18)                                         duration; the text's stays
   0x2c0abc0  Scripts::PlaySoundAction's vtable slot +0x18       lockstep_md_presentation.h       8 bytes (the slot): not run inside
              (0xc1d8e0), the twelfth of that module's slots     mdp_ (missions per player)       another player's own cue's frame
   0x5cefd4   the gate pass 0x5ce690: call 0x9f7b30 (X4's        lockstep_pilot_transit.h ptran_  call re-pointed (own page near

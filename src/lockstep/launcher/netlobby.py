@@ -4,13 +4,22 @@ master server or on the LAN (docs/NETPLAY.md; the requests and the state table a
 Every kit but one with a server (x4ls serve: lobby.lobby_run, as it always was) comes here: a release kit, a playtest
 kit, this checkout. The launcher's X4 runs in its lane's view and disposable profile, as x4ls lobby's always did:
 - At its start it runs the kit's own session in lobby form (a playtest kit: its overlay installed, the snapshot
-  staged), or the Multiplayer page alone (a release kit has no session until a game is chosen).
-- Hosting a game a release kit has no session for yet: X4 closes, x4ls new-session makes the session (its capture
-  client needs the capture profile and X4 closed), and X4 starts again with it. The session is kept in the kit's
-  sessions/ for the next game of that many players.
-- Joining: the session's files are downloaded and the overlay built here; X4 starts again with them, because what X4
-  reads only at its start (the session seed on the command line, the extension's libraries and macros) must be the
-  session's. Then READY.
+  staged), a host session the kit keeps (a release ships some) in lobby form, or the Multiplayer page alone.
+- What X4 reads only at its own start must be the session's: the -seed: of its command line and the extension's
+  md/, aiscripts/, libraries/ (start_parts). The page runs the overlay's ui files at the session's start, the probe
+  loads the gate DLL and the staged save then, and config.lua is written then. So an X4 that runs one session's overlay
+  takes another session of the same release in place (LobbyGame.take: its runtime files copied in, its save staged):
+  no restart. Only another seed or other start-time files (another release, the page alone) start X4 again.
+- Hosting a game the kit has no session for yet: x4ls new-session makes it beside this X4, whose page shows the
+  progress (the capture is a second X4 in the capture profile; this X4's instance mutex is free since its start
+  menu). Too little memory free for a second X4, or a capture beside that failed: X4 closes while the session is made.
+  No X4 yet (x4ls host, the Steam helper's hand-over): the session is made before X4 starts. The session is kept in
+  the kit's sessions/ for the next game of that many players.
+- Joining: the session's files are downloaded and the overlay built here; X4 takes it (in place, or starting again
+  once). Then READY.
+- A first request that hosts or joins (the Steam helper's hand-over, x4ls host, x4ls join) starts no X4 before its
+  job installs the session: the one start goes straight into the game. Every X4 the player looked at that closes for
+  another is a netkit.RESTART_MARK row of the run's launcher.log (netkit.count_restarts).
 - The start: this launcher writes the session into the extension's config.lua, the page runs the overlay's files, and
   from here on it is the session x4ls play and x4ls join make (session.monitor_play), with the relay on this PC in
   direct and LAN modes. The state keeps being written for the probe's "Multiplayer session" page.
@@ -18,6 +27,7 @@ kit, this checkout. The launcher's X4 runs in its lane's view and disposable pro
 A pump thread carries the page's requests (rows of the game's log) to the flow and the flow's state to
 lobby/state.lua (and to --state-mirror, which the Steam helper answers its pipe with)."""
 from dataclasses import dataclass
+import filecmp
 import json
 import os
 from pathlib import Path
@@ -46,12 +56,51 @@ class Form:
             return False
         return (resolved(self.overlay), resolved(self.snapshot)) == (resolved(other.overlay), resolved(other.snapshot))
 
+    def seed(self):
+        return session.snapshot_seed(self.snapshot) if self.snapshot else session.SESSION_SEED
+
 
 def resolved(path):
     return str(Path(path).resolve()).lower() if path else ''
 
 
-def install_page_only(extensions, show=False):
+# What X4 reads only when it starts, of an overlay installed in lobby form, is everything but these: the page runs the
+# overlay's ui files from the extension folder at the session's start (loadfile), the probe loads the gate DLL then
+# (package.loadlib) and the staged save (LoadGame save_009), config.lua is written at the start, and the launcher's own
+# files are not X4's. md/, aiscripts/, libraries/ and the rest (a story's patches of stock extensions, plot copies)
+# count, and so does the -seed: of the command line.
+RUNTIME_PREFIXES = ('ui/', 'native/')
+LAUNCHER_FILES = frozenset(('play-recipe.json', 'session.json', 'player-identity-plan.json', 'ui.xml.files',
+                            'x4lane-manifest.json'))
+NOT_COPIED = frozenset(('x4lane-manifest.json', 'ui.xml.files', 'ui/config.lua.append'))   # as extension.compose
+
+
+def start_parts(overlay):
+    """{file: sha-256} of an overlay's files that X4 reads only at its own start (see RUNTIME_PREFIXES). Two sessions of
+    one release have the same (their md, aiscripts and libraries are the release's, 25 Nov: 2, 3 and 4 players)."""
+    manifest = json.loads((Path(overlay) / 'x4lane-manifest.json').read_text(encoding='utf-8'))
+    return {name.replace('\\', '/'): digest for name, digest in manifest.items()
+            if not name.replace('\\', '/').startswith(RUNTIME_PREFIXES) and name.replace('\\', '/') not in LAUNCHER_FILES}
+
+
+def in_place_refusal(running, wanted):
+    """Why an X4 that runs the form `running` cannot take the session `wanted` without a restart, or None: it runs the
+    page alone (none of a session's start-time files), another start-time file, or another seed."""
+    if running is None or running.overlay is None:
+        return 'it runs the Multiplayer page without a session\'s files'
+    if wanted.overlay is None:
+        return 'the page alone is wanted'
+    try:
+        if start_parts(running.overlay) != start_parts(wanted.overlay):
+            return 'the sessions differ in files X4 reads at its start'
+        if running.seed() != wanted.seed():
+            return 'the sessions have different seeds'
+    except (OSError, ValueError, SystemExit) as error:
+        return f'the sessions could not be compared ({error})'
+    return None
+
+
+def install_page_only(extensions, show=False, single=False):
     """The extension of an X4 that waits on the Multiplayer page without a session (a release kit): the base files,
     the page and an empty lobby config."""
     target = Path(extensions) / extension.EXTENSION_ID
@@ -61,7 +110,7 @@ def install_page_only(extensions, show=False):
     shutil.copyfile(lobby.LOBBY_LUA, target / lobby.LOBBY_UI)
     (target / 'content.xml').write_text(extension.CONTENT)
     (target / 'ui.xml').write_text(extension.ui_xml([*extension.BASE_UI, lobby.LOBBY_UI]))
-    (target / 'ui' / 'config.lua').write_text(lobby.lobby_config([], show, netplay=True))
+    (target / 'ui' / 'config.lua').write_text(lobby.lobby_config([], show, netplay=True, single=single))
     (target / 'lobby').mkdir()
     return target, []
 
@@ -101,53 +150,155 @@ class LobbyGame:
         with self.lock:
             return self.proc is not None and self.proc.poll() is not None and not self.busy
 
+    def single(self):
+        """Steam's Play started this X4 through X4 Online: its page offers Single-player."""
+        return bool(getattr(self.o, 'single_player_mark', None))
+
+    def open(self):
+        """True while this lane's X4 runs (the player looks at it)."""
+        with self.lock:
+            return self.proc is not None and self.proc.poll() is None
+
     def hold(self):
         """Close X4 for a while (a session is being made); start() brings it back."""
         with self.lock:
             self.busy = True
-            self.stop_process()
+            self.stop_process('it is held while a session is made')
+
+    def take(self, form):
+        """The running X4 takes another session without a restart (in_place_refusal said it can): the overlay's runtime
+        files into the installed extension, its file list into the lobby config, its save staged. True when done."""
+        with self.lock:
+            if self.proc is None or self.proc.poll() is not None or self.target is None:
+                return False
+            why = in_place_refusal(self.form, form)
+            if why is not None:
+                self.log(f'lobby: X4 starts again for the session {Path(form.overlay).name if form.overlay else ""}: {why}')
+                return False
+            overlay = Path(form.overlay)
+            try:
+                files = self.copy_runtime(overlay)
+                lobby.write_atomic(self.target / 'ui' / 'config.lua',
+                                   lobby.lobby_config(files, self.o.show, False, netplay=True, single=self.single()))
+                if form.snapshot:
+                    self.stage(form.snapshot)
+            except OSError as error:   # a file X4 holds open (a loaded DLL): it starts again instead
+                self.log(f'lobby: X4 starts again for the session {overlay.name}: {error}')
+                return False
+            self.files = files
+            self.form = form
+            self.log(f'lobby: X4 pid {self.proc.pid} takes the session {overlay.name} in place (the same start-time files '
+                     'and seed): no restart')
+            return True
+
+    def copy_runtime(self, overlay):
+        """The overlay's files into the installed extension, but those X4 has already (the release's own: the gate DLL,
+        the probe) and those compose leaves out; the overlay's ui file list."""
+        overlay = Path(overlay)
+        for path in sorted(overlay.rglob('*')):
+            name = path.relative_to(overlay).as_posix()
+            installed = self.target / name
+            if not path.is_file() or name in NOT_COPIED:
+                continue
+            if installed.is_file() and filecmp.cmp(path, installed, shallow=False):
+                continue
+            installed.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(path, installed)
+        return lobby.overlay_files(overlay)
+
+    def take_join(self, overlay, slot, port, token, clients, relay_host, seed):
+        """A drop-in join played by this X4 without a restart (session.join_running): the joiner overlay (an early
+        joiner's: its save comes later, staged by hotjoin.EarlyJoin) must have this X4's start-time files and seed; its
+        runtime files and the session's config (slot, relay, no arm time) go into the extension. The page runs them when the
+        flow says 'session'. False, with nothing changed, when it cannot."""
+        with self.lock:
+            if self.proc is None or self.proc.poll() is not None or self.target is None:
+                return False
+            running = self.form
+            why = None
+            if running is None or running.overlay is None:
+                why = 'it runs the Multiplayer page without a session\'s files'
+            else:
+                try:
+                    if start_parts(running.overlay) != start_parts(overlay):
+                        why = 'the joiner\'s overlay differs in files X4 reads at its start'
+                    elif running.seed() != int(seed):
+                        why = 'the session has another seed'
+                except (OSError, ValueError, SystemExit) as error:
+                    why = f'the overlays could not be compared ({error})'
+            if why is not None:
+                self.log(f'lobby: the drop-in join starts X4 again: {why}')
+                return False
+            try:
+                files = self.copy_runtime(overlay)
+                config = lobby.session_config(overlay, files, slot, port, token, clients, self.profile_id, None, relay_host)
+                lobby.write_atomic(self.target / 'ui' / 'config.lua', config)
+            except OSError as error:
+                self.log(f'lobby: the drop-in join starts X4 again: {error}')
+                return False
+            self.files = files
+            self.form = Form(Path(overlay), None, clients)
+            self.log(f'lobby: X4 pid {self.proc.pid} plays the drop-in slot {slot} in place (the same start-time files and '
+                     'seed): no restart')
+            return True
 
     def start(self, form):
         """X4 with this form: the view made again, the extension installed, the profile wiped and staged."""
         with self.lock:
             self.busy = True
             try:
-                self.stop_process()
-                if self.view.exists():
-                    game.remove_view(self.view)
-                game.create_view(self.install, self.view)
-                if str(self.view) not in self.record['views']:
-                    self.record['views'].append(str(self.view))
-                extensions = self.view / 'extensions'
-                if form.overlay:
-                    self.target, self.files = lobby.install_lobby(form.overlay, extensions, form.clients, self.profile_id,
-                                                                  self.o.show, False, netplay=True)
-                else:
-                    self.target, self.files = install_page_only(extensions, self.o.show)
-                profile.prepare(self.profile_id, [*game.dlc_ids(self.view), extension.EXTENSION_ID], self.o.width,
-                                self.o.height, form.snapshot)
-                seed = session.snapshot_seed(form.snapshot) if form.snapshot else session.SESSION_SEED
-                self.proc = subprocess.Popen(session.client_command(self.view, self.profile_id, self.lane, seed),
-                                             cwd=self.view, env=steam.client_environment())
+                what = f'the session {Path(form.overlay).name}' if form.overlay else 'the Multiplayer page'
+                self.stop_process(f'it starts again with {what}')
+                self.proc = self.launch(form)
                 self.record['pids'].append(self.proc.pid)
                 self.save_record()
                 self.form = form
                 self.generation += 1
                 self.started_once = True
-                what = f'the session {Path(form.overlay).name}' if form.overlay else 'the Multiplayer page'
                 self.log(f'lobby: X4 pid {self.proc.pid}, profile {self.profile_id}, view {self.view}: {what}')
             except BaseException:
                 self.busy = False
                 raise
-        session.wait_for_log(self.log_path, 'Entering startmenu', self.proc, START_MENU_WAIT_S)
-        self.log(f'lobby: released {instance.release_instance_mutex(self.proc.pid)} instance mutex handle(s)')
+        self.wait_start_menu()
         with self.lock:
             self.busy = False
 
-    def stop_process(self):
-        """End X4 (if it runs) and keep its log: a restart wipes the profile."""
+    def launch(self, form):
+        """The view made again, the extension installed (self.target, self.files), the profile wiped and staged, X4
+        started: its process."""
+        if self.view.exists():
+            game.remove_view(self.view)
+        game.create_view(self.install, self.view)
+        if str(self.view) not in self.record['views']:
+            self.record['views'].append(str(self.view))
+        extensions = self.view / 'extensions'
+        if form.overlay:
+            self.target, self.files = lobby.install_lobby(form.overlay, extensions, form.clients, self.profile_id,
+                                                          self.o.show, False, netplay=True, single=self.single())
+        else:
+            self.target, self.files = install_page_only(extensions, self.o.show, single=self.single())
+        profile.prepare(self.profile_id, [*game.dlc_ids(self.view), extension.EXTENSION_ID], self.o.width,
+                        self.o.height, form.snapshot)
+        return subprocess.Popen(session.client_command(self.view, self.profile_id, self.lane, form.seed()),
+                                cwd=self.view, env=steam.client_environment())
+
+    def wait_start_menu(self):
+        session.wait_for_log(self.log_path, 'Entering startmenu', self.proc, START_MENU_WAIT_S)
+        self.log(f'lobby: released {instance.release_instance_mutex(self.proc.pid)} instance mutex handle(s)')
+
+    def stage(self, snapshot):
+        profile.stage(self.profile_id, snapshot)
+
+    def stop_process(self, why=''):
+        """End X4 (if it runs) and keep its log: a restart wipes the profile. An X4 that still runs is one the player
+        looks at: its end is a restart (netkit.RESTART_MARK, counted by netkit.count_restarts)."""
         if self.proc is None:
             return
+        if self.proc.poll() is None:
+            self.log(f'{netkit.RESTART_MARK}: lobby X4 pid {self.proc.pid} closes: {why or "it starts again"}')
+        self.end_process()
+
+    def end_process(self):
         if self.proc.poll() is None:
             session.kill(self.proc.pid)
             try:
@@ -181,10 +332,33 @@ class LobbyBackend(netplay.Backend):
         return game.installed_dlcs(self.game.install)
 
     def default_form(self):
+        """What this X4 starts with before a game is chosen: the kit's own session (a playtest kit), else a host session
+        the kit keeps (a release ships them; netkit.host_sessions) in lobby form, so that a game hosted or joined later
+        is taken in place (LobbyGame.take: the same start-time files), else the Multiplayer page alone."""
         own = self.kit_session()
-        if own is None:
-            return Form()
-        return Form(own.overlay, own.snapshot, own.players)
+        if own is not None:
+            return Form(own.overlay, own.snapshot, own.players)
+        kept = self.kept_session()
+        if kept is not None:
+            return Form(kept.overlay, kept.snapshot, kept.players)
+        return Form()
+
+    def kept_session(self):
+        """The kit's kept session this X4 waits with, so that a game hosted or joined later is taken in place: a host
+        session (the default start's and mode's first, the fewest players, no drop-in slots first), else a game this kit
+        joined before (any session of the release has the same start-time files); None without one."""
+        try:
+            found = list(netkit.host_sessions(self.kit).values())
+            joined = list(netkit.joined_sessions(self.kit).values())
+        except (OSError, SystemExit, ValueError) as error:
+            self.log(f'lobby: the kept sessions could not be read: {error}')
+            return None
+        start = self.o.base_start or netkit.HOST_SESSION_START
+        mode = self.o.mode or netkit.HOST_SESSION_MODE
+        found.sort(key=lambda files: ((files.recipe.get('session') or {}).get('base_start') != start,
+                                      files.recipe.get('mode') != mode, bool(files.recipe.get('open')), files.players))
+        usable = found + joined
+        return usable[0] if usable else None
 
     def work_folder(self):
         folder = self.run_dir / 'netplay'
@@ -215,12 +389,28 @@ class LobbyBackend(netplay.Backend):
         if cached is not None:
             return cached
         opened = f' (drop-in slots {", ".join(map(str, open_slots))})' if open_slots else ''
-        self.log(f'lobby: no session for {players} players{opened} yet: X4 closes while x4ls new-session makes one')
-        self.game.hold()
-        try:
+
+        def make(beside):
             return netkit.make_session(self.kit, players, mode, base_start, progress, self.log, cancelled,
                                        steam_fix=self.o.steam_fix, open_slots=open_slots, game=self.o.game,
-                                       lanes=self.o.lanes)
+                                       lanes=self.o.lanes, beside=beside)
+        if self.game.open():
+            if netkit.beside_fits():   # the page stays and shows the progress; the capture is a second X4 beside it
+                self.log(f'lobby: no session for {players} players{opened} yet: x4ls new-session makes one beside this X4')
+                try:
+                    return make(beside=True)
+                except netkit.KitError as error:
+                    if cancelled is not None and cancelled.is_set():
+                        raise
+                    self.log(f'lobby: the session could not be made beside this X4 ({error}): once more with X4 closed')
+            else:
+                self.log(f'lobby: less than {netkit.BESIDE_FREE_GIB} GB of memory free for a second X4')
+            self.log(f'lobby: no session for {players} players{opened} yet: X4 closes while x4ls new-session makes one')
+            self.game.hold()
+        else:   # no X4 runs yet (x4ls host, or the Steam helper's hand-over when it could not make the session)
+            self.log(f'lobby: no session for {players} players{opened} yet: x4ls new-session makes one before X4 starts')
+        try:
+            return make(beside=False)
         except BaseException:
             self.game.start(self.default_form())   # back to the page, which says why
             raise
@@ -228,13 +418,42 @@ class LobbyBackend(netplay.Backend):
     def save_folder(self):
         return profile.profile_dir(self.game.profile_id) / 'save'
 
+    # how this PC's Steam starts X4 (steamlib.SteamSetup: the helper writes Steam's files once Steam is closed)
+    def steam_setup(self):
+        from . import steamlib
+        return steamlib.SteamSetup(self.kit.root, log=self.log) if self.kit.root else None
+
+    def steam_view(self):
+        setup = self.steam_setup()
+        return setup.view() if setup is not None and setup.installed() else None
+
+    def steam_play(self, on):
+        setup = self.steam_setup()
+        if setup is None or not setup.installed():
+            return 'Only an installed X4 Online changes how Steam starts X4.'
+        setup.want_play(on)
+        return ('It takes effect once Steam is closed (the helper writes it then; Steam keeps that setting while it '
+                'runs).')
+
+    def single_player(self):
+        """Single-player: this lobby ends, and helper.pyw --steam-play starts X4 with Steam's own command line."""
+        mark = getattr(self.o, 'single_player_mark', None)
+        if not mark:
+            return 'Single-player is for an X4 that Steam\'s Play started: start X4 from Steam for that.'
+        Path(mark).write_text('single-player\n', encoding='utf-8')
+        self.single = True
+        return 'X4 starts again in your own profile, for single-player.'
+
     def install_session(self, files, progress):
+        """X4 runs this session: it does already, it takes it in place (LobbyGame.take: no restart), or it starts with
+        it (the first start of this lobby, or a restart when the start-time files or the seed differ)."""
         form = Form(files.overlay, files.snapshot, files.players)
         if self.game.runs(form):
             return
         extension.verify_overlay(files.overlay)
         progress(0.1)
-        self.game.start(form)
+        if not self.game.take(form):
+            self.game.start(form)
         progress(1.0)
 
 
@@ -390,9 +609,11 @@ def wait_for_start(o, flow, lobby_game, backend, log):
     a session starts or X4 is closed. (result, SessionStart or None)."""
     first = o.request or auto_request(o.auto)
     first_request = netplay.parse_request(first) if first else None
-    hosting_first = first_request is not None and first_request.kind == 'HOST'
-    # A first join waits for this X4: its job starts X4 again with the session, and two starts must not overlap.
-    if not hosting_first:
+    # A first host or join (the Steam helper's hand-over, x4ls host, x4ls join) starts no X4 of its own here: its job
+    # starts X4 with the session, so the player's one restart goes straight into the game. (A first join used to start
+    # the page first and then X4 again with the session: two X4s for one join.) If the job fails before that, the page
+    # is started below to say why.
+    if first_request is None or not (first_request.kind == 'HOST' or first_request.joins) or getattr(o, 'page_first', False):
         lobby_game.start(backend.default_form())
     if first:
         log(f'lobby: first request {first[:80]}')
@@ -405,6 +626,8 @@ def wait_for_start(o, flow, lobby_game, backend, log):
             return {'outcome': 'failed'}, start
         if lobby_game.exited():
             return {'outcome': 'closed', 'ended': 'X4 was closed in the menu'}, None
+        if getattr(backend, 'single', False):   # Single-player (helper.pyw --steam-play starts X4 for it)
+            return {'outcome': 'closed', 'ended': 'single-player'}, None
         if not lobby_game.started_once and not lobby_game.busy and flow.state.phase in ('idle', 'error'):
             lobby_game.start(backend.default_form())   # the first host failed before X4 was started: show why
         if o.lobby_timeout and time.time() - started > o.lobby_timeout:
@@ -459,23 +682,61 @@ def play_session(o, flow, lobby_game, start, relay, run_dir, log):
     return result
 
 
+class InPlaceJoin:
+    """session.join_running's view of this lane's X4 (late_join): it plays a drop-in slot without a restart."""
+
+    def __init__(self, lobby_game, flow):
+        self.game = lobby_game
+        self.flow = flow
+        self.view = lobby_game.view
+        self.profile_id = lobby_game.profile_id
+        self.proc = lobby_game.proc
+        self.lane = lobby_game.lane
+
+    def take(self, overlay, slot, port, token, clients, relay_host, seed):
+        return self.game.take_join(overlay, slot, port, token, clients, relay_host, seed)
+
+    def started(self):   # the page runs the session's config and files (the probe waits in the start menu)
+        self.flow.session_running(run_dir=None, tick=lambda: 0)
+
+
+def others_running(lobby_game):
+    """Another X4 on this PC than this lane's (another player's second window)."""
+    own = lobby_game.proc.pid if lobby_game.proc is not None else None
+    return any(pid != own for pid, _client in session.other_clients())
+
+
 def late_join(o, flow, lobby_game, start, log):
-    """A drop-in slot: this lane's X4 closes and hotjoin.hot_join plays the slot in the running game (its own lane,
-    view and profile: c<slot>), with the overlay this PC built from the host's recipe. The join files come from the
-    relay's file service (the master's relay keeps them for the joiner); X4 starts early, while the session saves."""
+    """A drop-in slot: hotjoin.hot_join plays it in the running game, with the overlay this PC built from the host's
+    recipe. The join files come from the relay's file service (the master's relay keeps them for the joiner); X4 starts
+    early, while the session saves. This lane's X4, when it runs with a session of the release (the page in the
+    multiplayer profile), plays the slot itself, no restart (InPlaceJoin, session.join_running); else it closes and the
+    hot join starts its own X4 (lane, view and profile c<slot>)."""
     from . import hotjoin
-    lobby_game.hold()
-    same_pc = session.x4_running()   # another player's X4 on this PC (a second window), as lobby.run's join_running
-    flow.session_running(run_dir=None, tick=lambda: 0)
+    running = InPlaceJoin(lobby_game, flow) if lobby_game.open() else None
+    if running is None:
+        lobby_game.hold()
     log(f'lobby: player {start.slot} of {start.clients} joins the running game at the relay {start.relay_host}:{start.port}')
-    options = hotjoin.HotJoinOptions(relay=f'{start.relay_host}:{start.port}', token=start.token, slot=start.slot,
-                                     overlay=Path(start.overlay).resolve(), offer_wait=LATE_OFFER_WAIT_S, width=o.width,
-                                     height=o.height, game=o.game, lanes=o.lanes, runs=o.runs,
-                                     state=session.ROOT / '.local/x4ls-join' if same_pc else o.state,
-                                     steam_fix=o.steam_fix, timeout=o.timeout, close_when_over=o.close_when_over,
-                                     same_pc=same_pc)
+
+    def options(in_place):
+        same_pc = others_running(lobby_game) if in_place else session.x4_running()   # another player's X4 on this PC
+        return hotjoin.HotJoinOptions(relay=f'{start.relay_host}:{start.port}', token=start.token, slot=start.slot,
+                                      overlay=Path(start.overlay).resolve(), offer_wait=LATE_OFFER_WAIT_S, width=o.width,
+                                      height=o.height, game=o.game, lanes=o.lanes, runs=o.runs,
+                                      state=session.ROOT / '.local/x4ls-join' if same_pc else o.state,
+                                      steam_fix=o.steam_fix, timeout=o.timeout, close_when_over=o.close_when_over,
+                                      same_pc=same_pc, running=running if in_place else None)
     try:
-        result = hotjoin.hot_join(options, log)
+        if running is not None:
+            try:
+                result = hotjoin.hot_join(options(True), log)
+            except session.NotInPlace as error:   # nothing was asked or changed: an X4 of the hot join's own
+                log(f'lobby: the drop-in join is not played by this X4 ({error})')
+                running = None
+                lobby_game.hold()
+        if running is None:
+            flow.session_running(run_dir=None, tick=lambda: 0)
+            result = hotjoin.hot_join(options(False), log)
     except SystemExit as error:   # the join's own refusals carry the reason as text
         log(f'lobby: the drop-in join failed: {error}')
         result = {'outcome': 'failed', 'ended': f'the drop-in join failed: {error}'}

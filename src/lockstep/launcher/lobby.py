@@ -70,6 +70,9 @@ class LobbyOptions:
     no_master: bool = False    # LAN games only
     master_url: str | None = None   # what the launcher found (set by netlobby.run)
     request: str = ''          # the page's first request, as if it had sent it (the Steam helper's hand-over, x4ls host/join)
+    page_first: bool = False   # test: X4 opens on the page before a first host or join (taken in place: no restart)
+    single_player_mark: Path | None = None   # helper.pyw --steam-play: the page's Single-player writes this file and the
+                                             # lobby ends (X4 then starts with Steam's own command line)
     state_mirror: Path | None = None   # the state is written here too (the Steam helper answers its pipe with it)
     base_start: str = ''       # a session a release kit makes for hosting: its start and mode (netkit's defaults)
     mode: str = ''
@@ -114,12 +117,13 @@ def lua_list(names):
     return '{' + ','.join("'" + n.replace('\\', '/').replace("'", '') + "'" for n in names) + '}'
 
 
-def lobby_config(files, show=False, server=False, netplay=False):
+def lobby_config(files, show=False, server=False, netplay=False, single=False):
     """config.lua while the game waits in the menu: nothing of a session, the overlay's files only named. netplay: the
-    page draws netplay's rows (Host, Join with a code, the lists; docs/NETPLAY.md "Page notes")."""
+    page draws netplay's rows (Host, Join with a code, the lists; docs/NETPLAY.md "Page notes"). single: Steam's Play
+    started this X4 through X4 Online (helper.pyw --steam-play): the page offers Single-player."""
     return (f'X4LAN_CONFIG = {{enabled = false}}\nX4LAN_CONFIG.lobby = {{files = {lua_list(files)}'
             + (', show = true' if show else '') + (', server = true' if server else '')
-            + (', netplay = true' if netplay else '') + '}\n')
+            + (', netplay = true' if netplay else '') + (', single = true' if single else '') + '}\n')
 
 
 def session_config(overlay, files, slot, port, token, clients, profile_id, arm_at, relay_host):
@@ -230,12 +234,12 @@ def write_atomic(path, text):
     os.replace(tmp, path)
 
 
-def install_lobby(overlay, extensions, clients, profile_id, show=False, server=False, netplay=False):
+def install_lobby(overlay, extensions, clients, profile_id, show=False, server=False, netplay=False, single=False):
     """The overlay as x4ls installs it, in lobby form: ui.xml runs config.lua, sha256.lua and the lobby file only."""
     target = extension.compose(overlay, extensions, 1, 0, '0' * 32, clients, extra={LOBBY_UI: LOBBY_LUA}, profile_id=profile_id)
     files = overlay_files(overlay)
     (target / 'ui.xml').write_text(extension.ui_xml([*extension.BASE_UI, LOBBY_UI]))
-    (target / 'ui/config.lua').write_text(lobby_config(files, show, server, netplay))
+    (target / 'ui/config.lua').write_text(lobby_config(files, show, server, netplay, single))
     (target / 'lobby').mkdir()
     return target, files
 

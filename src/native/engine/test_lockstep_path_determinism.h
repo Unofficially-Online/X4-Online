@@ -101,5 +101,40 @@ static void test_path_determinism(void) {
     /* Arming needs an active boot gate with the serial pathing join. */
     assert(!path_det_arm(1) && !path_det_armed);
     char status[512];assert(path_det_status(status,sizeof(status)) && strstr(status,"armed=0 mask=0 "));
-    printf("path determinism order/admission/TLS bracket/stamp/budget owner tests PASS\n");
+    /* Players' controllers (rel16 satellite: the stand-up's NavigationController took a PlayerController's lazy stamp): a
+     * U::PlayerController and a slot's private copy of its vtable are walked and stamped in saved-ID order with the
+     * NavigationControllers; another controller class is still skipped. */
+    {
+        static test_pd_ship players[4];static unsigned char pbatch[0x20],psentinel[0x18],pmanager[0x220];
+        const uint64_t pids[4]={10,30,40,50};
+        memset(pmanager,0,sizeof(pmanager));memset(pbatch,0,sizeof(pbatch));memset(psentinel,0,sizeof(psentinel));
+        *(uint64_t*)(pbatch+8)=4;*(unsigned char**)(pbatch+0x10)=psentinel;*(unsigned char**)(psentinel+8)=players[0].node;
+        for(unsigned i=0;i<4;i++) test_pd_link(&players[i],pids[i],psentinel,i+1<4?players[i+1].node:psentinel);
+        *(unsigned char**)(players[1].controller)=image+PATH_DET_PLAYER_VTABLE;          /* slot 1's PlayerController */
+        *(unsigned char**)(players[2].controller)=(unsigned char*)&pslots[2].vt.slots[0]; /* slot 2's, under its vtable copy */
+        *(unsigned char**)(players[3].controller)=image+0x2c39500;                       /* another class: not walked */
+        assert(path_det_admits(image+PATH_DET_PLAYER_VTABLE,image+PATH_DET_NAV_VTABLE) &&
+               path_det_admits((const unsigned char*)&pslots[3].vt.slots[0],image+PATH_DET_NAV_VTABLE) &&
+               !path_det_admits(image+0x2c39500,image+PATH_DET_NAV_VTABLE) && !path_det_admits(NULL,image+PATH_DET_NAV_VTABLE));
+        *(unsigned char**)(pmanager+0x180)=pbatch;*(unsigned char**)(pmanager+0x188)=pbatch+0x20;
+        *(unsigned char**)(pmanager+0x198)=pbatch+0x20;*(unsigned char**)(pmanager+0x1a0)=pbatch+0x20;
+        static world_identity_entry pidentities[WORLD_IDENTITY_CAPACITY];world_identity_entry *pprior=world_identities;LONG64 pprior_count=world_identity_count;
+        memset(pidentities,0,sizeof(pidentities));world_identities=pidentities;world_identity_count=0;
+        for(unsigned i=0;i<4;i++) assert(world_identity_record(pids[i],1000-pids[i]));
+        path_det_seq_valid=path_det_items_valid=0;
+        /* Two stale player stamps, as two clients' readers left them (229.44 and 231.04 in rel16): both end as the step's. */
+        double stale=229.44;memcpy(players[1].controller+0xc0,&stale,8);*(uint32_t*)(players[1].controller+0xc8)=0;
+        stale=231.04;memcpy(players[2].controller+0xc0,&stale,8);*(uint32_t*)(players[2].controller+0xc8)=0;
+        double start=231.4;memcpy(tls+0x300,&start,8);test_pd_now=231.4447;test_pd_bank=1;test_pd_calls=0;
+        path_det_frames=path_det_stamped=path_det_current=path_det_stale=path_det_skipped=path_det_unmapped=0;
+        assert(path_det_refresh_frame(test_pd_refresh,test_pd_sync,pmanager,tls,image+PATH_DET_NAV_VTABLE,&test_pd_bank));
+        const uint64_t porder[3]={40,30,10};   /* saved 960, 970, 990 */
+        assert(test_pd_calls==3 && !memcmp(test_pd_order,porder,sizeof(porder)) && path_det_skipped==1 && path_det_last_count==3);
+        for(unsigned i=0;i<3;i++) {
+            double t;memcpy(&t,players[i].controller+0xc0,8);
+            assert(t==231.4447 && *(uint32_t*)(players[i].controller+0xc8)==1);
+        }
+        world_identities=pprior;world_identity_count=pprior_count;path_det_seq_valid=path_det_items_valid=0;
+    }
+    printf("path determinism order/admission/players/TLS bracket/stamp/budget owner tests PASS\n");
 }

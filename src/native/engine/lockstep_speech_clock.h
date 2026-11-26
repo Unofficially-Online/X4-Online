@@ -13,13 +13,19 @@
  * client 2 (both started it at 3636). Its listeners ran two ticks apart: relay mismatches at
  * 3749 and 3750, equal again afterwards. Reproduced by the triage rerun at the same tick.
  *
- * At the first gated frame after arming, the clock is set to SCLOCK_VALUE under the engine's
- * lock. That is forward only: a clock already past it (18 hours of uptime) refuses. From then on
- * every client adds the same steps. Lines started before the set end at the first ticker after
- * it, on the same tick everywhere. Pins: the four instructions that read or write the clock (their
- * rip displacements name it). Every gate tick re-checks them; a failure stops the gate with reason
- * 196. Nothing is restored at stop: the clock only runs on. The status shows the clock's bits, so
- * clients can be compared tick by tick.
+ * Right before the first step's frame (tick 1) runs, the clock is set to SCLOCK_VALUE under the
+ * engine's lock (sclock_frame, from gate_original_once). That is forward only: a clock already past
+ * it (18 hours of uptime) refuses. From then on every client adds the same steps. Lines started
+ * before the set end at the first ticker after it, on the same tick everywhere. Until 26 Nov the
+ * set was at the first gated frame instead, before the boot's loading frames (boot_phase 0..2),
+ * whose number is each client's: they add their dt too, so one client of every session ran a
+ * whole step behind from tick 1 on (SPEECH_CLOCK tick=1 clock=40f000019999999b against
+ * 40f0000222222224, the last client of rk17's two- and three-client runs). A deadline compared at
+ * another magnitude can round to another frame. Pins: the four instructions that read or write
+ * the clock (their rip displacements name it). Every gate tick re-checks them and, until the set,
+ * that the clock is still below the value; a failure stops the gate with reason 196. Nothing is
+ * restored at stop: the clock only runs on. The status shows the clock's bits, so clients can be
+ * compared tick by tick.
  * Joining a running session (hotjoin, checkpoint loads): the clients in the session hold
  * SCLOCK_VALUE plus every frame's addition since tick 0. A joiner at tick T needs that exact
  * double: the same T additions of the fixed step, in order, from SCLOCK_VALUE (not
@@ -57,20 +63,31 @@ static int sclock_arm(void) {
     if(!sclock_pins()) {sclock_stage="pins";return 0;}
     sclock_armed=1;sclock_stage="armed";return 1;
 }
-/* Gate tick (main thread, no frame running): the set on the first one, the pins on every one. */
+static int sclock_below(double value) {return isfinite(value) && value>=0 && value<SCLOCK_VALUE;}
+/* Gate tick (main thread, no frame running): the pins on every one; until the set, the clock still below the value. */
 static int sclock_tick(void) {
     if(InterlockedCompareExchange64(&sclock_failures,0,0)) return 0;
     if(!sclock_pins()) {sclock_stage="pins_changed";InterlockedIncrement64(&sclock_failures);return 0;}
     if(sclock_set) return 1;
+    const double before=sclock_read();
+    if(sclock_below(before)) return 1;
+    memcpy(&sclock_before_bits,&before,8);sclock_stage="past_value";InterlockedIncrement64(&sclock_failures);return 0;
+}
+/* gate_original_once (main thread), right before a frame runs: the set, once, when that frame is a step's (issued past
+ * completed: tick 1's, a resumed session's first). Boot, loading and render-only frames run with issued == completed. A
+ * refusal here leaves the clock alone; the next gate tick stops with 196. */
+static void sclock_frame(void) {
+    if(!sclock_armed || sclock_set || !stats.active || stats.issued<=stats.completed) return;
+    if(InterlockedCompareExchange64(&sclock_failures,0,0)) return;
     CRITICAL_SECTION *lock=(CRITICAL_SECTION*)(image+SCLOCK_LOCK);
     EnterCriticalSection(lock);
-    double before=*(volatile double*)(image+SCLOCK_CLOCK);
-    int ok=isfinite(before) && before>=0 && before<SCLOCK_VALUE;
+    const double before=*(volatile double*)(image+SCLOCK_CLOCK);
+    const int ok=sclock_below(before);
     if(ok) *(volatile double*)(image+SCLOCK_CLOCK)=SCLOCK_VALUE;
     LeaveCriticalSection(lock);
     memcpy(&sclock_before_bits,&before,8);
-    if(!ok) {sclock_stage="past_value";InterlockedIncrement64(&sclock_failures);return 0;}
-    sclock_set=1;sclock_set_tick=stats.issued;sclock_stage="set";return 1;
+    if(!ok) {sclock_stage="past_value";InterlockedIncrement64(&sclock_failures);return;}
+    sclock_set=1;sclock_set_tick=stats.issued;sclock_stage="set";
 }
 static int sclock_status(char *out,size_t capacity) {
     double now=sclock_read();uint64_t bits;memcpy(&bits,&now,8);

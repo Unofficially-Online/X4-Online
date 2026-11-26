@@ -602,7 +602,7 @@ class SessionTests(unittest.TestCase):
                                 'UI_REPLAY_SCRIPT tick=42 op=target_none ok=true result=nil scope=1',
                                 'UI_REPLAY_SCRIPT tick=43 op=target_slot ok=true result=false scope=0',
                                 'UI_REPLAY_SCRIPT tick=50 op=target_slot ok=true result=false scope=0'])
-        self.assertEqual(dict(g.X4LAN_UI_REPLAY_CORE.SCOPED), {'hud_weapons': True, 'target_slot': True, 'target_none': True, 'target_home': True, 'dock_home': True, 'suit_home': True, 'suit_to': True, 'dock_named': True, 'guidance_slot': True, 'guidance_end': True, 'guidance_set': True, 'guidance_look': True, 'inv_read': True, 'inv_drop': True,
+        self.assertEqual(dict(g.X4LAN_UI_REPLAY_CORE.SCOPED), {'ap_toggle': True, 'hud_weapons': True, 'target_slot': True, 'target_none': True, 'target_home': True, 'dock_home': True, 'suit_home': True, 'suit_to': True, 'dock_named': True, 'guidance_slot': True, 'guidance_end': True, 'guidance_set': True, 'guidance_look': True, 'inv_read': True, 'inv_drop': True,
                                                                   'foot_where': True, 'transport_list': True, 'transport_to': True, 'transport_named': True, 'inv_research_seen': True, 'inv_research_hqs': True,
                                                                   # the shops' and the control panels' clicks (reps, itemtrader, hack)
                                                                   'trader_pick': True, 'trader_look': True, 'itemtrader_buy': True, 'inv_total': True,
@@ -617,6 +617,32 @@ class SessionTests(unittest.TestCase):
                                                                   'place': True,
                                                                   # the cover's reading and clicks of this client's own docked menu
                                                                   'cover_ui': True, 'cover_button': True, 'stance_set': True})
+
+    def test_the_autopilot_toggle_runs_where_the_huds_click_runs(self):
+        """rk15 (25 Nov): client 2's ap_toggle ran in the probe's canonical frame, where ToggleAutoPilot reads slot 1's
+        autopilot (off) and takes its start branch for slot 1's player: player 2's autopilot stayed on. Now it is asked in
+        the client's presentation scope, as the docked menu's button and the map's Shift+A ask it; slot 1's runs where it is."""
+        lua, g = client()
+        lua.execute('''
+          OPEN=false
+          present=function(on)
+            stock_calls[#stock_calls+1]=on and 'resume' or 'pause'
+            if on then OPEN=CAN_OPEN;return OPEN end
+            OPEN=false;return true end
+          C.ToggleAutoPilot=function(check) stock_calls[#stock_calls+1]='Toggle:'..tostring(check)..':'..tostring(OPEN);return OPEN end
+          tools={gate=gate,C=C,env=env,own_slot=2}
+          CAN_OPEN=true
+          S=new_session({script=X4LAN_UI_REPLAY_CORE.script({{0,'ap_toggle'},{1,'ap_toggle'},{2,'ap_toggle'}},40,tools),present=present})
+          for t=40,41 do S.frame(t) end
+          CAN_OPEN=false   -- slot 1's client: the call runs where it is
+          S.frame(42)
+        ''')
+        self.assertEqual(values(g.stock_calls), ['resume', 'Toggle:false:true', 'pause', 'resume', 'Toggle:false:true', 'pause',
+                                                 'resume', 'Toggle:false:false'])
+        rows = [line for line in values(g.logs) if 'UI_REPLAY_SCRIPT' in line]
+        self.assertEqual(rows, ['UI_REPLAY_SCRIPT tick=40 op=ap_toggle ok=true result=true scope=1',
+                                'UI_REPLAY_SCRIPT tick=41 op=ap_toggle ok=true result=true scope=1',
+                                'UI_REPLAY_SCRIPT tick=42 op=ap_toggle ok=true result=false scope=0'])
 
     def test_the_guidance_ops_set_and_end_it_where_the_maps_click_runs(self):
         """play39p-long: client 2's map set guidance on slot 1's ship (SetGuidance) inside its presentation scope; the ops do

@@ -25,7 +25,8 @@ what is written here; a change to a contract is a change to this file first.
 - `x4ls serve` (`src/lockstep/launcher/serve.py`): one kit's server (kit key, one game at a time, drop-in joins with
   join files uploaded by the saver). It stays for the playtest kits (service `x4mp-lobby` on UDP 47000/TCP 47001).
 - The Steam-start path (`src/lockstep/launcher/steamplay.py`): the menu extension `x4mp_playtest_menu` in X4's own
-  extensions folder, the helper behind named pipes, Join = restart X4 in the disposable profile.
+  extensions folder, the helper behind named pipes, Host and Join = X4 restarts once, into the game in the disposable
+  profile (what that X4 needs is readied first; "Restarts" below).
 - The page: `tools/dev/native_gate_lobby.lua`; the in-session page: the `mp_menu` block of
   `tools/dev/native_gate_probe.lua` ("Multiplayer session").
 - The NAT work of 1 Nov (report `reports/LOCKSTEP-NAT-TRAVERSAL-20261101.txt`): a C core with PCP, NAT-PMP and UPnP
@@ -371,6 +372,13 @@ What the page sends, exactly:
   keep every request the page makes under it), and a spelled request whose begin no helper answers stops there.
 - Numbers are read with `tonumber`, so `lobby.state_text` writing floats as strings (`done = '0.4'`) works; `public` and
   `network.public_ip_known` are not shown.
+- `restart` (a pipe page): the lines stay `quit_after` seconds (1 to 30; 1.5 without it, as the playtest helper's),
+  measured with X4's `getElapsedTime`, then the page quits X4 once (row `RESTART notice for N s`).
+- A new state while an edit box is active waits for the player's typing, at most 2.5 s after the last key (or the
+  activation): a box X4 keeps active no longer holds a new list or phase back. The typed text stays. (25 Nov: the
+  public games never showed while the code box was active, and the player typed the code instead.)
+- Row `GAMES public=N lan=M phase=P stamp=S` whenever the lists the page draws change (`none` for a list not asked
+  for yet); the launcher logs what it gave the page (`netplay: BROWSE: N public game(s) [names], M on the LAN`).
 - In the session (a config with `lobby`): the state is read when the page opens and every 150 frames while it is open
   (`lobby/state.lua` of the installed extension, or `<pipe>-state` when the session's config names a pipe); the page is
   drawn again when `stamp` changed. It shows the connection line, the code with Copy and the players (host and "you"
@@ -378,14 +386,32 @@ What the page sends, exactly:
 
 ## Release kit and installer (GitHub Actions)
 
-`tools/make_release_kit.py --gate-dll DLL --out DIR [--master URL] [--python-embed ZIP] [--crypto-dll DLL]` makes a
-kit that holds no session and no snapshot: `repo/` (git archive), `native/x4lan_gate_64.dll`, `python/` (embedded),
-`steam-menu/`, `helper.pyw`, `second.pyw`, `release.json`, `master.json` (only with `--master`), `KIT.txt`,
-`VERIFY.cmd` and `kit-manifest.json`. `--master` takes a URL (`https://master.example.org/x4mp`,
-`http://203.0.113.10:47100`) or a bare `HOST[:PORT]`, which becomes `http://HOST:PORT` (port 47100);
-`master.json` is `{"url": "<that URL>"}`, and the repository variable `X4MP_MASTER` holds such a URL. Sessions are
-made on the host's PC (`x4ls new-session`, cached in the kit's `sessions/`) or downloaded from the game's host.
-`tools/make_playtest_msi.py --kit DIR` makes the installer from it as from a playtest kit: product "X4 Online".
+`tools/make_release_kit.py --gate-dll DLL --out DIR [--master URL] [--python-embed ZIP] [--crypto-dll DLL]
+[--sessions DIR | --prebuild-sessions 2,3,4 [--game DIR] [--lanes DIR]]` makes a kit: `repo/` (git archive),
+`native/x4lan_gate_64.dll`, `python/` (embedded), `steam-menu/`, `helper.pyw`, `second.pyw`, `release.json`,
+`master.json` (only with `--master`), `KIT.txt`, `VERIFY.cmd`, `kit-manifest.json`, and with `--sessions` or
+`--prebuild-sessions` ready-made host sessions in `sessions/` (below). `--master` takes a URL
+(`https://master.example.org/x4mp`, `http://203.0.113.10:47100`) or a bare `HOST[:PORT]`, which becomes
+`http://HOST:PORT` (port 47100); `master.json` is `{"url": "<that URL>"}`, and the repository variable `X4MP_MASTER`
+holds such a URL. A session the kit does not ship is made on the host's PC (`x4ls new-session`, kept in the kit's
+`sessions/`); a joiner downloads the host's. `tools/make_playtest_msi.py --kit DIR` makes the installer from it as
+from a playtest kit: product "X4 Online".
+
+**Ready-made host sessions (25 Nov).** A release that ships the sessions of its common games (2, 3 and 4 players, coop,
+the default start) lets its host go straight into the game: no capture, X4 restarts once. A shipped session is the
+folder `sessions/host-<start>-<N>p-<mode>-<8 hex of the gate DLL>-<form>/` with `session.json`,
+`session-save.xml.gz`, `spec.json` and `overlay/` only (about 30 MB; new-session's `capture-overlay/` and
+`overlay.base/` stay behind), in the form `netkit.portable_session` gives it: session.json, the overlay's session.json
+and its recipe name the save `session-save.xml.gz` (no path of the PC that made it), the overlay's manifest follows.
+`--prebuild-sessions N,...` runs `x4ls new-session` for each count with the kit's own gate DLL (X4 and Steam on the
+building PC, about 2 minutes each, one capture X4; the checkout's `src/` and `tools/` must be its HEAD, since the
+kit's `repo/` is `git archive HEAD`). `--sessions DIR` takes the `host-*` folders of DIR (an earlier build's or an
+install's `sessions/`). Either way the builder refuses a session this kit could not host (`netkit.cached_session`), one
+whose overlay does not verify, whose gate DLL is not `native/x4lan_gate_64.dll`, or whose overlay `ui/*.lua` differs
+from the kit's `repo/tools/dev/` file of that name (the probe and its cores are copied into overlays as they are). The
+manifest lists the files and names the sessions (`sessions`); VERIFY checks them (sessions a PC made or joined later
+are still ignored); the installer installs exactly the manifest's files under `sessions/`. A GitHub Actions build has no
+X4: its kit ships no session; a release with sessions is built on a PC with X4 (see "Restarts").
 
 `.github/workflows/release.yml` (workflow_dispatch and tags `v*`): build the gate DLL (Windows, Zig 0.15.2, as
 `ci.yml`), the release kit with the master address from the repository variable `X4MP_MASTER` (absent: no
@@ -400,16 +426,22 @@ What the release build does, and what the other packages need to know about it.
   by the exported checkout's own `steamplay.write_menu` (a child Python on `repo/src`), so the whole kit is the
   commit's. `release.json` is the contract's; `kit-manifest.json` (schema `x4-online-release-kit-v1`) adds the
   file hashes, `master` and `python_embed_sha256`. `VERIFY.cmd` (`make_release_kit.py --verify`) ignores what a PC
-  makes while playing: `repo/.local/`, `sessions/`, `__pycache__/`, and a `master.json` put beside a kit built
-  without one.
+  makes while playing: `repo/.local/`, the sessions it made or joined in `sessions/` (not the kit's ready-made ones),
+  `__pycache__/`, and a `master.json` put beside a kit built without one.
 - **Nothing private:** the builder refuses (and removes) a kit with any file under `.local`, `.git`, `.venv`,
   `.claude`, `__pycache__`, `overlay(s)`, `snapshot(s)`, `save(s)`, `sessions`, `runs` or `logs`; named
   `server.json`, `session.json`, `.env`, credentials, SSH keys or `X4.exe`; ending `.key`, `.pem`, `.pfx`, `.p12`,
   `.ppk`, `.log`, `.xml.gz`, `.x4join`, `.sav`, `.dmp`; an X4 catalog (`01.cat`, `ext_01.dat`); a PEM private key;
   or a JSON file whose `key`, `secret`, `token`, `ticket`, `password`, `relay_seed` or `master` is long hex (and the
-  wire crypto key format). The installer checks a release kit against its manifest and these rules again.
-- **The installer:** a release kit becomes "X4 Online" (`%LOCALAPPDATA%\X4 Online`, Start menu "X4 Online" and
-  "X4 Online (second window)", Run value `X4Online`, upgrade code `{8D3B6E2A-41C7-4F95-A0E8-6B19C2D74F31}`): a new
+  wire crypto key format). The installer checks a release kit against its manifest and these rules again. The one
+  exception is a ready-made session (`make_release_kit.shipped_session_reason`): under `sessions/host-*/` only its
+  files and its overlay's data and code files, no private folder, no secret, and no text (the save read unpacked) that
+  names a drive, a share or a home folder. The overlay's copies of the kit's own Lua (checked to be the bytes of
+  `repo/tools/dev`) are not read for paths: the probe names pipes (`\\.\pipe\`) and the Linux port's folders.
+- **The installer:** a release kit becomes "X4 Online" (`%LOCALAPPDATA%\X4 Online`, Start menu "X4 Online" (the
+  helper), "X4 Online (play)" (`helper.pyw --play`: X4 in its multiplayer profile on the Multiplayer page, the helper
+  started first when none runs) and "X4 Online (second window)", Run value `X4Online`, upgrade code
+  `{8D3B6E2A-41C7-4F95-A0E8-6B19C2D74F31}`): a new
   release replaces an older one, never a playtest kit. Its version is `release.json`'s `built` (year, month, minute
   of the month, as playtest installers). It needs the bundled Python (`--python-embed`). Playtest kits keep "X4
   Multiplayer Playtest" and their installers' tables unchanged.
@@ -539,12 +571,19 @@ Backends:
   `MENU_SCRIPT` today passes neither and so writes the playtest menu); its helper.pyw calls
   `steamplay.main(KIT, None)` and second.pyw `steamplay.second(KIT, None)`. `remove_menu(install, identity)` removes
   only that identity's folder.
-- The release helper lists games itself (BROWSE in the Steam-started X4). HOST and the joins are handed over: the
-  helper says `restart`, the page quits X4, and the helper runs `x4ls lobby --kit KIT --request <text> --show
-  --close-when-over --state-mirror repo/.local/helper-state.lua`. A join is resolved first in the helper (JOIN reads the
-  clipboard there, JOINLAN becomes the row's code or its addresses as `JOINCODE|ip:port,ip:port`), since the lobby
-  process has neither. While that game runs the helper answers `state` with the mirrored state (restamped in its own
-  count) and ignores requests.
+- The release helper lists games itself (BROWSE in the Steam-started X4). HOST and the joins are handed over, once
+  readied (`backend.handover_job`, 25 Nov): `steamplay.HostHandOver` finds the session in the kit
+  (`netkit.cached_session`) or makes it beside the Steam-started X4, whose page shows `preparing` with the time and
+  the progress; `steamplay.JoinHandOver` joins at the master (or the LAN host), downloads and checks the session,
+  builds the overlay, and gives the slot back. A join that cannot work (a bad code, another release, other DLCs, no
+  master for a code) is said on that page and X4 stays. Then the helper says `restart` (with `quit_after`, the seconds
+  the page shows why), the page quits X4, and the helper runs `x4ls lobby --kit KIT --request <text> --show
+  --close-when-over --state-mirror repo/.local/helper-state.lua`, whose job finds everything in place (no capture, no
+  download, no build) and starts X4 with the session. A join is resolved in the helper (JOIN reads the clipboard
+  there, JOINLAN becomes the row's code or its addresses as `JOINCODE|ip:port,ip:port`), since the lobby process has
+  neither. While that game runs the helper answers `state` with the mirrored state and ignores requests. Every answer
+  has the next stamp of the helper's own count when the state changed (it was the larger of the helper's and the
+  flow's counts: after a game the flow's next states came with a stamp the page had, and the page kept what it showed).
 
 Steam-path transport (coordinator's decision, replacing `req-<hex>`): `<prefix>-tbegin` clears the buffer, one
 `<prefix>-t0` .. `-tf` per hex digit of the request's UTF-8 bytes, `<prefix>-tend` decodes and runs it; every open is
@@ -565,14 +604,29 @@ ping_ms}, `players` [{slot, ready, host}], `games` (at most 20: id, name, player
 page's COPY and LEAVE from the log then.
 
 Decisions where the contract left room:
-- **X4 starts again with the session.** What X4 reads only at its start must be the session's: the `-seed:` on the
-  command line (the save's seed; JobDB seeds job generators from it at the load), and the extension's libraries and
-  macros. So the launcher's X4 starts with the kit's own session (a playtest kit), else with the page alone (a release
-  kit, seed 276944566), and starts again when a hosted or joined game needs another overlay. A host whose kit has no
-  session for that many players closes X4 while `x4ls new-session` makes one (its capture client), then starts it
-  with the session; `--request HOST|...` makes the session before the first start. A joiner marks itself ready at the
-  master (or the LAN host) only after its X4 runs the session (download, build, restart: a ready player may be started
-  at once, and the load is 20 to 30 s later). The page never sends READY; the request is accepted and resent.
+- **What forces X4 to start again, and what does not (25 Nov).** What X4 reads only at its own start must be the
+  session's: the `-seed:` on the command line (the save's seed; JobDB seeds job generators from it at the load) and
+  the extension's start-time files (`netlobby.start_parts`: everything of the overlay but `ui/`, `native/` and the
+  launcher's JSON files; that is md/, aiscripts/, libraries/, a story's patches of stock extensions, plot copies).
+  Everything else is read when the session starts: the page runs the overlay's ui files (loadfile) and the new
+  config.lua at `session`, the probe loads the gate DLL (`package.loadlib`) and the staged save (`LoadGame
+  save_009`). Sessions of one release have equal start parts (25 Nov: the 2-, 3- and 4-player overlays of 4fdb7772
+  differ only in play-recipe.json, player-identity-plan.json, session.json and ui/config.lua.append), and every session
+  x4ls new-session makes has the seed 276944566. So an X4 that runs one session's overlay in lobby form takes another
+  of the same release in place (`LobbyGame.take`: the runtime files copied in, the lobby config's file list, the save
+  staged): no restart. `Form.same`, `extension.verify_overlay` and `Form(overlay, snapshot, players)` stay as they
+  were; `install_session` asks `take` before `start`. Only the page alone (it has none of a session's start-time
+  files), another seed, other start-time files (another release; a drop-in session's join overlays) or a file X4
+  holds open start X4 again. The lobby's X4 therefore waits with a kept host session of the kit in lobby form when the
+  kit has one (`LobbyBackend.default_form`), else the page alone.
+- **The first start goes straight into the game.** A first request that hosts or joins (the Steam helper's hand-over,
+  `x4ls host`, `x4ls join`) starts no X4 before its job installs the session; when the job fails before that, the
+  page is started to say why. A host whose kit has no session for that many players makes it beside the X4 that is
+  open (the page; the capture is a second X4, `X4LS_BESIDE=1`, without the focus) when this PC has
+  `netkit.BESIDE_FREE_GIB` (6) GB of memory free, else (or when the capture beside failed) with that X4 closed, the
+  page saying so first; with no X4 open yet the session is made before X4 starts. A joiner marks itself ready at the
+  master (or the LAN host) only after its X4 runs the session (a ready player may be started at once, and the load is
+  20 to 30 s later). The page never sends READY; the request is accepted and resent.
 - **START waits for every slot of the common load.** A session of N players needs N clients at the common load (the
   relay's barrier and the overlay are made for N), so the host starts the game at the master once every slot is taken
   and ready (START before that only says so). Fewer players: host a game for fewer, or with drop-in slots (the next
@@ -660,7 +714,128 @@ in-session page for a drop-in joiner (its X4 is hot_join's, without the netplay 
 (`can_ready`); the in-session page's requests from a Steam-started X4 while the game runs (ignored); the host's LEAVE
 keeps its relay running for the others until the session ends.
 
+## Restarts (25 Nov)
+
+From X4's Multiplayer button to being in the game, the player's X4 restarts once from a Steam-started X4 (its profile
+is the player's own, where no session may run) and not at all from an X4 already in the multiplayer profile. Counted
+from the log rows of one press (`netkit.count_restarts`; `tools/dev/netplay_live_check.py restarts LOG...`): every
+`X4 RESTART` row (an X4 the player looked at closed so that another could start: the helper's when the Steam-started
+X4 closed, the lobby's when it ends a running X4) and every `X4 SESSION MADE alone` row (a session made while none of
+the player's X4s was open: its capture X4 came and went in that gap). `X4 SESSION MADE beside` (the page stayed and
+showed the progress) does not count.
+
+| Flow | rk16 (4fdb7772) | now |
+|---|---|---|
+| Steam X4, Host, the kit has the session | 1 | 1 |
+| Steam X4, Host, no session yet | 2: X4 vanished for about 2 minutes without a word, then the session's X4 | 1: the page shows "Preparing a new game for N players: about 2 minutes", the capture runs beside it, then X4 restarts once |
+| ... without 6 GB free for a second X4 | 2 (silent) | 2, announced: the page says why and how long, X4 closes after 8 s, a Windows message box stands in while the session is made, X4 starts by itself |
+| Steam X4, Join | 2: the page X4 in the multiplayer profile first, then X4 again with the session | 1: downloaded and built while the Steam X4 shows the progress, then one restart; a join that cannot work is said there, no restart |
+| X4 in the multiplayer profile (x4ls lobby, "X4 Online (play)", "(second window)"), Host with the session, or Join | 1 (the page X4 always started again with the session) | 0 when it waits with a kept session (a release with ready-made sessions, or one made here before), else 1 |
+| ... Host, no session yet | 2 (the page X4 closed while the session was made, then started again) | as the row above: the session is made beside the page, which shows the progress |
+
+Build a release kit with ready-made sessions on a PC with X4 and Steam (one capture X4, below normal priority; take a
+slot of `C:/x4ls-locks` first):
+
+```
+py -3.12 tools/make_release_kit.py --gate-dll <x4lan_gate_64.dll> --out <kit> --master <URL> \
+    --python-embed python-3.12.10-embed-amd64.zip --prebuild-sessions 2,3,4 --lanes <own lanes folder>
+py -3.12 tools/make_playtest_msi.py --kit <kit> --out <X4-Online.msi>
+```
+
+or, with the sessions an earlier build of the same gate DLL and code made: `--sessions <earlier kit>/sessions`.
+
+## Zero restarts (26 Nov)
+
+A session must never run in the player's own profile: it would load the gate and the session scripts into their
+single-player game, and its autosaves and settings would land there. So every multiplayer path starts X4 in its
+multiplayer profile, on the Multiplayer page, with a kept session's files (`LobbyBackend.default_form`), and takes the
+hosted or joined game in place. A Steam-started X4 (the player's own profile) keeps its one restart.
+
+**Where X4 Online starts** (all `helper.pyw --play`: X4 in its multiplayer profile on the Multiplayer page, the helper
+started first when none runs):
+- the desktop shortcut "X4 Online" and the Start menu's "X4 Online (play)" (the installer);
+- the Steam library entry "X4 Online", a non-Steam game shortcut (`steamlib.py`, `userdata/<id>/config/shortcuts.vdf`).
+  Steam reads that file at its start and writes it while it runs and when it exits, so the helper adds the entry, for
+  every Steam user of the PC, at the first moment Steam is closed (every 10 s it looks; idempotent: the same name and
+  program is updated, never doubled). Its program is the kit's `pythonw.exe`, its options `"<kit>\helper.pyw" --play`,
+  the overlay allowed, X4's own icon. X4 started that way gets Steam's app id from the launcher
+  (`steam.client_environment`: `SteamAppId=392160`), as every launcher client does;
+- the last step of an install: Explorer opens the installed shortcut "X4 Online (first start)" (`--play --first`), so
+  that neither the launcher nor X4 is a child of the installer (the redirection guard); nothing opens when an X4 runs
+  already, and nothing on an uninstall;
+- Steam's own Play, when the player turns on **"Steam's Play starts X4 Online"** on the Multiplayer page (off by default:
+  an install never changes how someone's Steam starts X4 by itself). X4's launch options (app 392160,
+  `userdata/<id>/config/localconfig.vdf`) become `"<kit>\python\pythonw.exe" "<kit>\helper.pyw" --steam-play %command%`:
+  Steam runs the launcher with its own command line, X4 opens in the multiplayer profile, and the page's **Single-player**
+  ends that X4 and starts X4 with Steam's command line as it was (the player's own profile: one restart, for single-player
+  only). The launcher stays while either X4 runs, so Steam counts X4 as running. The options are written only while Steam
+  is closed (it writes that file at its exit): the helper does it at the next such moment, or the Steam X4's page offers
+  Restart Steam (X4 closes, `steam.exe -shutdown`, the file written, Steam started again). The options X4 had before are
+  kept (`repo/.local/steam.json`) and put back exactly when the switch goes off or on uninstall, also "none"; options the
+  player changed since stay the player's. Both files are read and written whole and atomically, Steam's own layout kept
+  byte for byte (a copy of each as it was is kept once as `<name>.x4online-backup`). Only an installed kit (its
+  manifest and helper.pyw) touches Steam; a checkout and a test's kit never do.
+
+**What still forces X4 to start again** (`netlobby.in_place_refusal`, `LobbyGame.take_join`):
+- the page alone: an X4 that started with none of a session's files. Its extension then lacks the md/, aiscripts/ and
+  libraries/ files X4 indexes at its start. A kit has a kept session once it shipped one, made one or joined a game
+  (`netkit.joined_sessions` counts since 26 Nov), so this is the first start of a kit that has none;
+- another seed: X4's `-seed:` is on its command line. Every session x4ls new-session makes has 276944566, and so does
+  a game continued from its milestones;
+- other start-time files: another release (it cannot play with this one anyway), a session with start stories (its
+  patches of stock extensions and content.xml's dependencies) or plot copies (md made from `md-copies.json`);
+- a file X4 holds open (a loaded DLL): only after a session ran, and a lobby ends with its session;
+- a drop-in join that is not an early join (more than one candidate slot, or a session without a seed in its recipe).
+
+Drop-in sessions had one more start-time file, `md/native_gate_join_shipyards.xml`. Since 26 Nov every play overlay
+carries it (`build_native_gate_overlay.py`; its cues act only on the probe's join events), so a session, a drop-in
+session and an early joiner's overlay of one release have the same start-time files (checked offline). A drop-in joiner
+is then played by the X4 that waits on the page (`netlobby.InPlaceJoin`, `session.join_running`): the joiner's overlay and
+config go into its extension, the page runs them, the probe waits in the start menu for the join save and package
+(`hotjoin.EarlyJoin`, the log `x4ls-c<lane>.log`), no X4 starts. When it cannot (`session.NotInPlace`, before anything
+was asked of the relay), the page X4 closes and the hot join starts its own as before.
+
+| Flow | rk17 (e405ea7c) | now |
+|---|---|---|
+| "X4 Online" (desktop, Start menu, Steam library), Host or Join, the kit has a kept session | 0 (Start menu "(play)" only; no desktop shortcut, no Steam entry) | 0 |
+| ... Host with drop-in slots | 1 (its start-time files differed) | 0 |
+| ... Join a drop-in slot | 1 (the page X4 closed for the hot join's own) | 0 |
+| ... the kit has no session at all (a CI release, nothing hosted or joined yet) | 1 | 1, then 0 (a joined game counts) |
+| Steam's Play, the switch off (default), Host or Join from its Multiplayer page | 1 | 1; the first notice says that X4 Online skips it |
+| Steam's Play, the switch on | - | 0 (X4 opens in the multiplayer profile); Single-player 1 |
+| The installer | - | X4 opens on the Multiplayer page when it finishes (then 0) |
+
+**Uninstall** (not an upgrade: MSI `UPGRADINGPRODUCTCODE` unset): `helper.pyw --remove --uninstall` takes the library
+entry out, puts X4's launch options back (Steam is closed first when they are X4 Online's, so that it does not write
+them back at its exit), and removes the game views in `<game drive>\x4ls-lanes` with the launcher's own
+`game.remove_view` (links unlinked, never entered; a view an X4 runs from stays). The desktop and Start menu shortcuts
+go with the installer's files. An upgrade only stops the old helper, so the switch and the library entry stay.
+
+**Release notes text:** Install the MSI: X4 opens on the Multiplayer page when the installer finishes. Later, start it
+from the "X4 Online" icon (desktop, Start menu) or the "X4 Online" entry in your Steam library: hosting and joining
+there need no restart. X4's own Play in Steam starts your single-player game as always; its Multiplayer page still
+works (X4 restarts once into the game), and the page's "Steam's Play starts X4 Online" makes Play open X4 Online
+instead (Single-player is then one click on that page).
+
+Not yet run live (26 Nov: the user's test of rk17 held every X4 slot): the Steam library entry and the launch options
+on a real Steam (DRM, the overlay, cloud saves: X4 runs with Steam's app id in its multiplayer profile, which Steam Cloud
+does not sync, and the player's own profile is not touched), the installer's last step, the uninstall, and a drop-in
+join played in place. Unit tests cover them on copies of Steam's files and with fakes for X4 and the relay.
+
 ## Live runs
+
+**25 Nov evening, the one-restart branch (kit from 32843550, gate 3fe464b7, a master on 127.0.0.1, two disposable
+profiles on one PC):** `x4ls host --players 2 --public` with no session in the kit made it before X4 started (`X4
+SESSION MADE alone`, counted 1) and started X4 once with it; a second host found it and started X4 once (0). A
+lobby in the multiplayer profile (`x4ls lobby --show`) waited with that kept session's files, browsed, logged
+`BROWSE: 1 public game(s) [live check]` and its page noted `GAMES public=1 lan=1`. `x4ls lobby --page-first --request
+JOINCODE|<code>` then joined from that page: it downloaded the session and built the overlay, and its X4 took it in place
+(`takes the session overlay in place`, no `X4 RESTART` row, 0 restarts). Both loaded at the common second, and the
+relay counted 2,387 ticks with 0 mismatches and 0 clock splits; both runs ended `played` with 0 errors. Found on the
+way: a capture made alone on a PC where other sessions' X4s run needs `X4LS_BESIDE=1` (`X4 is running; close it
+first`). The probe's own text failed the shipped-session path check, which now skips the kit's own Lua.
+Not run live: the Steam path (the helper and an X4 in the player's own profile), a capture beside an open X4, and the
+low-memory notice. They are covered by unit tests only.
 
 **23 Nov, first netplay game (release kit rk1 = c48f0e43e6f1-c44872287221, the master on a VPS behind nginx/TLS):**
 the desktop PC ran `x4ls host --players 2 --public` from the release kit: no session yet, so X4 closed, `x4ls new-session`

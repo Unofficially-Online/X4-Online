@@ -256,6 +256,59 @@ class HostSessions(unittest.TestCase):
             netkit.make_session(self.kit, 2, log=lambda text: None, popen=self.popen([], code=1))
         self.assertEqual(list(self.kit.sessions.iterdir()), [])
 
+    def test_beside_an_open_x4_the_capture_is_told_so_and_takes_no_focus(self):
+        calls, logs, options = [], [], []
+        proc = self.popen(calls)
+
+        def popen(command, **kwargs):
+            options.append(kwargs)
+            return proc(command, **kwargs)
+        netkit.make_session(self.kit, 3, log=logs.append, popen=popen, beside=True)
+        self.assertIn('--no-focus', calls[0])
+        self.assertEqual(options[0]['env']['X4LS_BESIDE'], '1')
+        self.assertTrue(logs[0].startswith(netkit.SESSION_BESIDE_MARK))
+        self.assertEqual(netkit.count_restarts('\n'.join(logs)), 0)      # the player's X4 stayed: no restart
+        netkit.make_session(self.kit, 2, log=logs.append, popen=popen)     # alone: no X4 of the player's was open
+        self.assertNotIn('--no-focus', calls[1])
+        self.assertNotIn('env', options[1])
+        self.assertEqual(netkit.count_restarts('\n'.join(logs)), 1)
+
+    def test_a_kept_session_names_no_path_of_this_pc(self):
+        files = netkit.make_session(self.kit, 2, log=lambda text: None, popen=self.popen([]))
+        folder = files.overlay.parent
+        self.assertEqual(json.loads((folder / 'session.json').read_text())['snapshot']['path'], netkit.SESSION_SAVE)
+        self.assertEqual(files.recipe['session']['snapshot']['path'], netkit.SESSION_SAVE)
+        self.assertEqual(netkit.portable_session(folder), [])              # once is enough
+        self.assertEqual(list(netkit.host_sessions(self.kit)), [folder.name])
+
+    def test_two_x4s_need_free_memory(self):
+        self.assertTrue(netkit.beside_fits(6, status=lambda: 7 << 30))
+        self.assertFalse(netkit.beside_fits(6, status=lambda: 5 << 30))
+        self.assertTrue(netkit.beside_fits(6, status=lambda: None))       # unknown: tried (a failure falls back)
+        command = netkit.new_session_command(self.kit, 2, 'coop', 'x', Path('out'), focus=False, display=3)
+        self.assertEqual(command[-3:], ['--no-focus', '--display', '3'])
+
+
+class ShippedSessions(unittest.TestCase):
+    def test_a_session_as_a_release_ships_it(self):
+        folder = fakes.Folder()
+        try:
+            kit = netkit.Kit(fakes.release_kit(folder.path / 'kit'))
+            made = fakes.host_session(kit.root, 3, work_path='C:\\Users\\someone\\x\\session-save.xml.gz')
+            shipped = netkit.ship_session(made, folder.path / 'out' / made.name)
+            self.assertEqual(sorted(p.name for p in shipped.iterdir()), ['overlay', 'session-save.xml.gz', 'session.json',
+                                                                         'spec.json'])
+            for name in ('session.json', 'overlay/session.json', 'overlay/play-recipe.json'):
+                self.assertNotIn('someone', (shipped / name).read_text())
+            from lockstep.launcher import extension
+            extension.verify_overlay(shipped / 'overlay')                  # its manifest follows the rewritten files
+            with self.assertRaises(netkit.KitError):
+                netkit.ship_session(made, shipped)                         # never over another
+            with self.assertRaises(netkit.KitError):
+                netkit.ship_session(folder.path / 'kit', folder.path / 'out' / 'x')   # not a session folder
+        finally:
+            folder.cleanup()
+
 
 if __name__ == '__main__':
     unittest.main()

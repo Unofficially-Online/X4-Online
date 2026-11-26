@@ -39,7 +39,11 @@ GAME_ID = re.compile(r'[A-Za-z0-9_-]{1,64}')
 HEX32 = re.compile(r'[0-9a-f]{32}')
 # Requests without fields. JOIN takes the code from the clipboard; HOST alone is the older page's Host (the kit's own
 # session, an invite code); JOIN<k> is a kit server's start picker (lobby.py, steamplay.py).
-SIMPLE_REQUESTS = ('BROWSE', 'START', 'READY', 'CANCEL', 'COPY', 'LEAVE', 'JOIN', 'HOST', 'FIREWALL')
+SIMPLE_REQUESTS = ('BROWSE', 'START', 'READY', 'CANCEL', 'COPY', 'LEAVE', 'JOIN', 'HOST', 'FIREWALL', 'SINGLEPLAYER',
+                   'STEAMRESTART')
+# Requests about how this PC's Steam starts X4 (steamlib.py): STEAMPLAY|1 / STEAMPLAY|0 (the page's switch "Steam's Play
+# starts X4 Online"), STEAMRESTART (Steam closes and starts again, so the switch takes effect now), SINGLEPLAYER (X4
+# started by Steam's Play through X4 Online starts again in the player's own profile, for single-player).
 JOIN_KINDS = ('JOIN', 'JOINCODE', 'JOINGAME', 'JOINLAN')
 # What an 8-character join code looks like (NETPLAY.md: XXXX-XXXX, case and dash insensitive). Text of this shape that
 # nat.normalize_code refuses is a mistyped code, not a host name.
@@ -61,6 +65,7 @@ class Request:
     game_id: str = ''       # JOINGAME
     index: int = 0          # JOINLAN: the row of the state's lan list, from 1
     slot: int = 0           # JOINSLOT (the page sends JOIN<k>): a start of a kit server's running game
+    on: bool = False        # STEAMPLAY: the switch's new value
 
     @property
     def joins(self):
@@ -130,6 +135,10 @@ def parse_request(text):
         if not GAME_ID.fullmatch(game_id):
             return None
         return Request('JOINGAME', game_id=game_id)
+    if kind == 'STEAMPLAY':
+        if fields.strip() not in ('0', '1'):
+            return None
+        return Request('STEAMPLAY', on=fields.strip() == '1')
     if kind == 'JOINLAN':
         index_text = fields.strip()
         if not index_text.isdigit() or not 1 <= int(index_text) <= LAN_SHOWN_MAX:
@@ -152,6 +161,8 @@ def request_text(request):
         return f'JOINLAN|{request.index}'
     if request.kind == 'JOINSLOT':
         return f'JOIN{request.slot}'
+    if request.kind == 'STEAMPLAY':
+        return f'STEAMPLAY|{1 if request.on else 0}'
     return request.kind
 
 
@@ -247,11 +258,12 @@ class State:
         self.phase = 'idle'
         self.lines = ()
         self.fields = {}
+        self.sticky = {}   # fields every state carries (the Steam switch), whatever phase sets the others
 
     def set(self, phase, lines, **fields):
-        """A new phase and lines; fields replace the earlier ones."""
+        """A new phase and lines; fields replace the earlier ones (the sticky ones stay, unless named)."""
         lines = tuple(str(line)[:LINE_MAX_CHARS] for line in lines if line is not None)[:LINES_MAX]
-        fields = clean_value(fields)
+        fields = clean_value({**self.sticky, **fields})
         with self.lock:
             if (phase, lines, fields) == (self.phase, self.lines, self.fields):
                 return
@@ -273,6 +285,16 @@ class State:
                 return
             self.stamp += 1
             self.fields = merged
+
+    def stick(self, **fields):
+        """Fields every state carries from now on (None takes one away), and into the state now."""
+        with self.lock:
+            for key, value in fields.items():
+                if value is None:
+                    self.sticky.pop(key, None)
+                else:
+                    self.sticky[key] = clean_value(value)
+        self.update(**fields)
 
     def view(self):
         """(stamp, phase, lines, fields) as they are now."""
@@ -370,6 +392,7 @@ class Cancelled(Exception):
 
 COMMAND_POLL_S = 0.1   # how often a job waiting for a request looks at its queue and its cancel
 LOADING_POLL_S = 0.2
+RESTART_NOTICE_S = 4   # the page shows why X4 closes this long before it quits (state field quit_after)
 
 
 # ---- jobs ----
@@ -502,10 +525,15 @@ class BrowseJob(Job):
         # a LAN scan listens for broadcasts: inbound, which Windows Firewall blocks for a program it has no rule for
         # (the laptop heard nothing with the release's own python.exe, 23 Nov); asked once per BROWSE job
         blocked = firewall_allowed() is False
+        logged = None
         while True:
             games = self.public_games(master)
             lan = self.lan_games()
             self.flow.listing = {'games': games, 'lan': lan}
+            listed = listing_line(games, lan, self.config.release)
+            if listed != logged:   # what the page is given to draw, once per change (the page notes what it drew)
+                logged = listed
+                self.flow.log(listed)
             lines = [f'{len(games)} public game(s), {len(lan)} on the local network.']
             if master_note:
                 lines.append(master_note)
@@ -536,6 +564,19 @@ class BrowseJob(Job):
             self.flow.log(f'netplay: no LAN scan: {error}')
             return []
         return [entry for entry in found if isinstance(entry, dict)][:LAN_SHOWN_MAX]
+
+
+def listing_line(games, lan, release):
+    """The browse's log row: how many games the state carries and their names (and which are of another release)."""
+    def other(row):
+        compatible = row.get('compatible')
+        return compatible is False or (compatible is None and row.get('release') not in (None, release))
+
+    def names(rows):
+        return ', '.join(clean_name(row.get('name') or '?') + (' (another release)' if other(row) else '')
+                         for row in rows[:8]) + (', ...' if len(rows) > 8 else '')
+    return (f'netplay: BROWSE: {len(games)} public game(s)' + (f' [{names(games)}]' if games else '')
+            + f', {len(lan)} on the LAN' + (f' [{names(lan)}]' if lan else '') + ' in the state')
 
 
 def game_row(game, release):
@@ -713,11 +754,13 @@ class Flow:
         self.job = None
         self.starts = queue.Queue()
         self.handover = None              # the Steam helper: the request X4 is started again for (backend.restart_for)
+        self.handover_before = None       # ... and what runs once that X4 has closed (hand_over_ready's before_start)
         self.listing = {'games': [], 'lan': []}   # the last browse: what JOINGAME and JOINLAN name
         self.copy_text = ''               # what COPY puts on the clipboard (a join code or an invite code)
         self.session_over = threading.Event()
         self.session_started = threading.Event()   # the backend wrote the session's config: the page may run it
         self.session_info = {}            # the backend's view of the running session (run folder, tick)
+        self.refresh_steam()
         self.idle()
 
     def idle(self, *lines):
@@ -746,6 +789,9 @@ class Flow:
         if request.kind == 'FIREWALL':
             self.allow_firewall()
             return
+        if request.kind in ('STEAMPLAY', 'STEAMRESTART', 'SINGLEPLAYER'):
+            self.steam_request(request, job)
+            return
         if request.kind == 'CANCEL' and job is not None and self.state.phase in ('loading', 'session'):
             # the start is out and the others load: this player leaves, the game is not taken away from them
             job.commands.put(Request('LEAVE'))
@@ -769,7 +815,18 @@ class Flow:
             self.state.set('error', ('Choosing a start of a running game needs a kit with a server.',))
             return
         if self.backend.restart_for(request):
-            self.hand_over(request)
+            # The Steam helper: what X4 needs once it starts again (the session made or found, a joiner's download and
+            # overlay) is readied first while this X4 stays on the page (a job of the backend's), so that the restart
+            # goes straight into the game; a backend without such a job hands over at once.
+            make = getattr(self.backend, 'handover_job', None)
+            job_class = make(request) if callable(make) else None
+            if job_class is None:
+                self.hand_over(request)
+                return
+            self.state.set('preparing', ('Getting the game ready...',))
+            job = job_class(self, request)
+            self.job = job
+            job.start()
             return
         # The first phase at once: the answer to a pipe's open is the state right after the request. The job is the
         # flow's before its thread runs, or what it shows first would not count as its own (Job.current).
@@ -801,13 +858,31 @@ class Flow:
             text = plan_text(plan)
             what = 'It joins the game there.'
         self.handover = text
-        self.state.set('restart', ('X4 closes now and comes back in a moment, in its multiplayer profile.', what))
+        self.state.set('restart', ('X4 closes now and comes back in a moment, in its multiplayer profile.', what),
+                       quit_after=RESTART_NOTICE_S)
+
+    def hand_over_ready(self, job, text, lines, quit_after=None, before_start=None):
+        """A hand-over job is done: X4 quits (after quit_after seconds of the lines) and starts again with text as its
+        request; before_start runs once that X4 has closed (a session made without it). Nothing happens when the job is
+        not the flow's any more (cancelled)."""
+        with self.lock:
+            if self.job is not job or job.cancelled.is_set():
+                return False
+            self.handover = text
+            self.handover_before = before_start
+            self.state.set('restart', lines, quit_after=quit_after or RESTART_NOTICE_S)
+            return True
 
     def take_handover(self):
+        return self.take_handover_with()[0]
+
+    def take_handover_with(self):
+        """(the request X4 starts again for or None, what runs once X4 has closed or None)."""
         with self.lock:
-            text = self.handover
+            text, before = self.handover, getattr(self, 'handover_before', None)
             self.handover = None
-            return text
+            self.handover_before = None
+            return text, (before if text else None)
 
     def join_plan(self, request):
         """What a join request names: ('game', game id, listed game or None), ('target', JoinTarget, LAN entry or None),
@@ -858,6 +933,28 @@ class Flow:
             self.log(f'netplay: FIREWALL: not allowed (ShellExecute {started})')
             self.note('Windows Firewall was not changed: the game goes on through the server\'s relay.')
 
+    def steam_request(self, request, job):
+        """STEAMPLAY, STEAMRESTART and SINGLEPLAYER: the backend's (steam_play, restart_steam, single_player); a
+        backend without them says so. Not while a game is hosted or joined."""
+        if job is not None and not job.replaceable:
+            self.log(f'netplay: {request.kind} while a game is being hosted or joined: Cancel first')
+            return
+        name = {'STEAMPLAY': 'steam_play', 'STEAMRESTART': 'restart_steam', 'SINGLEPLAYER': 'single_player'}[request.kind]
+        action = getattr(self.backend, name, None)
+        if not callable(action):
+            self.note('This X4 cannot do that here.')
+            return
+        line = action(request.on) if request.kind == 'STEAMPLAY' else action()
+        self.refresh_steam()
+        if line:
+            self.note(line)
+
+    def refresh_steam(self):
+        """The page's Steam switch (state field steam_play: on, pending, steam_running), from the backend."""
+        view = getattr(self.backend, 'steam_view', None)
+        value = view() if callable(view) else None
+        self.state.stick(steam_play=value if isinstance(value, dict) else None)
+
     def note(self, line):
         """One more line under the page's current lines (the phase and the rest of the state stay)."""
         _stamp, phase, lines, fields = self.state.view()
@@ -869,6 +966,7 @@ class Flow:
         job = self.job
         self.job = None
         self.handover = None
+        self.handover_before = None
         if job is not None:
             job.cancel()
         self.copy_text = ''
@@ -882,7 +980,7 @@ class Flow:
 
     def ended(self, job):
         with self.lock:
-            if self.job is job and self.state.phase not in ('error', 'session', 'loading'):
+            if self.job is job and self.state.phase not in ('error', 'session', 'loading', 'restart'):
                 self.job = None
                 self.idle()
 

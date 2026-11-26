@@ -227,6 +227,11 @@ def main(argv=None):
     lb.add_argument('--server-file', type=Path, metavar='server.json',
                     help="a kit's server (make_playtest_kit.py --server): the page has Join only, x4ls serve runs the relay")
     lb.add_argument('--show', action='store_true', help='test: the Multiplayer page opens by itself')
+    lb.add_argument('--single-player-mark', type=Path, metavar='FILE',
+                    help="helper.pyw --steam-play: the page offers Single-player, which writes FILE and ends the lobby")
+    lb.add_argument('--page-first', action='store_true',
+                    help='test: with --request HOST or a join, X4 opens on the Multiplayer page first and takes the '
+                         'session in place (no restart; netlobby.LobbyGame.take), as a click on that page would')
     lb.add_argument('--auto', default='', metavar='host|join|start|CODE',
                     help='test: host, join the server, take the first free start of its running game, or join with this '
                          'invite code, without a click in the menu')
@@ -439,7 +444,8 @@ def main(argv=None):
                                               lobby_timeout=args.lobby_timeout, auto=args.auto, show=args.show,
                                               server_file=args.server_file, kit=args.kit, master=args.master,
                                               no_master=args.no_master, request=args.request, state_mirror=args.state_mirror,
-                                              base_start=args.base_start, mode=args.mode))
+                                              base_start=args.base_start, mode=args.mode, page_first=args.page_first,
+                                              single_player_mark=args.single_player_mark))
         print(json.dumps(result, indent=2, default=str))
         return 0 if result['outcome'] in ('played', 'closed') else 1
     if args.command == 'join' and args.starts:

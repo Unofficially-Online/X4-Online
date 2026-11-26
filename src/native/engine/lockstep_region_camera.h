@@ -1205,12 +1205,24 @@ static rc_shape_update_fn rc_shape_update_native;     /* tests only: replaces 0x
 static rc_shape_interval_fn rc_shape_interval_native; /* tests only: replaces 0xc2810 */
 static rc_shape_macro_fn rc_shape_macro_native;       /* tests only: replaces 0x7ad890 */
 static rc_shape_rand_fn rc_shape_rand_native;         /* tests only: replaces Random::FloatState 0x14ddc90 */
+/* A body record pointer of an object's +0x260/+0x268 pair: aligned and in the user address range. Not every owner
+ * Body_UpdateShape passes has the pair there (for one in the cadet start the read through +0x268 faulted at
+ * 0xff0100001f on one client, 0x1ff8900001f on the other: no pointer), and reading through such a word took a first-chance exception in read_local's guard
+ * at ticks 300/301 and 330/332 of every session (CRASH_FIRST_CHANCE_GATE). A word that cannot be read never matched a
+ * holder, so the key is the same as before. */
+static int rc_shape_record_ok(const unsigned char *record) {
+    const uintptr_t p=(uintptr_t)record;
+    return p>=0x10000u && p<(uintptr_t)0x7fffffff0000ULL && !(p&7u);
+}
 /* The table key of one body record of an object: the object key and the record (0: the holder of the object's
  * +0x260 record, 1: of +0x268, 2: another), mixed; never 0 (an empty slot). */
 static uint64_t rc_shape_record_key(uint64_t key,const unsigned char *owner,const void *holder) {
     unsigned which=2;unsigned char *records[2]={NULL,NULL};
     if(owner && read_local(owner+0x260,records,16))
-        for(unsigned i=0;i<2 && which==2;i++) {void *h=NULL;if(records[i] && read_local(records[i]+0x20,&h,8) && h==holder) which=i;}
+        for(unsigned i=0;i<2 && which==2;i++) {
+            void *h=NULL;
+            if(rc_shape_record_ok(records[i]) && read_local(records[i]+0x20,&h,8) && h==holder) which=i;
+        }
     const uint64_t k=lockstep_mix(key*4u+which);
     return k?k:1;
 }

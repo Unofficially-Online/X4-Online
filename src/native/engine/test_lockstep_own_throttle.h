@@ -229,23 +229,53 @@ static void test_othr_slot(unsigned slot) {
         assert(!othr_motion_path(slot%3+1,T,TTHR_DELAY,path));   /* another slot */
     }
     /* The speed: own_predict draws the ship 6 m/s slower than the simulation's forward speed while the wheel step above
-     * lowers the throttle (pending at T+1): the number follows; faster, against the throttle, or at a steady one it does not. */
+     * lowers the throttle (pending at T+1) and the ship slows down to the lowered setpoint's speed: the number follows, never
+     * past that speed; faster, against the throttle, or without an own input (a ship slowing down by itself after a travel
+     * stop, rel16) it does not. */
     {   const uint64_t T=TTHR_TICKS;opred_slot *p=&opred_slots[slot-1];p->ready=1;p->have_end=1;p->display_tick=T;
-        opred_entry *oe=&p->ring[T%OPRED_RING];oe->rates[2]=200.0;p->end_rates[2]=194.0;
-        tthr.v=200.0;tthr.boost=tthr.travel=tthr.travel_due=0;double out[5];
-        const double in[5]={200.0/300.0,tthr.desired,200.0,0,0};
+        othr_bank pb;double target=0.0;unsigned part=0;
+        assert(othr_predict(slot,T,TTHR_DELAY,&pb,&target,NULL,&part)==OTHR_ABSTAINS && target<(double)pb.s-1e-3);
+        const double v=floor(300.0*target)+15.0;   /* a whole number of m/s, about 15 above the target's speed */
+        opred_entry *oe=&p->ring[T%OPRED_RING];oe->rates[2]=v;p->end_rates[2]=v-6.0;
+        tthr.v=v;tthr.boost=tthr.travel=tthr.travel_due=0;double out[5];
+        const double in[5]={v/300.0,tthr.desired,v,0,0};
         assert(othr_slope_known[1] && fabs(othr_slope[1]-1.0/300.0)<1e-6);
-        assert(othr_speed(in,out) && out[2]==194.0 && fabs(out[0]-194.0/300.0)<1e-6 && out[1]<in[1]);
-        opred_entry *before=&p->ring[(T-1)%OPRED_RING];before->tick=T-1;before->valid=before->rates_valid=1;before->rates[2]=200.0;
-        p->display_tick=T-1;assert(othr_speed(in,out) && out[2]==194.0);   /* the HUD before this tick's own_predict step */
-        p->display_tick=T-2;assert(othr_speed(in,out) && out[2]==200.0);
-        p->display_tick=T;p->end_rates[2]=199.7;assert(othr_speed(in,out) && out[2]==200.0 && out[0]==in[0]);   /* noise */
-        p->end_rates[2]=206.6;assert(othr_speed(in,out) && out[2]==200.0 && out[0]==in[0]);   /* against the throttle */
-        p->end_rates[2]=193.4;assert(othr_speed(in,out) && out[2]==193.0);
-        memset(&pstk_locals[(T+1-TTHR_DELAY)%PSTK_RING],0,sizeof(pstk_local));   /* no input pending: a steady throttle */
-        assert(othr_speed(in,out) && out[2]==200.0 && out[0]==in[0]);                /* ...at a steady speed: none */
-        before->rates[2]=197.0;assert(othr_speed(in,out) && out[2]==200.0);           /* speeding up, drawn slower: none */
-        p->end_rates[2]=206.4;assert(othr_speed(in,out) && out[2]==206.0);            /* speeding up, drawn faster */
+        const uint64_t opened=othr_resp_opened;
+        assert(othr_speed(in,out) && out[2]==v-6.0 && fabs(out[0]-(v-6.0)/300.0)<1e-6 && out[1]<in[1]);
+        assert(othr_resp.active && othr_resp.target==target && othr_resp_opened==opened+1);
+        opred_entry *before=&p->ring[(T-1)%OPRED_RING];before->tick=T-1;before->valid=before->rates_valid=1;before->rates[2]=v;
+        p->display_tick=T-1;assert(othr_speed(in,out) && out[2]==v-6.0);   /* the HUD before this tick's own_predict step */
+        p->display_tick=T-2;assert(othr_speed(in,out) && out[2]==v);
+        p->display_tick=T;p->end_rates[2]=v-0.3;assert(othr_speed(in,out) && out[2]==v && out[0]==in[0]);   /* noise */
+        p->end_rates[2]=v+6.6;assert(othr_speed(in,out) && out[2]==v && out[0]==in[0]);   /* against the throttle */
+        p->end_rates[2]=v-6.6;assert(othr_speed(in,out) && out[2]==v-7.0);
+        p->end_rates[2]=v-45.0;   /* drawn past the target's speed: at it */
+        assert(othr_speed(in,out) && fabs(out[0]-target)<1e-9 && out[2]==v+nearbyint(300.0*target-v) && out[2]>v-45.0);
+        p->end_rates[2]=v-6.0;
+        {   /* travel (simulated or shown) or a travel speed: the simulation's number (and the response ends) */
+            double fast[5]={in[0],in[1],in[2],in[3],1.0};assert(othr_speed(fast,out) && out[2]==fast[2] && !othr_resp.active);
+            fast[4]=0.0;fast[2]=850.0;oe->rates[2]=850.0;p->end_rates[2]=840.0;assert(othr_speed(fast,out) && out[2]==850.0);
+            oe->rates[2]=v;p->end_rates[2]=v-6.0;
+            double boosting[5]={in[0],in[1],in[2],1.0,0.0};assert(othr_speed(boosting,out) && out[2]==v && !othr_resp.active);
+        }
+        assert(othr_speed(in,out) && out[2]==v-6.0 && othr_resp.active);   /* the pending input opens it again */
+        memset(&pstk_locals[(T+1-TTHR_DELAY)%PSTK_RING],0,sizeof(pstk_local));   /* the input never came (refused): */
+        assert(othr_speed(in,out) && out[2]==v && out[0]==in[0] && !othr_resp.active);   /* the simulation's number at once */
+        /* No own input: a ship slowing down by itself (a travel stop's end) drawn 26 m/s slower: the simulation's number. */
+        before->rates[2]=v+7.0;p->end_rates[2]=v-26.0;assert(othr_speed(in,out) && out[2]==v && out[0]==in[0]);
+        /* A response whose input the simulation applied (the setpoint at its target): the lead while the ship speeds up to
+         * it, also after the grace; not when it stops speeding up after the grace, nor at the target's speed. */
+        const double v2=floor(300.0*(double)pb.s)-30.0,in2[5]={v2/300.0,tthr.desired,v2,0,0};
+        oe->rates[2]=v2;before->rates[2]=v2-3.0;p->end_rates[2]=v2+6.0;
+        othr_resp.active=1;othr_resp.target=(double)pb.s;othr_resp.last=T;
+        assert(othr_speed(in2,out) && out[2]==v2+6.0 && othr_resp.active);
+        othr_resp.last=T-OTHR_RESP_GRACE-1;assert(othr_speed(in2,out) && out[2]==v2+6.0 && othr_resp.active);
+        before->rates[2]=v2;assert(othr_speed(in2,out) && out[2]==v2 && !othr_resp.active);   /* stalled */
+        othr_resp.active=1;othr_resp.last=T;before->rates[2]=v2-3.0;
+        const double at[5]={(double)pb.s-0.002,tthr.desired,300.0*(double)pb.s-0.6,0,0};
+        assert(othr_speed(at,out) && out[2]==at[2] && !othr_resp.active);                     /* reached */
+        othr_resp.active=1;othr_resp.last=T-OTHR_RESP_MAX-1;assert(othr_speed(in2,out) && out[2]==v2 && !othr_resp.active);   /* too long */
+        memset(&othr_resp,0,sizeof(othr_resp));
     }
     tthr_hook(slot);
     char status[2048];assert(othr_status(status,sizeof(status))>0 && strstr(status,"armed=1") && strstr(status," up=") && strstr(status," travel="));
@@ -317,11 +347,12 @@ static void test_othr_arming(void) {
     othr_smooth_samples=othr_motion_paths=othr_motion_refused=othr_motion_samples=UINT64_MAX;
     for(unsigned i=0;i<5;i++) othr_motion_why[i]=UINT64_MAX;othr_smooth_err=othr_motion_err=-1.234567e-300;
     othr_order[0]=othr_order[1]=othr_hook_calls=othr_hook_short=othr_hook_thread=UINT64_MAX;othr_hooked=othr_hook_restored=-1;
+    othr_resp_opened=othr_resp_led=UINT64_MAX;
     for(unsigned s=0;s<4;s++) othr_slope[s]=-1.234567e-300;
     char status[2048];const int n=othr_status(status,sizeof(status));assert(n>0);
     othr_last.valid=1;othr_last.tick=othr_prev_tick=UINT64_MAX-1;othr_last.s_sim=othr_last.s_shown=othr_last.t_sim=othr_last.t_shown=-1.2345e300;
     othr_last.actual_sim=othr_last.actual_shown=othr_last.mps_sim=othr_last.mps_shown=othr_last.dv=-1.2345e300;
-    othr_last.b_sim=othr_last.b_shown=othr_last.tr_sim=othr_last.tr_shown=INT_MIN;
+    othr_last.b_sim=othr_last.b_shown=othr_last.tr_sim=othr_last.tr_shown=INT_MIN;othr_last.resp=INT_MIN;othr_last.resp_target=-1.2345e300;
     othr_bank wide;memset(&wide,0,sizeof(wide));wide.s=wide.desired=wide.smoothed=-1.2345e30f;
     const int m=othr_row(&wide,-1,UINT64_MAX-1,row,sizeof(row));assert(m>0 && strstr(row," hud="));
     printf("own throttle worst-case status %d bytes (2048), row %d bytes (512)\n",n,m);

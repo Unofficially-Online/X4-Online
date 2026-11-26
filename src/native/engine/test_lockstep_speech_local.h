@@ -14,6 +14,10 @@ static unsigned char test_spl_queue(void *data,void *lines,int priority,unsigned
     return data && lines==(void*)(uintptr_t)2 && priority==-7 && interrupt==1 && recipient==(void*)(uintptr_t)5 && source==(void*)(uintptr_t)6 &&
         flags==0x8u && text==(void*)(uintptr_t)9;   /* every argument as it came */
 }
+static void *test_splend_data;static unsigned test_splend_calls,test_splend_flag;
+static void test_splend_stub(void *data,unsigned char interrupted) {test_splend_data=data;test_splend_flag=interrupted;++test_splend_calls;}   /* X4's 0x562590 */
+static void *test_cut_got;static unsigned test_cut_calls;
+static unsigned char test_cut_stub(void *data,int priority) {(void)priority;test_cut_got=data;++test_cut_calls;return 1;}   /* X4's 0x562ba0 */
 static void test_speech_local(void) {
     uint64_t saved_issued=stats.issued;DWORD saved_ui=ui_thread;uint32_t saved_active=stats.active,saved_slot=stats.slot;
     unsigned char *saved_p1=pslot_p1;pslot_slot saved=pslots[2];
@@ -86,7 +90,7 @@ static void test_speech_local(void) {
     /* A request to speak made in a player's own cue notes the speaker for that player: the lines its queue starts later, in
      * nobody's frame, are voiced on that player's client only. A request in nobody's frame leaves the note while the
      * speaker speaks and takes it away once it is silent; the readout's note is not a cue's. */
-    {   static unsigned char data[0x40];const uint64_t id=0x4242;const unsigned scope=pstk_scope_slot,depth=mpp_depth,depth1=mpp_depth1;
+    {   static unsigned char data[0x98];const uint64_t id=0x4242;const unsigned scope=pstk_scope_slot,depth=mpp_depth,depth1=mpp_depth1;
         memset(data,0,sizeof(data));memcpy(data+8,&id,8);memset(spl_speakers,0,sizeof(spl_speakers));spl_cues_noted=spl_cues_cleared=0;
         spl_next_original=test_spl_next;test_spl_next_seen=-1;
         assert(stats.slot==2 && spl_muted==1);
@@ -111,6 +115,24 @@ static void test_speech_local(void) {
          assert(spl_rows_text(rows,sizeof(rows))>0 && strstr(rows,"SPEECH_START tick=") && strstr(rows," owner=2 scope=2 state=") && strstr(rows," result=1 cue=") &&
                 strstr(rows,"SPEECH_REQUEST tick=") && !spl_rows_text(rows,sizeof(rows)));}
         spl_queue_original=NULL;
+        /* A line's end: its SPEECH_END row (the flag, the state, the line, the clock against its start), then X4's own. */
+        spl_finish_original=test_splend_stub;test_splend_calls=0;spl_finish_calls=0;
+        {const uint32_t index=1;const double start=65536.5,duration=2.6;memcpy(data+0x50,&index,4);memcpy(data+0x20,&start,8);memcpy(data+0x18,&duration,8);}
+        spl_finish(data,1);assert(test_splend_calls==1 && test_splend_data==data && test_splend_flag==1 && spl_finish_calls==1);
+        {static char rows[SPL_ROWS*420+16];
+         assert(spl_rows_text(rows,sizeof(rows))>0 && strstr(rows,"SPEECH_END tick=") && strstr(rows," speaker=4242 owner=2 ") &&
+                strstr(rows," interrupted=1 state=0 line=1/0 ") && strstr(rows," start=40f0000800000000 duration=4004cccccccccccd") && !spl_rows_text(rows,sizeof(rows)));}
+        spl_armed=0;spl_finish(data,0);assert(test_splend_calls==2 && !test_splend_flag && spl_finish_calls==1);spl_armed=1;   /* unarmed: X4's alone */
+        spl_finish_original=NULL;memset(data+0x18,0,0x40);
+        /* A duration that changes under the same start: one SPEECH_DUR row from the frame's scan. */
+        {static unsigned char node[0x28],header[0x28];static char rows[SPL_ROWS*420+16];
+         memset(node,0,sizeof(node));memset(header,0,sizeof(header));memset(spl_durs,0,sizeof(spl_durs));
+         *(unsigned char **)(node+0x20)=data;*(unsigned char **)node=header;*(unsigned char **)(header+8)=node;
+         const double start=65540.0,text=4.2,audio=2.833;memcpy(data+0x20,&start,8);memcpy(data+0x18,&text,8);
+         spl_dur_changes=0;spl_dur_scan(node,header);assert(!spl_dur_changes);
+         memcpy(data+0x18,&audio,8);spl_dur_scan(node,header);assert(spl_dur_changes==1);spl_dur_scan(node,header);assert(spl_dur_changes==1);
+         assert(spl_rows_text(rows,sizeof(rows))>0 && strstr(rows,"SPEECH_DUR tick=") && strstr(rows," old=4010cccccccccccd new=4006a9fbe76c8b44 ") && !spl_rows_text(rows,sizeof(rows)));
+         memset(data+0x18,0,0x40);memset(spl_durs,0,sizeof(spl_durs));}
         pstk_scope_slot=scope;mpp_depth=depth;mpp_depth1=depth1;spl_next_original=NULL;memset(spl_speakers,0,sizeof(spl_speakers));
     }
     /* A site that holds neither value: the speak timer's failure; nothing else moves. */
@@ -145,7 +167,42 @@ static void test_speech_local(void) {
         assert(spl_pick_in(A,header,1)==sds[0]);                                                     /* +0x61 counts only outside state 4 */
         {const uint32_t one=1;memcpy(sds[0]+0x10,&one,4);}assert(spl_pick_in(A,header,1)==sds[2]);
         memset(spl_started,0,sizeof(spl_started));spl_pick_hidden=0;}
-    printf("speech local decision, owned frames, site CAS, arm, failure and restore tests, subtitles PASS\n");
+    /* A request's cut of another line (spl_cut): of the lines X4's walk accepts, the requesting player's, the speaker with
+     * the lowest key; another player's line is never ended; without a request of ours X4's own first line. */
+    {   static _Alignas(16) unsigned char header[0x40],nodes[3][0x40],sds[4][0x80],lines[4][0x60];
+        unsigned char *const A=nodes[0],*const B=nodes[1],*const C=nodes[2];void *p;
+        memset(header,0,sizeof(header));memset(nodes,0,sizeof(nodes));memset(sds,0,sizeof(sds));
+        p=header;memcpy(B,&p,8);p=A;memcpy(B+8,&p,8);p=C;memcpy(B+0x10,&p,8);p=B;memcpy(A,&p,8);memcpy(C,&p,8);memcpy(header+8,&p,8);
+        const uint64_t ids[4]={0x5eec0003u,0x5eec0001u,0x5eec0002u,0x5eec0004u};   /* in address order: player 2's, slot 1's, player 2's */
+        for(unsigned i=0;i<4;i++) {
+            memcpy(sds[i]+8,&ids[i],8);const uint32_t state=4;memcpy(sds[i]+0x10,&state,4);
+            void *b=lines[i],*e=lines[i]+0x60;memcpy(sds[i]+0x38,&b,8);memcpy(sds[i]+0x40,&e,8);   /* two lines, the first now */
+            if(i<3) {p=sds[i];memcpy(nodes[i]+0x20,&p,8);}
+        }
+        memset(spl_speakers,0,sizeof(spl_speakers));
+        spl_speaker_note(ids[0],2,SPL_KIND_CUE);spl_speaker_note(ids[2],2,SPL_KIND_CUE);spl_speaker_note(ids[3],2,SPL_KIND_CUE);
+        const int saved_armed=spl_armed;const uint32_t saved_active2=stats.active;const DWORD saved_ui2=ui_thread;
+        spl_armed=1;stats.active=1;ui_thread=GetCurrentThreadId();spl_cut_begin=A;spl_cut_end=header;spl_cut_original=test_cut_stub;
+        spl_cut_calls=spl_cut_ended=spl_cut_none=spl_cut_plain=0;spl_rows_read=spl_rows_written;
+        spl_request_data=sds[3];spl_request_owner=2;test_cut_calls=0;
+        assert(spl_cut(sds[0],0x7fffffff)==1 && test_cut_calls==1 && test_cut_got==sds[2]);   /* player 2's lowest key, not X4's first */
+        spl_request_owner=1;assert(spl_cut(sds[0],0x7fffffff)==1 && test_cut_got==sds[1]);    /* an unnoted speaker is slot 1's */
+        spl_request_owner=3;test_cut_calls=0;assert(spl_cut(sds[0],0x7fffffff)==1 && !test_cut_calls && spl_cut_none==1);   /* nobody's of 3 */
+        spl_request_owner=2;{const uint32_t zero=0;memcpy(sds[2]+0x10,&zero,4);}
+        assert(spl_cut(sds[0],0x7fffffff)==1 && test_cut_got==sds[0]);                         /* no state: not a candidate */
+        {const uint32_t four=4,two=2;memcpy(sds[2]+0x10,&four,4);memcpy(sds[2]+0x50,&two,4);}
+        assert(spl_cut(sds[0],0x7fffffff)==1 && test_cut_got==sds[0]);                         /* no line left: neither */
+        {const uint32_t zero=0;memcpy(sds[2]+0x50,&zero,4);}sds[2][0x5e]=1;
+        assert(spl_cut(sds[0],0x7fffffff)==1 && test_cut_got==sds[0]);sds[2][0x5e]=0;          /* NPC to NPC: neither */
+        spl_request_data=sds[2];assert(spl_cut(sds[1],0x7fffffff)==1 && test_cut_got==sds[0]); /* never the requester itself */
+        spl_request_data=NULL;assert(spl_cut(sds[1],0x7fffffff)==1 && test_cut_got==sds[1] && spl_cut_plain==1);   /* not ours: X4's */
+        assert(spl_cut_calls==7 && spl_cut_ended==6 && spl_cut_none==1);
+        char cut_rows[SPL_ROWS*420];assert(spl_rows_text(cut_rows,sizeof(cut_rows))>0 && strstr(cut_rows,"SPEECH_CUT tick=") &&
+            strstr(cut_rows," owner=2 scope=0 first=5eec0003 ended=5eec0002 candidates=3 own=2") && strstr(cut_rows," ended=0 candidates=3 own=0"));
+        spl_cut_begin=spl_cut_end=NULL;spl_cut_original=NULL;spl_request_data=NULL;spl_request_owner=0;memset(spl_speakers,0,sizeof(spl_speakers));
+        spl_armed=saved_armed;stats.active=saved_active2;ui_thread=saved_ui2;spl_cut_calls=spl_cut_ended=spl_cut_none=spl_cut_plain=0;
+    }
+    printf("speech local decision, owned frames, site CAS, arm, failure and restore tests, subtitles, cuts PASS\n");
 }
 /* The subtitle picker against X4's image: as shipped it is pinned; one byte changed in it is refused. */
 static void test_speech_pick_native_image(const char *path) {
@@ -169,6 +226,18 @@ static void test_speech_pick_native_image(const char *path) {
     at[SPL_PICK+0x30]^=0x10;assert(!spl_pick_pins(at));at[SPL_PICK+0x30]^=0x10;
     at[SPL_PICK+1]^=0x01;assert(!spl_pick_pins(at));at[SPL_PICK+1]^=0x01;assert(spl_pick_pins(at));
     assert(((SPL_PICK+4u)&~15u)==(SPL_PICK&~15u));   /* the patched five bytes lie in one 16-byte block */
+    /* The request's cut (spl_cut): the walk, its successor block with the call, 0x562ba0 pinned; the call's target; the
+     * acceptance spl_cut_accepts restates, read from the walk's own bytes; ours at the site still passes, a change refuses. */
+    assert(spl_cut_pins(at) && ((SPL_CUT_SITE+4u)&~15u)==(SPL_CUT_SITE&~15u));   /* one 16-byte block for the CAS */
+    int32_t cut_rel=0;memcpy(&cut_rel,at+SPL_CUT_SITE+1,4);assert(at[SPL_CUT_SITE]==0xe8 && SPL_CUT_SITE+5u+(uint32_t)cut_rel==SPL_CUT);
+    assert(!memcmp(at+0x56220a,"\xba\xff\xff\xff\x7f\x49\x8b\xc9",8));                 /* mov edx,0x7fffffff; mov rcx,r9 */
+    assert(!memcmp(at+0x5620a1,"\x4d\x8b\x48\x20\x4d\x3b\xcd",7));                     /* r9 = node+0x20; the requester (r13) left out */
+    assert(!memcmp(at+0x5620aa,"\x41\x38\x79\x5e",4) && !memcmp(at+0x5620b0,"\x41\x39\x79\x10",4));   /* +0x5e clear, a state */
+    assert(!memcmp(at+0x5620b6,"\x49\x8b\x49\x40",4) && !memcmp(at+0x5620bd,"\x49\x2b\x49\x38",4) && !memcmp(at+0x5620d2,"\x41\x8b\x41\x50",4));
+    {unsigned char saved[5];memcpy(saved,at+SPL_CUT_SITE,5);at[SPL_CUT_SITE+1]^=0x55;assert(spl_cut_pins(at));memcpy(at+SPL_CUT_SITE,saved,5);}
+    at[SPL_CUT_WALK+0x10]^=0x01;assert(!spl_cut_pins(at));at[SPL_CUT_WALK+0x10]^=0x01;
+    at[SPL_CUT_NEXT+2]^=0x01;assert(!spl_cut_pins(at));at[SPL_CUT_NEXT+2]^=0x01;
+    at[SPL_CUT+0x20]^=0x01;assert(!spl_cut_pins(at));at[SPL_CUT+0x20]^=0x01;assert(spl_cut_pins(at));
     VirtualFree(at,0,MEM_RELEASE);
     printf("speech pick native image: the subtitle picker and its two set operands pinned; tests PASS\n");
 }

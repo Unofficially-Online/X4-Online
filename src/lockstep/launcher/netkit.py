@@ -10,6 +10,7 @@
 from dataclasses import dataclass
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 import shutil
@@ -40,6 +41,20 @@ TABLE_DEPTH_MAX = 2
 MINUTES_MAX = 600
 SESSION_MARKS = (('capture client pid', 0.15), ('saved: ', 0.7), (' play it with', 0.95))
 CAPTURE_TYPICAL_S = 180   # a capture's usual length (ns1: 2.5 minutes), for the progress between its marks
+SESSION_TIME_TEXT = 'about 2 minutes'   # what the page says a new session takes (rk16, 25 Nov: 1 min 55 s for 2 players)
+# The capture of a new session runs beside an X4 the player looks at (the Multiplayer page) when this PC has this much
+# memory free: two X4s, one in its start menu and one making a new game.
+BESIDE_FREE_GIB = 6
+# The log rows that count restarts (count_restarts): the player's X4 closed so that another could start, and a session
+# made while no X4 of the player's was open (its capture X4 came and went in the gap).
+RESTART_MARK = 'X4 RESTART'
+SESSION_ALONE_MARK = 'X4 SESSION MADE alone'
+SESSION_BESIDE_MARK = 'X4 SESSION MADE beside'
+# A session kept in a release kit (make_release_kit.py --sessions, --prebuild-sessions): these files and the overlay
+# folder, nothing of the PC that made it (no capture overlay, no base overlay, no logs, no paths).
+SHIPPED_FILES = (SESSION_JSON, SESSION_SAVE, 'spec.json')
+SHIPPED_FOLDER = 'overlay'
+OVERLAY_MANIFEST = 'x4lane-manifest.json'
 
 
 class KitError(SystemExit):
@@ -223,12 +238,15 @@ def cached_session(kit, players, mode=HOST_SESSION_MODE, base_start=HOST_SESSION
     return files
 
 
-def new_session_command(kit, players, mode, base_start, out, steam_fix=False, open_slots=(), game=None, lanes=None):
+def new_session_command(kit, players, mode, base_start, out, steam_fix=False, open_slots=(), game=None, lanes=None,
+                        focus=True, display=None, gate_dll=None):
     """x4ls new-session for a hosted game: every slot starts in the session start's own ship; open slots (drop-in) start
     absent and are joined while the game runs. game and lanes: the lobby's own (its capture view goes beside its lane,
-    not into the default lanes, where another session's capture may be)."""
+    not into the default lanes, where another session's capture may be). focus False: the capture's window never takes
+    the keyboard focus (it runs beside an X4 the player looks at); display: its monitor. gate_dll: another file than the
+    kit's own (make_release_kit.py, before the kit is written)."""
     command = [sys.executable, str(session.ROOT / 'tools' / 'x4ls.py'), 'new-session', '--base-start', base_start,
-               '--players', str(players), '--mode', mode, '--gate-dll', str(kit.gate_dll), '--out', str(out)]
+               '--players', str(players), '--mode', mode, '--gate-dll', str(gate_dll or kit.gate_dll), '--out', str(out)]
     if open_slots:
         command += ['--open', ','.join(map(str, sorted(open_slots)))]
     if game:
@@ -237,7 +255,52 @@ def new_session_command(kit, players, mode, base_start, out, steam_fix=False, op
         command += ['--lanes', str(lanes)]
     if steam_fix:
         command.append('--steam-fix')
+    if not focus:
+        command.append('--no-focus')
+    if display:
+        command += ['--display', str(int(display))]
     return command
+
+
+def beside_fits(free_gib=BESIDE_FREE_GIB, status=None):
+    """True when this PC has the memory for a session's capture X4 beside an X4 that is open now (free physical memory
+    at least free_gib). status: a test's stand-in for GlobalMemoryStatusEx ((available bytes) or None). Off Windows, or
+    when Windows cannot be asked: True (the capture is tried; a failed one is made again with the other X4 closed)."""
+    available = status() if status else available_memory()
+    if available is None:
+        return True
+    return available >= free_gib * (1 << 30)
+
+
+def available_memory():
+    """Free physical memory in bytes (GlobalMemoryStatusEx), or None."""
+    if sys.platform != 'win32':
+        return None
+    import ctypes
+
+    class MemoryStatus(ctypes.Structure):
+        _fields_ = [('length', ctypes.c_ulong), ('load', ctypes.c_ulong), ('total', ctypes.c_ulonglong),
+                    ('available', ctypes.c_ulonglong), ('total_page', ctypes.c_ulonglong),
+                    ('available_page', ctypes.c_ulonglong), ('total_virtual', ctypes.c_ulonglong),
+                    ('available_virtual', ctypes.c_ulonglong), ('available_extended', ctypes.c_ulonglong)]
+    status = MemoryStatus()
+    status.length = ctypes.sizeof(MemoryStatus)
+    try:
+        if not ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
+            return None
+    except (OSError, AttributeError):
+        return None
+    return int(status.available)
+
+
+def count_restarts(text):
+    """How often a player's X4 went away on the way into a game, from the log rows of one press (the helper's
+    helper.log, the lobby's launcher.log, or both joined): every RESTART_MARK row (an X4 the player looked at closed so
+    that another could start) and every SESSION_ALONE_MARK row (a session made while none of the player's X4s was open:
+    its capture X4 came and went in that gap). One restart is the least a Steam-started X4 needs (its profile is the
+    player's own); an X4 already in the multiplayer profile needs none."""
+    rows = str(text or '').splitlines()
+    return sum(1 for row in rows if RESTART_MARK in row or SESSION_ALONE_MARK in row)
 
 
 def milestone_key(kit, milestone, keep_flight=False):
@@ -298,23 +361,34 @@ def milestone_session(kit, milestone, players, open_slots=(), progress=None, log
 
 
 def make_session(kit, players, mode=HOST_SESSION_MODE, base_start=HOST_SESSION_START, progress=None, log=print,
-                 cancelled=None, popen=None, steam_fix=False, open_slots=(), game=None, lanes=None):
-    """Make the session to host (x4ls new-session: a capture client on the capture profile, so X4 must be closed) and
-    keep it in the kit's sessions/. progress(fraction) follows new-session's lines. Returns SessionFiles."""
+                 cancelled=None, popen=None, steam_fix=False, open_slots=(), game=None, lanes=None, beside=False,
+                 display=None):
+    """Make the session to host (x4ls new-session: a capture client on the capture profile) and keep it in the kit's
+    sessions/. progress(fraction) follows new-session's lines. Returns SessionFiles.
+    beside: an X4 the player looks at stays open meanwhile (the Multiplayer page, which shows the progress): the capture
+    is told so (X4LS_BESIDE=1) and its window never takes the keyboard focus. The caller frees that X4's instance mutex
+    first (a launcher client's is free once it reached its start menu; a Steam-started X4's: steamplay). Without beside,
+    no X4 of the player's runs: the capture then is the only X4 (SESSION_ALONE_MARK, a restart in count_restarts)."""
     if kit.gate_dll is None:
         raise KitError('this kit has no gate DLL (native/x4lan_gate_64.dll): it cannot make a session')
     key = host_session_key(kit, players, mode, base_start, open_slots)
     final = kit.sessions / key
     work = kit.sessions / f'{key}.new-{int(time.time())}'
     kit.sessions.mkdir(parents=True, exist_ok=True)
-    command = new_session_command(kit, players, mode, base_start, work, steam_fix, open_slots, game, lanes)
+    command = new_session_command(kit, players, mode, base_start, work, steam_fix, open_slots, game, lanes,
+                                  focus=not beside and display is None, display=display)
+    env = dict(os.environ, X4LS_BESIDE='1') if beside else None
+    log(f'{SESSION_BESIDE_MARK if beside else SESSION_ALONE_MARK}: {players} players'
+        + (f', drop-in slots {",".join(map(str, sorted(open_slots)))}' if open_slots else '')
+        + (' (the X4 the player looks at stays open)' if beside else ' (no X4 of the player is open meanwhile)'))
     log('netplay: making the session: ' + ' '.join(command[1:]))
     started = time.time()
     reached = 0.05
     tail = []
     popen = popen or subprocess.Popen   # looked up now, so that a test's patch of subprocess applies
+    options = {'env': env} if env is not None else {}
     proc = popen(command, cwd=session.ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
-                 encoding='utf-8', errors='replace')
+                 encoding='utf-8', errors='replace', **options)
     try:
         for line in proc.stdout:
             tail = (tail + [line.rstrip()])[-20:]
@@ -339,9 +413,123 @@ def make_session(kit, players, mode=HOST_SESSION_MODE, base_start=HOST_SESSION_S
     if final.exists():
         shutil.rmtree(final)
     work.rename(final)
+    portable_session(final)   # its files named the work folder, which is gone now
     if progress:
         progress(1.0)
     return session_of_overlay(final / 'overlay', final / SESSION_SAVE)
+
+
+# ---- a session as a release kit ships it ----
+def portable_snapshot(data):
+    """session.json's form without the path of the PC that made it: the save is named by its file name (beside
+    session.json, and beside the overlay folder). Returns (data, changed)."""
+    if not isinstance(data, dict) or not isinstance(data.get('snapshot'), dict):
+        return data, False
+    if data['snapshot'].get('path') == SESSION_SAVE:
+        return data, False
+    out = json.loads(json.dumps(data))
+    out['snapshot']['path'] = SESSION_SAVE
+    return out, True
+
+
+def write_session_json(path, data):
+    Path(path).write_text(json.dumps(data, indent=1, sort_keys=True) + '\n', encoding='utf-8')
+
+
+def portable_session(folder):
+    """A kept session (folder: session.json, the save, overlay/) without this PC's paths: session.json, the overlay's
+    session.json and its recipe's session name the save by its file name; the overlay's manifest follows the files that
+    changed. Nothing X4 reads changes (the recipe and session.json are the launcher's), and a session made since 24 Nov
+    named its work folder there, which make_session renames anyway. Returns the files rewritten."""
+    folder = Path(folder)
+    changed = []
+    for path in (folder / SESSION_JSON, folder / SHIPPED_FOLDER / SESSION_JSON):
+        if path.is_file():
+            data, rewritten = portable_snapshot(read_json(path))
+            if rewritten:
+                write_session_json(path, data)
+                changed.append(path)
+    recipe_path = folder / SHIPPED_FOLDER / RECIPE
+    if recipe_path.is_file():
+        recipe = read_json(recipe_path)
+        data, rewritten = portable_snapshot(recipe.get('session'))
+        if rewritten:
+            recipe['session'] = data
+            write_session_json(recipe_path, recipe)
+            changed.append(recipe_path)
+    manifest_path = folder / SHIPPED_FOLDER / OVERLAY_MANIFEST
+    if changed and manifest_path.is_file():
+        manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
+        for path in changed:
+            if path.parent == folder / SHIPPED_FOLDER and path.name in manifest:
+                manifest[path.name] = sha256_file(path)
+        manifest_path.write_text(json.dumps(manifest, indent=2) + '\n')   # as native_gate_scenarios.write_manifest
+    return changed
+
+
+def ship_session(source, target):
+    """A host session as a release kit holds it (make_release_kit.py): from the folder x4ls new-session made, only
+    SHIPPED_FILES and the overlay (no capture overlay, no base overlay), and portable_session's form. Returns target."""
+    source, target = Path(source), Path(target)
+    if target.exists():
+        raise KitError(f'{target} exists')
+    if not (source / SHIPPED_FOLDER / RECIPE).is_file() or not (source / SESSION_SAVE).is_file():
+        raise KitError(f'{source} is not a session folder (no overlay/{RECIPE} or {SESSION_SAVE})')
+    target.mkdir(parents=True)
+    for name in SHIPPED_FILES:
+        if (source / name).is_file():
+            shutil.copyfile(source / name, target / name)
+    shutil.copytree(source / SHIPPED_FOLDER, target / SHIPPED_FOLDER, ignore=shutil.ignore_patterns('__pycache__'))
+    portable_session(target)
+    return target
+
+
+def host_sessions(kit):
+    """{folder name: SessionFiles} of the host sessions in the kit's sessions/ that this kit can host as they are
+    (cached_session's checks: its gate DLL, no fixture, the players and open slots of its name)."""
+    found = {}
+    root = kit.sessions
+    if not root.is_dir() or kit.gate_dll is None:
+        return found
+    for folder in sorted(root.glob('host-*')):
+        match = HOST_KEY.fullmatch(folder.name)
+        if not folder.is_dir() or not match:
+            continue
+        opened = tuple(int(slot) for slot in match.group('open').split('_')) if match.group('open') else ()
+        try:
+            files = cached_session(kit, int(match.group('players')), match.group('mode'), match.group('start'), opened)
+        except KitError:
+            files = None
+        if files is not None:
+            found[folder.name] = files
+    return found
+
+
+HOST_KEY = re.compile(r'host-(?P<start>[a-z0-9_]+)-(?P<players>[2-8])p(?:-open(?P<open>[2-8](?:_[2-8])*))?'
+                      r'-(?P<mode>coop|factions)-(?P<dll>[0-9a-f]{8}|nogate)-' + HOST_SESSION_FORM)
+JOINED_KEY = re.compile(r'joined-[0-9a-f]{16}-[0-9a-f]{12}')
+
+
+def joined_sessions(kit):
+    """{folder name: SessionFiles} of the games this kit joined before whose overlay was built here with this kit's gate
+    DLL (joined_session's folders), newest first."""
+    found = {}
+    root = kit.sessions
+    if not root.is_dir() or kit.gate_dll is None:
+        return found
+    dll_sha = sha256_file(kit.gate_dll)
+    folders = [folder for folder in root.glob('joined-*') if JOINED_KEY.fullmatch(folder.name)]
+    for folder in sorted(folders, key=lambda path: path.stat().st_mtime, reverse=True):
+        overlay = folder / SHIPPED_FOLDER
+        if not (overlay / RECIPE).is_file() or not (overlay / OVERLAY_MANIFEST).is_file() or not (folder / SESSION_SAVE).is_file():
+            continue
+        try:
+            files = session_of_overlay(overlay, folder / SESSION_SAVE)
+        except KitError:
+            continue
+        if files.recipe.get('gate_dll_sha') == dll_sha:
+            found[folder.name] = files
+    return found
 
 
 def session_progress(reached, elapsed):

@@ -960,6 +960,7 @@ static void finish(unsigned reason) {
     }
 }
 static void gate_original_once(tick_fn original,void *frame,unsigned char loading) {
+    sclock_frame();   /* lockstep_speech_clock.h: the unpaused clock's start, right before tick 1's frame */
     if(gd_enabled && boot_phase==3) {gd_original(original,frame,loading);return;}
     int counted=portable_native_configured && boot_phase==3,claimed=0;
     if(counted && portable_wire_enabled) {
@@ -1706,7 +1707,7 @@ static int lua_speak_timer_status(lua_State *L) {
 static int lua_speech_local(lua_State *L) {p_lua_pushnumber(L,spl_arm());return 1;}
 static int lua_speech_local_frame(lua_State *L) {p_lua_pushnumber(L,accept_ui()?spl_frame():0);return 1;}
 static int lua_speech_local_status(lua_State *L) {
-    char out[400];int n=accept_ui()?spl_status(out,sizeof(out)):0;
+    char out[640];int n=accept_ui()?spl_status(out,sizeof(out)):0;
     if(n) p_lua_pushlstring(L,out,(size_t)n);else p_lua_pushnil(L);return 1;
 }
 /* gate.speech_local_rows(): the SPEECH_REQUEST / SPEECH_START rows since the last call, one per line; nil when none. */
@@ -4500,7 +4501,7 @@ static int lua_world_detail(lua_State *L) {
 }
 /* world_controller(0) = the watch count; world_controller(i) = watch i's WORLD_CONTROLLER row now (diagnostic). */
 static int lua_world_controller(lua_State *L) {
-    double number=p_lua_tonumber(L,1);char out[600];int n=0;
+    double number=p_lua_tonumber(L,1);char out[1024];int n=0;
     if(!accept_ui() || !isfinite(number) || number<0 || floor(number)!=number) {p_lua_pushnil(L);return 1;}
     if(number==0) {p_lua_pushnumber(L,world_hash_watch_count);return 1;}
     if(number<=world_hash_watch_count) n=world_controller_row((unsigned)number-1,stats.issued,out,sizeof(out));

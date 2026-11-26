@@ -16,11 +16,15 @@ which runs this module without a window. The installer starts the helper and reg
 Nothing of the player's own profile, saves or settings is read or written. While the menu extension is installed X4
 counts as modified, as with any extension; removing the installer removes it (helper.pyw --remove).
 
-A release kit (release.json, no session; tools/make_release_kit.py) has a helper of its own (NetHelper): its menu
-extension is x4online_menu and its pipes x4online-*, so a playtest install and a release install live on one PC side by
-side. Its page spells netplay's requests (docs/NETPLAY.md) through fixed pipes (tbegin, t0..tf, tend); listing games happens
-here, in the Steam-started X4, while hosting and joining start X4 again in the disposable profile with the request
-already chosen (x4ls lobby --request), where netplay's flow runs (netlobby.py).
+A release kit (release.json; tools/make_release_kit.py) has a helper of its own (NetHelper): its menu extension is
+x4online_menu and its pipes x4online-*, so a playtest install and a release install live on one PC side by side. Its
+page spells netplay's requests (docs/NETPLAY.md) through fixed pipes (tbegin, t0..tf, tend); listing games happens here,
+in the Steam-started X4. Hosting and joining start X4 again in the disposable profile with the request already chosen
+(x4ls lobby --request), where netplay's flow runs (netlobby.py), and they do it once: what that X4 needs is readied here
+first, while the Steam-started X4 stays on its page with the progress (HostHandOver: the session found in the kit or
+made beside that X4; JoinHandOver: the joined game's session downloaded and its overlay built). Then the page says X4
+closes, X4 quits, and the lobby's X4 starts straight with the session. helper.pyw --play (Start menu "X4 Online
+(play)") opens X4 in the multiplayer profile on the Multiplayer page, where hosting and joining need no restart.
 
 Windows only. Everything the helper starts runs without a console window; problems are shown in a message box and
 written to repo/.local/helper.log."""
@@ -36,7 +40,7 @@ import threading
 import time
 from pathlib import Path
 
-from . import game, lobby, netplay
+from . import game, lobby, netjoin, netkit, netplay, steamlib
 
 PREFIX = '\\\\.\\pipe\\'
 HIDDEN = 0x08000000   # CREATE_NO_WINDOW
@@ -126,6 +130,81 @@ def remove_menu(install, identity=PLAYTEST):
 
 def say(text, error=False, title=TITLE):
     ctypes.windll.user32.MessageBoxW(None, text, title, (0x10 if error else 0x40) | 0x10000)   # icon, to the foreground
+
+
+class Notice:
+    """A small window of Windows' own (a message box, on top, without the focus taken from anything) while no X4 is open
+    and something takes a while; close() takes it away again. A player may close it earlier: it only informs."""
+    TOPMOST, SETFOREGROUND, INFORMATION = 0x40000, 0x10000, 0x40
+    WM_CLOSE = 0x10
+
+    def __init__(self, title, text, user32=None):
+        self.title = f'{title} ({os.getpid()})'   # a title of its own: close() finds this window by it
+        self.text = text
+        self.user32 = user32
+        self.thread = None
+
+    def api(self):
+        return self.user32 or ctypes.windll.user32
+
+    def show(self):
+        def box():
+            try:
+                self.api().MessageBoxW(None, self.text, self.title, self.INFORMATION | self.TOPMOST | self.SETFOREGROUND)
+            except (OSError, AttributeError):
+                pass
+        self.thread = threading.Thread(target=box, name='notice', daemon=True)
+        self.thread.start()
+        return self
+
+    def close(self):
+        if self.thread is None:
+            return
+        end = time.time() + 3
+        while self.thread.is_alive() and time.time() < end:
+            try:
+                window = self.api().FindWindowW(None, self.title)
+                if window:
+                    self.api().PostMessageW(window, self.WM_CLOSE, 0, 0)
+            except (OSError, AttributeError):
+                return
+            self.thread.join(0.2)
+
+
+def instance_mutex_exists():
+    """True while some process holds X4's instance mutex (a second X4 would be refused); False off Windows."""
+    if os.name != 'nt':
+        return False
+    from . import instance
+    kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+    kernel.OpenMutexW.restype = ctypes.c_void_p
+    handle = kernel.OpenMutexW(0x00100000, False, instance.MUTEX_NAME)   # SYNCHRONIZE
+    if not handle:
+        return False
+    kernel.CloseHandle(ctypes.c_void_p(handle))
+    return True
+
+
+def release_player_mutex(log=print, clients=None, release=None):
+    """The X4 the player started from Steam holds X4's instance mutex, and a second X4 (a session's capture) would be
+    refused while it does: its handle is closed from outside, as the launcher does for every client it starts
+    (instance.release_instance_mutex). Only X4s that are not launcher clients (no disposable profile) are asked, and
+    only when the player chose Host on its Multiplayer page: nothing else of that X4 is touched. (pids found, handles
+    freed)."""
+    from . import instance, session
+    listed = (clients or session.other_clients)()
+    found = [pid for pid, client in listed if not client]
+    freed = 0
+    for pid in found:
+        try:
+            closed = (release or instance.release_instance_mutex)(pid)
+        except OSError as error:
+            log(f'netplay: the instance mutex of X4 pid {pid} could not be freed: {error}')
+            continue
+        freed += closed
+        log(f'netplay: X4 pid {pid} (started from Steam): released {closed} instance mutex handle(s) for the session '
+            'capture beside it')
+    return found, freed
 
 
 class Pipes:
@@ -351,10 +430,10 @@ def kit_python(kit):
     return own if own.is_file() else Path(sys.executable).with_name('python.exe')
 
 
-def second(kit, snapshot=None):
+def second(kit, snapshot=None, extra=()):
     """second.pyw of a kit: one more X4 on this PC for the multiplayer session, without Steam (which starts only one).
     It opens in the disposable profile on the Multiplayer page: a kit with a server's Start and starts of the running
-    game; a release kit's netplay page (snapshot None)."""
+    game; a release kit's netplay page (snapshot None). extra: more x4ls lobby arguments (helper.pyw --steam-play's)."""
     kit = Path(kit)
     identity = identity_of(kit)
     base = [str(kit_python(kit)), 'repo/tools/x4ls.py']
@@ -366,7 +445,7 @@ def second(kit, snapshot=None):
     out = kit / 'repo' / '.local' / f'second-{os.getpid()}.log'
     out.parent.mkdir(parents=True, exist_ok=True)
     if snapshot is None:
-        command = [*base, 'lobby', '--kit', str(kit), '--show', '--close-when-over']
+        command = [*base, 'lobby', '--kit', str(kit), '--show', '--close-when-over', *extra]
     else:
         command = [*base, 'lobby', '--overlay', 'overlay', '--snapshot', snapshot, '--server-file', 'server.json',
                    '--show', '--close-when-over']
@@ -378,6 +457,149 @@ def second(kit, snapshot=None):
     else:
         out.unlink(missing_ok=True)
     return code
+
+
+DETACHED = 0x00000008 | 0x00000200   # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
+
+
+def running_x4s(clients=None):
+    """(X4s in a disposable profile: the launcher's, X4s that are not: the player's own) running on this PC."""
+    from . import session
+    listed = (clients or session.other_clients)()
+    return [pid for pid, client in listed if client], [pid for pid, client in listed if not client]
+
+
+def play(kit, snapshot=None, owner=None, popen=None, start_second=None, first=False, clients=None, tell=None):
+    """helper.pyw --play ("X4 Online" on the desktop, in the Start menu and in the Steam library): X4 opens in its
+    multiplayer profile on the Multiplayer page (second()), where hosting and joining need no restart at all; the helper
+    is started first when none runs (it serves the Steam-started X4's page). first (--first, the installer's last step):
+    nothing opens when an X4 runs already. An X4 of the player's own profile that runs holds X4's instance mutex: the
+    player is told to close it (or to use its Multiplayer page). owner, popen, start_second, clients, tell: a test's
+    stand-ins."""
+    kit = Path(kit)
+    identity = identity_of(kit)
+    launcher_x4, own_x4 = running_x4s(clients)
+    if (launcher_x4 or own_x4) and first:
+        ensure_helper(kit, identity, owner, popen)
+        return 0
+    if own_x4:
+        (tell or say)('X4 runs already (started from Steam, in your own profile).\n\nClose it, then start X4 Online '
+                      'again: X4 opens in its multiplayer profile. Or use Multiplayer in that X4.', title=identity.title)
+        return 0
+    if launcher_x4:   # X4 Online's X4 is open already
+        return 0
+    ensure_helper(kit, identity, owner, popen)
+    return (start_second or second)(kit, snapshot)
+
+
+def ensure_helper(kit, identity, owner=None, popen=None):
+    """The helper started when none runs (apart from this process); True when one was started."""
+    handle = first_instance(identity.pipe) if owner is None else owner()
+    if handle is not None:   # no helper runs: one is started, apart from this process
+        if owner is None:
+            import _winapi
+            _winapi.CloseHandle(handle)
+        pythonw = kit / 'python' / 'pythonw.exe'
+        if not pythonw.is_file():
+            pythonw = Path(sys.executable).with_name('pythonw.exe')
+        (popen or subprocess.Popen)([str(pythonw), str(kit / 'helper.pyw'), '--quiet'], cwd=kit, creationflags=DETACHED)
+        return True
+    return False
+
+
+def steam_play(kit, command, owner=None, popen=None, start_second=None, run=None):
+    """helper.pyw --steam-play %command% (X4's launch options, when the player turned on "Steam's Play starts X4
+    Online"): X4 opens in its multiplayer profile on the Multiplayer page, as from the desktop; its Single-player button
+    ends that X4 and X4 starts with Steam's own command line (command), in the player's own profile. This process
+    stays while either runs, so Steam counts X4 as running. command: the X4.exe path and Steam's arguments."""
+    kit = Path(kit)
+    identity = identity_of(kit)
+    ensure_helper(kit, identity, owner, popen)
+    mark = kit / 'repo' / '.local' / 'single-player.mark'
+    mark.parent.mkdir(parents=True, exist_ok=True)
+    mark.unlink(missing_ok=True)
+    code = (start_second or second)(kit, None, extra=['--single-player-mark', str(mark)])
+    if not mark.is_file():
+        return code
+    mark.unlink(missing_ok=True)
+    if not command:
+        return code
+    exe = Path(command[0].strip('"'))
+    return (run or subprocess.run)([str(exe), *command[1:]], cwd=str(exe.parent)).returncode
+
+
+def uninstall(kit, setup=None, lanes=None, shutdown=None, log=None):
+    """What X4 Online made outside its folder, taken out (helper.pyw --remove --uninstall: the installer's removal):
+    the Steam library entry and X4's launch options (steamlib.SteamSetup.undo; Steam closes first when X4's Play is X4
+    Online's, so that Steam does not write the old options back), and the game views (the lanes folder: hard links and
+    junctions, removed by game.remove_view, which unlinks links and never enters them; a view an X4 runs from stays)."""
+    log = log or (lambda text: None)
+    setup = setup or steamlib.SteamSetup(kit, log=log)
+    if not setup.undo():
+        if setup.read().get('play'):
+            (shutdown or shutdown_steam)(log)
+        setup.undo()
+    try:
+        lanes = Path(lanes) if lanes else default_lanes()
+    except (SystemExit, OSError):
+        lanes = None
+    if lanes is not None:
+        remove_lanes(lanes, log)
+
+
+def default_lanes():
+    """The lanes folder x4ls lobby uses without --lanes: <the game's drive>\\x4ls-lanes."""
+    install = game.find_install()
+    return Path(os.path.splitdrive(str(install))[0] + '\\x4ls-lanes')
+
+
+def remove_lanes(lanes, log=print, clients=None):
+    """Every game view in lanes that no running X4 was started from (game.remove_view), then the folder when empty.
+    Returns the views removed."""
+    from . import session
+    lanes = Path(lanes)
+    if not lanes.is_dir() or game.is_link_or_reparse(lanes):
+        return []
+    commands = ' '.join(command.lower() for command in running_commands(clients)) if clients is None else \
+        ' '.join(str(item).lower() for item in clients())
+    removed = []
+    for view in sorted(lanes.iterdir()):
+        if not (view / game.MARKER).is_file() or str(view).lower().replace('/', '\\') in commands.replace('/', '\\'):
+            continue
+        try:
+            game.remove_view(view)
+            removed.append(view)
+        except (SystemExit, OSError) as error:
+            log(f'uninstall: {view} stays: {error}')
+    try:
+        lanes.rmdir()
+    except OSError:
+        pass
+    return removed
+
+
+def running_commands(clients=None):
+    """The command lines of the X4s running on this PC."""
+    if sys.platform != 'win32':
+        return []
+    out = subprocess.run(['powershell', '-NoProfile', '-Command',
+                          "Get-CimInstance Win32_Process -Filter \"Name='X4.exe'\" | ForEach-Object { $_.ExecutablePath + ' ' + $_.CommandLine }"],
+                         capture_output=True, text=True, creationflags=HIDDEN).stdout
+    return [line for line in out.splitlines() if line.strip()]
+
+
+def shutdown_steam(log=print, wait=60, steam=None, running=None):
+    """Steam closed (steam.exe -shutdown), so that its files can be written; True once it is gone."""
+    root = steam or steamlib.steam_root()
+    running = running or steamlib.steam_running
+    if root is None or not running():
+        return not running()
+    subprocess.Popen([str(Path(root) / 'steam.exe'), '-shutdown'], creationflags=HIDDEN)
+    end = time.time() + wait
+    while running() and time.time() < end:
+        time.sleep(1)
+    log('steam: closed' if not running() else 'steam: did not close')
+    return not running()
 
 
 def redirection_guarded():
@@ -402,6 +624,10 @@ def main(kit, snapshot=None, argv=None):
     argv = sys.argv[1:] if argv is None else argv
     kit = Path(kit)
     identity = identity_of(kit)
+    if '--steam-play' in argv:
+        return steam_play(kit, argv[argv.index('--steam-play') + 1:])
+    if '--play' in argv:
+        return play(kit, snapshot, first='--first' in argv)
     if '--stop' in argv or '--remove' in argv:
         stop(identity.pipe)
         if '--remove' in argv:
@@ -409,6 +635,8 @@ def main(kit, snapshot=None, argv=None):
                 remove_menu(game.find_install(), identity)
             except (SystemExit, OSError):
                 pass
+        if '--uninstall' in argv:   # the installer's removal (not an upgrade): X4 Online out of Steam, the game views
+            uninstall(kit)
         return 0
     shortcut = Path(os.environ.get('APPDATA', '')) / 'Microsoft/Windows/Start Menu/Programs' / (identity.title + '.lnk')
     if redirection_guarded() and shortcut.is_file() and '--guarded' not in argv:
@@ -555,7 +783,8 @@ class TextPipes:
 
 class HelperBackend(netplay.Backend):
     """netplay's backend in the helper: listing games happens here; hosting and joining start X4 again in the
-    disposable profile (the player's own profile must not run a session)."""
+    disposable profile (the player's own profile must not run a session), once: what that X4 needs is readied here
+    first (HostHandOver, JoinHandOver) while the Steam-started X4 shows the progress on its page."""
 
     def __init__(self, helper):
         self.helper = helper
@@ -563,22 +792,165 @@ class HelperBackend(netplay.Backend):
     def restart_for(self, request):
         return request.kind == 'HOST' or request.joins
 
+    def handover_job(self, request):
+        if request.kind == 'HOST':
+            return HostHandOver
+        if request.joins:
+            return JoinHandOver
+        return None
+
     def idle_lines(self):
-        lines = [netplay.IDLE_LINES[0], 'Hosting or joining closes X4 and starts it again in its multiplayer profile.']
+        lines = [netplay.IDLE_LINES[0], 'Hosting or joining starts X4 once more, in its multiplayer profile, straight into the game.']
         if not self.helper.flow_config.master_url:
             lines.append('No master server for this release: games on the LAN, by invite code or by address.')
         return lines
 
+    def installed_dlcs(self):
+        try:
+            return game.installed_dlcs(game.find_install())
+        except (SystemExit, OSError, ValueError):
+            return None
+
+    # how this PC's Steam starts X4 (steamlib.SteamSetup)
+    def steam_view(self):
+        return self.helper.steam.view()
+
+    def steam_play(self, on):
+        self.helper.steam.want_play(on)
+        if self.helper.steam.apply(self.helper.icon()):
+            return ("Steam's Play starts X4 Online." if on else "Steam's Play starts X4 as before.")
+        return ('It takes effect once Steam is closed (Steam keeps that setting while it runs): close Steam, or '
+                'Restart Steam.')
+
+    def restart_steam(self):
+        self.helper.want_steam_restart = True
+        return None
+
+    def single_player(self):
+        return 'This X4 is your single-player X4 already.'
+
     def work_folder(self):
         return self.helper.local
+
+
+READY_LINES = ('X4 closes now and starts again once, in its multiplayer profile, straight into the game.',)
+# Said once per helper run, in the first restart notice (the one restart a Steam-started X4 needs).
+SKIP_TIP = ('Next time start "X4 Online" (desktop, Start menu or Steam library): it opens X4 in its multiplayer profile, '
+            'and hosting or joining there needs no restart.')
+
+
+def ready_lines(helper, lines=READY_LINES):
+    """A restart notice's lines, with SKIP_TIP the first time."""
+    if getattr(helper, 'told_tip', True):
+        return lines
+    helper.told_tip = True
+    return (*lines, SKIP_TIP)
+CLOSE_NOTICE_S = 8   # the page's notice before X4 closes for a session made without it (the reason and the time)
+
+
+def counts_text(players, opened):
+    """'3 players' or '1 player and 2 drop-in slots' (as the host's page names a game)."""
+    from . import nethost
+    return nethost.counts_text(players, opened)
+
+
+class HostHandOver(netplay.Job):
+    """HOST in the Steam-started X4: the session for that many players is found in the kit (a release ships some,
+    others were made here before) or made now, beside that X4, which stays on the page with the progress; then X4
+    closes once and x4ls lobby --request HOST|... starts it again with that session (NETPLAY.md "Launcher notes").
+    When this PC has too little memory free for a second X4 (or the capture beside failed), the page says so with the
+    time it takes, X4 closes after a few seconds, a small window stands in for it while the session is made, and X4
+    starts again by itself."""
+
+    def run(self):
+        helper = self.flow.backend.helper
+        request = self.request
+        if request.players:
+            total = request.players + request.open
+            opened = netplay.drop_in_slots(request.players, request.open)
+        else:   # the older page's HOST: the smallest game
+            total, opened = netplay.PLAYERS_MIN, ()
+        what = counts_text(total, opened)
+        text = netplay.request_text(request)
+        if opened:   # drop-in games play on the master's relay: said here, before X4 closes
+            master, note = self.flow.master()
+            if master is None:
+                raise netplay.JobFailed('Drop-in slots need the master server (it relays the game and keeps the join files).',
+                                        note or 'Host without drop-in slots for a game on the local network.')
+        kit = self.config.kit
+        self.show('preparing', f'Getting the session for {what} ready...', progress={'what': 'session', 'done': 0.0})
+        files = netkit.cached_session(kit, total, netkit.HOST_SESSION_MODE, netkit.HOST_SESSION_START, opened)
+        if files is not None:
+            self.flow.log(f'netplay: HOST: the session for {what} is ready ({Path(files.overlay).parent.name})')
+            self.flow.hand_over_ready(self, text, ready_lines(helper))
+            return
+        if kit.gate_dll is None:
+            raise netplay.JobFailed('This kit has no gate DLL (native/x4lan_gate_64.dll): it cannot make a session.')
+        why = helper.beside_refusal()
+        if why is None:
+            self.show('preparing', f'Preparing a new game for {what}: {netkit.SESSION_TIME_TEXT}.',
+                      'X4 stays here meanwhile, and then starts again once, straight into the game.',
+                      'Cancel stops it.', progress={'what': 'session', 'done': 0.0})
+            try:
+                helper.make_session_beside(total, opened, self.session_progress, self.cancelled)
+            except netkit.KitError as error:
+                self.check()   # cancelled: nothing more to do
+                self.flow.log(f'netplay: the session could not be made beside this X4: {error}')
+                why = 'preparing it beside X4 did not work'
+            else:
+                self.flow.hand_over_ready(self, text, ready_lines(helper))
+                return
+        self.flow.log(f'netplay: HOST: the session for {what} is made with X4 closed ({why})')
+        lines = (f'Preparing a new game for {what} takes {netkit.SESSION_TIME_TEXT}, with X4 closed ({why}).',
+                 'X4 closes in a few seconds. A small window says that the game is being prepared,',
+                 'and X4 starts again by itself, straight into the game.')
+        self.flow.hand_over_ready(self, text, lines, quit_after=CLOSE_NOTICE_S,
+                                  before_start=lambda: helper.make_session_alone(total, opened, what))
+
+    def session_progress(self, done):
+        self.progress('session', done)
+
+
+class JoinHandOver(netjoin.JoinJob):
+    """A join in the Steam-started X4: the game is joined at the master (or admitted by the LAN host), its session
+    downloaded, checked and its overlay built here, while that X4 shows the progress; then the slot is given back, X4
+    closes once, and x4ls lobby --request (the resolved join) joins again and finds everything in place (no download, no
+    build): its X4 starts with the session. A join that cannot work (a bad code, another release, other DLCs) is said
+    on this page, and X4 does not close."""
+
+    def run(self):
+        plan = self.flow.join_plan(self.request)
+        kind, value, entry = plan
+        if kind == 'invalid':
+            raise netplay.JobFailed(value)
+        text = netplay.plan_text(plan)
+        if kind == 'game':
+            self.join_master(game_id=value, listed=entry)
+        elif value.kind == 'code':
+            self.join_master(code=value.code, hint=value.addresses)
+        else:
+            self.join_lan(value)
+        self.flow.hand_over_ready(self, text, ready_lines(self.flow.backend.helper))
+
+    def join_master(self, code=None, game_id=None, listed=None, hint=()):
+        self.master_files(code, game_id, listed)   # the slot is left again when this job ends
+
+    def join_lan(self, target):
+        self.lan_files(target)   # its connection closes when this job ends, which frees the slot
+
+
+STEAM_STEP_S = 10   # how often the helper looks whether Steam is closed (its files can be written then)
 
 
 class NetHelper:
     """The helper of a release kit (see the module text): the page's state and requests through pipes; Host and the
     joins start X4 again with x4ls lobby --request <the request>, and while that runs the state is that lobby's."""
 
-    def __init__(self, kit, prefix=RELEASE.pipe, log=None, start=None, running=x4_running, net=None, master_url=None):
-        from . import netkit, netlobby
+    def __init__(self, kit, prefix=RELEASE.pipe, log=None, start=None, running=x4_running, net=None, master_url=None,
+                 make=None, fits=None, release_mutex=None, notice=None, steam=None):
+        """make, fits, release_mutex, notice: a test's stand-ins for netkit.make_session, netkit.beside_fits,
+        release_player_mutex and Notice (a test never makes a session: that starts X4)."""
+        from . import netlobby
         self.kit_dir = Path(kit)
         self.prefix = prefix
         self.local = self.kit_dir / 'repo' / '.local'
@@ -587,11 +959,19 @@ class NetHelper:
         self.log = log or self.write_log
         self.start = start or self.start_lobby
         self.running = running
+        self.make = make or netkit.make_session
+        self.fits = fits or netkit.beside_fits
+        self.release_mutex = release_mutex or release_player_mutex
+        self.notice = notice or Notice
+        self.steam = steam or steamlib.SteamSetup(self.kit_dir, log=self.log)
+        self.want_steam_restart = False
+        self.told_tip = False
         self.stopping = False
         self.text = TextRequests(self.log)
         self.lock = threading.Lock()
         self.mirrored = None       # (the lobby's state text, the stamp it is answered with) while a session runs
-        self.stamp = 0
+        self.stamp = 0             # the helper's own count: one more for every new state it answers with
+        self.flow_stamp = None     # the flow's stamp the last answer was made of
         self.kit = netkit.Kit(self.kit_dir)
         if master_url is None:
             master_url = netlobby.master_url(lobby.LobbyOptions(), self.kit)
@@ -617,8 +997,13 @@ class NetHelper:
                     self.stamp += 1
                     self.mirrored = (text, self.stamp)
                 return STAMP.sub(f'return {{stamp = {self.mirrored[1]}', self.mirrored[0], count=1)
+            # Every new state of the flow gets the next stamp of the helper's count. (It was the larger of the two
+            # counts: after a game, whose mirrored states had counted on, the flow's next states came with the stamp
+            # the page had already, and the page kept what it showed: the public list, for one, never came.)
             stamp = self.flow.state.view()[0]
-            self.stamp = max(self.stamp, stamp)
+            if stamp != self.flow_stamp:
+                self.flow_stamp = stamp
+                self.stamp += 1
             return self.flow.state.text(self.stamp)
 
     def answer(self, name):
@@ -654,7 +1039,7 @@ class NetHelper:
             code = subprocess.run(command, cwd=self.kit_dir, stdout=f, stderr=subprocess.STDOUT, creationflags=HIDDEN).returncode
         return code, out.read_text(encoding='utf-8', errors='replace').strip()
 
-    def session(self, request):
+    def session(self, request, before_start=None):
         self.log(f'{request[:80]} asked for: waiting for X4 to close')
         end = time.time() + 90
         while self.running() and time.time() < end:
@@ -663,6 +1048,17 @@ class NetHelper:
             self.log('X4 did not close')
             self.flow.state.set('error', ('X4 did not close by itself.', 'Close it, start it again and choose once more.'))
             return
+        self.log(f'{netkit.RESTART_MARK}: the Steam-started X4 closed for {request.split("|", 1)[0]}; '
+                 'the next X4 starts in its multiplayer profile')
+        if before_start is not None:
+            try:
+                before_start()
+            except (SystemExit, Exception) as error:   # the session was not made: nothing to start X4 again for
+                self.log(f'the game could not be prepared: {error}')
+                say(f'The game could not be prepared:\n\n{error}\n\nStart X4 again and choose once more. More in {self.local}',
+                    error=True, title=RELEASE.title)
+                self.flow.cancel()
+                return
         self.mirror.parent.mkdir(parents=True, exist_ok=True)
         waiting = netplay.State()
         waiting.set('session', ('A multiplayer game runs in X4\'s multiplayer profile.',
@@ -676,6 +1072,7 @@ class NetHelper:
         finally:
             with self.lock:
                 self.mirrored = None
+                self.flow_stamp = None   # the next answer is the flow's again: a new stamp
         self.log(f'the game ended with code {code}')
         if code:
             self.log(text[-3000:])
@@ -683,14 +1080,80 @@ class NetHelper:
                 + f'\n\nMore in {self.local}', error=True, title=RELEASE.title)
         self.flow.cancel()
 
+    # ---- a session made here, for HOST (HostHandOver) ----
+    def beside_refusal(self):
+        """Why the capture of a new session cannot run beside the Steam-started X4 (a line for the page), or None."""
+        if not self.fits():
+            return f'this PC has less than {netkit.BESIDE_FREE_GIB} GB of memory free for a second X4'
+        return None
+
+    def make_session_beside(self, players, opened, progress, cancelled):
+        """The session made while the Steam-started X4 stays on its page: its instance mutex is freed first (X4 lets one
+        process have it; the capture is a second X4 in its own profile and view), then x4ls new-session runs beside it,
+        its window never taking the focus. KitError when it could not be made."""
+        found, freed = self.release_mutex(self.log)
+        if found and not freed and instance_mutex_exists():   # (none freed and none there: freed by an earlier Host)
+            raise netkit.KitError('the X4 that Steam started holds its instance mutex, and it could not be freed')
+        return self.make(self.kit, players, netkit.HOST_SESSION_MODE, netkit.HOST_SESSION_START, progress, self.log,
+                         cancelled, open_slots=opened, beside=True)
+
+    def make_session_alone(self, players, opened, what):
+        """The session made after the Steam-started X4 closed (it had no room beside it): a small window says so
+        meanwhile, as no X4 is open."""
+        notice = self.notice(RELEASE.title, f'X4 Online is preparing a new game for {what} ({netkit.SESSION_TIME_TEXT}).\n\n'
+                                       'X4 starts again by itself when it is ready, straight into the game.')
+        notice.show()
+        try:
+            return self.make(self.kit, players, netkit.HOST_SESSION_MODE, netkit.HOST_SESSION_START, None, self.log,
+                             None, open_slots=opened)
+        finally:
+            notice.close()
+
+    def icon(self):
+        """The library entry's icon: X4's own (its exe in the installation; nothing of it is copied)."""
+        try:
+            exe = game.find_install() / 'X4.exe'
+            return str(exe) if exe.is_file() else ''
+        except (SystemExit, OSError):
+            return ''
+
+    def steam_step(self):
+        """Every few seconds: while Steam is closed, its X4 Online entry and X4's Play as the player wants them
+        (steamlib.SteamSetup.apply); a Restart Steam asked for: X4 closes, Steam closes, the setting is written, Steam
+        starts again."""
+        if self.want_steam_restart:
+            self.want_steam_restart = False
+            self.restart_steam()
+        try:
+            if self.steam.apply(self.icon()):
+                self.flow.refresh_steam()
+        except Exception as error:   # the page goes on without it
+            self.log(f'steam: not applied: {type(error).__name__}: {error}')
+
+    def restart_steam(self):
+        self.flow.state.set('restart', ('Steam closes and starts again so that its Play starts X4 as you chose.',
+                                        'X4 closes now; start it again from Steam once Steam is back.'), quit_after=4)
+        end = time.time() + 90
+        while self.running() and time.time() < end:
+            time.sleep(0.5)
+        root = steamlib.steam_root()
+        if root is not None and shutdown_steam(self.log):
+            self.steam.apply(self.icon())
+            subprocess.Popen([str(root / 'steam.exe')], creationflags=HIDDEN)
+        self.flow.cancel()
+
     def run(self):
         pipes = TextPipes(self.prefix, self.answer, (*LEGACY_NAMES, *TEXT_NAMES))
         self.log(f'helper ready (pid {os.getpid()}, kit {self.kit_dir}, release {self.kit.release})')
+        steam_at = 0.0
         try:
             while not self.stopping:
-                request = self.flow.take_handover()
+                request, before_start = self.flow.take_handover_with()
                 if request:
-                    self.session(request)
+                    self.session(request, before_start)
+                if time.time() - steam_at > STEAM_STEP_S:
+                    steam_at = time.time()
+                    self.steam_step()
                 time.sleep(0.2)
         finally:
             self.flow.cancel()

@@ -32,9 +32,12 @@ class FakeGame:
         self.form = None
         self.files = ['ui/native_gate_probe.lua']
         self.started = []
+        self.taken = []
         self.held = 0
         self.profile_id = 45850
         self.proc = None
+        self.x4_open = False      # open(): an X4 runs (the page the player looks at)
+        self.takes = False        # take(): this X4 takes another session in place
         self.new_target()
 
     def new_target(self):
@@ -48,13 +51,25 @@ class FakeGame:
     def runs(self, form):
         return form.same(self.form)
 
+    def open(self):
+        return self.x4_open
+
+    def take(self, form):
+        if not self.takes:
+            return False
+        self.taken.append(form)
+        self.form = form
+        return True
+
     def start(self, form):
         self.started.append(form)
         self.form = form
+        self.x4_open = True
         self.new_target()
 
     def hold(self):
         self.held += 1
+        self.x4_open = False
 
 
 class Pumping(unittest.TestCase):
@@ -113,28 +128,51 @@ class Backend(unittest.TestCase):
             self.backend.install_session(files, seen.append)
             self.assertEqual(self.game.started, [netlobby.Form(files.overlay, files.snapshot, 2)])
             self.backend.install_session(files, seen.append)                  # it runs that one already
+            other = fakes.make_session(self.folder.path / 'other', players=3, save=b'SAVE-3')
+            self.game.takes = True                                            # the same start-time files: in place
+            self.backend.install_session(other, seen.append)
         self.assertEqual(len(self.game.started), 1)
-        self.assertEqual(seen, [0.1, 1.0])
-        self.assertEqual(self.backend.default_form(), netlobby.Form())        # a release kit: the page alone
+        self.assertEqual(self.game.taken, [netlobby.Form(other.overlay, other.snapshot, 3)])
+        self.assertEqual(seen, [0.1, 1.0, 0.1, 1.0])
+        self.assertEqual(self.backend.default_form(), netlobby.Form())        # a release kit without sessions: the page
 
-    def test_host_session_from_the_cache_or_made_with_x4_closed(self):
+    def test_host_session_from_the_cache_or_made_beside_the_page(self):
         made = []
+        beside_fails = []
 
         def make(kit, players, mode, base_start, progress, log, cancelled, steam_fix=False, open_slots=(), game=None,
-                 lanes=None):
-            made.append((players, mode, base_start) + ((tuple(open_slots),) if open_slots else ()))
+                 lanes=None, beside=False):
+            made.append((players, mode, base_start, beside) + ((tuple(open_slots),) if open_slots else ()))
+            if beside and beside_fails:
+                raise netkit.KitError('The session could not be made: X4 is running; close it first')
             return 'made'
         with mock.patch.object(netlobby.netkit, 'cached_session', lambda *args: 'cached'):
             self.assertEqual(self.backend.host_session(3, None, None), 'cached')
         self.assertEqual(self.game.held, 0)
+        start = netkit.HOST_SESSION_START
         with mock.patch.object(netlobby.netkit, 'cached_session', lambda *args: None), \
-                mock.patch.object(netlobby.netkit, 'make_session', make):
+                mock.patch.object(netlobby.netkit, 'make_session', make), \
+                mock.patch.object(netlobby.netkit, 'beside_fits', lambda: True):
+            # no X4 runs yet (x4ls host, a hand-over): made before X4 starts, nothing to hold
             self.assertEqual(self.backend.host_session(3, None, None), 'made')
-        self.assertEqual((self.game.held, made), (1, [(3, 'coop', netkit.HOST_SESSION_START)]))
+            self.assertEqual((self.game.held, made[-1]), (0, (3, 'coop', start, False)))
+            # the page runs: made beside it, which stays (no hold: no restart for the capture)
+            self.game.x4_open = True
+            self.assertEqual(self.backend.host_session(3, None, None), 'made')
+            self.assertEqual((self.game.held, made[-1]), (0, (3, 'coop', start, True)))
+            self.assertEqual(self.backend.host_session(3, None, None, open_slots=(3,)), 'made')   # drop-in slots too
+            self.assertEqual(made[-1], (3, 'coop', start, True, (3,)))
+            # the capture beside failed: X4 is held, and the session made once more alone
+            beside_fails.append(True)
+            self.assertEqual(self.backend.host_session(2, None, None), 'made')
+            self.assertEqual(([entry[3] for entry in made[-2:]], self.game.held), ([True, False], 1))
+        beside_fails.clear()
         with mock.patch.object(netlobby.netkit, 'cached_session', lambda *args: None), \
-                mock.patch.object(netlobby.netkit, 'make_session', make):   # a drop-in session: its open slots too
-            self.assertEqual(self.backend.host_session(3, None, None, open_slots=(3,)), 'made')
-        self.assertEqual(made[-1], (3, 'coop', netkit.HOST_SESSION_START, (3,)))
+                mock.patch.object(netlobby.netkit, 'make_session', make), \
+                mock.patch.object(netlobby.netkit, 'beside_fits', lambda: False):
+            self.game.x4_open = True   # too little memory free for a second X4: held at once
+            self.assertEqual(self.backend.host_session(2, None, None), 'made')
+            self.assertEqual((self.game.held, made[-1][3]), (2, False))
         self.assertEqual(self.backend.save_folder().name, 'save')
 
         def fails(*args, **kwargs):

@@ -21,7 +21,24 @@
  * order. With native_gate_portable_created a created object is class 1 with
  * its created ID: saved agents keep their order, created ones follow them in
  * created-ID order, unportable ones come last; the order and stamp hashes
- * cover classes 0 and 1 (lockstep_world_identity.h). */
+ * cover classes 0 and 1 (lockstep_world_identity.h).
+ * A player's controller (U::PlayerController 0x2c39488, a NavigationController: slot 1's, and slot k's under its private
+ * vtable copy, lockstep_pilot_slots.h) is stamped by the same walk, in the same order. Until 25 Nov only exact
+ * NavigationControllers were, and a PlayerController's stamp stayed lazy: its transform readers (vfunc6 0xd8a680,
+ * vfunc34 0xd98e50) refresh it through GetTransformImpl whenever their inlined Agent test passes, on whatever asks.
+ * Release check rel16, satellite, the refresh watch on player 1's ship (af230): on client 2 its HUD (GetTargetElementInfo,
+ * the message visibility test) read that ship in player 2's presentation scope, whose bank held player 2's autopilot flag,
+ * and refreshed player 1's PlayerController every tick until player 2's autopilot ended (231.04 at tick 6452); on client 1
+ * only player 1's own upkeep did, twice (229.44 at 6404). At the stand-up (6464) X4 builds the ship's NavigationController
+ * from it (Controllable release 0x450380 -> the transfer constructor 0xea4c00, which copies +0xc0..+0xd8), so each client's
+ * new controller took its own stale stamp and cursor. A stamp older than the step is refreshed by its first reader: on
+ * client 2 the step's component update (Zone 0x843cd6) took it before the bank swap, as the walk would; on client 1 the
+ * cursor already held that bank, and the physics of client 1's own view (XPhys contact and shape callbacks under 0x9fe45e,
+ * the ship beside player 1) took it after the swap, then every step: the walk found it current (relation 0) and left it.
+ * The census' timing root parted at the first capture after (6,600) for good. The controller's +0x58 word that differed is
+ * a bool and seven bytes of padding (0xea4d0a stores the byte only): not state. Walked, a player's stamp is the step's own
+ * on every client, every later reader in that step finds it current, and the stand-up hands the same stamp on everywhere.
+ */
 #include <stdlib.h>
 /* The Linux gate (linux/gate_path.h) defines these for its executable and its own
  * frame and pins; the walk, the order, the stamping and the budget are shared. */
@@ -30,6 +47,7 @@
 #define PATH_DET_REFRESH 0xea2a20u
 #define PATH_DET_SYNC 0x14b8e20u
 #define PATH_DET_NAV_VTABLE 0x2c51158u
+#define PATH_DET_PLAYER_VTABLE 0x2c39488u /* U::PlayerController: slot copies read as it (pslot_canonical_vtable) */
 #define PATH_DET_READ_BANK 0x38f4ee4u
 #define PATH_DET_BUDGET 0x218u
 #define PATH_DET_BATCH_BEGIN 0x180
@@ -46,6 +64,23 @@
 #define PATH_DET_BUDGET_LIFTED 0x41cdcd6500000000ULL /* 1e9 s */
 #define PATH_DET_CAPACITY 131072u
 enum {PATH_DET_REFRESH_BIT=1,PATH_DET_BUDGET_BIT=2};
+/* What the walk stamps: an exact NavigationController, and a player's controller (U::PlayerController, whose first 0xe0 bytes
+ * are its NavigationController half; a slot's private copy of its vtable reads as the PlayerController's). The player's
+ * vtable is taken against the same image as nav_vtable (tests pass their own). */
+#ifndef PATH_DET_OWN_PLATFORM
+#define PATH_DET_CANONICAL_VTABLE(v) pslot_canonical_vtable(v)
+#else
+#define PATH_DET_CANONICAL_VTABLE(v) (v)
+#endif
+static int path_det_admits(const unsigned char *vtable,const unsigned char *nav_vtable) {
+    if(vtable==nav_vtable) return 1;
+#ifdef PATH_DET_PLAYER_VTABLE
+    const uintptr_t player=(uintptr_t)nav_vtable-(uintptr_t)PATH_DET_NAV_VTABLE+(uintptr_t)PATH_DET_PLAYER_VTABLE;
+    return vtable && PATH_DET_CANONICAL_VTABLE((uintptr_t)vtable)==player;
+#else
+    return 0;
+#endif
+}
 typedef void (*path_det_refresh_fn)(void *);
 typedef void (*path_det_sync_fn)(void);
 typedef struct {uint64_t id;unsigned char *controller;uint32_t klass;} path_det_item;
@@ -106,7 +141,8 @@ static uint64_t path_det_saved(const path_det_member *e,unsigned gen,const unsig
 /* Pinned layout (RunPass 0xeae3c0, UpdateBatch, AssignAgentToBatch 0xeaf2b0):
  * vectors +0x180 and +0x198 of 0x20-byte batches, member count at +8 and a
  * circular sentinel list at +0x10 (node+8 next, node+0x10 agent). Only exact
- * NavigationController owners with the world_nav link shape are admitted.
+ * NavigationController owners and players' controllers (path_det_admits) with
+ * the world_nav link shape are admitted.
  * The admission reads are the same every frame; *same reports that every
  * member, link and runtime ID matches the previous walk exactly. */
 static int path_det_walk(unsigned char *manager,const unsigned char *nav_vtable,uint64_t *skipped,uint64_t *unmapped,uint64_t *created,int *same) {
@@ -133,7 +169,7 @@ static int path_det_walk(unsigned char *manager,const unsigned char *nav_vtable,
                     }
                     unsigned char *agent=*(unsigned char**)(node+0x10),*object=NULL,*controller=NULL;uint64_t id=0;uint32_t admitted=0;
                     if(agent && (object=*(unsigned char**)(agent+PATH_DET_AGENT_OWNER)) && (controller=*(unsigned char**)(object+0x200)) &&
-                       *(const unsigned char**)controller==nav_vtable && *(unsigned char**)(controller+PATH_DET_NAV_OWNER)==object &&
+                       path_det_admits(*(const unsigned char**)controller,nav_vtable) && *(unsigned char**)(controller+PATH_DET_NAV_OWNER)==object &&
                        *(unsigned char**)(controller+PATH_DET_NAV_AGENT)==agent && *(unsigned char**)(controller+PATH_DET_NAV_SLOTS)==agent+PATH_DET_AGENT_SLOTS &&
                        (id=*(uint64_t*)(object+8))) admitted=1;
                     path_det_member *e=&path_det_seq[k];
@@ -267,7 +303,15 @@ static int path_det_pins(void) {
         hash_ok(image+0xeaecc0,176,"b83d2ecd5752c4ae0de3a7e250064a720a983b3bd427bc530baeceaba558922f") &&
         hash_ok(image+0xeaed74,353,"0d710205daf528902a2b95da8418d7173ea4e0fea8676d1b297c3885b6b140cf") &&
         hash_ok(image+0xeaf2b0,216,"c44bc6f94a518ef5613a518587617c01250558926488dac7a80f14a970039e11") &&
-        hash_ok(image+0xeabb8d,17,"13ac1795954cab2bc61fac315ec5635c94ac92bf19c51d5c079da5ec9a4d05f7");
+        hash_ok(image+0xeabb8d,17,"13ac1795954cab2bc61fac315ec5635c94ac92bf19c51d5c079da5ec9a4d05f7") &&
+        /* Players' controllers (path_det_admits): the PlayerController built on a NavigationController (0xd83ae0: the
+         * transfer constructor 0xea4c00, then U::PlayerController::vftable 0x2c39488), its transform reader that refreshes
+         * through GetTransformImpl in its Agent branch (0xd8a680), and the release that builds the NavigationController
+         * back from it at the stand-up (0x450380 -> 0xea4c00, which copies +0xc0..+0xd8: the stamp). */
+        hash_ok(image+0xd83ae0,761,"8dc02f6d8f93ead6ba5f019efcebfcc668721cfb63bf05de76f6c1b44616cd93") &&
+        hash_ok(image+0xea4c00,654,"5094ca3adf5fe63c6a9f6cd6e98020e405c4ed5f461469ce935973fd7a9afaf1") &&
+        hash_ok(image+0xd8a680,3416,"b0b97f49d47dc07a8093fce44c74184f39020b66a00b67ea8c26953db9a32f6d") &&
+        hash_ok(image+0x450380,1110,"8682c85c8ad6cc9040517c50831418a3ed43fb11b80c5d599fb8169baa5ac60e");
 }
 #endif
 static int path_det_arm(unsigned mask) {

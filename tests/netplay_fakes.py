@@ -350,6 +350,58 @@ def make_session(folder, players=2, dll=b'MZ-gate', save=b'SAVE-1', open_slots=(
     return netkit.SessionFiles(overlay=overlay, snapshot=save_path, recipe=recipe, players=players, sha256=save_sha)
 
 
+def session_save(players, seed=276944566, tail=b''):
+    """A session save as X4 writes one (gzip; the header names the start and the seed), small."""
+    import gzip
+    text = ('<?xml version="1.0" encoding="UTF-8"?>\n<savegame>\n<info>\n<save name="fixture" date="1"/>\n'
+            f'<game id="X4" version="900" build="611726" start="x4ep1_gamestart_discover" seed="{seed}"/>\n'
+            f'<player name="Pilot {players}" money="5000"/>\n</info>\n</savegame>\n').encode() + tail
+    return gzip.compress(text)
+
+
+def overlay_manifest(overlay):
+    overlay = Path(overlay)
+    manifest = {p.relative_to(overlay).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest()
+                for p in sorted(overlay.rglob('*')) if p.is_file() and p.name != 'x4lane-manifest.json'}
+    (overlay / 'x4lane-manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
+
+
+def host_session(kit_root, players=2, open_slots=(), seed=276944566, md=b'<mdscript name="Setup"/>\n',
+                 work_path=None):
+    """A host session as x4ls new-session leaves it in a kit's sessions/ (netkit.cached_session takes it): session.json
+    (no fixture), the save, spec.json, the overlay (an md file X4 reads at its start, the probe, the config, the gate
+    DLL of the kit, the recipe, the manifest), and the capture's and the base overlay's folders beside. work_path: the
+    path session.json names (the work folder new-session wrote it in)."""
+    kit = netkit.Kit(kit_root)
+    key = netkit.host_session_key(kit, players, netkit.HOST_SESSION_MODE, netkit.HOST_SESSION_START, open_slots)
+    folder = kit.sessions / key
+    overlay = folder / 'overlay'
+    for sub in ('md', 'ui', 'native'):
+        (overlay / sub).mkdir(parents=True, exist_ok=True)
+    save = session_save(players, seed)
+    (folder / 'session-save.xml.gz').write_bytes(save)
+    save_sha = hashlib.sha256(save).hexdigest()
+    shutil.copyfile(kit.gate_dll, overlay / 'native' / 'x4lan_gate_64.dll')
+    (overlay / 'md' / 'setup.xml').write_bytes(md)
+    (overlay / 'ui' / 'native_gate_probe.lua').write_text('-- the probe\n')
+    (overlay / 'ui' / 'config.lua.append').write_text(f'X4LAN_CONFIG.native_gate_clients = @X4LANE_CLIENTS@\n-- {players}\n')
+    (overlay / 'ui.xml.files').write_text('ui/native_gate_probe.lua\n')
+    described = {'format': 'X4LAN_SESSION_1', 'base_start': netkit.HOST_SESSION_START, 'mode': 'coop', 'players': players,
+                 'fixture': [], 'fixture_form': 'none', 'seed': str(seed), 'hulls': {}, 'slots': {},
+                 'snapshot': {'path': str(work_path or folder.resolve() / 'session-save.xml.gz'), 'sha256': save_sha,
+                              'bytes': len(save)}}
+    (folder / 'session.json').write_text(json.dumps(described, indent=1, sort_keys=True))
+    (overlay / 'session.json').write_text(json.dumps(described, indent=1, sort_keys=True))
+    (folder / 'spec.json').write_text(json.dumps({'format': 'X4LAN_SESSION_START_SPEC_1', 'players': players}))
+    recipe = recipe_for(players, save_sha, netkit.sha256_file(kit.gate_dll), described, open_slots)
+    (overlay / 'play-recipe.json').write_text(json.dumps(recipe, indent=1, sort_keys=True))
+    overlay_manifest(overlay)
+    for left in ('capture-overlay', 'overlay.base'):   # what new-session leaves beside, not part of a shipped session
+        (folder / left / 'ui').mkdir(parents=True)
+        (folder / left / 'ui' / 'config.lua.append').write_text('X4LAN_CONFIG.test_profile = "45841"\n')
+    return folder
+
+
 def release_kit(folder, release='0123456789ab-ba9876543210', dll=b'MZ-gate'):
     folder = Path(folder)
     (folder / 'native').mkdir(parents=True)

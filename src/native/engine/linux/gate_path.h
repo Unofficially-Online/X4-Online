@@ -29,6 +29,7 @@
 #define PATH_DET_REFRESH (LX_PATH_REFRESH_VA-LX_IMAGE_BASE)
 #define PATH_DET_SYNC (LX_PATH_SYNC_VA-LX_IMAGE_BASE)
 #define PATH_DET_NAV_VTABLE (0x3b697e8u-LX_IMAGE_BASE) /* U::NavigationController (gate_world_classes.h) */
+#define PATH_DET_PLAYER_VTABLE (0x3b7c208u-LX_IMAGE_BASE) /* U::PlayerController (gate_world_classes.h): walked as on Windows */
 #define PATH_DET_READ_BANK (LX_BANK_READ_VA-LX_IMAGE_BASE)
 #define PATH_DET_BUDGET LX_PATH_BUDGET
 #define PATH_DET_BATCH_BEGIN 0x2b0

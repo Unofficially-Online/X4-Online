@@ -17,7 +17,15 @@ Two kinds of kit, two products (a newer installer replaces an older one of the s
   chooses Multiplayer, Join in X4's main menu. Nothing else is needed but X4.
 - A release kit (tools/make_release_kit.py, it has release.json), "X4 Online": always for "Play in Steam", so it needs
   its bundled Python (--python-embed). Its version comes from release.json's build time. The kit must match its
-  manifest and hold nothing private (make_release_kit.verify and private_files), or no installer is made.
+  manifest and hold nothing private (make_release_kit.verify and private_files), or no installer is made. Its
+  ready-made host sessions (make_release_kit.py --sessions, --prebuild-sessions: the manifest's files under sessions/)
+  are installed; sessions the kit folder made or downloaded while playing are not. Start menu: "X4 Online" (the
+  helper), "X4 Online (play)" (X4 in its multiplayer profile on the Multiplayer page: no restart to host or join) and
+  "X4 Online (second window)"; on the desktop "X4 Online" (as "(play)"). When the install ends, X4 opens on the
+  Multiplayer page in its multiplayer profile (through Explorer and the installed shortcut "X4 Online (first start)",
+  helper.pyw --play --first: nothing opens when an X4 runs already). An uninstall (not an upgrade) also takes out what
+  X4 Online put into Steam (its library entry, X4's launch options put back) and the game views (helper.pyw --remove
+  --uninstall).
 
 - Windows shows the installer's progress bar only (no pages to click through).
   Removing it (Settings, Apps) leaves the run folders the games made in repo\\.local.
@@ -58,6 +66,8 @@ class Product(NamedTuple):
     run_value: str          # the helper's value under HKCU ...\Run
     comments: str           # Apps: which kit or release this is
     not_installed: tuple    # folder names whose files are left out
+    listed: frozenset = frozenset()   # a release's ready-made sessions: the manifest's files under sessions/, installed
+    play_short_name: str = 'X4ONPLAY'  # ... of a release's "(play)" entry
 
 
 def version_now(now=None):
@@ -125,16 +135,19 @@ def release_product(kit, name):
     if problems:
         raise SystemExit(f'{kit} does not match its manifest ({len(problems)} differences): ' + '; '.join(problems[:10]))
     found = tools.private_files(kit, skip=NOT_INSTALLED_RELEASE)
+    manifest = json.loads((kit / 'kit-manifest.json').read_text(encoding='utf-8'))
+    listed = frozenset(path for path in manifest.get('files', {}) if path.startswith(tools.SESSIONS + '/'))
+    found += [(path, why) for path in sorted(listed) if (why := tools.shipped_session_reason(kit, path))]
     if found:
         raise SystemExit(f'{kit} holds private files: ' + '; '.join(f'{path} ({why})' for path, why in found[:10]))
     product = Product(name=name or RELEASE_NAME, upgrade_code=RELEASE_UPGRADE_CODE, manufacturer='X4 Online',
                       feature_title='The X4 Online release', short_name='X4ONLINE', second_short_name='X4ONSEC',
                       run_value='X4Online', comments=f'release {release["release"]}',
-                      not_installed=NOT_INSTALLED_RELEASE)
+                      not_installed=NOT_INSTALLED_RELEASE, listed=listed)
     return product, release
 
 
-def add_sequences(msilib, sequence, db, helper):
+def add_sequences(msilib, sequence, db, helper, release_kit=False):
     """The standard actions, without the dialogs msilib names but does not define."""
     for table in sequence.tables:
         rows = [row for row in getattr(sequence, table) if row[0] not in MISSING_DIALOGS]
@@ -142,12 +155,21 @@ def add_sequences(msilib, sequence, db, helper):
             # an older kit goes before the new one comes (its removal stops its helper and takes its menu extension out)
             rows = [(action, condition, 1450 if action == 'RemoveExistingProducts' else number)
                     for action, condition, number in rows]
-            if helper:
+            if helper and release_kit:
+                # an upgrade's removal only stops the old helper; a real uninstall also takes X4 Online out of Steam and
+                # removes the game views. The last step of an install opens X4 on the Multiplayer page.
+                rows += [('StopHelper', 'REMOVE="ALL" AND UPGRADINGPRODUCTCODE', 1600),
+                         ('UninstallHelper', 'REMOVE="ALL" AND NOT UPGRADINGPRODUCTCODE', 1601),
+                         ('StartHelper', 'NOT REMOVE', 6650), ('StartPlay', 'NOT REMOVE', 6660)]
+            elif helper:
                 rows += [('StopHelper', 'REMOVE="ALL"', 1600), ('StartHelper', 'NOT REMOVE', 6650)]
         msilib.add_data(db, table, rows)
 
 
-def add_helper_actions(msilib, db, product, run_helper):
+FIRST_START = 'X4 Online (first start)'   # the installed shortcut the last step of an install opens (helper.pyw --play --first)
+
+
+def add_helper_actions(msilib, db, product, run_helper, release_kit=False):
     msilib.add_data(db, 'CustomAction', [
         ('StopHelper', 34 | 0x40, 'INSTALLDIR', run_helper + ' --remove'),    # waits for it; its result does not matter
         # Started and left running, through Explorer and the Start menu entry: what the installer starts itself
@@ -155,6 +177,13 @@ def add_helper_actions(msilib, db, product, run_helper):
         ('StartHelper', 34 | 0xC0, 'INSTALLDIR',
          '"[WindowsFolder]explorer.exe" "[ProgramMenuFolder]' + product.name + '.lnk"'),
     ])
+    if release_kit:
+        msilib.add_data(db, 'CustomAction', [
+            ('UninstallHelper', 34 | 0x40, 'INSTALLDIR', run_helper + ' --remove --uninstall'),
+            # X4 on the Multiplayer page, as the installer's last step: through Explorer and an installed shortcut, so
+            # that neither X4 nor its launcher is a child of the installer (the redirection guard, as StartHelper)
+            ('StartPlay', 34 | 0xC0, 'INSTALLDIR', '"[WindowsFolder]explorer.exe" "[INSTALLDIR]' + FIRST_START + '.lnk"'),
+        ])
 
 
 def add_properties(msilib, db, product):
@@ -172,7 +201,7 @@ def add_properties(msilib, db, product):
     summary.Persist()
 
 
-def add_shortcuts(msilib, db, kit, product, install, helper, run_helper):
+def add_shortcuts(msilib, db, kit, product, install, helper, run_helper, release_kit=False):
     msilib.add_data(db, 'Directory', [('DesktopFolder', 'TARGETDIR', 'Desktop'), ('ProgramMenuFolder', 'TARGETDIR', 'Programs')])
     short = product.short_name + '|' + product.name
     pythonw = '[INSTALLDIR]python' + BS + 'pythonw.exe'
@@ -182,6 +211,16 @@ def add_shortcuts(msilib, db, kit, product, install, helper, run_helper):
         msilib.add_data(db, 'Shortcut', [
             ('HelperMenu', 'ProgramMenuFolder', short, install.component, pythonw,
              '"[INSTALLDIR]helper.pyw"', 'Start the multiplayer helper (then press Play in Steam)', None, None, None, 1, 'INSTALLDIR')])
+        if release_kit:   # X4 in its multiplayer profile on the Multiplayer page: host or join there without a restart
+            play = '"[INSTALLDIR]helper.pyw" --play'
+            msilib.add_data(db, 'Shortcut', [
+                ('PlayProfileMenu', 'ProgramMenuFolder', product.play_short_name + '|' + product.name + ' (play)',
+                 install.component, pythonw, play, 'X4 in its multiplayer profile, on the Multiplayer page', None, None,
+                 None, 1, 'INSTALLDIR'),
+                ('PlayOnlineDesktop', 'DesktopFolder', short, install.component, pythonw, play,
+                 'X4 in its multiplayer profile, on the Multiplayer page', None, None, None, 1, 'INSTALLDIR'),
+                ('FirstStart', 'INSTALLDIR', 'X4FIRST|' + FIRST_START, install.component, pythonw, play + ' --first',
+                 'X4 on the Multiplayer page when the installer finishes', None, None, None, 1, 'INSTALLDIR')])
         if (kit / 'second.pyw').is_file():   # a second player on the same PC (Steam starts only one X4)
             msilib.add_data(db, 'Shortcut', [
                 ('SecondMenu', 'ProgramMenuFolder', product.second_short_name + '|' + product.name + ' (second window)',
@@ -212,9 +251,9 @@ def build(kit, out, name=None, version=None):
     db = msilib.init_database(str(out), schema, product.name, product_code, version, product.manufacturer)
     helper = (kit / 'helper.pyw').is_file() and (kit / 'python' / 'pythonw.exe').is_file()   # Play in Steam (steamplay.py)
     run_helper = '"[INSTALLDIR]python' + BS + 'pythonw.exe" "[INSTALLDIR]helper.pyw"'
-    add_sequences(msilib, sequence, db, helper)
+    add_sequences(msilib, sequence, db, helper, release_kit=release is not None)
     if helper:
-        add_helper_actions(msilib, db, product, run_helper)
+        add_helper_actions(msilib, db, product, run_helper, release_kit=release is not None)
     add_properties(msilib, db, product)
 
     cab = msilib.CAB('kit')
@@ -225,20 +264,25 @@ def build(kit, out, name=None, version=None):
     install = msilib.Directory(db, cab, local, '', 'INSTALLDIR', f'{product.short_name}|{product.name}')
     files = 0
 
-    def add(directory, folder):
+    shipped_dirs = {'/'.join(path.split('/')[:depth]) for path in product.listed for depth in range(1, path.count('/') + 1)}
+
+    def add(directory, folder, relative=''):
         nonlocal files
         entries = sorted(os.scandir(folder), key=lambda e: e.name.lower())
         for entry in entries:
-            if entry.is_file():
+            path = relative + entry.name
+            if entry.is_file() and (not path.startswith('sessions/') or path in product.listed):
                 directory.add_file(entry.name)
                 files += 1
         for entry in entries:
-            if entry.is_dir() and entry.name not in product.not_installed:
+            path = relative + entry.name
+            shipped = path in shipped_dirs   # a release's ready-made sessions (only the manifest's files)
+            if entry.is_dir() and (shipped or (entry.name not in product.not_installed and not path.startswith('sessions/'))):
                 child = msilib.Directory(db, cab, directory, entry.name, entry.name, f'{directory.make_short(entry.name)}|{entry.name}')
-                add(child, entry.path)
+                add(child, entry.path, path + '/')
 
     add(install, kit)
-    add_shortcuts(msilib, db, kit, product, install, helper, run_helper)
+    add_shortcuts(msilib, db, kit, product, install, helper, run_helper, release_kit=release is not None)
     cab.commit(db)
     db.Commit()
     del db

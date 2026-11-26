@@ -43,7 +43,25 @@
 #define SPEAK_MUTE_SITE 0x56163bu
 #define SPEAK_MUTE_ORIGINAL 0x0774u /* je rel8 +7 (little endian 74 07) */
 #define SPEAK_MUTE_PATCHED 0x9090u
-static int speak_timer_installed,speak_timer_restored,speak_timer_patched;
+/* The third site: the lipsync. U::BodyClass::Move 0x380dd0 starts a speaking character's lipsync animation
+ * (U::BodyClass::StartLipsyncAnim 0x37c640, the file <voice>/<page>/lipsync/<line>), and when the animation has a length it
+ * sets the speaker's line duration to it (0x37caeb: speak data = entity +0x378 (or its controlled one's); 0x37cafd comisd
+ * xmm7 (0.0),[rax+0x18] / 0x37cb02 jnc / 0x37cb04 movsd [rax+0x18],xmm6). A body moves where it is presented, so that
+ * store landed where and when each client's presentation ran it: rk17's two-client satellite run (26 Nov), 18 of 116
+ * lines ended on a lipsync length instead of their text (player 2's wingmate's 30284002: 4.2 s by its text, 2.833 s by its
+ * lipsync, the bits of the float 2833 * 0.001f), the same on both clients; its three-client runs did not agree: player
+ * 2's 30284008 (2.6 s by its text) ended at 5,490 on one or two clients (its lipsync's 2.04 s) and at 5,506 on the others,
+ * its use case asked for the next line 16 ticks apart and the runtime IDs parted there (census 5,700: 659 objects apart).
+ * The jnc becomes a jmp over the store: the animation still plays; the line keeps the duration SpeakNextLine gave it, the
+ * text's, on every client. Pinned (0x37cac0..0x37cb20 with the site as either value); armed and restored with the timer
+ * site, checked every gate tick (lipsync_changed). */
+#define SPEAK_LIPSYNC_SITE 0x37cb02u
+#define SPEAK_LIPSYNC_ORIGINAL 0x0573u /* jnc rel8 +5 (little endian 73 05) */
+#define SPEAK_LIPSYNC_PATCHED 0x05ebu  /* jmp rel8 +5 */
+#define SPEAK_LIPSYNC_BLOCK 0x37cac0u
+#define SPEAK_LIPSYNC_BLOCK_SIZE 0x60u
+#define SPEAK_LIPSYNC_BLOCK_SHA "210ae677d7628c25d8ad91011a638e0d3b5b7417c4c1363bee530d9a9acae520"
+static int speak_timer_installed,speak_timer_restored,speak_timer_patched,speak_lipsync_patched;
 static volatile LONG64 speak_timer_failures;
 static const char *speak_timer_stage="idle";
 static int speak_timer_block_ok(void) {
@@ -72,8 +90,16 @@ static int speak_timer_range_ok(unsigned rva,unsigned size,const char *sha) {
     }
     return hash_ok(copy,size,sha);
 }
+static int speak_lipsync_block_ok(void) {
+    unsigned char copy[SPEAK_LIPSYNC_BLOCK_SIZE];uint16_t site;
+    if(!read_local(image+SPEAK_LIPSYNC_BLOCK,copy,sizeof(copy))) return 0;
+    memcpy(&site,copy+(SPEAK_LIPSYNC_SITE-SPEAK_LIPSYNC_BLOCK),2);
+    if(site!=SPEAK_LIPSYNC_ORIGINAL && site!=SPEAK_LIPSYNC_PATCHED) return 0;
+    site=SPEAK_LIPSYNC_ORIGINAL;memcpy(copy+(SPEAK_LIPSYNC_SITE-SPEAK_LIPSYNC_BLOCK),&site,2);
+    return hash_ok(copy,sizeof(copy),SPEAK_LIPSYNC_BLOCK_SHA);
+}
 static int speak_timer_pins(void) {
-    return speak_timer_block_ok() &&
+    return speak_timer_block_ok() && speak_lipsync_block_ok() &&
         speak_timer_range_ok(0x563d30u,0x150u,"ed172734d9e208e4362f3ace721a011af63837b3c9a5ee6e34090fd2994b663c") &&
         speak_timer_range_ok(0x563e90u,0x120u,"6f0439b83aa9f3e49fb13aa9f9d95a8addcbe2da5e5abec96cb851fe4b67e9bb") &&
         speak_timer_range_ok(0x563fc0u,0x383u,"b1adad699b2f404f4143a80a1c78c96a20767d62515294a19861fc8e2c3dae79") &&
@@ -89,25 +115,35 @@ static int speak_site_swap(uint32_t at,uint16_t expected,uint16_t value) {
 }
 static int speak_timer_swap(uint16_t expected,uint16_t value) {return speak_site_swap(SPEAK_TIMER_SITE,expected,value);}
 static uint16_t speak_mute_site(void) {uint16_t v=0;read_local(image+SPEAK_MUTE_SITE,&v,2);return v;}
+static uint16_t speak_lipsync_site(void) {uint16_t v=0;read_local(image+SPEAK_LIPSYNC_SITE,&v,2);return v;}
 static int speak_timer_arm(void) {
     if(speak_timer_installed) return stats.active!=0; /* Identical rerun after a loading-UI reload. */
     if(!stats.active || (boot_mode && boot_phase) || stats.issued || GetCurrentThreadId()!=ui_thread) return 0;
     if(GetModuleHandleW(L"x4lan_fixedtick_64.dll")) {speak_timer_stage="foreign_module";return 0;}
     if(!speak_timer_pins()) {speak_timer_stage="pins";return 0;}
     if(speak_timer_site()!=SPEAK_TIMER_ORIGINAL) {speak_timer_stage="site";return 0;}
+    if(speak_lipsync_site()!=SPEAK_LIPSYNC_ORIGINAL) {speak_timer_stage="lipsync_site";return 0;}
     if(!speak_timer_swap(SPEAK_TIMER_ORIGINAL,SPEAK_TIMER_PATCHED)) {speak_timer_stage="cas";return 0;}
-    speak_timer_patched=1;speak_timer_restored=0;speak_timer_installed=1;speak_timer_stage="armed";return 1;
+    if(!speak_site_swap(SPEAK_LIPSYNC_SITE,SPEAK_LIPSYNC_ORIGINAL,SPEAK_LIPSYNC_PATCHED)) {
+        (void)speak_timer_swap(SPEAK_TIMER_PATCHED,SPEAK_TIMER_ORIGINAL);speak_timer_stage="lipsync_cas";return 0;
+    }
+    speak_lipsync_patched=1;speak_timer_patched=1;speak_timer_restored=0;speak_timer_installed=1;speak_timer_stage="armed";return 1;
 }
 /* Main-thread tick check. */
 static int speak_timer_check(void) {
     if(InterlockedCompareExchange64(&speak_timer_failures,0,0)) return 0;
-    const char *why=speak_timer_site()!=SPEAK_TIMER_PATCHED?"site_changed":!speak_timer_pins()?"block_changed":NULL;
+    const char *why=speak_timer_site()!=SPEAK_TIMER_PATCHED?"site_changed":
+        speak_lipsync_patched && speak_lipsync_site()!=SPEAK_LIPSYNC_PATCHED?"lipsync_changed":!speak_timer_pins()?"block_changed":NULL;
     if(why) {speak_timer_stage=why;InterlockedIncrement64(&speak_timer_failures);return 0;}
     return 1;
 }
 static int speak_timer_owned(void) {return !speak_timer_patched || speak_timer_site()==SPEAK_TIMER_PATCHED;}
 static void speak_timer_restore(void) {
     if(!speak_timer_installed) return;
+    if(speak_lipsync_patched) {
+        if(!speak_site_swap(SPEAK_LIPSYNC_SITE,SPEAK_LIPSYNC_PATCHED,SPEAK_LIPSYNC_ORIGINAL)) return; /* a foreign value stays */
+        speak_lipsync_patched=0;
+    }
     if(speak_timer_patched) {
         if(!speak_timer_swap(SPEAK_TIMER_PATCHED,SPEAK_TIMER_ORIGINAL)) return; /* a foreign value stays */
         speak_timer_patched=0;
@@ -115,7 +151,7 @@ static void speak_timer_restore(void) {
     speak_timer_restored=1;speak_timer_installed=0;
 }
 static int speak_timer_status(char *out,size_t capacity) {
-    int n=snprintf(out,capacity,"installed=%d site=%04x restored=%d stage=%s failures=%lld",speak_timer_installed,speak_timer_site(),
-        speak_timer_restored,speak_timer_stage,(long long)speak_timer_failures);
+    int n=snprintf(out,capacity,"installed=%d site=%04x restored=%d stage=%s failures=%lld lipsync=%04x",speak_timer_installed,speak_timer_site(),
+        speak_timer_restored,speak_timer_stage,(long long)speak_timer_failures,speak_lipsync_site());
     return n>0 && (size_t)n<capacity?n:0;
 }

@@ -10,18 +10,23 @@ static void test_sclock_write_sites(void) {
     }
 }
 static void test_sclock_cycle(double before) {
-    uint64_t saved_issued=stats.issued;DWORD saved_ui=ui_thread;uint32_t saved_active=stats.active;
+    uint64_t saved_issued=stats.issued,saved_completed=stats.completed;DWORD saved_ui=ui_thread;uint32_t saved_active=stats.active;
     InitializeCriticalSection((CRITICAL_SECTION*)(image+SCLOCK_LOCK));
     *(double*)(image+SCLOCK_CLOCK)=before;
-    test_sclock_reset();stats.active=1;stats.issued=0;ui_thread=GetCurrentThreadId();
+    test_sclock_reset();stats.active=1;stats.issued=stats.completed=0;ui_thread=GetCurrentThreadId();
     assert(sclock_arm() && sclock_armed && !sclock_set && sclock_read()==before); /* arming does not touch the clock */
-    stats.issued=7;assert(sclock_tick() && sclock_set && sclock_set_tick==7 && sclock_read()==SCLOCK_VALUE);
-    *(double*)(image+SCLOCK_CLOCK)=SCLOCK_VALUE+1.0/30;
-    stats.issued=8;assert(sclock_tick() && sclock_read()==SCLOCK_VALUE+1.0/30); /* set once: the clock runs on */
-    char status[256];assert(sclock_status(status,sizeof(status))>0 && strstr(status,"armed=1 set=1 set_tick=7 ") && strstr(status," stage=set failures=0"));
+    /* Gate ticks and the boot's frames (issued == completed) leave it: their number is each client's. */
+    assert(sclock_tick() && !sclock_set && sclock_read()==before);
+    for(unsigned i=0;i<3;i++) {sclock_frame();assert(!sclock_set && sclock_read()==before);}
+    stats.issued=1;assert(sclock_tick() && !sclock_set);   /* tick 1 permitted, its frame not run yet */
+    sclock_frame();assert(sclock_set && sclock_set_tick==1 && sclock_read()==SCLOCK_VALUE);
+    *(double*)(image+SCLOCK_CLOCK)=SCLOCK_VALUE+1.0/30;stats.completed=1;
+    stats.issued=2;assert(sclock_tick() && sclock_read()==SCLOCK_VALUE+1.0/30); /* set once: the clock runs on */
+    sclock_frame();assert(sclock_read()==SCLOCK_VALUE+1.0/30 && sclock_set_tick==1);
+    char status[256];assert(sclock_status(status,sizeof(status))>0 && strstr(status,"armed=1 set=1 set_tick=1 ") && strstr(status," stage=set failures=0"));
     uint64_t bits;memcpy(&bits,&before,8);assert(sclock_before_bits==bits);
     DeleteCriticalSection((CRITICAL_SECTION*)(image+SCLOCK_LOCK));memset(image+SCLOCK_LOCK,0,sizeof(CRITICAL_SECTION));
-    test_sclock_reset();stats.issued=saved_issued;ui_thread=saved_ui;stats.active=saved_active;
+    test_sclock_reset();stats.issued=saved_issued;stats.completed=saved_completed;ui_thread=saved_ui;stats.active=saved_active;
 }
 /* Hot join (lockstep_join.h join_admit_unpaused): the saver's clock at T rides the GATE record; the admission writes it and
  * marks the clock set, so the joiner's first gated frame neither sets the start again nor refuses past it. */
@@ -38,6 +43,8 @@ static void test_speech_clock_join(void) {
     memcpy(&got,image+SCLOCK_CLOCK,8);assert(got==want && sclock_set && sclock_set_tick==633 && !strcmp(sclock_stage,"join"));
     memcpy(&got,&own,8);assert(join_unpaused_before==got && sclock_before_bits==got);
     stats.issued=634;assert(sclock_tick() && sclock_read()==session);   /* the first gated frame after it: no set, no refusal */
+    {const uint64_t saved_completed=stats.completed;stats.completed=633;sclock_frame();stats.completed=saved_completed;}
+    assert(sclock_read()==session && sclock_set_tick==633 && !strcmp(sclock_stage,"join"));   /* nor at its step's frame */
     DeleteCriticalSection((CRITICAL_SECTION*)(image+SCLOCK_LOCK));memset(image+SCLOCK_LOCK,0,sizeof(CRITICAL_SECTION));
     for(unsigned i=0;i<SCLOCK_SITES;i++) memset(image+sclock_site[i],0,8);
     memset(image+SCLOCK_CLOCK,0,8);assert(!join_unpaused_get());   /* an uninitialized lock (a mapped image): not carried */
@@ -46,7 +53,7 @@ static void test_speech_clock_join(void) {
     printf("speech clock hot join admission tests PASS\n");
 }
 static void test_speech_clock(void) {
-    uint64_t saved_issued=stats.issued;DWORD saved_ui=ui_thread;uint32_t saved_active=stats.active;
+    uint64_t saved_issued=stats.issued,saved_completed=stats.completed;DWORD saved_ui=ui_thread;uint32_t saved_active=stats.active;
     test_sclock_reset();
     /* Arming refuses without an active gate, after tick 0, off the UI thread and on unpinned bytes. */
     stats.active=0;stats.issued=0;ui_thread=GetCurrentThreadId();assert(!sclock_arm());
@@ -65,13 +72,18 @@ static void test_speech_clock(void) {
     assert(!sclock_tick()); /* a failure stays */
     test_sclock_reset();stats.issued=0;assert(sclock_arm());
     *(double*)(image+SCLOCK_CLOCK)=NAN;assert(!sclock_tick() && !strcmp(sclock_stage,"past_value"));
+    /* Past the value at tick 1's frame: no set, the clock untouched, and the next gate tick stops. */
+    test_sclock_reset();stats.issued=stats.completed=0;assert(sclock_arm());*(double*)(image+SCLOCK_CLOCK)=5.0;assert(sclock_tick());
+    *(double*)(image+SCLOCK_CLOCK)=SCLOCK_VALUE+2.0;stats.issued=1;sclock_frame();
+    assert(!sclock_set && sclock_failures==1 && !strcmp(sclock_stage,"past_value") && sclock_read()==SCLOCK_VALUE+2.0 && !sclock_tick());
     /* A changed clock instruction after the set stops the gate. */
-    test_sclock_reset();stats.issued=0;assert(sclock_arm());*(double*)(image+SCLOCK_CLOCK)=5.0;assert(sclock_tick() && sclock_set);
+    test_sclock_reset();stats.issued=stats.completed=0;assert(sclock_arm());*(double*)(image+SCLOCK_CLOCK)=5.0;
+    stats.issued=1;assert(sclock_tick() && !sclock_set);sclock_frame();assert(sclock_set);
     image[sclock_site[2]]^=1;assert(!sclock_tick() && !strcmp(sclock_stage,"pins_changed"));image[sclock_site[2]]^=1;
     DeleteCriticalSection((CRITICAL_SECTION*)(image+SCLOCK_LOCK));memset(image+SCLOCK_LOCK,0,sizeof(CRITICAL_SECTION));
     for(unsigned i=0;i<SCLOCK_SITES;i++) memset(image+sclock_site[i],0,8);
     memset(image+SCLOCK_CLOCK,0,8);
-    test_sclock_reset();stats.issued=saved_issued;ui_thread=saved_ui;stats.active=saved_active;
+    test_sclock_reset();stats.issued=saved_issued;stats.completed=saved_completed;ui_thread=saved_ui;stats.active=saved_active;
     printf("speech clock arming, forward set, pins and status tests PASS\n");
     test_speech_clock_join();
 }

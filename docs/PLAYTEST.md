@@ -1706,6 +1706,224 @@ session. The heat, the reload, the clip reload, the stance block and the shots a
 icons dim as X4 dims a weapon whose clip reloads. Not run: two PCs (the change is presentation only: nothing the census
 reads), missiles in the secondary panel (the fighter has none), a group change by key while the panel is shown.
 
+## Release check: before a build goes to the players (built 25 Nov; one, two and three clients on one PC)
+
+Release rk15 passed the suite and the scripted two-client sync checks, and still regressed in real play: the game ran
+at 0.6x real time on the laptop host (0.8x with rk8), the starting mission's offer was missing from the mission list,
+Shift+A did nothing after a continue, and more. Those checks never measured the pace, never looked at a player's own
+mission manager and never played a mission through. `tools/dev/release_check.py` does, on this PC, and prints PASS or
+FAIL per check with the rows that decided it (exit code 0 all passed, 1 a check failed, 2 a run did not work):
+
+```
+# the candidate against rk9 on the same continued game and the same scripted flight (one X4 for player 1, then 2)
+python tools/dev/release_check.py perf --candidate <rk15>/native/x4lan_gate_64.dll \
+    --baseline <p2all>/.local/try/build-all10/x4lan_gate_64.dll@3fb2dc25 \
+    --save <rk9-save>/c3-t18000.xml.gz --session <rk9-save>/session.json --recipe <rk9-save>/overlay \
+    --solo 1 --minutes 6 --repeat 2 --locks [--ablate new]
+# each player's mission manager on the same continued game (14 minutes: the Terran story offers by its timer)
+python tools/dev/release_check.py missions --gate-dll <dll> --save ... --session ... --recipe ... --locks
+# every player on the Terran cadet start flies its first chapter (a new session, captured once per player count)
+python tools/dev/release_check.py satellite --gate-dll <dll> --players 2 --locks
+python tools/dev/release_check.py satellite --gate-dll <dll> --players 3 --locks
+# all three; and the verdicts again from finished runs (no X4)
+python tools/dev/release_check.py all --candidate <dll> --baseline <dll>@<commit> --save ... --session ... --recipe ... --locks
+python tools/dev/release_check.py report perf|missions|satellite RUN [RUN ...]
+python tools/dev/release_check.py perf-logs BASE_CLIENT.log CAND_CLIENT.log [--base-run RUN --cand-run RUN]
+```
+
+- **Where it runs.** Windowed clients with disposable profiles (`x4ls play --close-when-over --never-focus`), on
+  `--display 3` (default), lanes `C:/x4ls-lanes-relcheck` (default), below normal priority. `--locks` follows
+  `C:/x4ls-locks/PROFILES.txt`: one `--solo` X4 takes a free slot (x4-b, x4-a, then x4-d, x4-c; client K on that
+  slot's first profile), two clients a whole pair (x4-a + x4-b on 45855/45856, or x4-c + x4-d on 45850/45851), three
+  x4-a, x4-b and x4-c (45855 to 45857); a run of several clients queues in `want-both.txt` only while it waits, and
+  leaves the queue once it holds its slots. `--lock-slots a,b` limits a run to some slots. While `USER-PLAYING.txt`
+  exists no X4 starts at all; with `--beside-user` (only when the coordinator has opened them) x4-a and x4-b may be
+  taken, one `--solo` X4 or the pair, while x4-c and x4-d stay closed and no three-client run starts. A capture (`x4ls new-session`) waits for any other X4 on the capture profile 45841 and
+  holds `C:/x4ls-locks/capture-45841` meanwhile. Without `--locks` give `--first-profile`. A file `.local/release-check/PAUSE` in this checkout holds every
+  new run of it (the one in progress goes on) until it is removed: the slots go to another agent's runs meanwhile.
+- **Disk.** No run starts with less than 8 GB free on the drive (`--min-free-gb`; it waits before taking its
+  slots). After its verdict a run keeps `release-check-report.txt` (the verdict), the census records
+  (`x4lan-census-*.txt`), the crash notes and the relay's summaries; its raw X4 logs, saves and relay journals are
+  removed (`--keep-logs` keeps them, for a diagnosis). A perf run keeps its profile (`release-check-profile.json`),
+  which `report perf` reads when the logs are gone.
+- **Never run the Python suite in a tree whose session is live.** The launcher tests stop the session recorded in
+  that tree's `.local/x4ls/session.json`, and every X4 of it exits with code 15 at the same moment, without a crash
+  note (25 Nov). A run does not start while a `unittest`/`pytest` process runs from its tree (it waits, and after 30
+  minutes refuses).
+- **A baseline is its own release.** `DLL@COMMIT` exports that commit's tree once into
+  `.local/release-check/repos/<commit>` (`git archive`); the baseline's sessions, overlays, probe and defaults are
+  built by its own launcher, except the release check's own ops (the `X4LAN_RELEASE_CHECK` block of
+  `native_gate_ui_replay_core.lua`, with its dispatch hook in a core of before it): they come from this checkout in
+  every tree, so every release is driven by the same harness. A DLL without `@COMMIT` runs from this checkout. rk8
+  (c9478008) has no `x4ls continue`, so it can
+  be a baseline only of a new session, not of a continued save.
+- **perf.** The same save is continued by each build's own `x4ls continue` with `native_gate_probe_profile=true` and
+  `native_gate_frame_timing=true`, and every build plays the same plan (each minute: throttle up, the travel drive on
+  for 15 s, a yaw turn, the guns fired ahead). Measured from tick 600: per tick, the simulation thread's frame and
+  the gate's pre-step work (`FRAME_TIMING sim_us + pre_us`); per render-only frame, its period (`rframe_us`); ticks
+  per second from the relay's `released_at` stamps (X4's own log stamps are game time, paced, and useless for this).
+  and the processor time per tick of all of X4's threads (sampled every 5 s against the relay's tick: the measure
+  the other programs on the PC disturb least). FAIL when the candidate is more than 10% slower than a baseline in any
+  of these. A run without timing rows (its X4 never reached the session) stops the series. Then the largest differences:
+  every timing field of every status row (the means of the levels, the per-tick rates of the cumulative ones such as
+  `MASS_TRAFFIC total_wait_us`), and every counter's rate per tick (what a module does more often: e.g. `PILOT_INPUTS
+  eye.2`, the eye poses per tick). The new per-frame modules (HUD zone, aim presentation, own throttle, eye and walk
+  camera, cutscene, transit) have no timers of their own, so `--ablate KEY,...` (or `new`: the session keys added since
+  rk9) runs the candidate again with each one off; the difference is that module's own cost. `--sample-ms N` adds the
+  MoveWorker sampler (`tools/dev/census_profile.py --against` reads it). Repeat runs (`--repeat`) interleave the
+  builds, so the load of other X4 on the PC falls on both; the `--ablate` runs come in the first round only
+  (`--ablate-repeat N` for more). The module costs are printed beside the largest run-to-run spread of a build that ran
+  twice, and a cost inside that spread is marked so: on a PC other agents load, a module's cost below it is no cost
+  that was measured.
+- **missions** (each player's own client; the ops are `rc_look`, `rc_mm`, `rc_accept`, `rc_activate` in
+  `native_gate_ui_replay_core.lua`, scoped like a person's menu): the mission manager opens (the map in its mission
+  mode); every mission the client lists is that player's or nobody's (`gate.mpp_owner`), and every mission MD claimed
+  for that player is listed, and the world's count equals the manager's (`UI_MISSIONS_STATE missions=`); the active
+  mission, the one the HUD's mission panel reads in the presentation scope, is the player's own; the yellow objective
+  is that mission's objective target (the HUD draws the manager's active mission; X4's guidance component is a
+  guidance mission's, Plot course, and `none` otherwise, so a set guidance must point at the same target); the story offer
+  (`--offer`, default "Defenders", the Terran story's first mission from `Story_Yaki_P<k>`) appears for that player and
+  is accepted (`rc_accept` takes an offer of this player's or nobody's only: the lists show every player's offers),
+  then listed as its mission. Offers of other players in a client's list are named as a note. Also in this run, the
+  quick checks: Shift+A right after the continue (the look before and after the key: with an active mission that has
+  an objective target, the autopilot must fly) and the HUD's speed number around a travel drive
+  (`native_gate_own_throttle_rows=1`, no key held: within 2% of the simulated speed while that stays within 2% over
+  ±10 ticks, within 10% while it changes by less than 1% a tick; three such rows in a row, or off rows in more than a
+  tenth of the steady ones, FAIL).
+- **satellite.** `x4ls new-session --base-start x4ep1_gamestart_terran1 --players N --start K=x4ep1_gamestart_terran1
+  --omit K=world --story K` for K = 2..N (made once per player count in `.local/release-check/sessions/cadet-Np-*`).
+  Every player runs `rc_drive` every second, which plays chapter 1 of the cadet story by that player's own inputs:
+  the story's mission made active as the mission manager does, Shift+A through the replayed input while the objective
+  is away and the autopilot is off, the satellite launched by the ship menu's call at the deploy step, and at the
+  repair step the get-up key, "Use Spacesuit", the suit put 12 m from the broken satellite, looking at it (the test
+  placement of the mission tests: the suit's flight there is not part of the check), the satellite targeted and the
+  repair laser fired straight ahead until the objective moves on. The run ends once every M1 is in on every client
+  (two minutes later, for a census after it). PASS per player: `MILESTONE reached name=terran_cadet-M1-slot<k>` on
+  every client; the player's speech (`SPEECH_START owner=k`) played on client k (`muted=0`) and muted on every other
+  client; and the session in sync (no relay DESYNC, every common `WORLD_HASH` equal). The missions checks above run on
+  its rows too (the cadet mission listed, active and guided for its own player only).
+- **Naming a split.** `satellite --census-every 300` takes the census every 300 ticks in one step (no spread), keeps
+  the last 16 census records beside each client log and writes the digest's parts every tick (`DIGEST_PARTS`); the
+  report then names the first tick whose parts differ and the objects `tools/dev/census_record_diff.py` finds, and
+  `rc_ship` logs the ship the player left for the spacesuit every 10 ticks (speed, position, its pilot's AI command,
+  its order queue, flight assist, autopilot). `--set` adds probe keys to the run, e.g. a watch and its movement
+  controller every tick: `--set "native_gate_world_hash_watch={'<saved key>'}" --set
+  "native_gate_world_controller_rows={first,last}"`. `--plan suit` plays only the get-up and "Use Spacesuit" for
+  `--suit-slot` (default 1) at tick 600 and leaves the suit floating beside its ship, with ops every release has.
+  A run whose settings the probe refused (`CONFIG_REFUSED`) fails with the probe's reason; the session's planned end
+  (`STOP ... reason=1 restored=1`) is no stop.
+- **Weapon panel and lead mark** (in the missions run, where the release tree has the read ops `hud_weapons` and
+  `aim_look`; an older tree's plan leaves them out, since an unknown op refuses the whole plan): each player's panel
+  shows the weapons of its active group as active (`GetWeaponDetails3`'s flag, what the panel colours by), next to
+  player 1's; and one player after the other is put 1 km and then 10 km from the next player's ship with that ship as
+  its target: in weapon range near, out of it far (`IsTargetInPlayerWeaponRange`), the aim assist state as player
+  1's. X4's own lead mark stays on screen out of range (an X instead of the circle, measured 25 Nov), so the range
+  answer, not the mark's visibility, is what is compared.
+- **Not covered (yet).** A scripted run is not a person: what a person sees is covered only where a row says it (the
+  panel's drawn colours, the mark's shape, the mouse steering under the autopilot).
+
+Run on rk15 (25 Nov, this PC with up to four other X4 running; `report` gives every verdict again from the run folders):
+
+- **satellite, one X4 per player** (`--solo 2` of the two-player cadet session, `--solo 3` of the three-player one):
+  both players flew chapter 1 by the driver: Shift+A to each objective (the satellite 4 km ahead, the missing
+  satellite's place, the wingmate, the broken satellite 16 km out), the satellite launched at the deploy step, out in
+  the suit, the repair laser, then `MILESTONE reached name=terran_cadet-M1-slot2` at tick 10,007 and
+  `...-slot3` at 11,709 and their milestone saves; the cadet mission listed, active and with its objective for its own
+  player only on each client; the story's lines owned by that player and played on its client. The first driver fired
+  the laser from 40 m and the hull stayed at 20%: it reaches at 12 m (the driver now puts the suit there).
+- **missions, rk9's save continued, two clients**: client 2's gate stopped at tick 2,811 (stop 79: `PATH_DETERMINISM
+  stage=budget_owner`, the pathing manager's budget word changed under the gate, after a 1 s stall) and the relay
+  dropped it (FAIL). Until then, on both clients: the mission manager opens (the map in its mission mode), each client
+  lists only its own player's missions and nobody's (player 1's cadet mission "Essential Work" is hidden on client 2),
+  every mission MD claimed for its player is listed, the world counts equal `UI_MISSIONS_STATE`, player 1's active
+  mission is its own with its objective target, and Shift+A after the continue flies player 1 to it (player 2 had no
+  active mission in that save: n/a). Player 2's own offers ("Shakedown", "In Need of Supplies") are in player 1's
+  offer list too (noted). The Terran story's offer did not come for player 2 before its client stopped (14 minutes are
+  needed). The HUD speed of player 2 fell 15% below the simulated speed for 9 ticks at the end of a travel drive stop
+  and jumped back (137 shown at 162 m/s, tick 1,863: FAIL); player 1's stayed within 2%. Every client logged a
+  first-chance exception caught by the gate at tick ~300 (`CRASH_FIRST_CHANCE_GATE at=x4lan_gate_64.dll+2efa4c`,
+  named as a note).
+- **perf, the 0.6x of the rk15 game** (`perf-logs` on the two-PC games' client logs, ticks 600 to 15,000; client 1 the
+  laptop host, player 1; client 2 this PC, player 2; the same world in all three games, about 553,000 objects and
+  10,090 pathing agents). Lockstep runs the same simulation on both PCs, so a cost that grew on one PC only is that
+  PC's speed, not more work:
+
+  | per tick (identical work on both PCs) | laptop rk8 | laptop rk9 | laptop rk15 | this PC rk9 | this PC rk15 |
+  |---|---|---|---|---|---|
+  | pathing pass (`TRAVEL_DETERMINISM pass_us`) | 9.8 ms | 10.6 ms | **15.5 ms** | 8.9 ms | 8.4 ms |
+  | path refresh (`PATH_DETERMINISM total_us`) | 1.66 ms | 1.86 ms | 2.35 ms | 1.59 ms | 1.49 ms |
+  | mass traffic join (`MASS_TRAFFIC total_wait_us` per tick) | 1.80 ms | 1.95 ms | 2.24 ms | 1.49 ms | 1.52 ms |
+  | one census cycle (`WORLD_HASH_SPREAD cycle_us`) | 0.64 s | 0.64 s | 0.94 s | 0.59 s | 0.56 s |
+
+  So the laptop did the same work 27 to 47% slower in the rk15 game than in the rk9 game, while this PC did it as fast
+  or faster: about 6.5 ms more per tick on the laptop, 4.9 ms of it the serial pathing pass, which takes a 43 ms tick
+  (rk8's 23 ticks/s, 0.77x) to about 50 ms (0.67x). That is the laptop's own speed in that session (its clock, power
+  or another load on it), not more simulation work in rk15. What rk15 adds is per frame and smaller: the render-only
+  frame's MoveWorker part grew 1.45 to 1.76 ms (+21%) on this PC (player 2: the HUD zone, the aim presentation, the
+  own throttle, ...; the whole frame +6%), and on the laptop +37% (mixed with its slowdown). The controlled run (the
+  same save and flight with rk9's and rk15's builds on this PC, and the modules switched off one by one) is what
+  `perf --ablate new` does; on 25 Nov only rk15's runs finished before X4 had to stay closed (rk15 alone, contended PC:
+  41 to 43 ms per tick, 48 ms of processor time per tick over all of X4's threads, 23 to 24 ticks/s).
+
+Run on rel16 (rk16, gate 3fe464b7; 25 Nov, two clients on x4-a + x4-b, the two-player cadet session):
+
+- **satellite, two clients: FAIL, a split at the get-up.** Both players flew chapter 1 by the driver and reached
+  M1 on both clients (player 2 at tick ~7,105, player 1 at 7,997); each player's lines were heard on its own client
+  only; the mission lists, active missions and objectives were each player's own. But the session split: with
+  `--census-every 300` the world digest part first differs at the census of tick 6,600 (6,300 equal), in one object,
+  player 1's own ship (ShipSmall), timing domain. The get-up key went in at 6,460; at 6,464 the ship's movement
+  controller changes from the player's controller (image+0x2c39488) to a NavigationController (image+0x2c51158) on
+  both clients, and from that tick on the controller's word at +0x58 is 0x1 on client 1 and a tagged pointer on
+  client 2 (the hashed timing fields lie past the 0xc0 bytes the controller row shows). The empty ship meanwhile
+  stays at rest: no pilot, no orders, flight assist and autopilot off (`rc_ship`). The suit-out (6,550), the
+  placement and the laser come later. In the same session with `--plan suit` (out at tick 740 from a ship parked
+  since the start, floating beside it until tick 5,441) every census to 5,400 was equal: the split needs the ship's
+  flight before the get-up (the autopilot to the satellite, off at 407 m, coasting to rest at 185 m).
+- **rk9 on the same session and plan** (rk9 with the release-check ops grafted in, a local tree): apart already at
+  tick 4,551 (digest part `rid`, runtime IDs) during player 1's autopilot flight to the wingmate, a split rel16 no
+  longer has; at its get-up both clients keep 0x1 at +0x58.
+- **missions, rk9's save continued, two clients** (14 minutes, 25,241 ticks, no other X4 on the PC): in sync to the
+  end, every census equal, no stall; rk15's stop 79 at tick 2,811 did not come back. The mission manager opens on
+  both clients, each lists only its own player's missions and nobody's, MD's claimed missions are listed, the world
+  counts match, each active mission and its objective is the player's own; player 2's Terran story offer "Defenders
+  of Sol" came and was accepted at tick 11,290 (its own mission from 11,440); Shift+A after the continue flies
+  player 1 to its objective 4 km out; the weapon panel shows 3 of 3 active for both players; in weapon range at 1 km
+  and out of it at 10 km for both, with aim assist. FAIL: player 2's HUD speed, as on rk15 and at the same tick
+  (1,863: 137 shown at 162 m/s for 9 ticks at the end of a travel drive stop, then a jump back); player 1's within 2%.
+- **perf, rk9 against rel16 on this PC** (rk9's save continued, `--solo 1`, 6 minutes each, two rounds of each
+  build and the 11 `--ablate new` runs once, other agents' X4 running beside): PASS. Per tick 33.8 to 33.6 ms
+  (-0.5%), per render-only frame 1.59 to 1.57 ms, 28.5 to 29.1 ticks/s, processor time per tick 46.1 to 40.6 ms
+  (-12%). rel16's navigation octree build takes 0.27 instead of 7.9 ms a tick (it waits on its snapshots instead), the
+  nav mesh build and join 0.57 ms less, the gate's pre-step 0.27 ms less; its new per-frame work (the HUD's weapon
+  answers, the own throttle, the aim presentation) does not show in the totals. No new module has a measurable cost:
+  the run-to-run spread of one build was 2.3 ms per tick, and every run without a module came out slower than the
+  candidate, the PC's load having grown during the series. With the two-PC comparison above: rk15's 0.6x in that game
+  was the laptop's own slowdown, not more work per tick.
+- **First-chance exception at tick 300** (every session, every client, rk15 and rel16): the gate's guarded fast read
+  (`read_local`, `native_gate_fast_reads`) inside the region camera's shape update hook (`rc_shape_update`, its
+  `rc_shape_record_key`) reads the owner's two body records at owner+0x260 and then each record's +0x20; for one owner
+  the second slot holds a non-pointer (0xff0100001f), the guard catches the fault and the key falls back. Harmless as
+  it stands, noisy in every crash note.
+
+Run on rk17 (p2all 2a1574b3, gate DLL 490e605b; 25 Nov, new cadet sessions captured by rk17 itself):
+
+- **satellite, two clients: PASS** (15 of 15): M1 for both players on both clients at the same ticks, each player's
+  lines heard on its client only, every census to ~11,000 equal (the get-up split of rel16 is gone).
+- **satellite, three clients: PASS once, split twice.** In two of three runs the session split at tick 5,491, always
+  there: player 2's line 10101:30284009 is asked for 62 ticks after the line before it on one or two clients and 78
+  ticks after it on the others (one run: client 1 early; the next: client 3 late). The runtime ID callers
+  (`census_runtime_callers.py --first`, tables every 30 ticks: `--set native_gate_runtime_ids_caller_stride=30`)
+  differ from tick 5,490 by one allocation of each of MD's speech cues (Speak, LastSpeak_Update, OnSpeakFinished,
+  SkipSpeakHandler, ...); every runtime ID after it is shifted on that client, and the census of 5,700 has 659 ships
+  apart. In the run without the split every client took 78 ticks for that line and 62 for player 3's line by another
+  voice: the line's length looks taken from its voice file when that is loaded, which one client sometimes is not.
+  The passing run: M1 for all three players on all three clients, every census equal, each player's lines on its
+  client only, missions and objectives each player's own. The driver's first three-client run ended at "Check on
+  your wingmate" (the autopilot stopped 541 to 761 m away, the step goes on inside about 500 m): it now puts the ship
+  300 m from an objective it does not get closer to.
+- Also noted: on the last client of a session the speech clock (`SPEECH_CLOCK clock=`) runs exactly one tick behind
+  from tick 1, in two- and three-client sessions alike.
+
 ## Mission types, tested without a person (built 16 Nov; two clients on one PC)
 
 `tools/dev/mission_matrix.py` runs X4's own mission libraries (`md/rml_*.xml`) once per player, one after the
@@ -2456,6 +2674,19 @@ python tools/dev/action_tests.py plan trade
     on by default, `lockstep_pilot_room_attention.h`; status `rat=` in PILOT_INPUTS). Run of 24 Nov on the diagnostic
     branch (gm:GM_DeployInPlace, both players, 9,763 ticks, 0 mismatches): player 2's computer inroom from tick 37, no
     dip at 3280, its script heard the approach at 4627 and ended the flight itself.
+    The toggle for players 2..N (25 Nov): in a scripted rk15 course run, client 2's second ToggleAutoPilot answered
+    false and left player 2's autopilot on (`UI_REPLAY_STATUS captured=` and `passed=` unchanged). ToggleAutoPilot
+    (0x72bdc0) chooses stop or start by X4's player's autopilot word (0x2f4b7d8, which `IsAutoPilotActive` and the
+    HUD's autopilot icon read; per slot), and the test op ran in the probe's canonical frame, where that word is slot
+    1's: it took the start branch for slot 1's player and answered false before reaching a capture. No capture guard
+    is involved (AutopilotStop is captured with no repeat check). A person's toggle (the docked menu's autopilot button
+    and the map's Shift+A, both `C.ToggleAutoPilot(false)`) runs in that client's presentation scope, where X4's
+    player and that word are its own. Runs on rk16 (cadet start, three-player session, one X4 each): players 1, 2 and 3
+    each start the autopilot to the story's objective by the toggle and stop it again, then the same by the Shift+A
+    key (each step seen within 6 ticks, the key's stop within 1); both UI calls captured, none refused. The op is now
+    scoped like those clicks (`K.SCOPED.ap_toggle`); top-level `ap_toggle` at ticks 1845 and 2040 then starts and stops
+    the autopilot for players 2 and 3 (`scope=1`) as for player 1. Release check `missions` on that tree's build (rk9 save,
+    two clients, 14 minutes, with the quick checks): PASS, 21 of 21, in sync.
     `guidance` (run of 21 Nov): each player plots a course to a different station (player 1 to NLN-075, player 2 to
     MMJ-623), sees it on its own client, flies it by Shift+A (147 and 158 km), the course ends by itself at the
     station, a second course is cleared by Remove course; in sync at all 3,841 ticks.
@@ -2538,8 +2769,10 @@ python tools/dev/action_tests.py plan trade
     boost/travel colour came the input delay after the key, and a wheel step or a stop moved the drawn ship that late
     too. The bar now answers from your own latest inputs, in the frame of the key: the set speed by X4's throttle rules
     (step sizes fitted from the simulation), boost and travel at once, a refused one (no boost energy, a jammed drive)
-    gone again within a few ticks; the speed number is the speed of the ship on the screen, and the drawn ship takes the
-    predicted throttle (`native_gate_own_throttle`, a default; `false` turns it off; lockstep_own_throttle.h). Still on
+    gone again within a few ticks; the drawn ship takes the predicted throttle (`native_gate_own_throttle`, a default;
+    `false` turns it off; lockstep_own_throttle.h). The speed number is the drawn ship's only while it answers your own
+    throttle change, up to the set speed and never past it; otherwise it is the simulation's, as player 1's (rel16
+    release check: after a travel stop the number read 137 at 162 m/s for 9 ticks for player 2). Still on
     the simulation's time: the boost energy bar, the travel charge sound, tint and messages, engine sounds and effects.
   - The cursor (fixed 9 Nov, the focus rule in `lockstep_pilot_stock.h`). X4 reads the PC's one cursor in the
     unfocused window too. When the cursor is in the other window, X4 sees it at this window's edge. Before the fix,

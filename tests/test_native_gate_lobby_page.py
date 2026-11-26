@@ -243,6 +243,89 @@ class Page(unittest.TestCase):
             self.assertFalse(any(r.selectable() for r in buttons), text)
             self.assertFalse(any(r.edit.box.active for r in rows if r.edit), text)
 
+    def test_the_restart_notice_stays_its_seconds_then_x4_quits_once(self):
+        lua, g = self.start("{pipe = 'x4mp-page', netplay = true}",
+                            extra='\nclock = 100\nfunction getElapsedTime() return clock end\nquits = 0\n'
+                                  'function QuitGame() quits = quits + 1 end\n')
+        self.frames(g, 40)
+        g.helper_state = ("return {stamp = 2, phase = 'restart', quit_after = 8, lines = {'Preparing a new game for "
+                          "4 players takes about 2 minutes, with X4 closed.'}}")
+        self.frames(g, 40)
+        self.assertIn('[X4LAN] LOBBY RESTART notice for 8 s, then X4 quits', self.logs(g))
+        lua.execute('clock = 107.5')
+        self.frames(g, 1)
+        self.assertEqual(g.quits, 0)                           # the notice is read first
+        lua.execute('clock = 108.1')
+        self.frames(g, 1)
+        lua.execute('clock = 200')
+        self.frames(g, 60)
+        self.assertEqual(g.quits, 1)                           # once
+
+    def test_an_active_edit_box_holds_a_new_list_only_while_the_player_types(self):
+        lua, g = self.start("{pipe = 'x4mp-page', netplay = true}",
+                            extra='\nclock = 10\nfunction getElapsedTime() return clock end\n')
+        self.frames(g, 40)
+        self.open(g)
+        code = self.row(g, 'x4lan_lobby_code')
+        code.edit.handlers.onEditBoxActivated()                # the box is active (X4 may keep it so)
+        refreshes = g.menu.refreshes
+        g.helper_state = ("return {stamp = 2, phase = 'browsing', lines = {'1 public game(s)'}, "
+                          "games = {{id = 'e03590c63e3d05c5', name = 'X4 game', players = 1, max = 2, state = 'lobby', "
+                          "compatible = true}}}")
+        self.frames(g, 40)
+        self.assertEqual(g.menu.refreshes, refreshes)          # held while the player may be typing
+        lua.execute('clock = 11.5')
+        code.edit.handlers.onTextChanged(None, 'K7')            # a key: still held
+        lua.execute('clock = 13')
+        self.frames(g, 1)
+        self.assertEqual(g.menu.refreshes, refreshes)
+        lua.execute('clock = 14.1')                             # 2.6 s without a key: the list is drawn, the text kept
+        self.frames(g, 1)
+        self.assertEqual(g.menu.refreshes, refreshes + 1)
+        self.assertIn('x4lan_lobby_game_e03590c63e3d05c5', self.ids(g))
+        self.assertEqual(self.row(g, 'x4lan_lobby_code').edit.boxtext, 'K7')
+        self.assertIn('[X4LAN] LOBBY GAMES public=1 lan=none phase=browsing stamp=2', self.logs(g))
+        notes = [line for line in self.logs(g) if 'LOBBY GAMES' in line]
+        self.open(g)                                           # the same lists drawn again: no second note
+        self.assertEqual([line for line in self.logs(g) if 'LOBBY GAMES' in line], notes)
+
+    def test_the_steam_switch_and_single_player(self):
+        lua, g = self.start("{pipe = 'x4mp-page', netplay = true}")
+        self.frames(g, 40)
+        g.helper_state = ("return {stamp = 2, phase = 'idle', lines = {}, "
+                          "steam_play = {on = false, pending = false, steam_running = true}}")
+        self.frames(g, 40)
+        self.open(g)
+        ids = self.ids(g)
+        self.assertEqual(ids[-2:], ['header', 'x4lan_lobby_steamplay'])
+        switch = self.row(g, 'x4lan_lobby_steamplay')
+        self.assertEqual((switch.name, switch.value), ("Steam's Play starts X4 Online", 'Off'))
+        switch.callback()
+        self.assertEqual(self.helper_requests(g)[-1], 'STEAMPLAY|1')
+        g.helper_state = ("return {stamp = 3, phase = 'idle', lines = {}, "
+                          "steam_play = {on = true, pending = true, steam_running = true}}")
+        self.frames(g, 40)
+        self.open(g)
+        self.assertEqual(self.row(g, 'x4lan_lobby_steamplay').value, 'On')
+        self.assertIn('x4lan_lobby_steampending', self.ids(g))
+        self.row(g, 'x4lan_lobby_steamrestart').callback()               # the Steam X4's page offers the restart
+        self.assertEqual(self.helper_requests(g)[-1], 'STEAMRESTART')
+        self.row(g, 'x4lan_lobby_steamplay').callback()
+        self.assertEqual(self.helper_requests(g)[-1], 'STEAMPLAY|0')
+        self.assertNotIn('x4lan_lobby_single', self.ids(g))               # not an X4 that Steam's Play started
+        # the X4 Steam's Play started through X4 Online (x4ls lobby, no pipe): Single-player, no Restart Steam
+        lua, g = self.start('{netplay = true, single = true}')
+        self.state(lua, "{stamp = 1, phase = 'idle', lines = {}, steam_play = {on = true, pending = true, steam_running = true}}")
+        self.open(g)
+        self.assertIn('x4lan_lobby_single', self.ids(g))
+        self.assertNotIn('x4lan_lobby_steamrestart', self.ids(g))
+        self.row(g, 'x4lan_lobby_single').callback()
+        self.assertEqual(self.requests(g)[-1], 'SINGLEPLAYER')
+        self.state(lua, HOSTING)                                          # not while a game is made
+        self.open(g)
+        self.assertNotIn('x4lan_lobby_single', self.ids(g))
+        self.assertFalse(any('ERROR' in t for t in self.logs(g)), self.logs(g))
+
     def test_a_blocked_firewall_offers_one_click(self):
         # the router opened the ports but a firewall on the PC blocked them (the live runs of 23 Nov): FIREWALL
         lua, g = self.start()

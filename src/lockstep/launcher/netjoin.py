@@ -39,6 +39,17 @@ class JoinJob(netplay.Job):
 
     # ---- a game of the master server ----
     def join_master(self, code=None, game_id=None, listed=None, hint=()):
+        master, game, files = self.master_files(code, game_id, listed)
+        if not game['late']:
+            self.install(files)   # a drop-in joiner's X4 is started by the hot join, with the join save
+        self.ready(game)
+        start = self.wait_for_master_start(game, files, hint)
+        self.flow.begin_session(start)
+        self.in_session(start, game)
+
+    def master_files(self, code=None, game_id=None, listed=None):
+        """The game at the master joined (a ticket and a slot; left again when the job ends) and its session here: the
+        files downloaded and checked, the overlay built. (master, game, files)."""
         master, note = self.flow.master()
         if master is None:
             raise netplay.JobFailed('Join codes and public games need the master server.',
@@ -59,12 +70,7 @@ class JoinJob(netplay.Job):
             raise netplay.JobFailed(f'The master server gave slot {game["slot"]}, which this session does not have.')
         game['open'] = tuple(sorted(int(slot) for slot in files.recipe.get('open') or ()))
         game['late'] = game['slot'] in game['open']   # a drop-in slot: joined while the game runs (hotjoin)
-        if not game['late']:
-            self.install(files)   # a drop-in joiner's X4 is started by the hot join, with the join save
-        self.ready(game)
-        start = self.wait_for_master_start(game, files, hint)
-        self.flow.begin_session(start)
-        self.in_session(start, game)
+        return master, game, files
 
     def look_up(self, master, code, game_id, listed):
         errors = netplay.master_error_types(self.net)
@@ -282,6 +288,20 @@ class JoinJob(netplay.Job):
 
     # ---- a LAN game ----
     def join_lan(self, target):
+        joined = self.lan_files(target)
+        if joined is None:   # the host's game is the master's: joined by its code (refused)
+            return
+        sock, lines, game, files = joined
+        self.install(files)
+        lobby.send(sock, {'ready': True})
+        start = self.wait_for_lan_start(lines, game, files)
+        sock.close()
+        self.flow.begin_session(start)
+        self.in_session(start, game)
+
+    def lan_files(self, target):
+        """Admitted at the host's lobby (a slot; the connection closes when the job ends, which frees it) and the session
+        here: (socket, its lines, game, files), or None when the host's game is the master's and was joined by its code."""
         self.invite_token = target.token   # an invite code's; a public game's host sends its own
         first = target.addresses[0]
         self.show('joining', f'Joining {first[0]}...')
@@ -300,17 +320,12 @@ class JoinJob(netplay.Job):
             raise netplay.JobFailed(f'The host at {address} did not answer.')
         if not answer.get('ok'):
             self.refused(answer, sock, address, tcp_port)
-            return
+            return None
         game = self.admitted(answer, address)
         files = self.lan_session(answer, game, address)
         if not 2 <= game['slot'] <= files.players:
             raise netplay.JobFailed(f'The host gave slot {game["slot"]}, which this session does not have.')
-        self.install(files)
-        lobby.send(sock, {'ready': True})
-        start = self.wait_for_lan_start(lines, game, files)
-        sock.close()
-        self.flow.begin_session(start)
-        self.in_session(start, game)
+        return sock, lines, game, files
 
     def refused(self, answer, sock, address, tcp_port):
         """A refusal; one that names a code is a master game: joined by its code, this host's address first."""

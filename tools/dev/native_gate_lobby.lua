@@ -92,7 +92,8 @@ local MAX_CODE_BYTES = 100                -- a join code, a long invite code or 
 local MAX_LISTED_GAMES = 30               -- rows of one games list
 local POLL_FRAMES = 20                    -- the state is read every POLL_FRAMES frames ...
 local PIPE_POLL_FRAMES = 40               -- ... and through a pipe every PIPE_POLL_FRAMES frames
-local QUIT_DELAY_FRAMES = 90              -- the restart notice stays this long before X4 quits
+local QUIT_DELAY_S = 1.5                  -- the restart notice stays this long before X4 quits (else state.quit_after)
+local EDIT_HOLD_S = 2.5                   -- a redraw waits for typing in an edit box at most this long after a key
 local INSTALL_TRIES = 3600                -- frames to wait for X4's options menu
 local MIN_PLAYERS = 2
 local MAX_PLAYERS = 8
@@ -290,6 +291,19 @@ local function redraw()
   end
   pcall(options.refresh)
 end
+
+-- Seconds since the page ran first (X4's getElapsedTime; frames at 60 per second without it).
+local frames_run = 0
+local function now()
+  if type(getElapsedTime) == 'function' then
+    local ok, seconds = pcall(getElapsedTime)
+    if ok and type(seconds) == 'number' then
+      return seconds
+    end
+  end
+  return frames_run / 60
+end
+lobby.now = now
 
 -- Lines made from the state ------------------------------------------------------------------------------------------------
 
@@ -608,6 +622,13 @@ local function list_rows(rows)
   rows[#rows + 1] = button('x4lan_lobby_browse', 'Look for games again', 'Refresh', browse, free,
     'Ask the server for its public games and look for games on this network')
   local public = add_games(rows, state.games, 'game')
+  local lan_count = type(state.lan) == 'table' and #state.lan or -1
+  local drawn_lists = tostring(public or -1) .. '/' .. lan_count .. '/' .. tostring(state.stamp)
+  if drawn_lists ~= lobby.lists_noted then   -- the next report says what the page showed (the launcher logs what it gave)
+    lobby.lists_noted = drawn_lists
+    note('GAMES public=' .. tostring(public or 'none') .. ' lan=' .. (lan_count >= 0 and lan_count or 'none')
+      .. ' phase=' .. tostring(phase()) .. ' stamp=' .. tostring(state.stamp))
+  end
   if public == nil then
     rows[#rows + 1] = info('x4lan_lobby_game_none', waiting_text)
   elseif #state.games == 0 then
@@ -797,6 +818,49 @@ local function line_rows()
   return rows
 end
 
+-- How this PC's Steam starts X4 (state.steam_play from the launcher: on, pending, steam_running; steamlib.py) and, in an
+-- X4 that Steam's Play started through X4 Online (lobby.single), Single-player: X4 starts again as Steam starts it, in
+-- the player's own profile.
+local function steam_rows(rows)
+  local steam = type(lobby.state.steam_play) == 'table' and lobby.state.steam_play or nil
+  if not steam and not lobby_config.single then
+    return
+  end
+  rows[#rows + 1] = header('Steam')
+  if lobby_config.single then
+    local function single()
+      if free() then
+        request('SINGLEPLAYER')
+      end
+    end
+    rows[#rows + 1] = button('x4lan_lobby_single', 'Play single-player (X4 starts again in your own profile)',
+      'Single-player', single, free, 'X4 starts again as Steam starts it, with your own profile, saves and settings')
+  end
+  if steam then
+    local on = steam.on == true
+    local function toggle()
+      if free() then
+        request('STEAMPLAY|' .. (on and '0' or '1'))
+      end
+    end
+    rows[#rows + 1] = button('x4lan_lobby_steamplay', "Steam's Play starts X4 Online", on and 'On' or 'Off', toggle, free,
+      'On: Play in Steam opens X4 here, in its multiplayer profile (Single-player is one click away). Off: Steam starts X4 as before')
+    if steam.pending == true then
+      rows[#rows + 1] = info('x4lan_lobby_steampending', 'This takes effect once Steam is closed.')
+      if PIPE and steam.steam_running == true then
+        local function restart()
+          if free() then
+            request('STEAMRESTART')
+          end
+        end
+        rows[#rows + 1] = button('x4lan_lobby_steamrestart', 'Restart Steam now (X4 closes)', 'Restart', restart, free,
+          'Steam closes and starts again with this setting')
+      end
+    end
+  end
+end
+lobby.steam_rows = steam_rows
+
 -- The netplay page (lobby.netplay): by phase the start rows (host, join, the lists) or the game being made.
 local function netplay_rows(rows)
   local current = phase()
@@ -808,6 +872,7 @@ local function netplay_rows(rows)
     host_rows(rows)
     join_rows(rows)
     list_rows(rows)
+    steam_rows(rows)
   elseif current ~= 'session' and current ~= 'restart' then
     game_rows(rows)
   end
@@ -861,8 +926,10 @@ local function edit_row(ftable, row, columns)
   box:setText(tostring(edit.get() or ''), EDIT_TEXT_PROPERTIES)
   cell.handlers.onEditBoxActivated = function()
     lobby.editing = true
+    lobby.typed_at = now()
   end
   cell.handlers.onTextChanged = function(_, text)
+    lobby.typed_at = now()
     if type(text) == 'string' then
       edit.set(text)
     end
@@ -1118,7 +1185,9 @@ local function apply_state(state)
     return
   end
   if state.phase == 'restart' and PIPE and not lobby.quit_at then   -- the page shows why, then X4 closes
-    lobby.quit_at = polls + QUIT_DELAY_FRAMES
+    local after = tonumber(state.quit_after) or QUIT_DELAY_S
+    lobby.quit_at = now() + math.max(1, math.min(30, after))
+    note('RESTART notice for ' .. after .. ' s, then X4 quits')
   end
   show_once(state)
   auto_once(state)
@@ -1131,7 +1200,8 @@ local function update()
   end
   pcall(try_install)
   polls = polls + 1
-  if lobby.quit_at and polls >= lobby.quit_at then   -- the helper starts X4 again for the session once this one is gone
+  frames_run = frames_run + 1
+  if lobby.quit_at and now() >= lobby.quit_at then   -- the helper starts X4 again for the session once this one is gone
     lobby.quit_at = nil
     note('QUIT for the session')
     if type(QuitGame) == 'function' then
@@ -1139,8 +1209,12 @@ local function update()
     end
     return
   end
-  if lobby.stale and not lobby.editing then   -- a redraw held while the player typed
+  -- A redraw held while the player typed, now; or, while the box stays active, once no key came for EDIT_HOLD_S (a
+  -- box X4 keeps active must not hold a new list or a new phase back: the public games of 25 Nov never showed while
+  -- the code box was active). The typed text stays (the form keeps it).
+  if lobby.stale and (not lobby.editing or now() - (lobby.typed_at or 0) >= EDIT_HOLD_S) then
     lobby.stale = false
+    lobby.editing = false
     redraw()
   end
   local answer = lobby.answer   -- the helper's state at the end of a spelled request

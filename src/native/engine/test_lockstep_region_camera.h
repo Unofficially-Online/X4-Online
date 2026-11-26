@@ -668,6 +668,18 @@ static void test_region_camera(void) {
                 assert(pass?d3==1e9:d3==now);
             }
             assert(rc_shape_aligned==aligned_before+3);rc_shape_aligned=aligned_before;
+            /* A +0x268 word that is no record (unaligned, as 0xff0100001f, or outside the user range) is not read
+             * through: the holder behind an unaligned but readable word is "another" (2), not record 1. */
+            static __attribute__((aligned(16))) unsigned char fake3[0x40];memset(fake3,0,sizeof(fake3));
+            {void *h=holders3[1],*r=fake3+1;memcpy(fake3+1+0x20,&h,8);memcpy(owner3+0x268,&r,8);}
+            assert(rc_shape_record_key(0x176a99,owner3,holders3[1])==rc_shape_record_key(0x176a99,NULL,holders3[1]) &&
+                   rc_shape_record_key(0x176a99,owner3,holders3[0])!=rc_shape_record_key(0x176a99,NULL,holders3[0]));
+            {uint64_t bad=0xff0100001fULL;memcpy(owner3+0x268,&bad,8);}
+            assert(rc_shape_record_key(0x176a99,owner3,holders3[1])==rc_shape_record_key(0x176a99,NULL,holders3[1]));
+            assert(!rc_shape_record_ok((const unsigned char*)(uintptr_t)0xff0100001fULL) && !rc_shape_record_ok(NULL) &&
+                   !rc_shape_record_ok((const unsigned char*)(uintptr_t)0x8000) && !rc_shape_record_ok((const unsigned char*)(uintptr_t)0xffff800000001000ULL) &&
+                   rc_shape_record_ok(records3[0]));
+            {void *r=records3[1];memcpy(owner3+0x268,&r,8);}
         }
         *(uint64_t*)(test_rcp_part_b+8)=0x5ca73;memset((void *)rc_shape_keys,0,sizeof(rc_shape_keys));rc_shape_count=-1;
         rc_shape_update(test_shape_holder,test_rcp_part_b,0);memcpy(&due,test_shape_holder+0x28,8);assert(due==1e9 && rc_shape_aligned==1); /* not latched */

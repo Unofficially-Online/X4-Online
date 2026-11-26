@@ -17,6 +17,7 @@ from lockstep.launcher import lobby, netplay, steamplay  # noqa: E402
 import netplay_fakes as fakes  # noqa: E402
 
 NUMBER = itertools.count()
+READYING = "phase = '(preparing|joining)'"   # a join is readied before X4 closes
 
 
 class Identities(unittest.TestCase):
@@ -100,10 +101,22 @@ class NetHelperPipes(unittest.TestCase):
                                         'code': '-', 'name': 'Basement', 'tcp_port': 47001, 'players': 1, 'players_max': 2}])
         self.say = steamplay.say
         steamplay.say = lambda *args, **kwargs: None
+        self.made = []
+        self.fetched = []   # what the joins readied before X4 closed (the downloads: tests/test_launcher_one_restart.py)
+
+        def make(kit, players, *args, beside=False, **kwargs):
+            self.made.append((players, beside))   # never a real new-session here: it starts X4
         self.helper = steamplay.NetHelper(self.kit, prefix=self.prefix, log=self.logs.append, start=self.start,
                                           running=lambda: self.x4_open[0], net=fakes.network(None, landisco=self.lan),
-                                          master_url='')
+                                          master_url='', make=make, fits=lambda: True,
+                                          release_mutex=lambda log: ([], 0), notice=None)
         self.helper.flow.backend.clipboard_get = lambda: 'k7qx3fna'
+        patches = [mock.patch.object(steamplay.JoinHandOver, 'join_lan', lambda job, target: self.fetched.append(target)),
+                   mock.patch.object(steamplay.JoinHandOver, 'join_master',
+                                     lambda job, code=None, game_id=None, listed=None, hint=(): self.fetched.append(code or game_id))]
+        for patch in patches:
+            patch.start()
+            self.addCleanup(patch.stop)
         self.thread = threading.Thread(target=self.helper.run, daemon=True)
         self.thread.start()
 
@@ -136,7 +149,10 @@ class NetHelperPipes(unittest.TestCase):
         self.assertIn("phase = 'idle'", self.ask('state'))
         self.assertIn('No master server for this release', self.ask('state'))
         answer = self.spell('HOST|1|3|Zoë 000 game')       # the same digit three times in a row
-        self.assertIn("phase = 'restart'", answer)
+        self.assertIn("phase = 'preparing'", answer)        # the session is made first, beside this X4
+        self.assertTrue(fakes.wait_for(lambda: "phase = 'restart'" in self.ask('state')))
+        self.assertEqual(self.made, [(3, True)])
+        self.assertIn('quit_after = 4', self.ask('state'))   # the page shows why for a few seconds
         time.sleep(0.5)
         self.assertEqual(self.started, [])                 # not while the Steam-started X4 is open
         self.x4_open[0] = False
@@ -154,8 +170,9 @@ class NetHelperPipes(unittest.TestCase):
         self.x4_open[0] = False
         self.release_start.set()
         name = 'D' * 60                                            # hex 44 44 ...: 120 opens of t4 in a row
-        self.assertIn("phase = 'restart'", self.spell('JOINCODE|' + name))
+        self.assertRegex(self.spell('JOINCODE|' + name), READYING)
         self.assertTrue(fakes.wait_for(lambda: self.started))
+        self.assertEqual(self.fetched[0].addresses, ((name, 47001),))
         self.assertEqual(self.started, [f'JOINCODE|{name}:47001'])   # a host name, at the default lobby port
 
     def test_browse_here_join_from_the_lan_and_the_clipboard(self):
@@ -164,13 +181,14 @@ class NetHelperPipes(unittest.TestCase):
         self.assertIn("phase = 'browsing'", self.spell('BROWSE'))
         self.assertTrue(fakes.wait_for(lambda: "name = 'Basement'" in self.ask('state')), self.ask('state'))
         self.assertIn('compatible = false', self.ask('state'))     # another release, shown as such
-        self.assertIn("phase = 'restart'", self.spell('JOINLAN|1'))
+        self.assertRegex(self.spell('JOINLAN|1'), READYING)
         self.assertTrue(fakes.wait_for(lambda: self.started))
         self.assertEqual(self.started, ['JOINCODE|192.168.10.9:47001'])   # resolved here: the lobby has no list
         self.assertTrue(fakes.wait_for(lambda: "phase = 'idle'" in self.ask('state')))
-        self.assertIn("phase = 'restart'", self.ask('join'))       # the older pipe name: the code on the clipboard
+        self.assertRegex(self.ask('join'), READYING)       # the older pipe name: the code on the clipboard
         self.assertTrue(fakes.wait_for(lambda: len(self.started) == 2))
         self.assertEqual(self.started[1], 'JOINCODE|K7QX-3FNA')
+        self.assertEqual(self.fetched[1], 'K7QX-3FNA')
 
 
 if __name__ == '__main__':

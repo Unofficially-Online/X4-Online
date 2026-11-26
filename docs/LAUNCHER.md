@@ -312,7 +312,10 @@ pilots). Switches: `--window`, `--play-mode`, `--no-pace`, `--long`, `--world-sc
   deadline on a frame boundary then compares differently. `native_gate_speech_clock`
   (`lockstep_speech_clock.h`, now in the soak profile) sets the clock to 65536.0 on every
   client at the first gated frame. Its status shows the clock bit-identical on both clients
-  from tick 0. The rerun passed 3,749 in sync. Only the speech code reads the clock (6 call
+  from tick 0. The rerun passed 3,749 in sync. (26 Nov: the set moved to right before tick 1's
+  frame. The boot's loading frames after the first gated frame also add their dt, and their
+  number is each client's: the last client of rk17's runs held the clock one step behind from
+  tick 1 on.) Only the speech code reads the clock (6 call
   sites of its getter, 5 in EntitySpeakData). The same frame update advances two more
   clocks: 0x6b60e38 (scaled) and 0x6b60e40 (running while paused too). Each has more than 20
   readers and still starts at each client's boot time. A later split with a timer lead

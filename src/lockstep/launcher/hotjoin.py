@@ -208,6 +208,8 @@ class HotJoinOptions:
     ask_first: bool = False   # an early joiner asks for the save as X4 starts (the joiner is in sooner, the others wait a
                               # few seconds longer at the handover); default: once X4 waits in its start menu
     fetch_delay: float = 0.0  # DIAGNOSTIC: seconds added after the download (a slow link: the early joiner's restart)
+    running: object = None    # an X4 that already runs plays the slot (session.join_running; netlobby.InPlaceJoin): an
+                              # early join only, and session.NotInPlace before anything changed when it cannot take it
 
 
 def request(host, port, token, slot, wait_s=600, log=print, sock=None, interval=1.0, nonce=None):
@@ -347,13 +349,15 @@ def set_priority(pid, priority):
 
 class EarlyJoin:
     """session.JoinOptions.early: once the joiner's X4 runs, wait for its probe in the start menu, then ask the relay for the
-    join, fetch and check the files and stage them for the waiting probe. Raises SystemExit (session.join ends X4)."""
-    def __init__(self, o, slot, recipe, overlay, folder):
+    join, fetch and check the files and stage them for the waiting probe. Raises SystemExit (session.join ends X4).
+    log_name: the X4's log (x4ls-c<slot>.log; an X4 that ran before, netlobby's: x4ls-c<lane>.log)."""
+    def __init__(self, o, slot, recipe, overlay, folder, log_name=None):
         self.o, self.slot, self.recipe, self.overlay, self.folder = o, slot, recipe, Path(overlay), Path(folder)
+        self.log_name = log_name or f'x4ls-c{slot}.log'
         self.times = {}
 
     def wait_menu(self, profile_id, proc):
-        path = profile.profile_dir(profile_id) / f'x4ls-c{self.slot}.log'
+        path = profile.profile_dir(profile_id) / self.log_name
         start, offset, tail = time.monotonic(), 0, b''
         while time.monotonic() - start < self.o.menu_wait:
             if proc.poll() is not None:
@@ -443,14 +447,21 @@ def early_join(o, slot, recipe, log=print):
     """hot_join's early start (the module text): the stand-in overlay, then session.join with EarlyJoin."""
     from . import session
     folder = o.runs / (time.strftime('%Y%m%d-%H%M%S') + f'-hotjoin{slot}')
+    number = 1
+    while folder.exists():   # a second try in the same second (an X4 that could not take the join in place)
+        number += 1
+        folder = o.runs / (time.strftime('%Y%m%d-%H%M%S') + f'-hotjoin{slot}-{number}')
     (folder / 'join').mkdir(parents=True)
     standin = folder / 'join/early-standin.bin'
     standin.write_bytes(EARLY_STANDIN)
     overlay, recipe = build_joiner_overlay(o.overlay, standin, None, None, folder / 'overlay', log)
     o.slot = slot
+    running = o.running
+    log_name = f'x4ls-c{running.lane}.log' if running is not None else None
     return session.join(session.JoinOptions(relay=o.relay, token=o.token, slot=slot, clients=recipe['players'], arm_at=None,
                                             overlay=overlay, snapshot=None, seed=int(recipe['session']['seed']),
-                                            early=EarlyJoin(o, slot, recipe, overlay, folder), width=o.width, height=o.height,
+                                            early=EarlyJoin(o, slot, recipe, overlay, folder, log_name), running=running,
+                                            width=o.width, height=o.height,
                                             game=o.game, lanes=o.lanes, runs=o.runs, state=o.state, startup=o.startup,
                                             steam_fix=o.steam_fix, timeout=o.timeout, close_when_over=o.close_when_over,
                                             tick_hz=None, run_dir=folder, same_pc=o.same_pc, display=o.display, focus=o.focus,
@@ -477,12 +488,14 @@ def hot_join(o, log=print):
         candidates = [o.slot]
     if (o.state / 'session.json').exists():
         raise SystemExit('a previous session is still recorded; run x4ls clean first')
-    if session.x4_running() and not o.same_pc:
+    if session.x4_running() and not o.same_pc and o.running is None:
         raise SystemExit('X4 is running; close it first')
     port = int(port)
     session_data = recipe.get('session') or {}
     if o.early and len(candidates) == 1 and str(session_data.get('seed', '')).isdigit():
         return early_join(o, candidates[0], recipe, log)
+    if o.running is not None:   # nothing asked or changed yet: the caller starts an X4 of its own
+        raise session.NotInPlace('an X4 that runs already takes an early join only (one slot, a session with a seed)')
     state = None
     for index, slot in enumerate(candidates):
         nonce = o.nonce or previous_nonce(o.runs, slot, o.relay)

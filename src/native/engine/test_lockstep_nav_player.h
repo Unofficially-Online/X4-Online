@@ -219,6 +219,29 @@ static void test_nav_player_native_image(const char *path) {
     memcpy(&rel,image+0xd8a6e1u+2,4);assert(0xd8a6e1u+7+rel==NAV_PLAYER_HIGHWAY);
     memcpy(&own,image+0xd8a6f2u+2,4);assert(own==NAV_PLAYER_OWN);
     memcpy(&rel,image+0xd8b3ceu+1,4);assert(image[0xd8b3ceu]==0xe8 && 0xd8b3ceu+5+rel==0xea5a90u);
+    /* path_det's players (lockstep_path_determinism.h path_det_admits, its pins): the PlayerController vtable the walk
+     * admits is the one 0xd83ae0 stores after the transfer constructor 0xea4c00 (lea rip-relative), its slot 6 is the
+     * transform reader 0xd8a680 above, GetTransformImpl refreshes first (0xea5af0 -> RefreshFromPathingState 0xea2a20),
+     * the release 0x450380 builds the NavigationController with 0xea4c00, and 0xea4c00 copies the stamp +0xc0 and the
+     * cursor +0xc8 from its source controller. */
+    assert(path_det_pins());
+    assert(*(uint64_t*)(image+PATH_DET_PLAYER_VTABLE+6u*8u)==nt.OptionalHeader.ImageBase+0xd8a680u &&
+           *(uint64_t*)(image+PATH_DET_PLAYER_VTABLE+34u*8u)==nt.OptionalHeader.ImageBase+0xd98e50u);
+    {
+        int found=0;
+        for(unsigned at=0xd83ae0u;at<0xd83ae0u+761u-7u && !found;at++)
+            if(image[at]==0x48 && image[at+1]==0x8d) {memcpy(&rel,image+at+3,4);if(at+7u+(unsigned)rel==PATH_DET_PLAYER_VTABLE) found=1;}
+        assert(found);
+        memcpy(&rel,image+0xea5af0u+1,4);assert(image[0xea5af0u]==0xe8 && 0xea5af0u+5+rel==PATH_DET_REFRESH);
+        found=0;
+        for(unsigned at=0x450380u;at<0x450380u+1110u-5u;at++)
+            if(image[at]==0xe8) {memcpy(&rel,image+at+1,4);if(at+5u+(unsigned)rel==0xea4c00u) ++found;}
+        assert(found==1);
+        /* 0xea4d56: mov rax,[rdi+0xc0]; mov [rbx+0xc0],rax; mov eax,[rdi+0xc8]; mov [rbx+0xc8],eax (rdi the source, rbx the
+         * new controller); 0xea4d0a writes the byte +0x58 only (mov byte [rbx+0x58],1): +0x59..+0x5f stay as the heap left them */
+        assert(!memcmp(image+0xea4d56u,"\x48\x8b\x87\xc0\x00\x00\x00\x48\x89\x83\xc0\x00\x00\x00\x8b\x87\xc8\x00\x00\x00\x89\x83\xc8\x00\x00\x00",26));
+        assert(!memcmp(image+0xea4d0au,"\xc6\x43\x58\x01",4));
+    }
     const unsigned tampers[]={NAV_PLAYER_MOVE,NAV_PLAYER_MOVE+NAV_PLAYER_HEAD-1,NAV_PLAYER_BRANCH,NAV_PLAYER_BRANCH+12,NAV_PLAYER_TESTS,
         NAV_PLAYER_TESTS+19,NAV_PLAYER_TESTS+56,NAV_PLAYER_CALL,NAV_PLAYER_CALL+10};
     for(unsigned i=0;i<sizeof(tampers)/sizeof(*tampers);i++) {image[tampers[i]]^=1;assert(!nav_player_pins());image[tampers[i]]^=1;}

@@ -77,6 +77,8 @@ def overlay_context(overlay):
     context = {'overlay': str(Path(overlay).resolve()), 'recipe': recipe, 'session': recipe.get('session'), 'spec': None}
     session = recipe.get('session') or {}
     path = (session.get('snapshot') or {}).get('path')
+    if path and not Path(path).is_absolute():   # a kept session names its save by file name, beside the overlay folder
+        path = Path(overlay).resolve().parent / path
     if path:
         try:
             spec = json.loads(Path(path).with_name('spec.json').read_text(encoding='utf-8'))
