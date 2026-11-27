@@ -305,7 +305,7 @@ class Master:
             self.codes[code] = game_id
         self.log(f'master: game {game_id} created by {ip}: {"public" if game.public else "private"}, '
                  f'{game.players_max} slots' + (f' (open {",".join(map(str, game.open_slots))})' if game.open_slots else '')
-                 + f', want {game.want}, release {game.release}')
+                 + f', want {game.want}, release {game.release}' + (f', start {game.gamestart}' if game.gamestart else ''))
         return {'game_id': game_id, 'code': code, 'secret': game.secret, 'host_ticket': host.ticket, 'slot': 1}
 
     def api_lookup(self, handler, route, query):

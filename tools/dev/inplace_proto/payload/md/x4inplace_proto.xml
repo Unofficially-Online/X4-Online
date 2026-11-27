@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- In-place prototype: copied into the stand-in menu extension after X4 started. If X4 lists it at the next load, its
+     root cue runs once and says so (debug_text filter error is logged without -debug), and starts the prototype AI
+     script on one NPC pilot in the player's sector (proof that aiscripts/ copied in late are found too). -->
+<mdscript name="X4InplaceProto" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="md.xsd">
+  <cues>
+    <cue name="Loaded" instantiate="false">
+      <actions>
+        <debug_text text="'[X4INPLACE] MD_LOADED age=' + player.age" filter="error" />
+        <raise_lua_event name="'x4inplace.md'" param="'md_loaded'" />
+        <set_value name="$pilot" exact="null" />
+        <find_ship name="$ships" space="player.sector" multiple="true" />
+        <do_all exact="$ships.count" counter="$i">
+          <do_if value="not $pilot and $ships.{$i}.pilot and $ships.{$i}.pilot != player.entity">
+            <set_value name="$pilot" exact="$ships.{$i}.pilot" />
+          </do_if>
+        </do_all>
+        <do_if value="$pilot">
+          <debug_text text="'[X4INPLACE] MD_STARTS_AI ships=' + $ships.count" filter="error" />
+          <start_script object="$pilot" name="'x4inplace_proto'" />
+        </do_if>
+        <do_else>
+          <debug_text text="'[X4INPLACE] MD_NO_PILOT ships=' + $ships.count" filter="error" />
+        </do_else>
+      </actions>
+    </cue>
+  </cues>
+</mdscript>

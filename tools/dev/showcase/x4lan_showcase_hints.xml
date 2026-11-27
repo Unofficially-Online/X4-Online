@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Showcase takes only (tools/dev/showcase/take.py puts this file into a take's overlay): no hint box in the picture.
+     X4 shows its new-game hint ("To learn about missions ... open the Tutorials and Help menu") and later tutorial hints
+     in the middle of the screen; in a take they sat there for the whole session (the hint is in the save's help queue).
+     X4's own remove_help closes whatever hint is shown or queued, here every two seconds, at the same simulation time
+     on every client. Nothing else is touched; the game's own HUD, mission texts and notifications stay. -->
+<mdscript name="X4LAN_ShowcaseHints" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="md.xsd">
+ <cues>
+  <cue name="NoHints" instantiate="true" checkinterval="2s">
+   <conditions><check_value value="true"/></conditions>
+   <actions>
+    <remove_help all="true"/>
+   </actions>
+  </cue>
+ </cues>
+</mdscript>

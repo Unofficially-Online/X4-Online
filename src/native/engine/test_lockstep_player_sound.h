@@ -232,12 +232,15 @@ static int tpsnd_regs_kept(unsigned except) {
     for(unsigned i=0;i<96;i++) if(tpsnd_xout[i]!=tpsnd_xin[i]) {printf("xmm byte %u changed\n",i);return 0;}
     return tpsnd_land_rsp==tpsnd_at;
 }
-static void *tpsnd_vt_ship[1146],*tpsnd_vt_room[1146],*tpsnd_vt_bad[1146];
-static unsigned char tpsnd_ships[3][0x100],tpsnd_rooms[4][0x100];   /* room i in ship i; room 3 in no ship (a station's) */
-static unsigned tpsnd_ship_starts,tpsnd_ship_stops;static void *tpsnd_started,*tpsnd_stopped,*tpsnd_name_seen;
+#define TPSND_STATION_ID 0x7790u
+static void *tpsnd_vt_room[1146],*tpsnd_vt_station[1146];
+static unsigned char tpsnd_ships[3][0x100],tpsnd_rooms[4][0x100],tpsnd_station[0x100];   /* room i in ship i; room 3 in the station */
+static unsigned tpsnd_ship_starts,tpsnd_ship_stops,tpsnd_station_calls;static void *tpsnd_started,*tpsnd_stopped,*tpsnd_name_seen;
 static uint32_t tpsnd_kind_seen;static unsigned char tpsnd_flag_seen;static int tpsnd_gone=-1;
-static unsigned char tpsnd_is_ship(void *p,int cls) {(void)p;return cls==PSCTX_SHIP_CLASS;}
-static unsigned char tpsnd_is_room(void *p,int cls) {(void)p;(void)cls;return 0;}
+/* A station as X4 has it: an 'object' (class 0x49) as a ship is, and no sound function 1143 slots in (live: what lies
+ * behind U::Station's vtable there faulted). */
+static unsigned char tpsnd_is_object(void *p,int cls) {(void)p;return cls==0x49;}
+static void tpsnd_station_slot(void) {++tpsnd_station_calls;*(volatile int*)(uintptr_t)8=1;}
 static void tpsnd_ship_start(void *ship,psctx_list *list,void *name,unsigned char flag) {
     assert(list->capacity==4 && list->count==1 && !pres_open);
     tpsnd_kind_seen=list->inline_[0];tpsnd_name_seen=name;tpsnd_flag_seen=flag;tpsnd_started=ship;++tpsnd_ship_starts;
@@ -248,7 +251,7 @@ static void tpsnd_ship_stop(void *ship,psctx_list *list) {
 static void tpsnd_ship_fault(void *ship,psctx_list *list,void *name,unsigned char flag) {(void)ship;(void)list;(void)name;(void)flag;*(volatile int*)(uintptr_t)8=1;}
 static void *tpsnd_find_ship(uint64_t id) {
     for(int i=0;i<3;i++) {uint64_t own=0;memcpy(&own,tpsnd_ships[i]+8,8);if(own==id) return i==tpsnd_gone?NULL:tpsnd_ships[i];}
-    return NULL;
+    return id==TPSND_STATION_ID?tpsnd_station:NULL;
 }
 static void test_player_sound_play(void) {
     const pslot_slot kept2=pslots[2],kept3=pslots[3],kept8=pslots[8];unsigned char *const base=pnat_base,*const page_was=pslot_page;
@@ -319,23 +322,36 @@ static void test_player_sound_play(void) {
         region[PRES_PLAY_SITE]=0xcc;assert(!pres_play_install() && !pres_play_installed);
         VirtualFree(block,0,MEM_RELEASE);}
     /* The own ship's sound set for clients 2, 3 and 8: X4's start (slot 1143, its list, name and inside flag) on the
-     * ship slot k's player is in, its stop (slot 1144) on the one it left, found again by its ID (a destroyed one not);
-     * a room in no ship and an unseated slot have none; the end of presenting stops the last; a fault ends the module. */
-    {   unsigned char *const block=VirtualAlloc(NULL,0x2000,MEM_COMMIT|MEM_RESERVE,PAGE_READWRITE);assert(block);
-        unsigned char *const region=block-0x395d000u;pnat_base=region;
+     * ship slot k's player is in (each of the seven ship classes, by its vtable), its stop (slot 1144) on the one it
+     * left, found again by its ID (a destroyed one not); a room of a station (an 'object' too, with other functions
+     * there: the live stop 223 of 26 Nov) and an unseated slot have none; the end of presenting stops the last; a fault
+     * ends the module. The region holds the seven vtables and the list's entry where the image has them. */
+    {   const unsigned first=0x2b78000u,vt_end=0x2b9f000u,kind_page=0x395d000u,end=0x395f000u;
+        unsigned char *const block=VirtualAlloc(NULL,end-first,MEM_RESERVE,PAGE_NOACCESS);assert(block);
+        unsigned char *const region=block-first;pnat_base=region;
+        assert(VirtualAlloc(region+first,vt_end-first,MEM_COMMIT,PAGE_READWRITE) && VirtualAlloc(region+kind_page,end-kind_page,MEM_COMMIT,PAGE_READWRITE));
         {const uint32_t kind=0x5a;memcpy(region+PSCTX_KIND,&kind,4);}
-        tpsnd_vt_ship[0x11e8/8]=(void*)tpsnd_is_ship;tpsnd_vt_ship[PSCTX_START_SLOT/8]=(void*)tpsnd_ship_start;tpsnd_vt_ship[PSCTX_STOP_SLOT/8]=(void*)tpsnd_ship_stop;
-        tpsnd_vt_room[0x11e8/8]=(void*)tpsnd_is_room;
-        memcpy(tpsnd_vt_bad,tpsnd_vt_ship,sizeof(tpsnd_vt_bad));tpsnd_vt_bad[PSCTX_START_SLOT/8]=(void*)tpsnd_ship_fault;
+        for(unsigned i=0;i<SS_VTABLES;i++) {
+            assert(ss_vtables[i]>=first && ss_vtables[i]+PSCTX_STOP_SLOT+8u<=vt_end);
+            void *fn=(void*)tpsnd_ship_start;memcpy(region+ss_vtables[i]+PSCTX_START_SLOT,&fn,8);
+            fn=(void*)tpsnd_ship_stop;memcpy(region+ss_vtables[i]+PSCTX_STOP_SLOT,&fn,8);
+        }
+        tpsnd_vt_station[0x11e8/8]=(void*)tpsnd_is_object;tpsnd_vt_station[PSCTX_START_SLOT/8]=tpsnd_vt_station[PSCTX_STOP_SLOT/8]=(void*)tpsnd_station_slot;
+        {void *vt=tpsnd_vt_station;const uint64_t id=TPSND_STATION_ID;memset(tpsnd_station,0,sizeof(tpsnd_station));memcpy(tpsnd_station,&vt,8);memcpy(tpsnd_station+8,&id,8);}
         for(int i=0;i<4;i++) {
             void *vt=tpsnd_vt_room;memset(tpsnd_rooms[i],0,sizeof(tpsnd_rooms[i]));memcpy(tpsnd_rooms[i],&vt,8);
-            if(i<3) {vt=tpsnd_vt_ship;memset(tpsnd_ships[i],0,sizeof(tpsnd_ships[i]));memcpy(tpsnd_ships[i],&vt,8);
-                     const uint64_t id=0x7700+(uint64_t)i;memcpy(tpsnd_ships[i]+8,&id,8);unsigned char *up=tpsnd_ships[i];memcpy(tpsnd_rooms[i]+0x70,&up,8);}
+            unsigned char *up=i<3?tpsnd_ships[i]:tpsnd_station;memcpy(tpsnd_rooms[i]+0x70,&up,8);
+            if(i<3) {memset(tpsnd_ships[i],0,sizeof(tpsnd_ships[i]));const uint64_t id=0x7700+(uint64_t)i;memcpy(tpsnd_ships[i]+8,&id,8);}
         }
-        psctx_find=tpsnd_find_ship;tpsnd_gone=-1;
+        psctx_find=tpsnd_find_ship;tpsnd_gone=-1;tpsnd_station_calls=0;
         static const unsigned clients[3]={2,3,8};
         for(unsigned c=0;c<3;c++) {
             const unsigned k=clients[c];pres_slot=k;
+            for(unsigned i=0;i<3;i++) {   /* nine ships over the seven classes */
+                unsigned char *const vt=region+ss_vtables[(c*3u+i)%SS_VTABLES];memcpy(tpsnd_ships[i],&vt,8);
+                assert(psctx_is_ship(tpsnd_ships[i]) && psctx_ship_of(tpsnd_rooms[i])==tpsnd_ships[i] && psctx_ship_of(tpsnd_ships[i])==tpsnd_ships[i]);
+            }
+            assert(!psctx_is_ship(tpsnd_station) && !psctx_is_ship(tpsnd_rooms[3]) && !psctx_is_ship(NULL) && !psctx_ship_of(tpsnd_rooms[3]) && !psctx_ship_of(NULL));
             pslot_slot *s=&pslots[k];memset(s,0,sizeof(*s));s->player=k==8?player8:tpsnd_p[k-2];s->seated=1;s->room=tpsnd_rooms[0];
             psctx_installed=1;psctx_ship_id=0;psctx_why="-";tpsnd_ship_starts=tpsnd_ship_stops=0;psctx_starts=psctx_stops=psctx_faults=0;pres_open=0;
             psctx_follow(s);
@@ -344,8 +360,10 @@ static void test_player_sound_play(void) {
             psctx_follow(s);assert(tpsnd_ship_starts==1 && !tpsnd_ship_stops);                       /* the same ship: nothing */
             s->room=tpsnd_rooms[1];psctx_follow(s);                                                  /* a ship change */
             assert(tpsnd_ship_stops==1 && tpsnd_stopped==tpsnd_ships[0] && tpsnd_ship_starts==2 && tpsnd_started==tpsnd_ships[1] && psctx_ship_id==0x7701);
-            s->walk_room=tpsnd_rooms[3];psctx_follow(s);                                             /* out of it, on foot in a station */
+            s->walk_room=tpsnd_rooms[3];psctx_follow(s);                                             /* out of it, on foot on a station's dock */
             assert(tpsnd_ship_stops==2 && tpsnd_stopped==tpsnd_ships[1] && tpsnd_ship_starts==2 && !psctx_ship_id);
+            assert(!tpsnd_station_calls && !psctx_faults && psctx_installed && psctx_check());       /* the station: no call, no stop */
+            psctx_follow(s);assert(tpsnd_ship_stops==2 && tpsnd_ship_starts==2 && !tpsnd_station_calls);   /* walking on there: nothing */
             s->walk_room=tpsnd_rooms[2];psctx_follow(s);assert(tpsnd_ship_starts==3 && tpsnd_started==tpsnd_ships[2]);   /* on foot in another ship */
             s->walk_room=NULL;tpsnd_gone=2;psctx_follow(s);                                          /* that one destroyed: no stop; back in its own */
             assert(tpsnd_ship_stops==2 && tpsnd_ship_starts==4 && tpsnd_started==tpsnd_ships[1] && psctx_ship_id==0x7701);tpsnd_gone=-1;
@@ -356,16 +374,28 @@ static void test_player_sound_play(void) {
             assert(psctx_starts==5 && psctx_stops==4 && psctx_check());
         }
         {char status[96];psctx=1;psctx_installed=1;psctx_ship_id=0x7701;assert(psctx_status(status,sizeof(status))>0 && !strcmp(status," context=1/1/5/4/0/7701"));psctx=0;}
+        /* the one it left is no ship (found by an ID that is a station's): no stop there, on to the new one; the end too */
+        pslots[2].room=tpsnd_rooms[0];pslots[2].walk_room=NULL;psctx_installed=1;psctx_ship_id=TPSND_STATION_ID;psctx_why="-";psctx_check_why="-";
+        tpsnd_ship_starts=tpsnd_ship_stops=0;psctx_starts=psctx_stops=psctx_faults=0;
+        psctx_follow(&pslots[2]);
+        assert(!tpsnd_station_calls && !tpsnd_ship_stops && !psctx_stops && tpsnd_ship_starts==1 && tpsnd_started==tpsnd_ships[0] && psctx_ship_id==0x7700);
+        psctx_ship_id=TPSND_STATION_ID;psctx_end();assert(!tpsnd_station_calls && !tpsnd_ship_stops && !psctx_faults && !psctx_ship_id && !psctx_installed && psctx_check());
+        /* the stop row names the tick check's why (pilot_why_text) */
+        {const int armed_was=pilot_armed,on_was=psctx;char why[1024];pilot_armed=1;psctx=1;psctx_check_why="context_fault";
+         assert(pilot_why_text(why,sizeof(why)) && strstr(why," sound_context=context_fault"));
+         psctx_check_why="-";assert(pilot_why_text(why,sizeof(why)) && strstr(why," sound_context=-"));
+         psctx=0;assert(!psctx_armed_any() && pilot_why_text(why,sizeof(why)) && !strstr(why," sound_context="));pilot_armed=armed_was;psctx=on_was;}
         /* a fault in X4's start: counted, the module ends, the tick check stops (223, context_fault) */
-        {void *vt=tpsnd_vt_bad;memcpy(tpsnd_ships[0],&vt,8);}
+        {unsigned char *const vt=region+ss_vtables[0];void *fn=(void*)tpsnd_ship_fault;memcpy(tpsnd_ships[0],&vt,8);memcpy(vt+PSCTX_START_SLOT,&fn,8);}
         pslots[2].room=tpsnd_rooms[0];pslots[2].walk_room=NULL;psctx_installed=1;psctx_ship_id=0;psctx_why="-";psctx_check_why="-";
+        psctx_starts=psctx_stops=psctx_faults=0;
         psctx_follow(&pslots[2]);
         assert(psctx_faults==1 && !psctx_installed && !psctx_ship_id && !strcmp(psctx_why,"context_fault") && !psctx_check() && !strcmp(psctx_check_why,"context_fault"));
         psctx_why="-";psctx_check_why="-";psctx_find=NULL;psctx_starts=psctx_stops=psctx_faults=0;
         VirtualFree(block,0,MEM_RELEASE);}
     pslots[2]=kept2;pslots[3]=kept3;pslots[8]=kept8;pnat_base=base;pslot_page=page_was;pres_slot=slot_was;ui_thread=ui_was;pres_active=active_was;
     pres_sound_installed=sound_was;pres_open=open_was;pres_play_installed=0;
-    printf("player sound play: the stub run with both answers, the first play for clients 3, 2 and 8, its site and tick check, the own ship's sound set for slots 2, 3 and 8; tests PASS\n");
+    printf("player sound play: the stub run with both answers, the first play for clients 3, 2 and 8, its site and tick check, the own ship's sound set for slots 2, 3 and 8 (seven ship classes, none on a station), the stop row's why; tests PASS\n");
 }
 
 /* ---- the sound update in the presentation scope (called from test_lockstep_pilot_slots.h's client 3 section) ---- */
@@ -483,9 +513,20 @@ static void test_player_sound_native_image(const char *path) {
     {int32_t rel;memcpy(&rel,image+0x7cddea+2,4);assert(0x7cddf0u+(uint32_t)rel==PSCTX_KIND);
      memcpy(&rel,image+0x7cde1f+3,4);assert(0x7cde26u+(uint32_t)rel==PSCTX_NAME);}
     for(unsigned i=0;i<SS_VTABLES;i++) {
-        void *start=NULL,*stop=NULL;memcpy(&start,image+ss_vtables[i]+PSCTX_START_SLOT,8);memcpy(&stop,image+ss_vtables[i]+PSCTX_STOP_SLOT,8);
-        assert(start==(void*)(image+SS_TARGET) && stop==(void*)(image+PSCTX_STOP_FN));
+        void *start=NULL,*stop=NULL,*entered=NULL,*left=NULL;
+        memcpy(&start,image+ss_vtables[i]+PSCTX_START_SLOT,8);memcpy(&stop,image+ss_vtables[i]+PSCTX_STOP_SLOT,8);
+        memcpy(&entered,image+ss_vtables[i]+366u*8u,8);memcpy(&left,image+ss_vtables[i]+367u*8u,8);
+        assert(start==(void*)(image+SS_TARGET) && stop==(void*)(image+PSCTX_STOP_FN) && entered==(void*)(image+PSCTX_ENTERED) && left==(void*)(image+PSCTX_LEFT));
+        memcpy(image+ss_vtables[i]+PSCTX_STOP_SLOT,&start,8);assert(!psctx_pins());memcpy(image+ss_vtables[i]+PSCTX_STOP_SLOT,&stop,8);   /* a stop slot is pinned */
     }
+    /* A station is no ship: U::Station (its RTTI) has X4's empty function (ret 0) as its camera handlers, and 1143 slots
+     * in, behind its vtable, lies 0x34fe40 (mov rcx,[rcx+0x30]; call 0x7ad890: the live fault of 26 Nov, stop 223). */
+    {   const uint32_t station=0x2b764d8u;unsigned char *col=NULL;void *entered=NULL,*left=NULL,*behind=NULL;
+        memcpy(&col,image+station-8,8);uint32_t td=0;memcpy(&td,col+12,4);assert(!strcmp((const char*)image+td+16,".?AVStation@U@@"));
+        for(unsigned i=0;i<SS_VTABLES;i++) assert(ss_vtables[i]!=station);
+        memcpy(&entered,image+station+366u*8u,8);memcpy(&left,image+station+367u*8u,8);memcpy(&behind,image+station+PSCTX_START_SLOT,8);
+        assert(entered==(void*)(image+0x963b0u) && left==entered && !memcmp(image+0x963b0,"\xc2\x00\x00",3));
+        assert(behind==(void*)(image+0x34fe40u) && !memcmp(image+0x34fe44,"\x48\x8b\x49\x30\xe8",5) && tpsnd_call_target(image,0x34fe48)==0x7ad890u);}
     image[PSCTX_LEFT+5]^=0x01;assert(!psctx_pins());image[PSCTX_LEFT+5]^=0x01;
     image=prior;
     printf("pinned native image player sound verified (the sound update and its listener, the placement's anchor, the sound start, the autopilot posts, the animated shot)\n");

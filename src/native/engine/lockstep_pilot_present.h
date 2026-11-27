@@ -892,15 +892,20 @@ static int pres_play_status(char *out,size_t capacity) {
  * slot k's ship never had its own sounds on client k (inventory G09: boarding, sitting down, getting up, transport,
  * suit, ship change; a sector, zone, gate, highway, dock or undock change re-parents the ship, not into or out of it,
  * and keeps them, as in stock). On client k (k = 2..N) each pass of the presentation (the frame thread, outside every
- * scope) finds the ship slot k's player is in now (the class-0x49 ancestor of its room; none while it is not seated:
- * dead, in transit) and, when it changed, calls slot 1144 on the one it left (found again by its ID: a destroyed ship
- * stopped its own) and slot 1143 on the new one, with X4's own arguments; the end of presenting stops the last one.
+ * scope) finds the ship slot k's player is in now (the nearest ancestor of its room of a ship class: one of the seven
+ * ship vtables of lockstep_ship_sound.h, the only classes with these slots; none while it is not seated: dead, in
+ * transit, and none on foot in a station) and, when it changed, calls slot 1144 on the one it left (found again by its
+ * ID: a destroyed ship stopped its own) and slot 1143 on the new one, with X4's own arguments; the end of presenting
+ * stops the last one. A station gets neither call, as in stock: its slots 366/367 are X4's empty 0x963b0, and its
+ * vtable (1131 slots) ends before slot 1143. Until 26 Nov the ship was the class-0x49 ancestor, X4's class 'object',
+ * which a station is too: player 2 walked from its docked ship onto the dock, the start ran what lies 12 slots behind
+ * U::Station's vtable (0x34fe40) and faulted at 0x7ad8b9 (stop 223 at tick 2,935, why context_fault).
  * Only the two sound slots run, never 366/367 (their attention part is the simulation's). Presentation only: the
  * starts go through 0x14e8ec0 (their draws on native_gate_sound_rng's words, slot 1143's through native_gate_ship_sound_rng
  * when armed) with the ship as emitter, and the play above plays them in the scope. Slot 1's ship keeps the sounds the
  * simulation's camera events give it on every client (a 0.05 volume loop with a 10 m range at slot 1's cockpit).
- * Pinned: both handlers (their arguments) and both slots. A fault counts and ends the module (stop 223,
- * why=context_fault). Status context=on/installed/starts/stops/faults/ship ID. */
+ * Pinned: both handlers (their arguments) and both slots in each of the seven ship vtables. A fault counts and ends the
+ * module (stop 223, why=context_fault). Status context=on/installed/starts/stops/faults/ship ID. */
 #define PSCTX_ENTERED 0x7cddc0u
 #define PSCTX_ENTERED_SIZE 0xa3u
 #define PSCTX_ENTERED_SHA "9a6e057e4e9e142a9c7e53088cb51e5a1cef3167c58eb635e0eca6fa668a04d0"
@@ -914,7 +919,6 @@ static int pres_play_status(char *out,size_t capacity) {
 #define PSCTX_STOP_SLOT 0x23c0u          /* Ship slot 1144 */
 #define PSCTX_KIND 0x395d024u            /* the list's one entry (read live: set at X4's start) */
 #define PSCTX_NAME 0x2f61360u            /* the name argument */
-#define PSCTX_SHIP_CLASS 0x49
 #define PSCTX_DEPTH 8u
 /* X4's small list of 32-bit entries (0xce7c0's layout): four inline, the capacity 4 at +0x10, the count at +0x18. */
 typedef struct {uint32_t inline_[4];uint64_t capacity,count;} psctx_list;
@@ -926,15 +930,25 @@ static volatile LONG64 psctx_starts,psctx_stops,psctx_faults;
 static const char *psctx_why="-";
 static void *(*psctx_find)(uint64_t);   /* tests; NULL: X4's registry (0xced70) */
 static int psctx_pins(void) {
-    return hash_ok(image+PSCTX_ENTERED,PSCTX_ENTERED_SIZE,PSCTX_ENTERED_SHA) && hash_ok(image+PSCTX_LEFT,PSCTX_LEFT_SIZE,PSCTX_LEFT_SHA) &&
-        hash_ok(image+PSCTX_STOP_FN,PSCTX_STOP_FN_SIZE,PSCTX_STOP_FN_SHA) && hash_ok(image+SS_TARGET,SS_BODY,SS_BODY_SHA);
+    if(!hash_ok(image+PSCTX_ENTERED,PSCTX_ENTERED_SIZE,PSCTX_ENTERED_SHA) || !hash_ok(image+PSCTX_LEFT,PSCTX_LEFT_SIZE,PSCTX_LEFT_SHA) ||
+       !hash_ok(image+PSCTX_STOP_FN,PSCTX_STOP_FN_SIZE,PSCTX_STOP_FN_SHA) || !ss_pins()) return 0;   /* ss_pins: the start and its seven slots */
+    for(unsigned i=0;i<SS_VTABLES;i++) {
+        void *stop=NULL;
+        if(!read_local(image+ss_vtables[i]+PSCTX_STOP_SLOT,&stop,8) || stop!=(void*)(image+PSCTX_STOP_FN)) return 0;
+    }
+    return 1;
 }
-/* The ship (class 0x49) a component lies in, itself included; NULL when none. */
+/* A component of a ship class: its vtable one of the seven whose slots 1143/1144 are the two sound functions. */
+static int psctx_is_ship(const unsigned char *p) {
+    const unsigned char *vtable=NULL;
+    if(!p || !read_local(p,&vtable,8) || !vtable) return 0;
+    for(unsigned i=0;i<SS_VTABLES;i++) if(vtable==pnat_base+ss_vtables[i]) return 1;
+    return 0;
+}
+/* The ship a component lies in, itself included; NULL when none (a room of a station). */
 static unsigned char *psctx_ship_of(unsigned char *p) {
     for(unsigned depth=0;p && depth<PSCTX_DEPTH;depth++) {
-        void **vtable=NULL;unsigned char (*is_a)(void *,int)=NULL;   /* X4's answer is al */
-        if(!read_local(p,&vtable,8) || !vtable || !read_local((unsigned char*)vtable+0x11e8,&is_a,8) || !is_a) return NULL;
-        if(is_a(p,PSCTX_SHIP_CLASS)) return p;
+        if(psctx_is_ship(p)) return p;
         if(!read_local(p+0x70,&p,8)) return NULL;
     }
     return NULL;
@@ -944,10 +958,12 @@ static void *psctx_lookup(uint64_t id) {
     if(psctx_find) return psctx_find(id);
     return id && read_local(pnat_base+0x6cf1500,&map,8) && map?((void*(*)(void*,uint64_t,int))(pnat_base+0xced70))(map,id,4):NULL;
 }
-/* Slot 1143 or 1144 of a ship, as its camera handler calls it. 0 on a fault (the module ends). */
+/* Slot 1143 or 1144 of a ship, as its camera handler calls it; no call on anything else (another class has other
+ * functions there, or none). 0 on a fault (the module ends). */
 static int psctx_call(unsigned char *ship,int start) {
     psctx_list list;void **vtable=NULL;void *fn=NULL;uint32_t kind=0;
     memset(&list,0,sizeof(list));list.capacity=4;list.count=1;
+    if(!psctx_is_ship(ship)) return 1;
     if(!read_local(pnat_base+PSCTX_KIND,&kind,4) || !read_local(ship,&vtable,8) || !vtable ||
        !read_local((unsigned char*)vtable+(start?PSCTX_START_SLOT:PSCTX_STOP_SLOT),&fn,8) || !fn) return 1;
     list.inline_[0]=kind;

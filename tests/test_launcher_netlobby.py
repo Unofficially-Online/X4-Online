@@ -136,12 +136,37 @@ class Backend(unittest.TestCase):
         self.assertEqual(seen, [0.1, 1.0, 0.1, 1.0])
         self.assertEqual(self.backend.default_form(), netlobby.Form())        # a release kit without sessions: the page
 
+    def test_the_hosted_start_and_its_story_form_reach_the_session_tool(self):
+        cadet = 'x4ep1_gamestart_terran1'
+        asked, made = [], []
+
+        def cached(*args):
+            asked.append(args[1:])
+            return None
+
+        def make(kit, players, mode, base_start, progress, log, cancelled, **options):
+            made.append((players, base_start, options.get('story')))
+            return 'made'
+        with mock.patch.object(netlobby.netkit, 'cached_session', cached), \
+                mock.patch.object(netlobby.netkit, 'make_session', make):
+            self.assertEqual(self.backend.host_session(2, None, None, base_start=cadet, story=True), 'made')
+            self.assertEqual(self.backend.host_session(3, None, None, open_slots=(3,)), 'made')   # the default, story unknown
+        self.assertEqual(asked, [(2, 'coop', cadet, (), True), (3, 'coop', netkit.HOST_SESSION_START, (3,), None)])
+        self.assertEqual(made, [(2, cadet, True), (3, netkit.HOST_SESSION_START, None)])
+        self.options.base_start = cadet   # x4ls lobby --base-start: the default when the request names none
+        with mock.patch.object(netlobby.netkit, 'cached_session', lambda *args: args[3]):
+            self.assertEqual(self.backend.host_session(2, None, None), cadet)
+        # the Host form's starts: this lobby's X4's own game data
+        self.game.install = self.folder.path / 'X4'
+        with mock.patch.object(netlobby.hoststarts, 'load', lambda game, mode='coop', log=print: (game, mode)):
+            self.assertEqual(self.backend.host_starts('coop'), (self.game.install, 'coop'))
+
     def test_host_session_from_the_cache_or_made_beside_the_page(self):
         made = []
         beside_fails = []
 
         def make(kit, players, mode, base_start, progress, log, cancelled, steam_fix=False, open_slots=(), game=None,
-                 lanes=None, beside=False):
+                 lanes=None, beside=False, story=None):
             made.append((players, mode, base_start, beside) + ((tuple(open_slots),) if open_slots else ()))
             if beside and beside_fails:
                 raise netkit.KitError('The session could not be made: X4 is running; close it first')
@@ -323,6 +348,12 @@ class CommandLines(unittest.TestCase):
             self.run_x4ls(['join', '--relay', '192.0.2.1:47000', '--token', 'ab' * 16, '--slot', '2'])
         with self.assertRaisesRegex(SystemExit, '--players must be'):
             self.run_x4ls(['host', '--players', '9'])
+        # the start: in the request, as the page's Start sends it (and the lobby's default start too)
+        _, options = self.run_x4ls(['host', '--players', '2', '--base-start', 'x4ep1_gamestart_terran1', '--name', 'Cadets'])
+        self.assertEqual((options.request, options.base_start), ('HOST|0|2|Cadets|x4ep1_gamestart_terran1', 'x4ep1_gamestart_terran1'))
+        self.assertEqual(netplay.parse_request(options.request).start, 'x4ep1_gamestart_terran1')
+        with self.assertRaisesRegex(SystemExit, 'not a gamestart id'):
+            self.run_x4ls(['host', '--base-start', 'Terran Cadet'])
 
     def test_games_lists_the_public_and_the_lan(self):
         master = fakes.FakeMaster()

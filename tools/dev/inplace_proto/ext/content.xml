@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<content id="x4inplace_proto" name="X4 in-place study (stand-in menu extension)" description="Feasibility prototype: stands in for the release's menu extension in a disposable profile." author="X4 lockstep" version="100" date="2026-11-26" save="false">
+  <dependency version="900" />
+</content>

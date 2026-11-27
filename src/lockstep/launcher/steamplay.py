@@ -811,6 +811,10 @@ class HelperBackend(netplay.Backend):
         except (SystemExit, OSError, ValueError):
             return None
 
+    def host_starts(self, mode):
+        """The starts the Host form offers: this PC's game data (the X4 Steam starts), read in the flow's thread."""
+        return self.helper.host_starts(mode)
+
     # how this PC's Steam starts X4 (steamlib.SteamSetup)
     def steam_view(self):
         return self.helper.steam.view()
@@ -872,6 +876,9 @@ class HostHandOver(netplay.Job):
             total, opened = netplay.PLAYERS_MIN, ()
         what = counts_text(total, opened)
         text = netplay.request_text(request)
+        start, story = self.flow.host_start(request.start)   # a start that cannot be hosted is said here, X4 stays
+        if start != netkit.HOST_SESSION_START:
+            what += f' at the start {self.flow.start_label(start)}'
         if opened:   # drop-in games play on the master's relay: said here, before X4 closes
             master, note = self.flow.master()
             if master is None:
@@ -879,7 +886,7 @@ class HostHandOver(netplay.Job):
                                         note or 'Host without drop-in slots for a game on the local network.')
         kit = self.config.kit
         self.show('preparing', f'Getting the session for {what} ready...', progress={'what': 'session', 'done': 0.0})
-        files = netkit.cached_session(kit, total, netkit.HOST_SESSION_MODE, netkit.HOST_SESSION_START, opened)
+        files = netkit.cached_session(kit, total, netkit.HOST_SESSION_MODE, start, opened, story)
         if files is not None:
             self.flow.log(f'netplay: HOST: the session for {what} is ready ({Path(files.overlay).parent.name})')
             self.flow.hand_over_ready(self, text, ready_lines(helper))
@@ -892,7 +899,7 @@ class HostHandOver(netplay.Job):
                       'X4 stays here meanwhile, and then starts again once, straight into the game.',
                       'Cancel stops it.', progress={'what': 'session', 'done': 0.0})
             try:
-                helper.make_session_beside(total, opened, self.session_progress, self.cancelled)
+                helper.make_session_beside(total, opened, self.session_progress, self.cancelled, start, story)
             except netkit.KitError as error:
                 self.check()   # cancelled: nothing more to do
                 self.flow.log(f'netplay: the session could not be made beside this X4: {error}')
@@ -905,7 +912,7 @@ class HostHandOver(netplay.Job):
                  'X4 closes in a few seconds. A small window says that the game is being prepared,',
                  'and X4 starts again by itself, straight into the game.')
         self.flow.hand_over_ready(self, text, lines, quit_after=CLOSE_NOTICE_S,
-                                  before_start=lambda: helper.make_session_alone(total, opened, what))
+                                  before_start=lambda: helper.make_session_alone(total, opened, what, start, story))
 
     def session_progress(self, done):
         self.progress('session', done)
@@ -947,9 +954,10 @@ class NetHelper:
     joins start X4 again with x4ls lobby --request <the request>, and while that runs the state is that lobby's."""
 
     def __init__(self, kit, prefix=RELEASE.pipe, log=None, start=None, running=x4_running, net=None, master_url=None,
-                 make=None, fits=None, release_mutex=None, notice=None, steam=None):
+                 make=None, fits=None, release_mutex=None, notice=None, steam=None, starts=None):
         """make, fits, release_mutex, notice: a test's stand-ins for netkit.make_session, netkit.beside_fits,
-        release_player_mutex and Notice (a test never makes a session: that starts X4)."""
+        release_player_mutex and Notice (a test never makes a session: that starts X4). starts: a test's stand-in for
+        hoststarts.load (the Host form's starts from this PC's game data)."""
         from . import netlobby
         self.kit_dir = Path(kit)
         self.prefix = prefix
@@ -966,6 +974,7 @@ class NetHelper:
         self.steam = steam or steamlib.SteamSetup(self.kit_dir, log=self.log)
         self.want_steam_restart = False
         self.told_tip = False
+        self.load_starts = starts
         self.stopping = False
         self.text = TextRequests(self.log)
         self.lock = threading.Lock()
@@ -1087,25 +1096,33 @@ class NetHelper:
             return f'this PC has less than {netkit.BESIDE_FREE_GIB} GB of memory free for a second X4'
         return None
 
-    def make_session_beside(self, players, opened, progress, cancelled):
+    def host_starts(self, mode):
+        """hoststarts.load of the X4 Steam starts (or the test's stand-in)."""
+        from . import hoststarts
+        if self.load_starts is not None:
+            return self.load_starts(mode)
+        return hoststarts.load(game.find_install(), mode=mode, log=self.log)
+
+    def make_session_beside(self, players, opened, progress, cancelled, start=netkit.HOST_SESSION_START, story=None):
         """The session made while the Steam-started X4 stays on its page: its instance mutex is freed first (X4 lets one
         process have it; the capture is a second X4 in its own profile and view), then x4ls new-session runs beside it,
-        its window never taking the focus. KitError when it could not be made."""
+        its window never taking the focus. KitError when it could not be made. start, story: the game's start and
+        whether each player has its story (Flow.host_start)."""
         found, freed = self.release_mutex(self.log)
         if found and not freed and instance_mutex_exists():   # (none freed and none there: freed by an earlier Host)
             raise netkit.KitError('the X4 that Steam started holds its instance mutex, and it could not be freed')
-        return self.make(self.kit, players, netkit.HOST_SESSION_MODE, netkit.HOST_SESSION_START, progress, self.log,
-                         cancelled, open_slots=opened, beside=True)
+        return self.make(self.kit, players, netkit.HOST_SESSION_MODE, start, progress, self.log,
+                         cancelled, open_slots=opened, beside=True, story=story)
 
-    def make_session_alone(self, players, opened, what):
+    def make_session_alone(self, players, opened, what, start=netkit.HOST_SESSION_START, story=None):
         """The session made after the Steam-started X4 closed (it had no room beside it): a small window says so
         meanwhile, as no X4 is open."""
         notice = self.notice(RELEASE.title, f'X4 Online is preparing a new game for {what} ({netkit.SESSION_TIME_TEXT}).\n\n'
                                        'X4 starts again by itself when it is ready, straight into the game.')
         notice.show()
         try:
-            return self.make(self.kit, players, netkit.HOST_SESSION_MODE, netkit.HOST_SESSION_START, None, self.log,
-                             None, open_slots=opened)
+            return self.make(self.kit, players, netkit.HOST_SESSION_MODE, start, None, self.log,
+                             None, open_slots=opened, story=story)
         finally:
             notice.close()
 

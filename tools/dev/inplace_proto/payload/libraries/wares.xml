@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- In-place prototype: a library patch copied in after X4 started (and after a first load that looked for none). -->
+<diff>
+  <add sel="/wares">
+    <ware id="x4inplace_proto_ware" name="X4 in-place prototype ware" transport="inventory" volume="1" tags="inventory">
+      <price min="1" average="1" max="1" />
+    </ware>
+  </add>
+</diff>

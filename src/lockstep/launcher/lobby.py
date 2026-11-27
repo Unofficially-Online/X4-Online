@@ -80,6 +80,10 @@ class LobbyOptions:
     milestone_session: Path | None = None   # ...a save without a sidecar: its session's session.json (host --session)
     milestone_overlay: Path | None = None   # ...and a folder with its play recipe (host --overlay-recipe)
     milestone_keep_flight: bool = False     # ...its ships flying as saved (host --keep-flight; default: at rest)
+    display: int | None = None      # netplay: the X4 window goes to this monitor when it opens (as x4ls play --display)
+    page_preview: Path | None = None   # test: the page alone shows these states in turn, no flow, no network (netlobby)
+    shots: Path | None = None          # ... and a picture of the window per state goes into this folder
+    preview_pipe: bool = False         # ... and the page reads the states through named pipes, as a Steam-started page
 
 
 def invite(address, port, token):
@@ -117,13 +121,16 @@ def lua_list(names):
     return '{' + ','.join("'" + n.replace('\\', '/').replace("'", '') + "'" for n in names) + '}'
 
 
-def lobby_config(files, show=False, server=False, netplay=False, single=False):
+def lobby_config(files, show=False, server=False, netplay=False, single=False, pipe=None):
     """config.lua while the game waits in the menu: nothing of a session, the overlay's files only named. netplay: the
     page draws netplay's rows (Host, Join with a code, the lists; docs/NETPLAY.md "Page notes"). single: Steam's Play
-    started this X4 through X4 Online (helper.pyw --steam-play): the page offers Single-player."""
+    started this X4 through X4 Online (helper.pyw --steam-play): the page offers Single-player. pipe (x4ls lobby
+    --page-preview --preview-pipe, a test): the page talks to that pipe prefix as a Steam-started page to its helper, and
+    is marked a preview (it closes X4's "Modified game" notice all the same)."""
     return (f'X4LAN_CONFIG = {{enabled = false}}\nX4LAN_CONFIG.lobby = {{files = {lua_list(files)}'
             + (', show = true' if show else '') + (', server = true' if server else '')
-            + (', netplay = true' if netplay else '') + (', single = true' if single else '') + '}\n')
+            + (', netplay = true' if netplay else '') + (', single = true' if single else '')
+            + (f", pipe = '{pipe}', preview = true" if pipe else '') + '}\n')
 
 
 def session_config(overlay, files, slot, port, token, clients, profile_id, arm_at, relay_host):
@@ -750,6 +757,8 @@ def run(o: LobbyOptions, log=print):
     if not o.server_file:
         from . import netlobby
         return netlobby.run(o, log)
+    if o.page_preview or o.shots:
+        raise SystemExit('--page-preview shows the netplay page: leave out --server-file')
     if not o.overlay or not o.snapshot:
         raise SystemExit('x4ls lobby --server-file needs --overlay and --snapshot (the kit\'s)')
     result = lobby_run(o, log)

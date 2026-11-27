@@ -248,6 +248,31 @@ Installed from such an installer, a player starts nothing of ours: **Play in Ste
   OneDrive also uploads the disposable profiles (a session's log is hundreds of MB): on a PC whose Documents is in
   OneDrive, pause OneDrive while you test.
 
+### Hosting at another start (built 26 Nov; one game hosted at the cadet start from the command line, on one PC)
+
+The Host form of the Multiplayer page has **Start**, under Drop-in slots: the starts your game can give every player
+of a hosted game, named as X4's own new-game menu names them. With every DLC: The Untested Explorer (the default, as
+before), Terran Cadet, Spear of the Patriarch and The Dedicated Warrior. Every player of the game starts in the chosen
+start, in its own ship at its place, with its money and kit. On a story start (Terran Cadet, Spear of the Patriarch)
+every player also plays the start's story as their own: player 1 the game's own, every other player their own copy
+(with the cadet start also the Terran story after it), its missions in their own list and its speech on their own PC
+only. The starts that begin on foot, docked or in a spacesuit are not offered: a hosted game needs every player in a
+ship in open space. Other players see the start in the public list's row of the game.
+
+- The first game of a start and a player count makes its session first (about 2 minutes, as for the default start);
+  the next game of that start and count finds it. A release kit can ship them ready-made:
+  `tools/make_release_kit.py ... --prebuild-sessions 2,3,4 --prebuild-starts discover,terran1,split2,fight`.
+- From the command line: `python tools/x4ls.py host --players 2 --base-start x4ep1_gamestart_terran1`.
+- Where to look: the launcher's log names the table (`host starts: discover, terran1 (story), split2 (story), fight;
+  not hostable: ...`) and the start of the game (`netplay: HOST: the start x4ep1_gamestart_terran1 (every player has
+  its own story)`); the session's `new-session` lines name each player's copies (`its own copies:
+  story=GS_Terran1_P2, yaki=Story_Yaki_P2`). docs/NETPLAY.md "The start of a hosted game" has the rules.
+- Live (26 Nov, docs/NETPLAY.md "Live runs"): `x4ls host --base-start x4ep1_gamestart_terran1` and `x4ls join --code`
+  on one PC: player 2 in the cadet's own ship beside player 1, its own cadet story begun on both clients, each
+  player's story speech on that player's PC only, 15,035 ticks in sync. Each X4 started once, straight into the game.
+  The release check's satellite run on that hosted session (`satellite --hosted DIR`) passed: both players flew cadet
+  chapter 1 through to its first milestone.
+
 ### A game you can join while it runs, with a start of your choice (built 10 Nov; run on one PC)
 
 A kit whose overlay has open slots (`build_play_overlay.py --open`, `x4ls new-session --start K=... --open K,...`)
@@ -1725,6 +1750,9 @@ python tools/dev/release_check.py missions --gate-dll <dll> --save ... --session
 # every player on the Terran cadet start flies its first chapter (a new session, captured once per player count)
 python tools/dev/release_check.py satellite --gate-dll <dll> --players 2 --locks
 python tools/dev/release_check.py satellite --gate-dll <dll> --players 3 --locks
+# the same on the session a hosted game of the cadet start made (the Host form's Start, x4ls host --base-start)
+python tools/dev/release_check.py satellite --gate-dll <dll> --players 2 --locks \
+    --hosted <kit>/sessions/host-x4ep1_gamestart_terran1-2p-coop-<dll8>-n
 # all three; and the verdicts again from finished runs (no X4)
 python tools/dev/release_check.py all --candidate <dll> --baseline <dll>@<commit> --save ... --session ... --recipe ... --locks
 python tools/dev/release_check.py report perf|missions|satellite RUN [RUN ...]
@@ -1791,7 +1819,9 @@ python tools/dev/release_check.py perf-logs BASE_CLIENT.log CAND_CLIENT.log [--b
   ±10 ticks, within 10% while it changes by less than 1% a tick; three such rows in a row, or off rows in more than a
   tenth of the steady ones, FAIL).
 - **satellite.** `x4ls new-session --base-start x4ep1_gamestart_terran1 --players N --start K=x4ep1_gamestart_terran1
-  --omit K=world --story K` for K = 2..N (made once per player count in `.local/release-check/sessions/cadet-Np-*`).
+  --omit K=world --story K` for K = 2..N (made once per player count in `.local/release-check/sessions/cadet-Np-*`;
+  `--hosted DIR` takes a hosted game's session of the cadet start instead, refused unless every player 2..N has its
+  own cadet story in it).
   Every player runs `rc_drive` every second, which plays chapter 1 of the cadet story by that player's own inputs:
   the story's mission made active as the mission manager does, Shift+A through the replayed input while the objective
   is away and the autopilot is off, the satellite launched by the ship menu's call at the deploy step, and at the
@@ -1921,8 +1951,30 @@ Run on rk17 (p2all 2a1574b3, gate DLL 490e605b; 25 Nov, new cadet sessions captu
   client only, missions and objectives each player's own. The driver's first three-client run ended at "Check on
   your wingmate" (the autopilot stopped 541 to 761 m away, the step goes on inside about 500 m): it now puts the ship
   300 m from an objective it does not get closer to.
+- **missions and perf (cut short: rk18 superseded rk17).** The missions run reached tick 3,640 before it was stopped:
+  manager, own missions, world counts, Shift+A, weapon panel and lead mark range as on rel16, and player 2's HUD
+  speed now within 2% (0 of 2,168 steady rows off; rel16 had 9 off at tick 1,863). Perf, one run each of rel16 and
+  rk17: per tick 32.6 to 33.3 ms (+2.2%), per frame 1.61 to 1.63 ms, 29.7 to 29.1 ticks/s, processor time per tick
+  40.1 to 41.1 ms: inside 10%, of the size of one run's noise.
 - Also noted: on the last client of a session the speech clock (`SPEECH_CLOCK clock=`) runs exactly one tick behind
   from tick 1, in two- and three-client sessions alike.
+
+Run on rk18 (p2all 2dd91b85: rk17 with the speech line kept at its text length on every client; gate DLL c7c7ece3;
+26 Nov, new cadet sessions captured by rk18):
+
+- **satellite, two clients: PASS** (15 of 15) and **three clients: PASS** (22 of 22; x4-c lent for the run): M1
+  for every player on every client, each player's lines heard on its client only, every census equal (38 and 44
+  captures), missions and objectives each player's own. The three-client split of rk17 at tick 5,491 is gone.
+- **missions, rk9's save continued, two clients: PASS** (21 of 21): the manager, each player's own missions only,
+  MD's claimed missions listed, world counts, active missions and objectives each player's own; player 2's
+  "Defenders of Sol" offered and accepted (tick 11,290); Shift+A after the continue flies player 1; both players'
+  HUD speed within 2% (0 of about 23,900 steady rows off: the player 2 fault of rk15 and rel16 is gone); the weapon
+  panel and the lead mark's range as player 1's; in sync to the end.
+- **perf, rel17 against rk18** (rk9's save continued, `--solo 1`, two rounds): PASS. Per tick 31.5 to 31.9 ms
+  (+1.2%), per render-only frame 1.56 to 1.58 ms, 29.9 ticks/s both, processor time per tick 40.0 to 39.9 ms.
+- Milestone saves: player 1's M1 save was refused by X4 three times (`MILESTONE_SAVE_FAILED`/`_RETRY`,
+  `why=is_saving_possible`, player 1 out in the spacesuit after the repair) and made on the fourth try, 900 ticks
+  late, at the same tick on every client; the other players' saves went at once.
 
 ## Mission types, tested without a person (built 16 Nov; two clients on one PC)
 

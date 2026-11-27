@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- In-place prototype: a patch of a stock MD script that is NOT there when X4 starts (copied in late). -->
+<diff>
+  <add sel="/mdscript/cues">
+    <cue name="X4InplaceProtoPatch" instantiate="false">
+      <actions>
+        <debug_text text="'[X4INPLACE] MD_PATCH_APPLIED'" filter="error" />
+      </actions>
+    </cue>
+  </add>
+</diff>

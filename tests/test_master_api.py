@@ -38,6 +38,16 @@ class HealthAndListTests(MasterCase):
         self.assertNotIn('secret', str(listed))
         self.assertNotIn(first['code'], str(listed))
 
+    def test_a_games_start_is_in_the_list(self):
+        self.host_game(name='Cadets', gamestart='x4ep1_gamestart_terran1', ip='203.0.113.1')
+        listed = self.call('GET', f'/api/v1/games?release={RELEASE}').json['games']
+        self.assertEqual((listed[0]['name'], listed[0]['gamestart']), ('Cadets', 'x4ep1_gamestart_terran1'))
+        self.assertTrue(any('start x4ep1_gamestart_terran1' in line for line in self.logs))
+        for number, bad in enumerate(('Terran Cadet', 'x' * 65, 7, '../x')):
+            body = {'name': 'Game', 'public': True, 'release': RELEASE, 'players_max': 2, 'session_sha256': 'c' * 64,
+                    'gamestart': bad}
+            self.assertError(self.call('POST', '/api/v1/games', body, ip=f'192.0.2.{100 + number}'), 400, 'bad_request')
+
     def test_a_bad_release_in_the_list_query(self):
         self.assertError(self.call('GET', '/api/v1/games?release=%3Cscript%3E'), 400, 'bad_request')
 

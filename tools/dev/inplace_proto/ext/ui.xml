@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<addon name="x4inplace_proto">
+  <environment type="menus">
+    <dependency name="ego_detailmonitor" />
+    <file name="ui/proto.lua" />
+  </environment>
+</addon>

@@ -235,6 +235,14 @@ def main(argv=None):
     lb.add_argument('--auto', default='', metavar='host|join|start|CODE',
                     help='test: host, join the server, take the first free start of its running game, or join with this '
                          'invite code, without a click in the menu')
+    lb.add_argument('--display', type=int, help='netplay: the X4 window goes to this monitor (as x4ls play --display)')
+    lb.add_argument('--page-preview', type=Path, metavar='STATES.json',
+                    help='test: X4 shows the Multiplayer page alone with these states in turn (no flow, no network; '
+                         'tools/dev/page_preview_states.json), then closes')
+    lb.add_argument('--shots', type=Path, metavar='DIR', help='with --page-preview: a picture of the window per state')
+    lb.add_argument('--preview-pipe', action='store_true',
+                    help='with --page-preview: the page reads the states through named pipes, as a Steam-started page '
+                         'from its helper (prefix x4mp-preview), and its requests are logged')
     lb.add_argument('--size', default='1280x720')
     lb.add_argument('--timeout', type=int, default=0)
     lb.add_argument('--close-when-over', action='store_true')
@@ -445,9 +453,11 @@ def main(argv=None):
                                               server_file=args.server_file, kit=args.kit, master=args.master,
                                               no_master=args.no_master, request=args.request, state_mirror=args.state_mirror,
                                               base_start=args.base_start, mode=args.mode, page_first=args.page_first,
-                                              single_player_mark=args.single_player_mark))
+                                              single_player_mark=args.single_player_mark, display=args.display,
+                                              page_preview=args.page_preview, shots=args.shots,
+                                              preview_pipe=args.preview_pipe))
         print(json.dumps(result, indent=2, default=str))
-        return 0 if result['outcome'] in ('played', 'closed') else 1
+        return 0 if result['outcome'] in ('played', 'closed', 'preview') else 1
     if args.command == 'join' and args.starts:
         from . import hotjoin
         recipe = hotjoin.recipe_tools().read_recipe(args.overlay)

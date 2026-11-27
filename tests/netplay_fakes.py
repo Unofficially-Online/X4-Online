@@ -82,7 +82,8 @@ class FakeMaster:
     def api_echo_address(self):
         return ('master.example.org', 47101)
 
-    def api_create_game(self, name, public, release, players_max, session_sha256, open_slots=(), want='auto', direct=None, lan=None):
+    def api_create_game(self, name, public, release, players_max, session_sha256, open_slots=(), want='auto', direct=None, lan=None,
+                        gamestart=''):
         game_id = 'g' + secrets.token_hex(3)
         code = 'K7QX-3FNA' if not self.games else 'M8RT-5HJK'
         self.games[game_id] = {'game_id': game_id, 'name': name, 'public': public, 'release': release,
@@ -90,7 +91,7 @@ class FakeMaster:
                                'direct': direct, 'lan': lan, 'code': code, 'secret': secrets.token_hex(16),
                                'host_ticket': secrets.token_hex(16), 'files': {}, 'state': 'lobby', 'stamp': 1,
                                'players': [{'slot': 1, 'ready': True, 'host': True}], 'tickets': {}, 'start': None,
-                               'open_slots': tuple(open_slots), 'send_join': []}
+                               'open_slots': tuple(open_slots), 'send_join': [], 'gamestart': gamestart}
         game = self.games[game_id]
         return {'game_id': game_id, 'code': code, 'secret': game['secret'], 'host_ticket': game['host_ticket'], 'slot': 1}
 
@@ -107,7 +108,8 @@ class FakeMaster:
     def info(self, game):
         return {'game_id': game['game_id'], 'name': game['name'], 'release': game['release'], 'players': len(game['players']),
                 'players_max': game['players_max'], 'state': game['state'], 'mode': 'direct' if game['direct'] else 'relay',
-                'open_slots_free': len(self.free_slots(game)) if game['state'] != 'lobby' else 0, 'age_s': 1}
+                'open_slots_free': len(self.free_slots(game)) if game['state'] != 'lobby' else 0, 'age_s': 1,
+                **({'gamestart': game['gamestart']} if game.get('gamestart') else {})}
 
     @staticmethod
     def free_slots(game):
@@ -367,13 +369,16 @@ def overlay_manifest(overlay):
 
 
 def host_session(kit_root, players=2, open_slots=(), seed=276944566, md=b'<mdscript name="Setup"/>\n',
-                 work_path=None):
+                 work_path=None, extra=None, base_start=None, story=False):
     """A host session as x4ls new-session leaves it in a kit's sessions/ (netkit.cached_session takes it): session.json
-    (no fixture), the save, spec.json, the overlay (an md file X4 reads at its start, the probe, the config, the gate
-    DLL of the kit, the recipe, the manifest), and the capture's and the base overlay's folders beside. work_path: the
-    path session.json names (the work folder new-session wrote it in)."""
+    (no fixture), the save, spec.json, the overlay (an md file, the probe, the config, the gate DLL of the kit, the
+    recipe, the manifest; extra: more overlay files, {relative path: bytes}), and the capture's and the base overlay's
+    folders beside. work_path: the path session.json names (the work folder new-session wrote it in). base_start: its
+    start (default the default start); story: every slot 2..N with its own copy of the start's story (new-session
+    --story 2..N)."""
     kit = netkit.Kit(kit_root)
-    key = netkit.host_session_key(kit, players, netkit.HOST_SESSION_MODE, netkit.HOST_SESSION_START, open_slots)
+    base_start = base_start or netkit.HOST_SESSION_START
+    key = netkit.host_session_key(kit, players, netkit.HOST_SESSION_MODE, base_start, open_slots)
     folder = kit.sessions / key
     overlay = folder / 'overlay'
     for sub in ('md', 'ui', 'native'):
@@ -386,8 +391,11 @@ def host_session(kit_root, players=2, open_slots=(), seed=276944566, md=b'<mdscr
     (overlay / 'ui' / 'native_gate_probe.lua').write_text('-- the probe\n')
     (overlay / 'ui' / 'config.lua.append').write_text(f'X4LAN_CONFIG.native_gate_clients = @X4LANE_CLIENTS@\n-- {players}\n')
     (overlay / 'ui.xml.files').write_text('ui/native_gate_probe.lua\n')
-    described = {'format': 'X4LAN_SESSION_1', 'base_start': netkit.HOST_SESSION_START, 'mode': 'coop', 'players': players,
-                 'fixture': [], 'fixture_form': 'none', 'seed': str(seed), 'hulls': {}, 'slots': {},
+    slots = {str(k): {'gamestart': base_start, 'story': None, 'plots': [{'id': 'story', 'copy': f'GS_Copy_P{k}'}]}
+             for k in range(2, players + 1)} if story else {}
+    hulls = {k: f'{0x100 + int(k):016x}' for k in slots}
+    described = {'format': 'X4LAN_SESSION_1', 'base_start': base_start, 'mode': 'coop', 'players': players,
+                 'fixture': [], 'fixture_form': 'none', 'seed': str(seed), 'hulls': hulls, 'slots': slots,
                  'snapshot': {'path': str(work_path or folder.resolve() / 'session-save.xml.gz'), 'sha256': save_sha,
                               'bytes': len(save)}}
     (folder / 'session.json').write_text(json.dumps(described, indent=1, sort_keys=True))
@@ -395,6 +403,9 @@ def host_session(kit_root, players=2, open_slots=(), seed=276944566, md=b'<mdscr
     (folder / 'spec.json').write_text(json.dumps({'format': 'X4LAN_SESSION_START_SPEC_1', 'players': players}))
     recipe = recipe_for(players, save_sha, netkit.sha256_file(kit.gate_dll), described, open_slots)
     (overlay / 'play-recipe.json').write_text(json.dumps(recipe, indent=1, sort_keys=True))
+    for name, data in (extra or {}).items():
+        (overlay / name).parent.mkdir(parents=True, exist_ok=True)
+        (overlay / name).write_bytes(data)
     overlay_manifest(overlay)
     for left in ('capture-overlay', 'overlay.base'):   # what new-session leaves beside, not part of a shipped session
         (folder / left / 'ui').mkdir(parents=True)
@@ -428,16 +439,25 @@ def fake_build(calls):
     return run
 
 
+# hoststarts.load's (rows, refused) of the stock game as this PC's X4 9.00 has it (Discover, the Terran cadet start).
+STARTS = ([{'id': 'x4ep1_gamestart_discover', 'label': 'The Untested Explorer', 'story': False, 'page': 1021, 'line': 400},
+           {'id': 'x4ep1_gamestart_terran1', 'label': 'Terran Cadet', 'story': True, 'page': 1021, 'line': 900}],
+          {'x4ep1_gamestart_trade': 'start x4ep1_gamestart_trade: the snapshot capture needs the player in a ship in open '
+                                    'space (on_foot)'})
+
+
 class FakeBackend(netplay.Backend):
     """The flow's backend without X4: the clipboard in memory, sessions from files, installs recorded."""
 
-    def __init__(self, work, host_files=None, own=None):
+    def __init__(self, work, host_files=None, own=None, starts=None):
         self.work = Path(work)
         self.clipboard = ''
         self.host_files = host_files
         self.own = own
+        self.starts = starts      # host_starts' (rows, refused): the Host form's starts; None: no table
         self.installed = []
         self.hosted = []
+        self.hosted_starts = []   # (base_start, story) of each host_session
 
     def clipboard_get(self):
         return self.clipboard
@@ -446,8 +466,12 @@ class FakeBackend(netplay.Backend):
         self.clipboard = text
         return True
 
-    def host_session(self, players, progress, cancelled, open_slots=()):
+    def host_starts(self, mode):
+        return self.starts
+
+    def host_session(self, players, progress, cancelled, open_slots=(), base_start='', story=None):
         self.hosted.append((players, tuple(open_slots)) if open_slots else players)
+        self.hosted_starts.append((base_start, story))
         progress(0.5)
         progress(1.0)
         return self.host_files

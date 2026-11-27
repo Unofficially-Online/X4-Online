@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- In-place prototype: copied in after X4 started; started by md/x4inplace_proto.xml. It only says that it runs. -->
+<aiscript name="x4inplace_proto" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="aiscripts.xsd" version="1">
+  <attention min="unknown">
+    <actions>
+      <debug_text text="'[X4INPLACE] AI_RUNS ' + this.ship.knownname" filter="error" />
+    </actions>
+  </attention>
+</aiscript>

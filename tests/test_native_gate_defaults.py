@@ -377,8 +377,13 @@ class ApplyTests(unittest.TestCase):
         lua.execute('X4LAN_NATIVE_GATE_DEFAULTS.announce(X4LAN_CONFIG._native_gate_defaults)')
         logs = items(lua.globals().logs)
         self.assertEqual(sum('ERROR DEFAULT_SKIPPED' in line for line in logs), 4)
-        self.assertEqual(len(items(lua.globals().info)), 1)
-        self.assertIn('4 default features are off', items(lua.globals().info)[0])
+        # The info line leaves out the opt-in nobody configured (the peer window) and the key that only follows it:
+        # every one-PC or relay session has those two, and players saw them as a warning at every start.
+        info = items(lua.globals().info)
+        self.assertEqual(len(info), 1)
+        self.assertIn('2 default features are off', info[0])
+        self.assertNotIn('peer_window', info[0])
+        self.assertNotIn('peer_rendezvous_port', info[0])
 
     def test_explicit_values_win(self):
         lua = lua_session(",native_gate_render_fps=false,native_gate_pilot_death='off',native_gate_status_stride=1,native_gate_ui_guard=false")

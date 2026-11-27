@@ -7,6 +7,7 @@ import json
 import sys
 import types
 import unittest
+from unittest import mock
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -189,8 +190,15 @@ class HostSessions(unittest.TestCase):
                 opened = [int(k) for k in command[command.index('--open') + 1].split(',')] if '--open' in command else []
                 if code == 0:
                     made = fakes.make_session(out, players, dll=kit.gate_dll.read_bytes(), open_slots=opened)
-                    # x4ls new-session's own session.json names the fixture's form (none since 24 Nov)
-                    (out / 'session.json').write_text(json.dumps(dict(made.recipe['session'], fixture_form=form)))
+                    # x4ls new-session's own session.json names the fixture's form (none since 24 Nov), the start, and
+                    # the slots that play the start's story as their own copy (--story)
+                    start = command[command.index('--base-start') + 1]
+                    story = [int(k) for k in command[command.index('--story') + 1].split(',')] if '--story' in command else []
+                    slots = {str(k): {'gamestart': start, 'story': None,
+                                      'plots': [{'id': 'story', 'copy': f'GS_X_P{k}'}] if k in story else []}
+                             for k in range(2, players + 1)}
+                    (out / 'session.json').write_text(json.dumps(dict(made.recipe['session'], fixture_form=form,
+                                                                      base_start=start, slots=slots)))
                 self.stdout = io.StringIO('slot 2: start x\ncapture client pid 4: starting x\nsaved: out\n'
                                           'session out: base start x, 2 players (coop); play it with:\n')
                 self.returncode = code
@@ -242,6 +250,35 @@ class HostSessions(unittest.TestCase):
         self.assertEqual(netkit.cached_session(self.kit, 3, open_slots=(3,)).overlay, files.overlay)
         self.assertIsNone(netkit.cached_session(self.kit, 3))              # the same players without drop-in: another session
         self.assertNotIn('--open', netkit.new_session_command(self.kit, 2, 'coop', 'x', Path('out')))
+
+    def test_a_story_start_gives_every_slot_its_story_and_is_kept_in_that_form(self):
+        cadet = 'x4ep1_gamestart_terran1'
+        command = netkit.new_session_command(self.kit, 3, 'coop', cadet, Path('out'), story=True)
+        self.assertEqual(command[command.index('--story') + 1], '2,3')
+        command = netkit.new_session_command(self.kit, 4, 'coop', cadet, Path('out'), open_slots=(4,), story=True)
+        self.assertEqual((command[command.index('--open') + 1], command[command.index('--story') + 1]), ('4', '2,3,4'))
+        self.assertNotIn('--story', netkit.new_session_command(self.kit, 3, 'coop', cadet, Path('out')))
+        calls, logs = [], []
+        files = netkit.make_session(self.kit, 3, base_start=cadet, log=logs.append, popen=self.popen(calls), story=True)
+        self.assertEqual(calls[0][calls[0].index('--story') + 1], '2,3')
+        self.assertIn(f'start {cadet}, a story per player', logs[0])
+        self.assertEqual(files.overlay.parent.name, netkit.host_session_key(self.kit, 3, 'coop', cadet))
+        self.assertEqual(netkit.cached_session(self.kit, 3, 'coop', cadet, (), True).overlay, files.overlay)
+        self.assertIsNotNone(netkit.cached_session(self.kit, 3, 'coop', cadet))        # story unknown: either form
+        self.assertIsNone(netkit.cached_session(self.kit, 3, 'coop', cadet, (), False))
+        self.assertIsNone(netkit.cached_session(self.kit, 3))                          # another start: another session
+        # a session of that start made before (no story per player) is made again when the stories are wanted
+        netkit.make_session(self.kit, 2, base_start=cadet, log=logs.append, popen=self.popen(calls), story=False)
+        self.assertIsNone(netkit.cached_session(self.kit, 2, 'coop', cadet, (), True))
+        self.assertIsNone(netkit.session_stories({'slots': {'2': {'plots': [{'id': 'story'}]}, '3': {}}}, 3))   # a mix
+        # story unknown: this PC's game data says (netkit.start_story); the default start has no story per player
+        asked = []
+        with mock.patch.object(netkit, 'start_story', lambda start, game=None, log=print: asked.append(start) or True):
+            netkit.make_session(self.kit, 2, base_start=cadet, log=logs.append, popen=self.popen(calls))
+            self.assertIn('--story', calls[-1])
+            netkit.make_session(self.kit, 2, log=logs.append, popen=self.popen(calls))
+            self.assertNotIn('--story', calls[-1])
+        self.assertEqual(asked, [cadet])
 
     def test_the_capture_goes_into_the_lobbys_own_lanes(self):
         # with the default lanes another session's capture view blocked hosting ("c:\x4ls-lanes\capture already

@@ -272,6 +272,23 @@ class LeadMarkRange(unittest.TestCase):
 
 
 class SatelliteVerdicts(unittest.TestCase):
+    def test_a_hosted_session_of_the_cadet_start(self):
+        with tempfile.TemporaryDirectory() as d:
+            folder = Path(d) / 'host-x4ep1_gamestart_terran1-2p-coop-0123abcd-n'
+            story = {'gamestart': rc.CADET, 'plots': [{'id': 'story', 'copy': 'GS_Terran1_P2'}]}
+            write(folder, 'session.json', json.dumps({'base_start': rc.CADET, 'players': 2, 'slots': {'2': story}}))
+            write(folder, 'session-save.xml.gz', 'save')
+            self.assertEqual(rc.hosted_session(folder, 2), folder)
+            for data, why in (({'base_start': 'x4ep1_gamestart_discover', 'players': 2, 'slots': {'2': story}}, 'not of'),
+                              ({'base_start': rc.CADET, 'players': 3, 'slots': {'2': story}}, 'not of'),
+                              ({'base_start': rc.CADET, 'players': 2, 'slots': {'2': {'plots': []}}}, 'no cadet story')):
+                write(folder, 'session.json', json.dumps(data))
+                with self.assertRaises(SystemExit) as refused:
+                    rc.hosted_session(folder, 2)
+                self.assertIn(why, str(refused.exception))
+            with self.assertRaises(SystemExit):
+                rc.hosted_session(Path(d) / 'none', 2)
+
     def test_milestones_speech_and_sync(self):
         with tempfile.TemporaryDirectory() as d:
             c1 = ('[X4LAN] NATIVE_GATE MILESTONE reached name=terran_cadet-M1-slot1 due=3 save=900\n'

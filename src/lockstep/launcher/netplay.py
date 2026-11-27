@@ -22,7 +22,7 @@ import re
 import threading
 import time
 
-from . import lobby, session
+from . import hoststarts, lobby, session
 
 PLAYERS_MIN = 2
 PLAYERS_MAX = 8
@@ -48,6 +48,9 @@ JOIN_KINDS = ('JOIN', 'JOINCODE', 'JOINGAME', 'JOINLAN')
 # What an 8-character join code looks like (NETPLAY.md: XXXX-XXXX, case and dash insensitive). Text of this shape that
 # nat.normalize_code refuses is a mistyped code, not a host name.
 CODE_SHAPE = re.compile(r'[A-Za-z0-9]{4}-?[A-Za-z0-9]{4}')
+# HOST's optional last field: the game's start, a gamestart id (hoststarts.py; without it the launcher's default start).
+START_ID = hoststarts.START_ID
+HOST_STARTS_WAIT_S = 60   # a HOST waits this long at most for this PC's table of hostable starts (read in a thread)
 HOST_LABEL = r'[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?'
 HOST_NAME = re.compile(rf'(?=.{{1,253}}$){HOST_LABEL}(?:\.{HOST_LABEL})*\.?')
 
@@ -61,6 +64,7 @@ class Request:
     players: int = 0        # HOST|...: 2..8 (1..7 with drop-in slots); 0 is the older page's HOST (the kit's own session)
     open: int = 0           # HOST|...: drop-in slots, joined while the game runs (players + open <= 8)
     name: str = ''          # HOST|...: the game's name as the host typed it
+    start: str = ''         # HOST|...: the game's start (a gamestart id), every player's; '' the launcher's default
     text: str = ''          # JOINCODE: what was typed or pasted (a join code, an invite code, addresses)
     game_id: str = ''       # JOINGAME
     index: int = 0          # JOINLAN: the row of the state's lan list, from 1
@@ -81,12 +85,18 @@ def clean_name(text):
 
 
 def parse_host(fields):
-    """HOST|<public 0/1>|<players>[+<drop-in slots>]|<name> without its kind; None when a field is wrong. Without
-    drop-in slots players is 2..8; with them (1..7 more slots, joined while the game runs) the game may start with
-    the host alone, and players + slots is at most 8."""
+    """HOST|<public 0/1>|<players>[+<drop-in slots>]|<name>[|<start>] without its kind; None when a field is wrong.
+    Without drop-in slots players is 2..8; with them (1..7 more slots, joined while the game runs) the game may start
+    with the host alone, and players + slots is at most 8. start: the gamestart every player starts in (hoststarts.py);
+    a request without it (an older page's) hosts the launcher's default start. The page's names have no '|' (typed
+    fields lose it), so a last field of a gamestart id's shape is the start; any other text after the players is the
+    name, '|' and all (cleaned, as before the start was added)."""
     parts = fields.split('|', 2)
     if len(parts) != 3:
         return None
+    named, bar, last = parts[2].rpartition('|')
+    start = last.strip() if bar and START_ID.fullmatch(last.strip()) else ''
+    name = named if start else parts[2]
     public_text = parts[0]
     players_text, plus, open_text = parts[1].partition('+')
     if public_text not in ('0', '1') or not players_text.isdigit() or (plus and not open_text.isdigit()):
@@ -95,7 +105,7 @@ def parse_host(fields):
     extra = int(open_text) if plus else 0
     if not host_counts_valid(players, extra):
         return None
-    return Request('HOST', public=public_text == '1', players=players, open=extra, name=clean_name(parts[2]))
+    return Request('HOST', public=public_text == '1', players=players, open=extra, name=clean_name(name), start=start)
 
 
 def host_counts_valid(players, extra):
@@ -152,7 +162,8 @@ def request_text(request):
     if request.kind == 'HOST' and request.players:
         public = '1' if request.public else '0'
         extra = f'+{request.open}' if request.open else ''
-        return f'HOST|{public}|{request.players}{extra}|{request.name}'
+        start = f'|{request.start}' if request.start else ''
+        return f'HOST|{public}|{request.players}{extra}|{clean_name(request.name)}{start}'
     if request.kind == 'JOINCODE':
         return f'JOINCODE|{request.text}'
     if request.kind == 'JOINGAME':
@@ -250,7 +261,8 @@ def clean_value(value):
 
 class State:
     """The state table the page draws (NETPLAY.md), and the stamp that tells the page it changed. Thread safe: the flow's
-    jobs write it, the backend reads it."""
+    jobs write it, the backend reads it. Sticky fields (stick) are in every phase's table until they change: what
+    belongs to the launcher, not to a phase (steam_play, the Steam switch; host_starts, the Host form's starts)."""
 
     def __init__(self):
         self.lock = threading.Lock()
@@ -258,7 +270,7 @@ class State:
         self.phase = 'idle'
         self.lines = ()
         self.fields = {}
-        self.sticky = {}   # fields every state carries (the Steam switch), whatever phase sets the others
+        self.sticky = {}   # fields every state carries (the Steam switch, the Host form's starts), whatever the phase
 
     def set(self, phase, lines, **fields):
         """A new phase and lines; fields replace the earlier ones (the sticky ones stay, unless named)."""
@@ -491,7 +503,7 @@ class Job:
             self.flow.failed(self, (str(error),))
         except Exception as error:   # a bug must not leave the page waiting forever
             self.flow.log(f'netplay: {type(self).__name__} failed: {type(error).__name__}: {error}')
-            self.flow.failed(self, ('Something went wrong in the launcher:', f'{type(error).__name__}: {error}'))
+            self.flow.failed(self, ('Something went wrong in X4 Online.', "The launcher's log has the details."))
         finally:
             for action in reversed(self.cleanups):
                 try:
@@ -587,7 +599,14 @@ def game_row(game, release):
     return {'id': str(game.get('game_id')), 'name': clean_name(game.get('name') or 'A game'),
             'players': int(game.get('players') or 0), 'max': int(game.get('players_max') or 0),
             'state': str(game.get('state') or 'lobby'), 'compatible': bool(compatible),
-            'mode': str(game.get('mode') or '') or None, 'open': int(game.get('open_slots_free') or 0)}
+            'mode': str(game.get('mode') or '') or None, 'open': int(game.get('open_slots_free') or 0),
+            'start': game_start(game)}
+
+
+def game_start(game):
+    """A listed game's start (the master's optional gamestart field), None when it has none or not one of a start id."""
+    start = str(game.get('gamestart') or '')
+    return start if START_ID.fullmatch(start) else None
 
 
 def lan_row(index, entry, release):
@@ -761,6 +780,8 @@ class Flow:
         self.session_started = threading.Event()   # the backend wrote the session's config: the page may run it
         self.session_info = {}            # the backend's view of the running session (run folder, tick)
         self.refresh_steam()
+        # The starts a game hosted here may have (the Host form's Start), read from this PC's game data in a thread.
+        self.host_starts = hoststarts.Starts(self.read_host_starts, log).start(self.show_host_starts)
         self.idle()
 
     def idle(self, *lines):
@@ -769,6 +790,38 @@ class Flow:
     def idle_lines(self):
         lines = getattr(self.backend, 'idle_lines', None)
         return tuple(lines()) if callable(lines) else IDLE_LINES
+
+    # the start of a hosted game
+    def default_start(self):
+        return self.config.base_start or hoststarts.DEFAULT
+
+    def read_host_starts(self):
+        read = getattr(self.backend, 'host_starts', None)
+        return read(self.config.mode or 'coop') if callable(read) else None
+
+    def show_host_starts(self, rows):
+        """The page's Start choices (state field host_starts, in every phase): {id, label, page, line, story, default}."""
+        default = self.default_start()
+        self.state.stick(host_starts=[dict(row, default=True) if row['id'] == default else dict(row) for row in rows])
+
+    def start_label(self, start):
+        """A start's name for the page's lines: the table's label (the game's English text), else its short id."""
+        row = hoststarts.find(self.host_starts.rows, start)
+        return (row or {}).get('label') or hoststarts.short(start)
+
+    def host_start(self, start=''):
+        """(gamestart, story) of a HOST's start ('' the launcher's default): story True gives every slot 2..N its own
+        copy of the start's story, None when this PC has no table of hostable starts (the session tool decides then).
+        JobFailed when the start cannot be hosted (the page offers only those that can)."""
+        wanted = start or self.default_start()
+        rows = self.host_starts.wait(HOST_STARTS_WAIT_S)
+        if rows is None:
+            return wanted, None
+        row = hoststarts.find(rows, wanted)
+        if row is None:
+            why = self.host_starts.refused.get(wanted) or "this PC's game has no such start (its DLC?)"
+            raise JobFailed(f'A game cannot be hosted with the start {wanted}:', why[:LINE_MAX_CHARS])
+        return row['id'], bool(row['story'])
 
     # requests
     def request(self, text):
@@ -1107,10 +1160,16 @@ class Backend:
     def clipboard_set(self, text):
         return lobby.clipboard_set(text)
 
-    def host_session(self, players, progress, cancelled, open_slots=()):
+    def host_session(self, players, progress, cancelled, open_slots=(), base_start='', story=None):
         """The session to host for this many players (netkit.SessionFiles), open_slots joined while it runs; may close
-        X4 to make one."""
+        X4 to make one. base_start: every player's start ('' the launcher's default); story: its slots 2..N play the
+        start's story as their own copies (None: as this PC's game data says, Flow.host_start)."""
         raise NotImplementedError
+
+    def host_starts(self, mode):
+        """(rows, refused) of hoststarts.load for this PC's game, or None (no game data here: hosting keeps its default
+        start). Runs in its own thread (Flow.host_starts)."""
+        return None
 
     def save_folder(self):
         """The save folder of this PC's X4 in the session (its join saves are in save/mpjoin), or None."""

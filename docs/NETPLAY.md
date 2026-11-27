@@ -101,9 +101,9 @@ JSON body or in the header `X-X4MP-Auth`.
 | Method, path | Body | Answer |
 |---|---|---|
 | `GET /api/v1/health` | | `{version, games, relays, uptime_s, echo_port}` (the echo's host is the base URL's hostname) |
-| `POST /api/v1/games` | `{name, public, release, players_max (2..8), session_sha256, open_slots: [k...], want: "auto"\|"direct"\|"relay", direct: {udp_port, tcp_port} \| null, lan: {candidates: [ip...], udp_port, tcp_port} \| null}` | `{game_id, code, secret, host_ticket, slot: 1}` |
+| `POST /api/v1/games` | `{name, public, release, players_max (2..8), session_sha256, open_slots: [k...], want: "auto"\|"direct"\|"relay", direct: {udp_port, tcp_port} \| null, lan: {candidates: [ip...], udp_port, tcp_port} \| null, gamestart?}` (`gamestart`, 26 Nov: the session's start, a gamestart id `[a-z0-9_]{1,64}`, for the list; a master before it ignores the field) | `{game_id, code, secret, host_ticket, slot: 1}` |
 | `PUT /api/v1/games/{id}/files/{name}` | raw bytes; headers `X-X4MP-Auth: <secret>`, `X-X4MP-Sha256` | `{name, size, sha256}`; names and caps: `session-save.xml.gz` 64 MiB, `session.json` 1 MiB, `play-recipe.json` 1 MiB |
-| `GET /api/v1/games?release=R` | | `{games: [{game_id, name, release, compatible, players, players_max, state, mode, open_slots_free, age_s}]}`: public games only, newest first, at most 100 |
+| `GET /api/v1/games?release=R` | | `{games: [{game_id, name, release, compatible, players, players_max, state, mode, open_slots_free, age_s, gamestart?}]}`: public games only, newest first, at most 100 (`gamestart` only for a game registered with one) |
 | `GET /api/v1/codes/{CODE}` | | the same fields for one game (public or private), plus `lan` (candidates and ports) only when the asker's public IP is the host's |
 | `POST /api/v1/games/{id}/join` | `{release, code?}` | `{ticket, slot, files: {name: {size, sha256}}}`; 409 `incompatible`/`full`/`started` |
 | `GET /api/v1/games/{id}/files/{name}` | header `X-X4MP-Auth: <ticket>` | raw bytes (Range supported) |
@@ -298,8 +298,9 @@ Both backends (the launcher's X4: log rows `[X4LAN] LOBBY REQUEST <text>` and `l
 X4: named pipes) carry the same requests and the same state table.
 
 Requests (text, at most 200 bytes of UTF-8):
-`HOST|<public 0/1>|<players 2..8>[+<drop-in slots>]|<name>` (with drop-in slots: players 1..7, together at most 8;
-"Drop-in games") · `JOINCODE|<code>` · `JOIN` (code from the clipboard: a join code or a
+`HOST|<public 0/1>|<players 2..8>[+<drop-in slots>]|<name>[|<start>]` (with drop-in slots: players 1..7, together at
+most 8; "Drop-in games"; `<start>`: the gamestart id every player starts in, "The start of a hosted game"; without it the
+launcher's default start) · `JOINCODE|<code>` · `JOIN` (code from the clipboard: a join code or a
 long LAN invite code) · `BROWSE` · `JOINGAME|<game_id>` · `JOINLAN|<index>` · `START` · `READY` · `CANCEL` ·
 `COPY` · `LEAVE`. The existing `JOIN`, `JOIN<k>` (start picker) and `HOST`/`COPY`/`CANCEL` keep working. `READY` is
 not sent by the page: the launcher marks a player ready itself once its files and overlay are done.
@@ -330,7 +331,9 @@ State (a Lua table; every field optional except `stamp` and `phase`):
   players = { {slot = 1, ready = true, host = true}, ... },
   games = { {id = 'g1', name = '...', players = 2, max = 4, state = 'lobby', compatible = true, ping_ms = 40}, ... },
   lan = { {index = 1, name = '...', players = 1, max = 2, compatible = true}, ... },
-  progress = {what = 'download'|'overlay'|'session', done = 0.4} }
+  progress = {what = 'download'|'overlay'|'session', done = 0.4},
+  host_starts = { {id = 'x4ep1_gamestart_terran1', page = 1021, line = 900, label = 'Terran Cadet', story = true,
+                   default = true}, ... } }   -- in every phase (26 Nov); games rows may carry start = '<gamestart id>'
 ```
 
 The page draws rows from this table only; it never talks to the network itself (X4's UI Lua cannot).
@@ -349,7 +352,8 @@ neither keeps the LAN lobby of before (Host a game, Join a game (invite code fro
 
 The netplay page, by phase (the state's `lines` always first, at most 6):
 - `idle`, `browsing`, `error` (and, greyed, `starting` before the first state and `nohelper`): Host a game
-  (Visibility Public/Private, default Private; Players 2..8, default 2; Game name box; Host), Join a game (one box for a
+  (Visibility Public/Private, default Private; Players 2..8, default 2; Drop-in slots; Start, once the state has
+  `host_starts`; Game name box; Host), Join a game (one box for a
   join code, invite code or address; Join; Join with the code on the clipboard), Public games (Refresh, the list) and
   LAN games. `error` adds Cancel. Lists not yet asked for say "Press Refresh..." (`browsing`: "Looking for games...").
 - `preparing`, `hosting`, `joining`, `waiting`, `loading`: the progress line (`progress`), the code with Copy (`code`, or
@@ -360,11 +364,15 @@ The netplay page, by phase (the state's `lines` always first, at most 6):
 What the page sends, exactly:
 - `HOST|<0/1>|<2..8>|<name>`, or `HOST|<0/1>|<1..7>+<1..7>|<name>` with drop-in slots (the page's "Drop-in slots"
   dropdown, 0 = none; Players offers 1 for a host who starts alone, and the two stay valid together: at most 8, and
-  without drop-in slots at least 2): an empty name is sent as `X4 game`. `JOINCODE|<text>`: the box's text as typed, trimmed
+  without drop-in slots at least 2): an empty name is sent as `X4 game`. With `host_starts` in the state the request
+  ends with `|<start>`: the Start dropdown's choice (its default: the row with `default = true`, else the first; a
+  choice the next list does not have falls back to it). `JOINCODE|<text>`: the box's text as typed, trimmed
   (the launcher normalizes codes); sent by Join and by Enter in the box (a click elsewhere, which X4 also reports as a
   confirmed box, sends nothing). Typed fields lose `|` and control characters (they become spaces) and are cut at whole
   UTF-8 characters: a name at 40 bytes, the code box at 100.
 - `BROWSE` once by itself when the netplay page is open in `idle` and the state has no `games`; again with Refresh.
+- A public game's row names its start after its state (`start`: this PC's name of it from `host_starts`, else the id
+  without `x4ep1_gamestart_`; a value that is no gamestart id is left out).
 - `JOINGAME|<id>` and `JOINLAN|<index>` from the lists, only for rows that can be joined: `compatible = false` is greyed
   "(another release)", `players >= max` "(full)". At most 30 rows per list, then "and N more".
 - `START`, `CANCEL`, `COPY`; in the session `COPY` and `LEAVE` (after the gate has stopped). Never `READY`.
@@ -383,11 +391,22 @@ What the page sends, exactly:
   (`lobby/state.lua` of the installed extension, or `<pipe>-state` when the session's config names a pipe); the page is
   drawn again when `stamp` changed. It shows the connection line, the code with Copy and the players (host and "you"
   marked from `players[].slot` and the client's own slot). A session without `lobby` shows the page as before.
+- How it looks (26 Nov, docs/MULTIPLAYER-PAGE.md): the netplay page and the in-session page are drawn as X4 draws its
+  own menus, one view per phase, into X4's options frame (X4's title row, then the page's status line and tables). The
+  rows above are what a menu without X4's frame gets (`DRAW_FALLBACK` once when a view fails); every request and field
+  above works in both. The state's `lines` are no longer drawn as six header rows: the status line says the phase in
+  plain words and has them as its mouse-over; the error notice shows them without "Cancel to go back." (its Back button
+  is there). New optional fields: `game = {name, public, start, players_max, open, address}` in hosting and waiting
+  (the game view's summary and its empty slots), and an unexpected failure reads "Something went wrong in X4 Online."
+  with the exception in the launcher's log only. The page's own: Try again (its last HOST or join request once more),
+  Copied for 2 s after Copy. Screenshots of every phase: `x4ls lobby --page-preview tools/dev/page_preview_states.json
+  --shots DIR`.
 
 ## Release kit and installer (GitHub Actions)
 
 `tools/make_release_kit.py --gate-dll DLL --out DIR [--master URL] [--python-embed ZIP] [--crypto-dll DLL]
-[--sessions DIR | --prebuild-sessions 2,3,4 [--game DIR] [--lanes DIR]]` makes a kit: `repo/` (git archive),
+[--sessions DIR | --prebuild-sessions 2,3,4 [--prebuild-starts discover,terran1,...] [--game DIR] [--lanes DIR]]`
+makes a kit: `repo/` (git archive),
 `native/x4lan_gate_64.dll`, `python/` (embedded), `steam-menu/`, `helper.pyw`, `second.pyw`, `release.json`,
 `master.json` (only with `--master`), `KIT.txt`, `VERIFY.cmd`, `kit-manifest.json`, and with `--sessions` or
 `--prebuild-sessions` ready-made host sessions in `sessions/` (below). `--master` takes a URL
@@ -405,7 +424,9 @@ folder `sessions/host-<start>-<N>p-<mode>-<8 hex of the gate DLL>-<form>/` with 
 and its recipe name the save `session-save.xml.gz` (no path of the PC that made it), the overlay's manifest follows.
 `--prebuild-sessions N,...` runs `x4ls new-session` for each count with the kit's own gate DLL (X4 and Steam on the
 building PC, about 2 minutes each, one capture X4; the checkout's `src/` and `tools/` must be its HEAD, since the
-kit's `repo/` is `git archive HEAD`). `--sessions DIR` takes the `host-*` folders of DIR (an earlier build's or an
+kit's `repo/` is `git archive HEAD`), for each start of `--prebuild-starts` (26 Nov; default `discover`; a start's id
+or its id without `x4ep1_gamestart_`, checked against the starts the building PC's game can host, "The start of a
+hosted game"; a story start's sessions give every player its own copy of the story and are checked to have them). `--sessions DIR` takes the `host-*` folders of DIR (an earlier build's or an
 install's `sessions/`). Either way the builder refuses a session this kit could not host (`netkit.cached_session`), one
 whose overlay does not verify, whose gate DLL is not `native/x4lan_gate_64.dll`, or whose overlay `ui/*.lua` differs
 from the kit's `repo/tools/dev/` file of that name (the probe and its cores are copied into overlays as they are). The
@@ -714,6 +735,52 @@ in-session page for a drop-in joiner (its X4 is hot_join's, without the netplay 
 (`can_ready`); the in-session page's requests from a Steam-started X4 while the game runs (ignored); the host's LEAVE
 keeps its relay running for the others until the session ends.
 
+### The start of a hosted game (26 Nov)
+
+The host chooses the game's start on the Host form (Start); every player of that game starts in it (coop): slot 1 is
+the session's base start, and every slot 2..N, drop-in slots too, takes that start's own ship, place, money and kit
+beside slot 1's (`x4ls new-session`'s own_starts: `--start K=<start> --omit K=world`). Discover stays the default. A
+player who joins a drop-in slot may still choose another start there ("The start", `JOINSTART`); this section is the
+game's own start.
+- **Which starts** (`src/lockstep/launcher/hoststarts.py`, from the host's game data: its DLCs): a start that can be the
+  session base (`native_gate_gamestarts.session_base_refusal`: the player in a ship in open space of the main galaxy)
+  and every slot's own start in the ship-only form (`per_player_refusal(world=True)`), and whose session spec can be
+  built (a dry `build_spec` for two players). On X4 9.00 with every DLC: The Untested Explorer (Discover), Terran
+  Cadet (`terran1`, story), Spear of the Patriarch (`split2`, story) and The Dedicated Warrior (`fight`). Not offered:
+  the starts that begin on foot or docked (Young Gun/`tutorial`, `trade`, `intro`, `scientist`, `terran2`, `boron2`,
+  `pirate2`, `boso`: the capture needs the player in a ship in open space), in a spacesuit (`split1`), with parts the
+  start reader does not know (`hyperion`, `dlc_mini_02`), without a place (the custom starts), and the tutorials,
+  Timelines and test starts. The launcher logs the table (`host starts: discover, terran1 (story), ...; not hostable:
+  ...`).
+- **Names:** X4's own. The state's `host_starts` rows carry the start's name reference (`page`, `line`: its
+  `name="{1021,900}"`), and the page shows `ReadText(page, line)` (the player's language); `label` is the game's English
+  text (read from the catalogs, `gamedata.texts`) for a page without it and the launcher's logs.
+- **Story starts:** a start with a story script of the stock shape (class b: `terran1`, `split2`) gives every slot
+  2..N its own copy of that story, as the release check's satellite sessions: `x4ls new-session --base-start <start>
+  --players N --story 2..N` (with own_starts: `--start K=<start> --omit K=world --story K`), drop-in slots included
+  (their copy begins 30 ticks after the slot's handover). Slot 1 plays the stock script. For the cadet start that is
+  `GS_Terran1_P<k>` and `Story_Yaki_P<k>` per player (PLAYTEST.md "Several players on one start"); each PC makes the
+  copies from its own installed game. Class c starts (Discover, Fight) have no story per player: their slots get the
+  ship, place and kit.
+- **The request:** `HOST|<public>|<players>[+<drop-in>]|<name>|<start>` (at most 116 bytes with a 40-byte name and a
+  64-byte id, under the 200 of a spelled request). An older page's request has no start: the launcher's default
+  (`x4ls lobby --base-start`, else Discover). The page's names have no `|`, so a last field of a gamestart id's shape is
+  the start; any other text after the players stays the name, as before. A start the table does not have is refused
+  on the page (`A game cannot be hosted with the start <id>:` and why), before anything is made and, in the Steam path,
+  before X4 closes. Without a table (no game data on that PC) the start is taken as asked and the session tool decides.
+- **The session:** `netkit.make_session(..., base_start, story)` (`story` None: `netkit.start_story` asks the game data),
+  kept under `host-<start>-<N>p[-open<slots>]-<mode>-<dll>-n` as before. `netkit.cached_session(..., story)` takes a kept
+  session only in the asked form: every slot 2..N with its story copy for a story start (a session of the cadet start
+  made before 26 Nov gave the story to player 1 only and is made again), none for the others. The Steam helper's
+  hand-over (`HostHandOver`) finds or makes that session before X4 closes, and `x4ls lobby --request` hosts the same
+  start: one restart. A story start's session has other start-time files (its story copies) than a Discover session,
+  so an X4 that waits with a kept Discover session starts again once for it.
+- **The master:** `POST /games` carries `gamestart` (the session's base start), the public list returns it, and the
+  page names it in the game's row. The joiner needs nothing else: the session's files say it.
+- **Command line:** `x4ls host --base-start <start>` puts the start into its HOST request (refused with
+  `--milestone`: a continued game keeps its start); `x4ls lobby --base-start` sets the default the page marks.
+- **Ready-made:** `make_release_kit.py --prebuild-sessions 2,3,4 --prebuild-starts discover,terran1,split2,fight`.
+
 ## Restarts (25 Nov)
 
 From X4's Multiplayer button to being in the game, the player's X4 restarts once from a Steam-started X4 (its profile
@@ -738,7 +805,8 @@ slot of `C:/x4ls-locks` first):
 
 ```
 py -3.12 tools/make_release_kit.py --gate-dll <x4lan_gate_64.dll> --out <kit> --master <URL> \
-    --python-embed python-3.12.10-embed-amd64.zip --prebuild-sessions 2,3,4 --lanes <own lanes folder>
+    --python-embed python-3.12.10-embed-amd64.zip --prebuild-sessions 2,3,4 \
+    --prebuild-starts discover,terran1,split2,fight --lanes <own lanes folder>
 py -3.12 tools/make_playtest_msi.py --kit <kit> --out <X4-Online.msi>
 ```
 
@@ -776,16 +844,32 @@ started first when none runs):
   byte for byte (a copy of each as it was is kept once as `<name>.x4online-backup`). Only an installed kit (its
   manifest and helper.pyw) touches Steam; a checkout and a test's kit never do.
 
-**What still forces X4 to start again** (`netlobby.in_place_refusal`, `LobbyGame.take_join`):
-- the page alone: an X4 that started with none of a session's files. Its extension then lacks the md/, aiscripts/ and
-  libraries/ files X4 indexes at its start. A kit has a kept session once it shipped one, made one or joined a game
-  (`netkit.joined_sessions` counts since 26 Nov), so this is the first start of a kit that has none;
-- another seed: X4's `-seed:` is on its command line. Every session x4ls new-session makes has 276944566, and so does
-  a game continued from its milestones;
-- other start-time files: another release (it cannot play with this one anyway), a session with start stories (its
-  patches of stock extensions and content.xml's dependencies) or plot copies (md made from `md-copies.json`);
+**What X4 reads only at its start, and what it reads at every load** (reports/INPLACE-STUDY-20261126.txt, sections 2
+and 3, from X4.exe and two prototype runs): md/, aiscripts/ and libraries/ are read again at every new game and load,
+and the md/ and aiscripts/ folders are listed live then, so a new MD or AI script copied in before the session's load is
+found. What X4 fixes at its start is the set of enabled extensions with their load order (content.xml), and every patch
+path it has once found missing: a patch (of a stock AI script, a library, another extension's script) is looked up by its
+path, and a missing path is remembered until X4 exits. The start menu's own game does not remember an MD patch path
+(measured: an MD patch copied in later was applied); a game load does. `-seed:` is two fields of GameClient
+(+0x218, +0x220) read at every new game and load, before the databases are seeded.
+
+So since 26 Nov (contrib/ferrite-inplace-any) an X4 in the multiplayer profile that waits with one session takes any
+session of the same release in place (`LobbyGame.take`, `take_join`, `refusal`): every file of the session's overlay is
+copied into its extension (md/, aiscripts/, libraries/ too), the files of the previous session that the new one lacks are
+taken out (a patch path X4 had at its start becomes a placeholder `<diff/>`, which changes nothing), its plot copies are
+made, its save is staged, and the seed is told (`x4mem.force_seed`: GameClient+0x218/+0x220 written by the launcher,
+which started this X4 itself, only when the running image is the pinned build and the code that reads the fields is
+the file's; read back). **What still forces X4 to start again:**
+- a patch path the running X4 did not have when it started (`starts_late_ok`: not an MD file, not a new AI script): an
+  AI or library patch of a session made by another release, a story session's patches of DLC scripts
+  (`extensions/<dlc>/md/...`). The page alone (an X4 that started with no session's files) lacks the release's AI
+  patches, so it starts again for any real session; a kit has a kept session once it shipped, made or joined one;
+- a story session's load order: its content.xml loads the extension after the DLCs (read at X4's start), so a story
+  session and a session without one do not take each other's place;
+- a seed it cannot be told: another X4 build (the pin checks), a string X4 keeps too short for the text;
 - a file X4 holds open (a loaded DLL): only after a session ran, and a lobby ends with its session;
 - a drop-in join that is not an early join (more than one candidate slot, or a session without a seed in its recipe).
+The Steam-started X4 (the player's own profile) is not changed by any of this.
 
 Drop-in sessions had one more start-time file, `md/native_gate_join_shipyards.xml`. Since 26 Nov every play overlay
 carries it (`build_native_gate_overlay.py`; its cues act only on the probe's join events), so a session, a drop-in
@@ -823,6 +907,31 @@ does not sync, and the player's own profile is not touched), the installer's las
 join played in place. Unit tests cover them on copies of Steam's files and with fakes for X4 and the relay.
 
 ## Live runs
+
+**26 Nov, a game hosted at the Terran cadet start (release kit 210fcea96fd6-c7c7ece30798 from the host-start branch,
+gate of rk18, a master on 127.0.0.1, two disposable profiles on one PC):** `x4ls host --players 2 --base-start
+x4ep1_gamestart_terran1` sent `HOST|0|2|Cadets hs1|x4ep1_gamestart_terran1`; the launcher's table read `host starts:
+discover, terran1 (story), split2 (story), fight` from the PC's game data, and the kit had no session of that start,
+so it made one before X4 started (`X4 SESSION MADE alone: 2 players, start x4ep1_gamestart_terran1, a story per
+player`, the capture 2 minutes): slot 2 in the cadet's own ship (`ship_ter_s_fighter_01_a_macro`) beside slot 1 in
+`cluster_101_sector001`, with its own `GS_Terran1_P2` and `Story_Yaki_P2`. `x4ls join --code` joined it (direct mode);
+each X4 started once, straight into the game (restarts counted: host 1, the session made alone; joiner 0). On both
+clients the copies began for player 2 at tick 100 (`STORY_MD slot=2 plot=story script=GS_Terran1_P2`, `plot=yaki`,
+`MPP_STORY ... signalled cues=2`), player 1's story line played on client 1 only and player 2's two lines on client
+2 only (`SPEECH_START owner=k muted=0` on client k, `muted=1` on the other). 15,035 ticks, 0 mismatches, 0 clock
+splits, the eight census records (ticks 1,800 to 14,400) equal byte for byte; both runs ended `played`. The release
+check's satellite run on that same hosted session (`release_check.py satellite --players 2 --locks --hosted <kit>/sessions/
+host-x4ep1_gamestart_terran1-2p-coop-c7c7ece3-n`): PASS, 15 of 15 (both players finished cadet chapter 1 on both
+clients, 58 story lines each on its own client only, each player's mission list its own, in sync). Not run live:
+the page's Start clicked in X4 (unit tests only), the Steam path with a start, and a story start with drop-in slots.
+
+**26 Nov 02:36, a session of another seed taken in place (kits from c13a7ac3, gate c7c7ece3 = rk18's, a master on
+127.0.0.1, slots x4-a + x4-b):** the host's kit shipped rk18's 2-player session; the joiner's kit kept only a copy of it
+whose save header names seed 123456789, so its page X4 started with `-seed:123456789`. `x4ls lobby --page-first
+--request JOINCODE|<code>` downloaded the host's session (seed 276944566), built its overlay, and its X4 took it in
+place: `x4mem.force_seed` passed the pin checks and read back (`its next load takes the seed 276944566`), no `X4 RESTART`
+row. Both loaded at the common second and played 2,088 ticks with 0 mismatches and 0 clock splits (with the joiner's
+own seed, JobDB's job generators would have parted at once).
 
 **25 Nov evening, the one-restart branch (kit from 32843550, gate 3fe464b7, a master on 127.0.0.1, two disposable
 profiles on one PC):** `x4ls host --players 2 --public` with no session in the kit made it before X4 started (`X4

@@ -23,7 +23,9 @@ def add_netplay_options(parser, with_port=True):
     parser.add_argument('--no-master', action='store_true', help='LAN games only: invite codes, addresses, LAN discovery')
     parser.add_argument('--state-mirror', type=Path, metavar='FILE', help='write the page\'s state here too')
     parser.add_argument('--base-start', default='', metavar='GAMESTART',
-                        help=f'hosting with a release kit: the start of the session made here (default {netkit.HOST_SESSION_START})')
+                        help=f'hosting: the start of every player, the session made here (default {netkit.HOST_SESSION_START}; '
+                             'x4ls host puts it into its HOST request as the Start of the page does; a story start gives '
+                             'each player its own copy of the story)')
     parser.add_argument('--mode', choices=('coop', 'factions'), default='', help='hosting: the new session\'s mode (default coop)')
     if with_port:
         parser.add_argument('--port', type=int, default=netplay.RELAY_UDP_PORT,
@@ -111,7 +113,12 @@ def host_request(args):
         raise SystemExit(f'--players must be {netplay.PLAYERS_MIN}..{netplay.PLAYERS_MAX}')
     public = '1' if args.public else '0'
     players = f'{args.players}+{extra}' if extra else str(args.players)
-    return f'HOST|{public}|{players}|{netplay.clean_name(args.name)}'
+    start = getattr(args, 'base_start', '') or ''   # the game's start, as the page's Start sends it (every player's)
+    if start and not netplay.START_ID.fullmatch(start):
+        raise SystemExit(f'--base-start: {start!r} is not a gamestart id (x4ls starts lists them)')
+    if start and getattr(args, 'milestone', None):
+        raise SystemExit('--base-start and --milestone: a continued game keeps the start it was saved with')
+    return f'HOST|{public}|{players}|{netplay.clean_name(args.name)}' + (f'|{start}' if start else '')
 
 
 def lobby_options(args, width, height, request):

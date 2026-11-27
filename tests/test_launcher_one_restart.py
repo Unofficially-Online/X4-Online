@@ -46,6 +46,14 @@ class QuietLobbyGame(netlobby.LobbyGame):
                          {'views': [], 'pids': []}, lambda: None, log)
         self.launched = []
         self.staged = []
+        self.seeds = []           # the seeds told (force_seed: x4mem in a real X4)
+        self.seed_tellable = True
+
+    def can_force_seed(self):
+        return self.seed_tellable
+
+    def force_seed(self, seed):
+        self.seeds.append(seed)
 
     def launch(self, form):
         self.launched.append(form)
@@ -92,22 +100,24 @@ class Case(unittest.TestCase):
         self.folder.cleanup()
 
     # the Steam side
-    def helper(self, kit, net=None, master_url='', fits=True, make=None):
+    def helper(self, kit, net=None, master_url='', fits=True, make=None, starts=None):
         self.helper_logs = []
         self.made = []
         self.notices = []
         self.x4_open = [True]   # the Steam-started X4
 
         def made(kit, players, mode, base_start, progress, log, cancelled, steam_fix=False, open_slots=(), game=None,
-                 lanes=None, beside=False):
+                 lanes=None, beside=False, story=None):
             self.made.append({'players': players, 'beside': beside, 'steam_x4_open': self.x4_open[0],
-                              'open': tuple(open_slots)})
+                              'open': tuple(open_slots), 'start': base_start, 'story': story})
             log(f'{netkit.SESSION_BESIDE_MARK if beside else netkit.SESSION_ALONE_MARK}: {players} players')
             if make is not None:
                 make(beside)
             if progress:
                 progress(0.5)
-            folder = fakes.host_session(kit.root, players, open_slots)
+            shutil.rmtree(kit.sessions / netkit.host_session_key(kit, players, mode, base_start, open_slots),
+                          ignore_errors=True)   # as make_session: a session made again replaces the one there
+            folder = fakes.host_session(kit.root, players, open_slots, base_start=base_start, story=bool(story))
             for left in ('capture-overlay', 'overlay.base'):
                 shutil.rmtree(folder / left)
             return netkit.cached_session(kit, players, mode, base_start, open_slots)
@@ -127,7 +137,8 @@ class Case(unittest.TestCase):
         helper = steamplay.NetHelper(kit.root, prefix='x4mp-onerestart-test', log=self.helper_logs.append,
                                      start=self.lobby_start, running=lambda: self.x4_open[0], net=net or fakes.network(None),
                                      master_url=master_url, make=made, fits=lambda: fits,
-                                     release_mutex=lambda log: ([], 0), notice=Notice)
+                                     release_mutex=lambda log: ([], 0), notice=Notice,
+                                     starts=starts or (lambda mode: None))   # never this PC's own game data
         helper.flow.backend.installed_dlcs = lambda: None
         self.flows.append(helper.flow)
         return helper
@@ -188,6 +199,34 @@ class SteamHost(Case):
         self.assertEqual([form.overlay for form in game.launched],           # one X4: the session's, not the page first
                          [kit.sessions / netkit.host_session_key(kit, 2, 'coop', netkit.HOST_SESSION_START) / 'overlay'])
         self.assertEqual(self.restarts(self.helper_logs, logs), 1)
+
+    def test_the_pages_start_is_the_sessions_and_a_story_start_gives_every_player_its_story(self):
+        cadet = 'x4ep1_gamestart_terran1'
+        kit = netkit.Kit(fakes.release_kit(self.root / 'kit'))
+        fakes.host_session(kit.root, 2, base_start=cadet, story=False)       # made before 26 Nov: the story for player 1 only
+        helper = self.helper(kit, starts=lambda mode: fakes.STARTS)
+        request = self.hand_over(helper, f'HOST|0|2|Cadets|{cadet}')
+        self.assertEqual(request, f'HOST|0|2|Cadets|{cadet}')               # the lobby hosts the same start
+        self.assertEqual([(entry['start'], entry['story'], entry['beside']) for entry in self.made], [(cadet, True, True)])
+        self.assertTrue(any('preparing a new game' in row.lower() or 'SESSION MADE beside' in row for row in self.helper_logs))
+        game, logs, _start, _flow = self.run_lobby(kit, request)
+        key = netkit.host_session_key(kit, 2, 'coop', cadet)
+        self.assertEqual([form.overlay for form in game.launched], [kit.sessions / key / 'overlay'])   # that session, one X4
+        self.assertEqual(self.restarts(self.helper_logs, logs), 1)
+        self.assertTrue(netkit.session_stories(netkit.read_json(kit.sessions / key / 'session.json'), 2))
+        # the next game of that start finds it: nothing is made, still one restart
+        self.made.clear()
+        helper.flow.cancel()
+        self.helper_logs.clear()
+        self.assertEqual(self.hand_over(helper, f'HOST|1|2|Again|{cadet}'), f'HOST|1|2|Again|{cadet}')
+        self.assertEqual(self.made, [])
+        # a start this PC cannot host is said on the Steam page: X4 does not close, nothing is made
+        helper.flow.cancel()
+        helper.flow.request('HOST|0|2|x|x4ep1_gamestart_trade')
+        self.assertTrue(fakes.wait_for(lambda: helper.flow.state.phase == 'error'), helper.flow.state.lines)
+        self.assertTrue(any('on_foot' in line for line in helper.flow.state.lines), helper.flow.state.lines)
+        self.assertIsNone(helper.flow.take_handover())
+        self.assertEqual(self.made, [])
 
     def test_the_steam_x4_says_once_that_x4_online_skips_the_restart(self):
         kit = netkit.Kit(fakes.release_kit(self.root / 'kit'))
@@ -367,28 +406,62 @@ class MultiplayerProfile(Case):
         self.assertTrue(any('in place' in line for line in logs))
         self.assertEqual(self.restarts(logs), 0)
 
-    def test_other_start_time_files_or_another_seed_start_x4_again(self):
+    def test_other_scripts_and_another_seed_are_taken_in_place(self):
+        """MD, AI scripts and libraries are read at every load, the seed is told: only patch paths X4 did not have at its
+        start (and a story's load order) still start it again (reports/INPLACE-STUDY-20261126.txt 2.1, 3)."""
         kit = netkit.Kit(fakes.release_kit(self.root / 'kit'))
-        fakes.host_session(kit.root, 2)
-        fakes.host_session(kit.root, 3, md=b'<mdscript name="Another release"/>\n')
-        fakes.host_session(kit.root, 4, seed=12345)
+        patch = b'<?xml version="1.0"?>\n<!-- a patch -->\n<diff><add sel="/x"/></diff>\n'
+        fakes.host_session(kit.root, 2, extra={'aiscripts/order.fight.xml': patch, 'md/x4lan_old.xml': b'<mdscript/>\n',
+                                                'libraries/factions.xml': patch, 'libraries/x4lan_extra.xml': patch})
+        fakes.host_session(kit.root, 3, md=b'<mdscript name="Other"/>\n', extra={
+            'aiscripts/order.fight.xml': patch, 'md/x4lan_new.xml': b'<mdscript name="New"/>\n',
+            'md/notifications.xml': patch, 'aiscripts/x4lan_new.xml': b'<aiscript name="New"/>\n'})
+        fakes.host_session(kit.root, 4, seed=12345, extra={'aiscripts/order.fight.xml': patch})
         game, backend, logs = self.page(kit)
-        for players in (4, 3):   # another seed, then other start-time files
-            backend.install_session(netkit.cached_session(kit, players), lambda done: None)
-        self.assertEqual(len(game.launched), 3)
-        self.assertEqual(self.restarts(logs), 2)
-        self.assertTrue(any('X4 reads at its start' in line for line in logs))
-        self.assertTrue(any('different seeds' in line for line in logs))
+        start_target = game.target
+        backend.install_session(netkit.cached_session(kit, 3), lambda done: None)   # other MD, new MD and AI scripts
+        self.assertEqual(len(game.launched), 1)
+        self.assertEqual((start_target / 'md' / 'setup.xml').read_bytes(), b'<mdscript name="Other"/>\n')
+        self.assertTrue((start_target / 'md' / 'notifications.xml').is_file())     # an MD patch path new to X4: fine
+        self.assertTrue((start_target / 'aiscripts' / 'x4lan_new.xml').is_file())
+        self.assertFalse((start_target / 'md' / 'x4lan_old.xml').exists())         # the previous form's script is out
+        # a patch path X4 had at its start and the new form lacks stays as a placeholder (X4 knows it exists); a base
+        # file the previous overlay had replaced is the base's again
+        self.assertEqual((start_target / 'libraries' / 'x4lan_extra.xml').read_text(encoding='utf-8'), netlobby.PLACEHOLDER)
+        self.assertEqual((start_target / 'libraries' / 'factions.xml').read_bytes(),
+                         (netlobby.extension.BASE / 'libraries' / 'factions.xml').read_bytes())
+        backend.install_session(netkit.cached_session(kit, 4), lambda done: None)   # another seed: told
+        self.assertEqual((len(game.launched), game.seeds), (1, [12345]))
+        self.assertEqual(self.restarts(logs), 0)
 
-    def test_the_page_alone_cannot_take_a_session(self):
+    def test_what_still_starts_x4_again(self):
+        kit = netkit.Kit(fakes.release_kit(self.root / 'kit'))
+        patch = b'<diff><add sel="/x"/></diff>\n'
+        fakes.host_session(kit.root, 2)
+        fakes.host_session(kit.root, 3, extra={'aiscripts/order.fight.xml': patch})       # an AI patch new to X4
+        fakes.host_session(kit.root, 4, extra={'md/x4lan_story.xml': b'<mdscript/>\n'})    # a story's load order
+        fakes.host_session(kit.root, 5, extra={'extensions/ego_dlc_split/md/gs_split.xml': patch})
+        fakes.host_session(kit.root, 6, seed=12345)
+        game, backend, logs = self.page(kit)
+        game.seed_tellable = False
+        for players in (3, 4, 5, 6):
+            game.start(backend.default_form())   # back to the page with the 2-player session's files
+            backend.install_session(netkit.cached_session(kit, players), lambda done: None)
+        reasons = [line for line in logs if 'X4 starts again for the session' in line]
+        self.assertEqual(len(reasons), 4)
+        self.assertIn('aiscripts/order.fight.xml is a patch path this X4 did not have', reasons[0])
+        self.assertIn('a story session needs X4 to load this extension after the DLCs', reasons[1])
+        self.assertIn('extensions/ego_dlc_split/md/gs_split.xml is a patch path', reasons[2])
+        self.assertIn('another seed, and this X4 cannot be told it', reasons[3])
+
+    def test_the_page_alone_cannot_take_a_session_with_ai_patches(self):
         kit = netkit.Kit(fakes.release_kit(self.root / 'kit'))
         game, backend, logs = self.page(kit)                                 # no kept session: the page alone
         self.assertIsNone(game.form.overlay)
-        files = fakes.host_session(kit.root, 2)
-        backend.install_session(netkit.cached_session(kit, 2), lambda done: None)
+        fakes.host_session(kit.root, 2, extra={'aiscripts/order.fight.xml': b'<diff><add sel="/x"/></diff>\n'})
+        backend.install_session(netkit.cached_session(kit, 2), lambda done: None)   # a session's AI patches: not there
         self.assertEqual(len(game.launched), 2)
         self.assertEqual(self.restarts(logs), 1)
-        self.assertTrue(files.is_dir())
 
     def test_x4ls_lobby_page_first_hosts_in_place(self):
         kit = netkit.Kit(fakes.release_kit(self.root / 'kit'))
@@ -477,14 +550,22 @@ class DropInInPlace(Case):
     the early joiner's overlay has the page's start-time files and seed, so no X4 starts. The relay, the files and the
     monitor are fakes (hotjoin.EarlyJoin.__call__, session.monitor_play)."""
 
+    def fresh(self, name):
+        """A folder of its own for each use in one test."""
+        self.uses = getattr(self, 'uses', 0) + 1
+        return self.root / f'{name}{self.uses}'
+
     def session_overlay(self):
-        kit = fakes.release_kit(self.root / 'src-kit')
+        kit = fakes.release_kit(self.fresh('src-kit'))
         fakes.host_session(kit, 2)
         return netkit.cached_session(netkit.Kit(kit), 2).overlay
 
-    def joiner_overlay(self, source, md=None):
-        overlay = self.root / ('joiner-other' if md else 'joiner') / 'overlay'
+    def joiner_overlay(self, source, md=None, extra=None):
+        overlay = self.fresh('joiner') / 'overlay'
         shutil.copytree(source, overlay)
+        for name, data in (extra or {}).items():
+            (overlay / name).parent.mkdir(parents=True, exist_ok=True)
+            (overlay / name).write_bytes(data)
         (overlay / 'ui' / 'config.lua.append').write_text('X4LAN_CONFIG.native_gate_join = "early"\n'
                                                           'X4LAN_CONFIG.port = @X4LANE_PORT@\n'
                                                           'X4LAN_CONFIG.token = "@X4LANE_TOKEN@"\n'
@@ -496,17 +577,18 @@ class DropInInPlace(Case):
         return overlay
 
     def run_late(self, joiner):
-        kit = netkit.Kit(fakes.release_kit(self.root / 'kit'))
+        base = self.fresh('late')
+        kit = netkit.Kit(fakes.release_kit(base / 'kit'))
         fakes.host_session(kit.root, 2)
         dropin = fakes.host_session(kit.root, 2, open_slots=(2,))   # the host's session as this PC built it
         logs = []
         o = lobby.LobbyOptions(lane=1)
-        o.state = self.root / 'state'
-        o.runs = self.root / 'runs'
-        game = QuietLobbyGame(self.root / 'page', logs.append, o)
-        backend = netlobby.LobbyBackend(o, kit, game, self.root / 'run', logs.append)
+        o.state = base / 'state'
+        o.runs = base / 'runs'
+        game = QuietLobbyGame(base / 'page', logs.append, o)
+        backend = netlobby.LobbyBackend(o, kit, game, base / 'run', logs.append)
         game.start(backend.default_form())
-        flow = netplay.Flow(netplay.FlowConfig(kit=kit, release=kit.release), fakes.FakeBackend(self.root / 'work'),
+        flow = netplay.Flow(netplay.FlowConfig(kit=kit, release=kit.release), fakes.FakeBackend(base / 'work'),
                             net=fakes.network(None), log=logs.append)
         self.flows.append(flow)
         start = netplay.SessionStart(slot=2, clients=2, relay_host='203.0.113.50', port=47205, token='ef' * 16,
@@ -546,13 +628,16 @@ class DropInInPlace(Case):
         self.assertTrue(any('plays the drop-in slot 2 in place' in line for line in logs))
         self.assertEqual(self.restarts(logs), 0)
 
-    def test_other_start_time_files_start_an_x4_of_its_own(self):
+    def test_other_scripts_are_taken_and_a_new_patch_path_starts_an_x4_of_its_own(self):
         joiner = self.joiner_overlay(self.session_overlay(), md=b'<mdscript name="Other"/>\n')
+        game, logs, result, early, others, _flow = self.run_late(joiner)
+        self.assertEqual((result.get('in_place'), others), (True, []))   # other MD content: read at the join's load
+        joiner = self.joiner_overlay(self.session_overlay(), extra={'aiscripts/order.fight.xml': b'<diff/>\n'})
         game, logs, result, early, others, _flow = self.run_late(joiner)
         self.assertEqual(result.get('own_x4'), True)
         self.assertEqual(len(others), 1)
         self.assertEqual(early, [])
-        self.assertTrue(any('differs in files X4 reads at its start' in line for line in logs))
+        self.assertTrue(any('aiscripts/order.fight.xml is a patch path this X4 did not have' in line for line in logs))
         self.assertEqual(self.restarts(logs), 1)                            # the page X4 closed for the hot join's own
 
 

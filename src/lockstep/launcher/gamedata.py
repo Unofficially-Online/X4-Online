@@ -11,6 +11,7 @@ this PC: .local/x4ls/gamedata by default, never in git. It is unpacked again whe
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 
 STOCK_EXTENSIONS = ('ego_dlc_boron', 'ego_dlc_mini_01', 'ego_dlc_mini_02', 'ego_dlc_pirate', 'ego_dlc_split',
@@ -86,3 +87,74 @@ def unpack(game, cache, log=print):
 def default_cache():
     from .session import ROOT
     return Path(os.environ.get('X4LS_GAMEDATA') or ROOT / '.local/x4ls/gamedata')
+
+
+# ---- the game's own text (t/0001-l<language>.xml), read straight from the catalogs ----
+TEXT_REF = re.compile(r'\{\s*(\d{1,9})\s*,\s*(\d{1,9})\s*\}')
+TEXT_COMMENT = re.compile(r'(?<!\\)\((?:[^()\\]|\\.)*\)')   # X4 drops unescaped (...) from a text: the writers' notes
+TEXT_DEPTH = 4
+ENGLISH = 44
+
+
+def read_file(game, path):
+    """The bytes of one file of the game as X4 reads it (the last catalog that has it), or None."""
+    wanted = path.replace('\\', '/').lower()
+    found = None
+    for _ext, cat in catalogs(game):
+        offset = 0
+        for name, size in index(cat):
+            if name.lower() == wanted:
+                found = (cat, offset, size)
+            offset += size
+    if found is None:
+        return None
+    cat, offset, size = found
+    with open(cat.with_suffix('.dat'), 'rb') as dat:
+        dat.seek(offset)
+        return dat.read(size)
+
+
+def text_table(data):
+    """{(page, id): raw text} of one language file's bytes."""
+    import xml.etree.ElementTree as ET
+    table = {}
+    for page in ET.fromstring(data).iter('page'):
+        try:
+            page_id = int(page.get('id'))
+        except (TypeError, ValueError):
+            continue
+        for entry in page.iter('t'):
+            try:
+                table[(page_id, int(entry.get('id')))] = entry.text or ''
+            except (TypeError, ValueError):
+                continue
+    return table
+
+
+def resolve_text(table, page, line, depth=0):
+    """One text as X4 shows it: the writers' notes in parentheses left out, {page,id} references resolved, escaped
+    parentheses kept; None when the table has no such line."""
+    raw = table.get((int(page), int(line)))
+    if raw is None or depth > TEXT_DEPTH:
+        return None
+    text = TEXT_COMMENT.sub('', raw)
+    text = TEXT_REF.sub(lambda m: resolve_text(table, m.group(1), m.group(2), depth + 1) or '', text)
+    return text.replace('\\(', '(').replace('\\)', ')').strip()
+
+
+def texts(game, refs, language=ENGLISH):
+    """{(page, id): text} of the game's own text for these references (X4's language file; English by default). A
+    reference the game has no text for is left out; an unreadable file gives {}."""
+    data = read_file(game, f't/0001-l{int(language):03d}.xml')
+    if not data:
+        return {}
+    try:
+        table = text_table(data)
+    except Exception:   # a broken file: the names are only labels
+        return {}
+    out = {}
+    for page, line in refs:
+        text = resolve_text(table, page, line)
+        if text:
+            out[(int(page), int(line))] = text
+    return out

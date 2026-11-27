@@ -61,23 +61,31 @@ class HostJob(netplay.Job):
 
     # the session
     def prepare(self, legacy):
-        """The session to host: the kit's own (a playtest kit), else one made here for the players asked for."""
+        """The session to host: the kit's own (a playtest kit), else one made here for the players and the start asked
+        for (every player starts in that start's own ship; a story start gives each its own copy of the story)."""
         self.show('preparing', 'Getting the session ready...', progress={'what': 'session', 'done': 0.0})
         own = self.flow.backend.kit_session()
         if legacy:
             if own is None:
-                return self.flow.backend.host_session(netplay.PLAYERS_MIN, self.session_progress, self.cancelled)
+                start, story = self.flow.host_start()
+                return self.flow.backend.host_session(netplay.PLAYERS_MIN, self.session_progress, self.cancelled,
+                                                      base_start=start, story=story)
             return own
         total = self.request.players + self.request.open
         opened = netplay.drop_in_slots(self.request.players, self.request.open)
-        if own is not None and own.players == total and drop_in(own) == opened:
+        own_start = session_start_of(own) if own is not None else ''
+        if own is not None and own.players == total and drop_in(own) == opened and self.request.start in ('', own_start):
             return own
         if own is not None:
-            raise netplay.JobFailed(f'This kit\'s session is made for {counts_text(own.players, drop_in(own))}, not '
-                                    f'{counts_text(total, opened)}.', f'Host a game for {counts_text(own.players, drop_in(own))}.')
-        if opened:
-            return self.flow.backend.host_session(total, self.session_progress, self.cancelled, open_slots=opened)
-        return self.flow.backend.host_session(total, self.session_progress, self.cancelled)
+            what = counts_text(own.players, drop_in(own)) + (f' at the start {own_start}' if own_start else '')
+            raise netplay.JobFailed(f'This kit\'s session is made for {what}, not {counts_text(total, opened)}'
+                                    + (f' at the start {self.request.start}' if self.request.start else '') + '.',
+                                    f'Host a game for {what}.')
+        start, story = self.flow.host_start(self.request.start)
+        self.flow.log(f'netplay: HOST: the start {start}' + {True: ' (every player has its own story)', False: '',
+                                                               None: ' (no table of starts on this PC)'}[story])
+        return self.flow.backend.host_session(total, self.session_progress, self.cancelled, open_slots=opened,
+                                              base_start=start, story=story)
 
     def session_progress(self, done):
         self.progress('session', done)
@@ -123,10 +131,12 @@ class HostJob(netplay.Job):
         try:
             created = master.create_game(name, public, self.config.release, files.players, files.sha256,
                                          open_slots=opened, want='relay' if opened else 'auto',
-                                         direct={'udp_port': port, 'tcp_port': tcp_port} if direct else None, lan=lan)
+                                         direct={'udp_port': port, 'tcp_port': tcp_port} if direct else None, lan=lan,
+                                         **game_start_field(files))
         except errors as error:
             raise netplay.JobFailed('The master server did not take the game:', netplay.error_why(error)) from None
         game = checked_created(created)
+        game['summary'] = game_summary(name, public, files)
         self.on_end(lambda: self.end_game(master, game))
         game['beat'] = 'lobby'
         beat = netplay.Heartbeat(master, game['game_id'], game['secret'], errors, self.flow.log,
@@ -247,7 +257,7 @@ class HostJob(netplay.Job):
                 asked_start = time.time()
                 self.ask_start(master, game)
             self.show('hosting', *hosting_lines(game, players, full), code=game['code'], public=game['public'],
-                      host=True, can_start=full, network=game['network'], players=players)
+                      host=True, can_start=full, network=game['network'], players=players, game=game.get('summary'))
             self.sleep(LOOP_S)
 
     def ask_start(self, master, game):
@@ -299,7 +309,8 @@ class HostJob(netplay.Job):
         self.announce(public, '-', name, files.players)
         self.flow.log(f'netplay: hosting on the LAN, UDP {port} (the session) and TCP {port + 1} (the lobby); invite code:\n  {invite}')
         game = {'invite': invite, 'address': address, 'public': public, 'players_max': files.players,
-                'network': {'mode': 'lan', 'mapping': 'none'}, 'code': invite, 'note': note}
+                'network': {'mode': 'lan', 'mapping': 'none'}, 'code': invite, 'note': note,
+                'summary': dict(game_summary(name, public, files), address=address)}
         while True:
             self.check()
             lobby_host.poll()
@@ -311,7 +322,7 @@ class HostJob(netplay.Job):
             if full:
                 break
             self.show('hosting', *lan_lines(game, lobby_host), code=invite, invite=invite, public=public, host=True,
-                      can_start=False, network=game['network'], players=lobby_host.rows())
+                      can_start=False, network=game['network'], players=lobby_host.rows(), game=game['summary'])
             self.sleep(LOOP_S)
         arm_at = int(time.time()) + self.config.load_wait
         addresses = lobby_host.start(arm_at, token)
@@ -395,6 +406,25 @@ class HostJob(netplay.Job):
             return max(0, int(reader())) if callable(reader) else 0   # the relay says -1 before its first step
         except (OSError, ValueError, TypeError):
             return 0
+
+
+def session_start_of(files):
+    """The base start of a session (its recipe's session.json), '' when the recipe does not name one."""
+    start = str((files.recipe.get('session') or {}).get('base_start') or '')
+    return start if netplay.START_ID.fullmatch(start) else ''
+
+
+def game_summary(name, public, files):
+    """The hosted game as the page's game view sums it up (state field game: its name, Public or Private, the start,
+    the session's players and its drop-in slots; docs/MULTIPLAYER-PAGE.md)."""
+    return {'name': netplay.clean_name(name), 'public': bool(public), 'start': session_start_of(files) or None,
+            'players_max': int(files.players), 'open': list(drop_in(files))}
+
+
+def game_start_field(files):
+    """create_game's gamestart for the public list (the joiners' page names the start); none when unknown."""
+    start = session_start_of(files)
+    return {'gamestart': start} if start else {}
 
 
 def drop_in(files):

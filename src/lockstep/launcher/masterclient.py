@@ -241,11 +241,14 @@ class MasterClient:
         return self._echo
 
     def create_game(self, name, public, release, players_max, session_sha256, open_slots=(), want='auto',
-                    direct=None, lan=None):
-        """{game_id, code, secret, host_ticket, slot}."""
+                    direct=None, lan=None, gamestart=''):
+        """{game_id, code, secret, host_ticket, slot}. gamestart: the session's start, for the public list (a master
+        before 26 Nov leaves it out)."""
         body = {'name': name, 'public': bool(public), 'release': release, 'players_max': players_max,
                 'session_sha256': session_sha256, 'open_slots': list(open_slots), 'want': want, 'direct': direct,
                 'lan': lan}
+        if gamestart:
+            body['gamestart'] = gamestart
         return self._call('POST', '/games', body=body)
 
     def upload(self, game_id, secret, name, path):

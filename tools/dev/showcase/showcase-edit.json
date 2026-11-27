@@ -1,0 +1,28 @@
+{
+ "size": [1920, 1080],
+ "fps": 30,
+ "base": "../../../.local/showcase",
+ "takes": {"page": "raw/page-151642.mkv", "battle": "raw/biglate-165556.mkv", "missions": "raw/missions-153716.mkv", "walk": "raw/walk-160823.mkv", "pads": "raw/pads-164236.mkv"},
+ "ticks": {"battle": "raw/biglate-165556.ticks.txt", "missions": "raw/missions-153716.ticks.txt", "walk": "raw/walk-160823.ticks.txt", "pads": "raw/pads-164236.ticks.txt"},
+ "cards": {
+  "title.png": {"type": "title"},
+  "end.png": {"type": "end"},
+  "o-lobby.png": {"labels": [[40, 990, "PLAYER 1  HOSTS", "left"], [1000, 990, "PLAYER 2  JOINS WITH THE CODE", "left"]], "divider": [960]},
+  "o-battle.png": {"labels": [[40, 36, "PLAYER 1  ·  BOMBER", "left"], [1000, 36, "PLAYER 2  ·  DESTROYER", "left"]], "divider": [960]},
+  "o-battle2.png": {"labels": [[40, 36, "PLAYER 1  ·  BOMBER", "left"], [1000, 36, "PLAYER 2  ·  DESTROYER", "left"], [960, 1010, "ONE BATTLE  ·  TWO PLAYERS  ·  THE SAME WORLD ON BOTH SCREENS", "center"]], "divider": [960]},
+  "o-missions.png": {"labels": [[40, 36, "PLAYER 1  ·  OWN MISSION", "left"], [1000, 36, "PLAYER 2  ·  OWN MISSION", "left"], [960, 1010, "EACH REPAIRS THEIR OWN SATELLITE  ·  EACH MISSION COMPLETES ON ITS OWN", "center"]], "divider": [960]},
+  "o-walk.png": {"labels": [[40, 36, "PLAYER 1  ·  ON FOOT", "left"], [1000, 36, "PLAYER 2  ·  ON FOOT", "left"], [960, 1010, "THE SAME DOCK  ·  EACH SEES THE OTHER", "center"]], "divider": [960]},
+  "o-lapse.png": {"labels": [[40, 36, "PLAYER 1  ·  ON THE PAD", "left"], [1000, 36, "PLAYER 2  ·  FROM ABOVE", "left"], [960, 1010, "TIME LAPSE  ·  THE STATION'S TRAFFIC, THE SAME IN BOTH WORLDS", "center"]], "divider": [960]}
+ },
+ "shots": [
+  {"kind": "card", "image": "cards/title.png", "seconds": 2.2, "fade": [0.35, 0.25], "note": "title card"},
+  {"kind": "pair", "take": "page", "at": [37.3, 56.95], "seconds": 3.2, "zoom": 1.2, "overlay": "cards/o-lobby.png", "fade": [0.15, 0], "note": "the Multiplayer page in X4's main menu: the host's join code and players, the joiner's side (page preview, example data)"},
+  {"kind": "duo", "take": "battle", "tick": 1840, "seconds": 4.5, "speed": "game", "overlay": "cards/o-battle.png", "note": "battle 1: both players set off into the fleets, X4's chase camera with the HUD; player 1 (Teladi bomber) has player 2's destroyer ahead"},
+  {"kind": "duo", "take": "battle", "tick": 2265, "seconds": 4.0, "speed": "game", "overlay": "cards/o-battle.png", "note": "battle 2: through the fight, the Xenon destroyer on both screens"},
+  {"kind": "duo", "take": "battle", "tick": 2385, "seconds": 3.6, "speed": "game", "overlay": "cards/o-battle2.png", "note": "battle 3: past the Xenon destroyer (the session in sync at all 3,280 ticks)"},
+  {"kind": "duo", "take": "missions", "tick": 7560, "seconds": 5.0, "speed": "game", "overlay": "cards/o-missions.png", "note": "own missions: both in spacesuits repairing their own satellite; player 2's objective completes (tick 7677) while player 1 still works"},
+  {"kind": "duo", "take": "walk", "at": 244.5, "seconds": 4.6, "speed": "game", "overlay": "cards/o-walk.png", "note": "on foot on the same dock: the players walk up to each other, each sees the other's figure (gate with the stop 223 fix)"},
+  {"kind": "duo", "take": "pads", "at": 92, "seconds": 5.0, "speed": 34, "overlay": "cards/o-lapse.png", "note": "time lapse (34x) of the station's own traffic on its landing pad: player 1 from its pad, player 2 from above"},
+  {"kind": "card", "image": "cards/end.png", "seconds": 3.0, "fade": [0.3, 0.5], "note": "end card"}
+ ]
+}

@@ -461,6 +461,93 @@ class Page(unittest.TestCase):
         self.assertEqual(len(self.requests(g)), before)
         self.assertFalse(any('ERROR' in t for t in self.logs(g)), self.logs(g))
 
+    STARTS = ("host_starts = {{id = 'x4ep1_gamestart_discover', page = 1021, line = 400, label = 'The Untested Explorer', "
+              "story = false, default = true}, {id = 'x4ep1_gamestart_terran1', page = 1021, line = 900, label = 'Terran Cadet', "
+              "story = true}, {id = 'bad id!', label = 'not a start id'}}")
+    # X4's ReadText: the player's language (a stand-in); a line X4 has no text for reads 'ReadText<page>-<line>'
+    READ_TEXT = ("\nfunction ReadText(page, line) if page == 1021 and line == 900 then return 'Terranischer Kadett' end "
+                 "return 'ReadText' .. page .. '-' .. line end\n")
+
+    def test_the_start_of_a_hosted_game(self):
+        lua, g = self.start(extra=self.READ_TEXT)
+        self.state(lua, "{stamp = 1, phase = 'idle', lines = {}, " + self.STARTS + "}")
+        self.open(g)
+        ids = self.ids(g)
+        self.assertEqual(ids[ids.index('x4lan_lobby_dropin') + 1:ids.index('x4lan_lobby_dropin') + 3],
+                         ['x4lan_lobby_start', 'x4lan_lobby_name'])          # between the drop-in slots and the name
+        start = self.row(g, 'x4lan_lobby_start')
+        self.assertEqual((start.name, start.valuetype), ('Start', 'dropdown'))
+        choices, current = start.value()
+        rows = [choices[i] for i in range(1, len(choices) + 1)]
+        # X4's own names: the game's text in the player's language, else the launcher's (English) label; no bad id
+        self.assertEqual([(c.id, c.text) for c in rows], [('x4ep1_gamestart_discover', 'The Untested Explorer'),
+                                                          ('x4ep1_gamestart_terran1', 'Terranischer Kadett')])
+        self.assertEqual(current, 'x4ep1_gamestart_discover')               # the launcher's default
+        self.assertIn('plays its story', rows[1].mouseovertext)
+        self.assertNotIn('story', rows[0].mouseovertext)
+        self.row(g, 'x4lan_lobby_host').callback()
+        self.assertEqual(self.requests(g)[-1], 'HOST|0|2|X4 game|x4ep1_gamestart_discover')
+        start.callback('x4lan_lobby_start', 'x4ep1_gamestart_terran1')
+        start.callback('x4lan_lobby_start', 'x4ep1_gamestart_trade')        # not offered: unchanged
+        start.callback()                                                    # the row selected without a choice
+        self.assertEqual(start.value()[1], 'x4ep1_gamestart_terran1')
+        self.open(g)
+        self.assertIn('plays its story', self.row(g, 'x4lan_lobby_start').mouseOverText)
+        self.row(g, 'x4lan_lobby_players').callback('x4lan_lobby_players', '3')
+        self.row(g, 'x4lan_lobby_dropin').callback('x4lan_lobby_dropin', '1')
+        self.row(g, 'x4lan_lobby_host').callback()
+        self.assertEqual(self.requests(g)[-1], 'HOST|0|3+1|X4 game|x4ep1_gamestart_terran1')
+        # the chosen start stays while the list has it; a new list without it: the list's default again
+        self.state(lua, "{stamp = 2, phase = 'browsing', lines = {}, host_starts = {{id = 'x4ep1_gamestart_fight', "
+                        "label = 'The Dedicated Warrior', story = false}}}")
+        self.open(g)
+        self.assertEqual(self.row(g, 'x4lan_lobby_start').value()[1], 'x4ep1_gamestart_fight')   # no default: the first
+        # outside the start phases nothing is chosen
+        self.state(lua, HOSTING)
+        self.assertNotIn('x4lan_lobby_start', self.ids(g) if self.open(g) else [])
+        # without the launcher's list (an older launcher, no game data): no Start row, HOST as before
+        self.state(lua, "{stamp = 3, phase = 'idle', lines = {}}")
+        self.open(g)
+        self.assertNotIn('x4lan_lobby_start', self.ids(g))
+        self.row(g, 'x4lan_lobby_host').callback()
+        self.assertEqual(self.requests(g)[-1], 'HOST|0|3+1|X4 game')
+        self.assertFalse(any('ERROR' in text for text in self.logs(g)), self.logs(g))
+
+    def test_a_listed_game_names_its_start(self):
+        lua, g = self.start(extra=self.READ_TEXT)
+        self.state(lua, "{stamp = 1, phase = 'idle', lines = {}, " + self.STARTS + ", games = {"
+                        "{id = 'g1', name = 'Cadets', players = 1, max = 2, state = 'lobby', compatible = true, "
+                        "start = 'x4ep1_gamestart_terran1'},"
+                        "{id = 'g2', name = 'Patriarch', players = 1, max = 2, state = 'lobby', compatible = true, "
+                        "start = 'x4ep1_gamestart_split2'},"
+                        "{id = 'g3', name = 'Odd', players = 1, max = 2, state = 'lobby', compatible = true, start = '../x'}}}")
+        self.open(g)
+        self.assertEqual([self.row(g, 'x4lan_lobby_game_' + k).name for k in ('g1', 'g2', 'g3')],
+                         ['Cadets, 1/2, open, Terranischer Kadett',   # this PC's name of the start
+                          'Patriarch, 1/2, open, split2',             # a start this PC cannot host: its id's short form
+                          'Odd, 1/2, open'])                          # not a start id: left out
+        # no ReadText (a test X4 without it): the launcher's label
+        lua, g = self.start()
+        self.state(lua, "{stamp = 1, phase = 'idle', lines = {}, " + self.STARTS + "}")
+        self.open(g)
+        choices = self.row(g, 'x4lan_lobby_start').value()[0]
+        self.assertEqual(choices[2].text, 'Terran Cadet')
+
+    def test_the_start_goes_through_the_helpers_pipes(self):
+        lua, g = self.start("{pipe = 'x4mp-page', netplay = true}", extra='\npackage = nil\n' + self.READ_TEXT)
+        g.helper_state = "return {stamp = 1, phase = 'idle', lines = {'Helper here.'}, " + self.STARTS + "}"
+        self.frames(g, 40)
+        self.open(g)
+        self.row(g, 'x4lan_lobby_start').callback('x4lan_lobby_start', 'x4ep1_gamestart_terran1')
+        self.row(g, 'x4lan_lobby_name').edit.handlers.onTextChanged(None, 'N' * 40)
+        self.row(g, 'x4lan_lobby_players').callback('x4lan_lobby_players', '7')
+        self.row(g, 'x4lan_lobby_dropin').callback('x4lan_lobby_dropin', '1')
+        self.row(g, 'x4lan_lobby_public').callback()
+        self.row(g, 'x4lan_lobby_host').callback()
+        text = 'HOST|1|7+1|' + 'N' * 40 + '|x4ep1_gamestart_terran1'
+        self.assertEqual(self.helper_requests(g)[-1], text)   # whole, under the 200 bytes of a spelled request
+        self.assertLessEqual(len(text.encode()), 200)
+
     def test_public_and_lan_games(self):
         lua, g = self.start()
         self.state(lua, "{stamp = 1, phase = 'idle', lines = {}, games = {"

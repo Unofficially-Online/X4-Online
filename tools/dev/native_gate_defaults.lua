@@ -916,10 +916,17 @@ function D.announce(R)
  rows('DEFAULTS_APPLIED',R.applied)
  if #R.explicit>0 then rows('DEFAULTS_EXPLICIT',R.explicit) end
  if #R.offlist>0 then rows('DEFAULTS_EXPLICIT_OFF',R.offlist) end
+ -- The info line names only defaults that were dropped for a reason the players should know about. An opt-in nobody
+ -- configured (the peer window of a one-PC or relay session) and the keys that only follow it are normal: log rows only.
+ local quiet={}
+ for _,s in ipairs(R.skipped) do
+  if s[2]:find('^not configured') then quiet[s[1]]=true end
+ end
  local names={}
  for _,s in ipairs(R.skipped) do
   D.loud('DEFAULT_SKIPPED','key='..s[1]..' why='..s[2]..(s[3] and ' feature='..s[3] or ''),false)
-  names[#names+1]=(s[1]:gsub('^native_gate_',''))
+  local needs=s[2]:match('^needs (native_gate_[%w_]+) %(off%)$')
+  if not quiet[s[1]] and not (needs and quiet[needs]) then names[#names+1]=(s[1]:gsub('^native_gate_','')) end
  end
  if #names>0 then
   D.notice(#names..' default feature'..(#names==1 and ' is' or 's are')..' off - '..table.concat(names,', ',1,math.min(#names,4))..

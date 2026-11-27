@@ -179,6 +179,7 @@ static int pilot_why_text(char *out,size_t capacity) {
         pslot_leave_last?pslot_leave_last:"-");
     if(n>0 && (size_t)n<capacity && pdeath_armed) n+=snprintf(out+n,capacity-(size_t)n," death=%s death_why=%s",pdeath_stage,pdeath_why);
     if(n>0 && (size_t)n<capacity && pres_armed) n+=snprintf(out+n,capacity-(size_t)n," present=%s present_why=%s",pres_stage,pres_why);
+    if(n>0 && (size_t)n<capacity && psctx_armed_any()) n+=snprintf(out+n,capacity-(size_t)n," sound_context=%s",psctx_check_why);   /* stop 223's why */
     if(n>0 && (size_t)n<capacity && uirep_armed) n+=snprintf(out+n,capacity-(size_t)n," replay=%s replay_why=%s",uirep_stage_name,uirep_why);
     if(n>0 && (size_t)n<capacity && pilot_absent) {int more=pilot_absent_text(out+n,capacity-(size_t)n);if(!more) return 0;n+=more;}
     if(n>0 && (size_t)n<capacity && pjoin_controls[0]) n+=snprintf(out+n,capacity-(size_t)n," join_controls=%s",pjoin_controls);

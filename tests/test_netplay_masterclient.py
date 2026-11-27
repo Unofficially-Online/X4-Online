@@ -52,6 +52,17 @@ class Fixture(unittest.TestCase):
 
 
 class Flows(Fixture):
+    def test_a_games_start_goes_with_its_registration(self):
+        sent = []
+        client = MasterClient(self.master.base_url, timeout=5)
+        client._call = lambda method, path, body=None, **kwargs: sent.append(body) or {}
+        client.create_game('Cadets', True, RELEASE, 2, SESSION_SHA, gamestart='x4ep1_gamestart_terran1')
+        client.create_game('Plain', True, RELEASE, 2, SESSION_SHA)
+        self.assertEqual(sent[0]['gamestart'], 'x4ep1_gamestart_terran1')
+        self.assertNotIn('gamestart', sent[1])   # no field without a start (the master's list then has none)
+        game = self.client.create_game('Cadets', True, RELEASE, 2, SESSION_SHA, gamestart='x4ep1_gamestart_terran1')
+        self.assertRegex(game['game_id'], r'.')   # a master that does not know the field takes the game all the same
+
     def test_health_and_the_echo_address(self):
         answer = self.client.health()
         self.assertTrue(answer['ok'])

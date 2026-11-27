@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- In-place prototype: a placeholder patch present when X4 starts (no change); the driver replaces its content with
+     payload/libraries/wares.xml before the session load. -->
+<diff />

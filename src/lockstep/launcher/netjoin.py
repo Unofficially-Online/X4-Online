@@ -212,7 +212,8 @@ class JoinJob(netplay.Job):
             self.show('waiting', f'Joined {game["name"]} as player {game["slot"]} of {files.players}.',
                       f'{len(players)} of {files.players} players here, {ready} ready.',
                       last, code=game['code'] or None, host=False,
-                      network=game['network'], players=players, slot=game['slot'])
+                      network=game['network'], players=players, slot=game['slot'],
+                      game={'name': game['name'], 'players_max': int(files.players)})
             self.sleep(LOOP_S)
         start = netplay.checked_start(start)
         game['network'] = dict(game['network'], mode=start['mode'])

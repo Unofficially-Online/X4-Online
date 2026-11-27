@@ -547,8 +547,12 @@ Modules (define, owner):
   223 PSCTX_STOP_REASON         lockstep_pilot_present.h (player sound context: native_gate_sound_play_scope, a default:
                                 the sound start's play site 0x14e94c7 no longer ours, why play_site_lost; and
                                 native_gate_ship_sound_context, a default: a fault in X4's start or stop of the own
-                                ship's sound set (Ship slots 1143/1144), why context_fault. The pins refuse the arming;
-                                status PLAYER_SOUND play=, context=, context_why=)
+                                ship's sound set (Ship slots 1143/1144), why context_fault. Only a component of one of
+                                the seven ship classes (its vtable) gets the two calls: on foot in a station there is
+                                no own ship, as in stock (26 Nov: the class-0x49 'object' ancestor was the station on
+                                its dock, and the start ran what lies behind U::Station's vtable; fixed). The pins
+                                refuse the arming; status PLAYER_SOUND play=, context=, context_why=; the stop row
+                                PILOT_STOP_WHY carries sound_context=<why>)
   224 WLAY_STOP_REASON          lockstep_worker_layout.h (native_gate_worker_layout, a default: the pathing batches
                                 were not laid out before the first admitted step, or Jolt's concurrency slot is no
                                 longer ours; stages occupied, unreadable, layout, not_laid_out, slot_changed); on the

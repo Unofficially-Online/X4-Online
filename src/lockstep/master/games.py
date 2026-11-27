@@ -22,6 +22,7 @@ PORT_MIN = 1024
 PORT_MAX = 65535
 LAN_CANDIDATES_MAX = 16
 CLIENT_STATE = re.compile(r'[a-z_]{0,24}')
+GAMESTART = re.compile(r'[a-z0-9_]{1,64}')   # a game's start, as X4's gamestarts.xml names it
 TICK_LIMIT = 1 << 31
 
 
@@ -82,6 +83,7 @@ class Game:
     ended_at: float = 0.0    # monotonic
     end_reason: str = ''
     gone_slots: set = field(default_factory=set)     # slots whose player left after the start (not given out again)
+    gamestart: str = ''      # the session's start (a gamestart id) as the host named it, for the list; '' unknown
 
     @property
     def present_slots(self):
@@ -191,8 +193,12 @@ def parse_new_game(body):
     if direct is not None:
         direct = port_pair(direct, 'direct')
     require(want != 'direct' or direct is not None, 'want direct: needs direct ports')
+    gamestart = body.get('gamestart', '')
+    require(isinstance(gamestart, str) and (gamestart == '' or GAMESTART.fullmatch(gamestart)),
+            'gamestart: a gamestart id (a-z, 0-9, _; at most 64)')
     return {'name': name, 'public': public, 'release': release, 'players_max': players_max, 'session_sha256': session_sha,
-            'open_slots': tuple(sorted(open_slots)), 'want': want, 'direct': direct, 'lan': parse_lan(body.get('lan'))}
+            'open_slots': tuple(sorted(open_slots)), 'want': want, 'direct': direct, 'lan': parse_lan(body.get('lan')),
+            'gamestart': gamestart}
 
 
 def parse_heartbeat(body):
@@ -208,7 +214,8 @@ def summary(game, release, now):
     return {'game_id': game.game_id, 'name': game.name, 'release': game.release,
             'compatible': (release == game.release) if release is not None else None,
             'players': len(game.players), 'players_max': game.players_max, 'state': game.state, 'mode': game.mode,
-            'open_slots_free': game.joinable_count(), 'age_s': max(0, int(now - game.created))}
+            'open_slots_free': game.joinable_count(), 'age_s': max(0, int(now - game.created)),
+            **({'gamestart': game.gamestart} if game.gamestart else {})}
 
 
 def lobby_answer(game, player, pending_joins=None):

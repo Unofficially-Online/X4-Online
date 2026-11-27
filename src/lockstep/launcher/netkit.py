@@ -221,9 +221,10 @@ def host_session_key(kit, players, mode, base_start, open_slots=()):
     return f'host-{base_start}-{players}p{opened}-{mode}-{dll_part}-{HOST_SESSION_FORM}'
 
 
-def cached_session(kit, players, mode=HOST_SESSION_MODE, base_start=HOST_SESSION_START, open_slots=()):
+def cached_session(kit, players, mode=HOST_SESSION_MODE, base_start=HOST_SESSION_START, open_slots=(), story=None):
     """A session x4ls new-session made here before for this many players (these open slots), with this kit's gate
-    DLL; None if none."""
+    DLL; None if none. story True: every slot 2..N must play the start's story as its own copy (a session of a story
+    start made before 26 Nov gave it to player 1 only, and is made again); False: no slot 2..N has one; None: either."""
     folder = kit.sessions / host_session_key(kit, players, mode, base_start, open_slots)
     if not all((folder / name).is_file() for name in (SESSION_JSON, SESSION_SAVE)) or not (folder / 'overlay' / RECIPE).is_file():
         return None
@@ -235,20 +236,52 @@ def cached_session(kit, players, mode=HOST_SESSION_MODE, base_start=HOST_SESSION
         return None
     if sorted(files.recipe.get('open') or []) != sorted(open_slots):
         return None
+    if story is not None and session_stories(read_json(folder / SESSION_JSON), players) is not bool(story):
+        return None
     return files
 
 
+def session_stories(data, players):
+    """True when every slot 2..players of a session.json plays its start's story (the claimed stock script or its own
+    copy: the slot's story or plots), False when none does; None for a mix (a session tool's own choice per slot)."""
+    slots = data.get('slots') if isinstance(data, dict) else None
+    slots = slots if isinstance(slots, dict) else {}
+    has = [bool(isinstance(slots.get(str(k)), dict) and (slots[str(k)].get('story') or slots[str(k)].get('plots')))
+           for k in range(2, players + 1)]
+    if all(has):
+        return True
+    return False if not any(has) else None
+
+
+def start_story(base_start, game=None, cache=None, log=print, load=None):
+    """Whether a hosted session of this start gives every slot 2..N its own copy of the start's story (hoststarts.py
+    'story', from this PC's game data). KitError when the start cannot be hosted. load: a test's hoststarts.load."""
+    from . import hoststarts
+    try:
+        rows, refused = (load or hoststarts.load)(game, cache, log=log)
+    except SystemExit as error:
+        raise KitError(f"The starts of this PC's game could not be read: {error}") from None
+    row = hoststarts.find(rows, base_start)
+    if row is None:
+        raise KitError(f'A game cannot be hosted with the start {base_start}: '
+                       + (refused.get(base_start) or "this PC's game has no such start"))
+    return bool(row['story'])
+
+
 def new_session_command(kit, players, mode, base_start, out, steam_fix=False, open_slots=(), game=None, lanes=None,
-                        focus=True, display=None, gate_dll=None):
+                        focus=True, display=None, gate_dll=None, story=False):
     """x4ls new-session for a hosted game: every slot starts in the session start's own ship; open slots (drop-in) start
-    absent and are joined while the game runs. game and lanes: the lobby's own (its capture view goes beside its lane,
-    not into the default lanes, where another session's capture may be). focus False: the capture's window never takes
-    the keyboard focus (it runs beside an X4 the player looks at); display: its monitor. gate_dll: another file than the
-    kit's own (make_release_kit.py, before the kit is written)."""
+    absent and are joined while the game runs. story: every slot 2..N (open ones too) plays the start's story as its own
+    copy (--story 2..N, as the release check's cadet sessions; slot 1 plays the stock script). game and lanes: the
+    lobby's own (its capture view goes beside its lane, not into the default lanes, where another session's capture may
+    be). focus False: the capture's window never takes the keyboard focus (it runs beside an X4 the player looks at);
+    display: its monitor. gate_dll: another file than the kit's own (make_release_kit.py, before the kit is written)."""
     command = [sys.executable, str(session.ROOT / 'tools' / 'x4ls.py'), 'new-session', '--base-start', base_start,
                '--players', str(players), '--mode', mode, '--gate-dll', str(gate_dll or kit.gate_dll), '--out', str(out)]
     if open_slots:
         command += ['--open', ','.join(map(str, sorted(open_slots)))]
+    if story and players > 1:
+        command += ['--story', ','.join(str(k) for k in range(2, players + 1))]
     if game:
         command += ['--game', str(game)]
     if lanes:
@@ -362,24 +395,29 @@ def milestone_session(kit, milestone, players, open_slots=(), progress=None, log
 
 def make_session(kit, players, mode=HOST_SESSION_MODE, base_start=HOST_SESSION_START, progress=None, log=print,
                  cancelled=None, popen=None, steam_fix=False, open_slots=(), game=None, lanes=None, beside=False,
-                 display=None):
+                 display=None, story=None):
     """Make the session to host (x4ls new-session: a capture client on the capture profile) and keep it in the kit's
     sessions/. progress(fraction) follows new-session's lines. Returns SessionFiles.
     beside: an X4 the player looks at stays open meanwhile (the Multiplayer page, which shows the progress): the capture
     is told so (X4LS_BESIDE=1) and its window never takes the keyboard focus. The caller frees that X4's instance mutex
     first (a launcher client's is free once it reached its start menu; a Steam-started X4's: steamplay). Without beside,
-    no X4 of the player's runs: the capture then is the only X4 (SESSION_ALONE_MARK, a restart in count_restarts)."""
+    no X4 of the player's runs: the capture then is the only X4 (SESSION_ALONE_MARK, a restart in count_restarts).
+    story: every slot 2..N plays the start's story as its own copy (new_session_command); None: as this PC's game data
+    says for this start (start_story; the default start, Discover, has none)."""
     if kit.gate_dll is None:
         raise KitError('this kit has no gate DLL (native/x4lan_gate_64.dll): it cannot make a session')
+    if story is None:
+        story = False if base_start == HOST_SESSION_START else start_story(base_start, game, log=log)
     key = host_session_key(kit, players, mode, base_start, open_slots)
     final = kit.sessions / key
     work = kit.sessions / f'{key}.new-{int(time.time())}'
     kit.sessions.mkdir(parents=True, exist_ok=True)
     command = new_session_command(kit, players, mode, base_start, work, steam_fix, open_slots, game, lanes,
-                                  focus=not beside and display is None, display=display)
+                                  focus=not beside and display is None, display=display, story=story)
     env = dict(os.environ, X4LS_BESIDE='1') if beside else None
     log(f'{SESSION_BESIDE_MARK if beside else SESSION_ALONE_MARK}: {players} players'
         + (f', drop-in slots {",".join(map(str, sorted(open_slots)))}' if open_slots else '')
+        + (f', start {base_start}' if base_start != HOST_SESSION_START else '') + (', a story per player' if story else '')
         + (' (the X4 the player looks at stays open)' if beside else ' (no X4 of the player is open meanwhile)'))
     log('netplay: making the session: ' + ' '.join(command[1:]))
     started = time.time()

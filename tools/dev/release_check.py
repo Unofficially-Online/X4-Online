@@ -312,9 +312,10 @@ class Locks:
     """mkdir/owner.txt/rmdir of the slots this run needs; waits its turn. want: 'one', 'two' or 'three'.
     first_profile() is X4LS_FIRST_PROFILE of the clients of what it holds."""
 
-    def __init__(self, name, what, root=None, log=print, poll=3, slots=None, beside_user=False, pause=None):
+    def __init__(self, name, what, root=None, log=print, poll=3, slots=None, beside_user=False, pause=None, skip_queue=False):
         self.name, self.what, self.root, self.log, self.poll = name, what, Path(root or LOCKS), log, poll
         self.pause = Path(pause) if pause else None      # the runner's: WORK/PAUSE
+        self.skip_queue = skip_queue          # a short solo (a session capture) the coordinator let past the queued pairs
         self.beside_user = beside_user        # one --solo X4 beside the user's game (only when the user allows it)
         self.held, self.queued, self.index = [], False, None
         self.slots = set(slots) if slots else set(LOCK_INDEX)        # the slots this run may take
@@ -358,7 +359,7 @@ class Locks:
             return None, 'the user is playing (USER-PLAYING.txt): no X4 starts until the file is gone'
         if want == 'one':
             queue = self.queue()
-            if queue and queue[0] != self.name:
+            if queue and queue[0] != self.name and not self.skip_queue:
                 return None, 'a two-client run is queued (%s)' % queue[0]
             for lock in ('x4-b', 'x4-a') + (() if playing else ('x4-d', 'x4-c')):
                 if lock in self.slots and self.take(lock):
@@ -608,6 +609,28 @@ def fresh_session(repo, dll, players, out, minutes, display=None, lanes=None, en
 
 
 CAPTURE_PROFILE = 45841       # src/lockstep/launcher/profile.py: every capture of this PC
+
+
+def hosted_session(folder, players):
+    """satellite --hosted: a made session folder (session.json, session-save.xml.gz), e.g. the one a hosted game of the
+    cadet start keeps (<kit>/sessions/host-x4ep1_gamestart_terran1-<N>p-coop-<dll>-n). It must be a session of the cadet
+    start for these players in which every player 2..N plays the cadet story as its own copy (as fresh_session's)."""
+    folder = Path(folder)
+    try:
+        data = json.loads((folder / 'session.json').read_text(encoding='utf-8'))
+    except (OSError, ValueError) as error:
+        raise SystemExit('--hosted %s: no session.json (%s)' % (folder, error))
+    if data.get('base_start') != CADET or data.get('players') != players:
+        raise SystemExit('--hosted %s: a session of %s for %s players, not of %s for %d'
+                         % (folder, data.get('base_start'), data.get('players'), CADET, players))
+    slots = data.get('slots') or {}
+    missing = [k for k in range(2, players + 1) if not (slots.get(str(k)) or {}).get('plots')]
+    if missing:
+        raise SystemExit('--hosted %s: players %s have no cadet story of their own (a session made before 26 Nov?)'
+                         % (folder, ', '.join(map(str, missing))))
+    if not (folder / 'session-save.xml.gz').is_file():
+        raise SystemExit('--hosted %s: no session-save.xml.gz' % folder)
+    return folder
 
 
 def captures_running():
@@ -1515,7 +1538,7 @@ class Runner:
         self.lane = Lane(args.lanes, args.display, args.size)
         slots = [x if x.startswith('x4-') else 'x4-' + x for x in args.lock_slots.split(',') if x] if args.lock_slots else None
         self.locks = Locks(args.lock_name, args.lock_what, slots=slots, beside_user=args.beside_user,
-                           pause=WORK / 'PAUSE') if args.locks else None
+                           pause=WORK / 'PAUSE', skip_queue=getattr(args, 'capture_skips_queue', False) or getattr(args, 'skip_queue', False)) if args.locks else None
         self.log = lambda text: print(time.strftime('%H:%M:%S ') + text, flush=True)
 
     def held(self, want, body):
@@ -1746,7 +1769,10 @@ def cmd_satellite(args):
     dll, commit = parse_dll(args.gate_dll)
     repo = checkout(commit)
     end = int(args.minutes * 60 * 30)
-    session = WORK / 'sessions' / ('cadet-%dp-%s' % (args.players, (commit or 'here')[:8]))
+    if getattr(args, 'hosted', None):   # a session made elsewhere: a hosted game's (the Host form's Start, x4ls host)
+        session = hosted_session(args.hosted, args.players)
+    else:
+        session = WORK / 'sessions' / ('cadet-%dp-%s' % (args.players, (commit or 'here')[:8]))
     if not (session / 'session.json').exists():
         runner.held('one', lambda lock: fresh_session(repo, dll, args.players, session, args.minutes, display=args.display,
                                                        lanes=args.lanes))
@@ -1940,6 +1966,7 @@ def main(argv=None):
         p.add_argument('--tolerance', type=float, default=TOLERANCE, help='how much slower fails (default 0.10)')
         p.add_argument('--min-free-gb', type=float, default=MIN_FREE_GB, help='no run starts below this free space (default 8)')
         p.add_argument('--keep-logs', action='store_true', help="keep a run's raw X4 logs and saves after its verdict")
+        p.add_argument('--skip-queue', action='store_true', help='a one-slot run does not wait behind queued pairs (when the coordinator says so)')
 
     def continued(p, required=True):
         p.add_argument('--save', type=Path, required=required, help='the save to continue (a periodic, a person\'s or a milestone save)')
@@ -1974,7 +2001,11 @@ def main(argv=None):
     sat.add_argument('--plan', choices=('satellite', 'suit'), default='satellite',
                      help='satellite: every player flies the cadet chapter 1; suit: one player gets out in the spacesuit and floats beside its ship')
     sat.add_argument('--suit-slot', type=int, default=1)
+    sat.add_argument('--capture-skips-queue', action='store_true',
+                     help='the session capture (one slot, a few minutes) does not wait behind queued pairs (when the coordinator allows it)')
     sat.add_argument('--census-every', type=int, default=0, help='a census every N ticks in one step, the last 16 records, digest parts (a split named)')
+    sat.add_argument('--hosted', metavar='DIR', help='a made session of the cadet start instead of one made here: e.g. a '
+                     'hosted game\'s (<kit>/sessions/host-x4ep1_gamestart_terran1-<N>p-coop-<dll>-n)')
     common(sat)
     every = sub.add_parser('all', help='perf, missions and satellite')
     every.add_argument('--candidate', required=True)

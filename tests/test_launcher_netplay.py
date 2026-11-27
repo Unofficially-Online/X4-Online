@@ -151,10 +151,12 @@ class FlowCase(unittest.TestCase):
                 job.thread.join(5)
         self.folder.cleanup()
 
-    def flow(self, name, net, master_url='http://master.example.org:47100', host_files=None, own=None, release=None):
+    def flow(self, name, net, master_url='http://master.example.org:47100', host_files=None, own=None, release=None,
+             starts=None, base_start=''):
         kit = netkit.Kit(fakes.release_kit(self.root / name / 'kit', release=release or self.RELEASE))
-        backend = fakes.FakeBackend(self.root / name / 'work', host_files=host_files, own=own)
-        config = netplay.FlowConfig(kit=kit, release=kit.release, master_url=master_url, port=self.port, load_wait=20)
+        backend = fakes.FakeBackend(self.root / name / 'work', host_files=host_files, own=own, starts=starts)
+        config = netplay.FlowConfig(kit=kit, release=kit.release, master_url=master_url, port=self.port, load_wait=20,
+                                    base_start=base_start)
         logs = []
         flow = netplay.Flow(config, backend, net=net, log=logs.append)
         flow.logs = logs
@@ -460,7 +462,8 @@ class JoinWithMaster(FlowCase):
         self.assertTrue(fakes.wait_for(lambda: self.fields(browser).get('games')), browser.state.lines)
         fields = self.fields(browser)
         self.assertEqual(fields['games'][0], {'id': game['game_id'], 'name': 'Friday', 'players': 1, 'max': 2,
-                                              'state': 'lobby', 'compatible': True, 'mode': 'relay', 'open': 0})
+                                              'state': 'lobby', 'compatible': True, 'mode': 'relay', 'open': 0,
+                                              'start': 'x4ep1_gamestart_discover'})   # the host's session's start
         self.assertEqual(fields['lan'][0], {'index': 1, 'name': 'Friday', 'players': 1, 'max': 2, 'compatible': True})
         plan = browser.join_plan(netplay.parse_request('JOINLAN|1'))
         self.assertEqual(plan[1], netplay.JoinTarget('code', code='K7QX-3FNA', addresses=(('192.168.10.9', self.port + 1),)))
@@ -601,6 +604,83 @@ class DropIn(FlowCase):
         host, _ = self.drop_in_host(master)
         self.wait_phase(host, 'error')
         self.assertIn('need the master server', host.state.lines[0])
+
+
+class HostStart(FlowCase):
+    """The start of a hosted game (the Host form's Start, docs/NETPLAY.md "The start of a hosted game"): the request's
+    last field, the table of this PC's hostable starts in every phase of the state, the start and its story form handed
+    to the backend, a start that cannot be hosted said on the page, the start in the master's game record."""
+    CADET = 'x4ep1_gamestart_terran1'
+
+    def test_the_host_request_carries_the_start(self):
+        parse = netplay.parse_request
+        self.assertEqual(parse(f'HOST|0|2|Cadets|{self.CADET}'), netplay.Request('HOST', players=2, name='Cadets', start=self.CADET))
+        self.assertEqual(parse(f'HOST|1|1+2||{self.CADET}'), netplay.Request('HOST', public=True, players=1, open=2, start=self.CADET))
+        self.assertEqual(parse('HOST|0|2|Coop|Not a start!'), netplay.Request('HOST', players=2, name='CoopNot a start!'))
+        self.assertEqual(parse('HOST|0|2|Coop|'), netplay.Request('HOST', players=2, name='Coop'))   # as before: a name
+        for text in (f'HOST|0|2|Cadets|{self.CADET}', f'HOST|1|1+7||{self.CADET}', 'HOST|1|4|Friday night'):
+            self.assertEqual(netplay.request_text(parse(text)), text)
+        longest = netplay.request_text(netplay.Request('HOST', public=True, players=7, open=1, name='\u00e9' * 20, start='s' * 64))
+        self.assertEqual(parse(longest).start, 's' * 64)
+        self.assertLessEqual(len(longest.encode('utf-8')), 200)   # a spelled request's limit (the page's MAX_REQUEST_BYTES)
+        self.assertIsNone(parse('HOST|0|9|x|' + self.CADET))
+
+    def test_the_page_gets_the_starts_in_every_phase(self):
+        host = self.flow('host', fakes.network(None), master_url=None, starts=fakes.STARTS)
+        self.assertTrue(fakes.wait_for(lambda: self.fields(host).get('host_starts')), host.logs[-3:])
+        starts = self.fields(host)['host_starts']
+        self.assertEqual([(row['id'], row['story'], row.get('default')) for row in starts],
+                         [('x4ep1_gamestart_discover', False, True), (self.CADET, True, None)])
+        self.assertEqual((starts[1]['label'], starts[1]['page'], starts[1]['line']), ('Terran Cadet', 1021, 900))
+        self.assertEqual((host.start_label(self.CADET), host.start_label('x4ep1_gamestart_fight')), ('Terran Cadet', 'fight'))
+        host.state.set('browsing', ('Looking for games...',), games=[])
+        self.assertEqual(self.fields(host)['host_starts'], starts)       # kept: the phase changes, the starts stay
+        self.assertIn("host_starts = {{id = 'x4ep1_gamestart_discover'", host.state.text())
+        host.state.set('error', ('x',), host_starts=[])
+        self.assertEqual(self.fields(host)['host_starts'], [])            # a phase's own field wins
+        # the launcher's default start (x4ls lobby --base-start) is the one marked
+        other = self.flow('other', fakes.network(None), master_url=None, starts=fakes.STARTS, base_start=self.CADET)
+        self.assertTrue(fakes.wait_for(lambda: self.fields(other).get('host_starts')))
+        self.assertEqual([row.get('default') for row in self.fields(other)['host_starts']], [None, True])
+        # no table (no game data here): no field, the page shows no Start
+        bare = self.flow('bare', fakes.network(None), master_url=None)
+        self.assertTrue(bare.host_starts.done.wait(5))
+        self.assertNotIn('host_starts', self.fields(bare))
+
+    def hosted_with(self, name, request, starts=fakes.STARTS, base='x4ep1_gamestart_discover'):
+        master = fakes.FakeMaster()
+        files = fakes.make_session(self.root / name / 'session', 2)
+        files.recipe['session']['base_start'] = base
+        host = self.flow(name, fakes.network(master, fakes.FakeNat(reachable=True)), host_files=files, starts=starts)
+        host.request(request)
+        return master, host
+
+    def test_a_story_start_reaches_the_backend_and_the_masters_list(self):
+        master, host = self.hosted_with('host', f'HOST|1|2|Cadets|{self.CADET}', base=self.CADET)
+        self.wait_phase(host, 'hosting')
+        self.assertEqual(host.backend.hosted_starts, [(self.CADET, True)])   # every player 2..N with its story
+        game = next(iter(master.games.values()))
+        self.assertEqual(game['gamestart'], self.CADET)
+        self.assertTrue(any('the start x4ep1_gamestart_terran1 (every player has its own story)' in row for row in host.logs))
+
+    def test_without_a_start_the_default_and_without_a_table_the_start_as_asked(self):
+        master, host = self.hosted_with('host', 'HOST|0|2|x')
+        self.wait_phase(host, 'hosting')
+        self.assertEqual(host.backend.hosted_starts, [('x4ep1_gamestart_discover', False)])
+        self.assertEqual(next(iter(master.games.values()))['gamestart'], 'x4ep1_gamestart_discover')
+        _, bare = self.hosted_with('bare', f'HOST|0|2|x|{self.CADET}', starts=None)
+        self.wait_phase(bare, 'hosting')
+        self.assertEqual(bare.backend.hosted_starts, [(self.CADET, None)])   # the session tool decides (netkit.start_story)
+
+    def test_a_start_that_cannot_be_hosted_is_said_on_the_page(self):
+        _, host = self.hosted_with('host', 'HOST|0|2|x|x4ep1_gamestart_trade')
+        self.wait_phase(host, 'error')
+        self.assertIn('A game cannot be hosted with the start x4ep1_gamestart_trade:', host.state.lines)
+        self.assertTrue(any('on_foot' in line for line in host.state.lines), host.state.lines)
+        self.assertEqual(host.backend.hosted, [])
+        _, other = self.hosted_with('other', 'HOST|0|2|x|x4ep1_gamestart_boron1')
+        self.wait_phase(other, 'error')
+        self.assertTrue(any('no such start' in line for line in other.state.lines), other.state.lines)
 
 
 class HandOver(FlowCase):

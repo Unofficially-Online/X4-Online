@@ -161,7 +161,7 @@ class Sessions(unittest.TestCase):
     def test_prebuild_makes_each_session_with_the_kits_gate(self):
         calls = []
 
-        def make(kit, players, mode, base_start, progress, log, cancelled, steam_fix=False, game=None, lanes=None):
+        def make(kit, players, mode, base_start, progress, log, cancelled, steam_fix=False, game=None, lanes=None, story=None):
             calls.append((players, Path(kit.gate_dll).read_bytes(), game, lanes))
             fakes.host_session(kit.root, players)   # as make_session leaves it: capture and base overlays too
             return netkit.cached_session(kit, players)
@@ -180,6 +180,47 @@ class Sessions(unittest.TestCase):
         with self.assertRaises(SystemExit):
             release_kit.player_counts('2,9')
         self.assertEqual(release_kit.player_counts('2, 3,3,4'), (2, 3, 4))
+
+    def test_prebuilt_sessions_for_several_starts(self):
+        cadet = 'x4ep1_gamestart_terran1'
+        calls = []
+
+        def make(kit, players, mode, base_start, progress, log, cancelled, steam_fix=False, game=None, lanes=None, story=None):
+            calls.append((base_start, players, story))
+            fakes.host_session(kit.root, players, base_start=base_start, story=bool(story))
+            return netkit.cached_session(kit, players, mode, base_start)
+        manifest = self.build(prebuild=(2, 3), starts=('discover', 'terran1'), make=make, clean=lambda root: True,
+                              table=lambda: fakes.STARTS)
+        self.assertEqual(calls, [(netkit.HOST_SESSION_START, 2, False), (netkit.HOST_SESSION_START, 3, False),
+                                 (cadet, 2, True), (cadet, 3, True)])   # every player of a story start with its story
+        kit = netkit.Kit(self.base / 'kit')
+        self.assertEqual(sorted(manifest['sessions']), sorted(netkit.host_session_key(kit, n, 'coop', start)
+                                                              for start in (netkit.HOST_SESSION_START, cadet) for n in (2, 3)))
+        self.assertIsNotNone(netkit.cached_session(kit, 3, 'coop', cadet, (), True))   # what hosting it looks for
+        self.assertEqual(release_kit.verify(self.base / 'kit')[1], [])
+        # a prebuilt session that lost its stories (another tool made it) is refused, the kit removed again
+        def flat(kit, players, mode, base_start, progress, log, cancelled, steam_fix=False, game=None, lanes=None, story=None):
+            return make(kit, players, mode, base_start, progress, log, cancelled, story=False)
+        with self.assertRaises(SystemExit) as refused:
+            self.build(out='flat', prebuild=(2,), starts=('terran1',), make=flat, clean=lambda root: True,
+                       table=lambda: fakes.STARTS)
+        self.assertIn('could not host it', str(refused.exception))
+        self.assertFalse((self.base / 'flat').exists())
+        # a start that cannot be hosted, or that this game does not have, is refused before anything is made
+        calls.clear()
+        for name, why in (('trade', 'on_foot'), ('boron1', 'no such start')):
+            with self.assertRaises(SystemExit) as refused:
+                self.build(out='bad-' + name, prebuild=(2,), starts=(name,), make=make, clean=lambda root: True,
+                           table=lambda: fakes.STARTS)
+            self.assertIn(why, str(refused.exception))
+            self.assertIn('Hostable: discover, terran1', str(refused.exception))
+        self.assertEqual(calls, [])
+        self.assertEqual(release_kit.start_names('discover, Terran1,discover'), ('discover', 'terran1'))
+        for bad in ('', 'terran 1', 'a/b'):
+            with self.assertRaises(SystemExit):
+                release_kit.start_names(bad)
+        with self.assertRaises(SystemExit):   # starts without player counts
+            release_kit.main(['--gate-dll', str(self.gate), '--out', str(self.base / 'x'), '--prebuild-starts', 'terran1'])
 
     @unittest.skipUnless(msilib, 'msilib: Windows, Python 3.12 or older')
     def test_the_installer_installs_the_shipped_sessions_only(self):

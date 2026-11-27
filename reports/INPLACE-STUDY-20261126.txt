@@ -1,0 +1,341 @@
+X4 MULTIPLAYER - HOST OR JOIN WITHOUT RESTARTING THE STEAM-STARTED X4 (FEASIBILITY STUDY)
+26 November 2026 | branch contrib/ferrite-inplace-study (from contrib/ferrite-p2-all e405ea7c) | no product change
+
+QUESTION
+Can the Multiplayer button of an X4 that Steam started (the player's own profile, only x4online_menu besides the
+DLCs) host or join a session without restarting X4? A session needs (a) its own disposable profile, (b) the session
+extension's start-time files, (c) the fixed seed -seed:276944566, (d) the gate DLL armed.
+
+Evidence: static analysis of the pinned X4.exe 9.00 (x4-re, Ghidra copy x4-re/ghidra-inplace, decompiles in
+x4-re/work/inplace/out/b1..b10, helper scripts in x4-re/scripts/inplace) and two prototype runs
+(tools/dev/inplace_proto, section 7). Confidence: H = read in code (decompile + disassembly), M = inferred from
+structure, L = guess. RVAs (add 0x140000000 for the VA).
+
+1. PROFILE REDIRECT
+
+1.1 Where the personal folder lives                                                                        [H]
+- -personalfolderid N: maybe_X4::ParseCommandLine 0x1221840 stores the number in 0x2f4b9b8 (read again only by
+  GameClient::Init 0x1223ce0). Init calls FileIO::Init 0x14ca7c0(g_FileIO, "Egosoft", "X4", ..., N):
+  SHGetKnownFolderPath(Documents) + "\Egosoft\X4\N\", directories created (a file in the way is moved to .bak),
+  and the UTF-8 result stored as one std::string at g_FileIO+0x28 (g_FileIO = *(0x6cf1558)). g_FileIO+0x08 holds
+  ".\" (the current folder: the game or view folder).
+- Every file operation takes a "personal" flag and builds its path at call time from base[personal] =
+  g_FileIO + 0x08 + 0x20*personal: XLib::RemoveFile 0x14cc360, XLib::RenameFile 0x14cbfa0,
+  XLib::GZOpenForWriting 0x14cd060, the open/exists helpers 0x14ccd20 / 0x14cc570 / 0x14cd8d0, the directory scan
+  0x14dcc40, FileIO::RevertCanonicalPathName 0x14cbac0, and the loader thread (XLib::FileIO::Loader::BeginIO
+  0x14d09f0 reads g_FileIO+0x28 or +0x08 per request). GetSaveFolderPath 0x23e290 rebuilds base + "save\" on
+  every call. Nothing copies the folder string elsewhere: rewriting g_FileIO+0x28 redirects every later read and
+  write. (65 functions reference g_FileIO; all go through these helpers.)
+- Exceptions (state opened or read before a redirect):
+  * an open log file. The log is opened once, by 0x14b9b30(GameClient+0x3a8, GameClient+0x380 name), in Init when
+    -logfile or config.xml <logfile> is set (0x121df00). A Steam-started X4 has no -logfile: no log at all. The
+    same function can be called later and opens (or reopens) the log in the redirected folder.
+  * what X4 read into memory at its start: config.xml (GameClient+0x118 parameter tree, loaded by 0x12637c0),
+    inputmap, colors, inputfeedback, the enabled-extension list (content.xml). These stay the player's settings
+    in memory; they are only written again, to wherever the folder points then.
+  * the save list (SaveList): ReloadSaveList re-scans GetSaveFolderPath; the probe already calls it.
+
+1.2 Every write X4 makes to the profile during a session and at exit                                  [H unless noted]
+  save/              GameClass::Save 0x9f0dd0 (manual saves, autosaves autosave_*, temp_save then rename;
+                     the gate's periodic and hot-join saves)
+  config.xml         0x1264c50 (config save), called by 152 sites: every Set*/Save*/Restore* option function,
+                     Alt+Enter fullscreen (X4::WndProc -> 0xfa9bb0), radar mode (0xe1abc0), MD <set_user_data>
+                     (Scripts::UserDataAction 0xc34db0) and the ego_ user values (0xccb200), AddKnownItem ->
+                     timeline achievements (0x720260), scenario consoles (0x740ff0), NewGame 0x9ed5b0, the
+                     debug command line (0xabfc20), Ventures/online config. Not at exit.
+  uidata.xml         0xad23c0 (the UI addons' saved data) at every UI teardown: UI::CUIController::Shutdown
+                     (exit) and the UI rebuild of every game load (vfunc66/71/97).
+  content.xml        Lua SetExtensionSettings / ResetAllExtensionSettings (the Extensions menu), workshop sync
+  inputmap_*.xml, inputfeedback.xml, colors.xml / color profiles: only from the controls/accessibility menus
+  screenshots/       0x122dfa0 (screenshot key), X4::SetMovieCaptureMode 0x122e670
+  constructionplans.xml, custom gamestarts, map editor exports: only from those editors
+  logs (exportlogbook, aicompat.xml, MD <debug_to_file> Scripts::DebugToFileAction 0xc2cb50): debug only
+  progressbar.xml    ProgressTracker (0x122ed10 reads it): the load progress timings, written at a load [measured]
+  userdata.xml       X4's user data (DoesUserDataExist 0x179ac0), written during the session          [measured]
+  pipelinecache.bin  0x1016cd0 at graphics device changes and teardown (exit)                         [measured]
+  the log file       only with -logfile / <logfile> (see above)
+  gate/probe files   x4lan-crash.txt, x4lan-census-*.txt, x4lan-debug.txt, the arm file: built from
+                     GetSaveFolderPath by the probe, so they follow the redirect
+  not the profile    CrashRpt crash reports (0x950a0 loads CrashRpt; its own folder)                       [M]
+  At exit: uidata.xml, pipelinecache.bin (and the log's last lines). config.xml is not written at exit.
+  (Section 7: with the folder redirected before the session's load, every one of these that happened in the
+  runs - saves, config.xml, uidata.xml, progressbar.xml, userdata.xml, pipelinecache.bin - landed in the
+  disposable profile, and the stand-in own profile was not written at all, the exit included.)
+
+1.3 Can the gate redirect late?                                                                              [H]
+Yes, before the session save loads: one std::string (g_FileIO+0x28). Measured: one byte written from outside. Same-length paths (another five-digit
+disposable id) are one byte; otherwise an assignment on the main thread while no file request is in flight (the
+loader thread reads the string per request). Order: redirect first, then everything else; the probe's existing
+check (GetSaveFolderPath must end in /<disposable>/save) fails closed if the redirect did not happen. While the
+redirect stays on, the exit writes (uidata.xml, pipelinecache.bin) land in the disposable profile too, so the own
+profile is never written once the session started (section 7: measured).
+
+2. START-TIME FILES
+
+2.1 When X4 reads them                                                                                       [H]
+- The enabled extensions: ExtensionDB::LoadExtension 0x1244eb0 runs only from GameClient::Init (via 0x1243aa0,
+  0x1244cc0; the profile's content.xml) and from the workshop sync worker. An extension that was not enabled at
+  X4's start cannot be added later. Catalogs (.cat/.dat) are frozen after the import at start
+  ("[CatalogList::AddNewCatalog] Trying to add new catalog after catalog import").
+- MD: lockstep_fn_111fd20 lists md/*.xml of the base game and every enabled extension (0x1248230) at every
+  NewGame (0x9ed5b0) and every load (GameClass::Load 0x9ee7a0 -> lockstep_fn_1120600(MD, 0, 0) -> 0x111fd20).
+- AI scripts: 0x1067f10 lists aiscripts/*.xml the same way at every NewGame and every load.
+- Libraries: maybe_GameClass::ImportDatabases 0x9f3610 at every NewGame and load (GodDB, JobDB, WareDB, ...).
+- UI: AddonManager::LoadAddonInfos 0xad3730 (ui.xml of every extension) at every UI init, i.e. after every load.
+- The start menu itself is a game: lockstep_fn_ac4120 (libraries/startmenu) calls NewGame, so all of the above
+  run once right at X4's start.
+- The listing (0x1248230 -> 0x14d77e0) is the catalog index plus a LIVE directory scan of
+  extensions\<id>\<dir>\<pattern> (0x14dcc40, FindFirstFileExW) at the time of the call: a new loose file in an
+  enabled extension is found at the next load. (Ghidra's decompile of 0x14d77e0 hides the non-recursive scan; it is
+  at 0x14d7df8 -> 0x14d7dab -> call 0x14dcc40.)
+- But a patch of an existing file (a <diff> of md/setup.xml, aiscripts/*.xml, libraries/*.xml) is found
+  differently: 0x123ab70 -> 0x1247a20 asks, per enabled extension, whether extensions\<id>\<path> exists
+  (0x14ce020 -> 0x14cd8d0 with the cache flag). 0x14cd8d0 keeps a NEGATIVE cache for non-personal paths: a path
+  found missing once is remembered (FNV-1a of the path in the set at g_FileIO+0xc0, lock g_FileIO+0x98) and
+  reported missing without asking the disk again, until X4 ends. Measured (section 7): the start menu's game
+  did not fill it for an MD patch path (a patch copied in before the first game load was applied), a game load
+  did (copied in after one, it was not).
+So: new scripts (MD, AI) can come late; a patch path that X4 already found missing in this process cannot,
+unless the cache entry is removed. A placeholder that exists from the start (<diff/>, a no-op) can have its content
+replaced late: the content is read at every load. (Section 7 measures both.)
+
+2.2 Session scripts sitting permanently in the menu extension?
+The session's start-time files today (rk15-a overlay + base + generated):
+  - 8 AI <diff> patches, 24 operations (build.shiptrader 1, interrupt.disengage 1, lib.target.selection 1,
+    masstraffic.generic 3, masstraffic.police 1, masstraffic.watchdog 5, move.seekenemies 2,
+    order.fight.protect.ship 10)
+  - 6 MD <diff> patches, 47 operations (cover 22, guidance 10, notifications 4, playerreputation 1, setup 6,
+    tutorial_global 4)
+  - 13 new MD scripts (native_gate_battle, _pilot_respawn, _player_identity, _ui_replay 168 KB, x4lan_cover_p2..p8,
+    x4lan_milestones, x4lan_story) + plot copies made per PC (md-copies.json: x4lan_plot_<id>_p<k>.xml)
+  - a story session adds patches of DLC start scripts (extensions/<dlc>/md/gs_*.xml)
+  - libraries: factions.xml (9 diff operations: 16 pool factions x4lan_player1..16 and their relations to every
+    faction), icons.xml (16 icons, textures under extensions\x4_lan_lab\), character_macros.xml (generated)
+Permanently active they change single-player: 71 patch operations on stock MD/AI (some <replace>, which can only
+be made inert by carrying the stock text in an else branch), 16 factions added to every new game and every loaded
+save (X4 adds library factions to a save it loads, and the save then keeps them), new macros, DLC start scripts
+patched. Every one of the 71 operations, the story patches and the factions would need a session guard; the
+factions cannot be guarded (a library has no condition). Not recommended.
+The other answer is the one X4 already gives (2.1): copy the session's files into the menu extension right before
+the session's load and take them out afterwards. New scripts need nothing. Patches need their file to exist when X4
+starts: the menu extension ships every patch path as a placeholder <diff/> (no change in single player; the
+release's set of patch paths is known), the helper writes the session's content into them before the load and
+writes <diff/> back afterwards. A session whose patch paths are not all placeholders of the running X4 still needs
+the restart (as in_place_refusal does today for other start-time files), unless the gate removes the negative
+cache entries (section 6).
+
+3. SEED                                                                                                      [H]
+- -seed:<v>: ParseCommandLine 0x1221840 stores the text at GameClient+0x220 (std::string) and the number (decimal,
+  else FNV-1a of the text) at GameClient+0x218 (GameClient = *(0x6cf1520)).
+- Read in three places only (scan of all 459 functions that load GameClient): GameClass::Load 0x9ee870 and
+  NewGame 0x9ed5fe: if +0x218 != 0, g_SessionSeed (0x3d19860) = +0x218 via GetForcedOrRandomSessionSeed 0x975c20
+  and g_SessionSeedString = +0x220; else the gamestart's seed, else a random 32-bit value. This happens BEFORE
+  ImportDatabases (GodDB seed+'god1', JobDB seed+'jobs': the job generators of lockstep_spawn_rng.h) and before
+  GodEngine::SetSeed(seed+'god2'). Load does not restore the seed from the save header (it only writes it there).
+  The third reader, 0x9ebd7e (NotifyUniverseGenerated), only reports it.
+- So the gate can set +0x218/+0x220 at runtime before LoadGame and get exactly what -seed: gives; clearing them
+  afterwards gives back the Steam X4's behaviour (random seed for new games and loads). Measured: written from
+  outside, the session load got g_SessionSeed 276944566 (a load before it, without, a random 1156793563).
+
+4. ARMING THE GATE LATE                                                                                      [H]
+- Late arming is what the multiplayer profile already does: the probe loads the gate with package.loadlib when
+  the session starts, minutes after X4's start (lobby form, LobbyGame.take). The pin checks do not depend on when
+  or how the DLL came in: verify() (lockstep_gate.c) checks the running image's headers (TimeDateStamp,
+  SizeOfImage), the SHA-256 of the X4.exe file the module was loaded from (the Steam install's X4.exe is the
+  same file the views hard-link) and per-site byte hashes in memory. The Steam overlay hooks system DLLs, not
+  X4.exe code.
+- The obstacle is X4's protected UI mode, on by default in a player's profile: every UI Lua state is set up by
+  0xaf7d70, which always removes `debug`, wraps `require` (0xaf72a0: only whitelisted modules, native modules must
+  be signed) and, when config "uisafemode" is true (default 1, read at every state creation), sets `package` to
+  nil. ffi.C is wrapped too (0xaf7150: only whitelisted X4 functions, "Access to FFI function '%s' is
+  restricted!"). So the menu extension's Lua cannot load any DLL in a Steam X4 with protected UI mode on.
+- Ways in:
+  a) the player has protected UI mode off already (many modded installs do): package.loadlib works as today.
+  b) the extension's Lua calls SetUISafeModeOption(false): X4 refuses it ("Restricted function
+     SetUISafeModeOption() called from non-verified source 'extensions/...'", measured), and it would write the
+     player's config.xml anyway. Closed.
+  c) the helper injects the DLL (OpenProcess, VirtualAllocEx, WriteProcessMemory, CreateRemoteThread on
+     LoadLibraryW: same user, no elevation; measured with x4lan_net_64.dll). Works, but not needed (d), and
+     remote-thread injection is what anti-virus heuristics look for.
+  d) the helper writes two code bytes from outside before the session's load: 0xaf8089 74 1f -> eb 1f (the
+     branch of 0xaf7d70 that sets package = nil), compare-and-write after the pinned-build checks. Every UI state
+     made while it is in place keeps `package` (io, os, debug stay removed); the session's load makes one, and the
+     probe's package.loadlib loads the gate there as it does today. Measured: the real gate DLL loaded in a
+     protected-mode X4 and luaopen_x4lan_gate returned its table (963 methods). The patch stays for the session
+     (a UI reload inside the session needs `package` again) and dies with the process. Together with the folder
+     byte and the seed field these are the only writes that must happen before the load; everything else the
+     gate does itself once loaded.
+- Also missing in a Steam X4 and set at runtime by the gate instead: -nocputhrottle (byte 0x2f4b9d2, read by
+  X4::FrameTick), -debug scripts (0x14b9210(g_DebugLog 0x6cf1508, filter)), -logfile (0x14b9b30, see 1.1).
+  -skipintro / -noworkshopsync only matter at the start.
+
+5. BACK TO SINGLE PLAYER                                                                                     [H]
+Not in the same process. The gate is one-shot: start_gate sets `used` and never clears it (a second start returns
+10), pins its own module (GET_MODULE_HANDLE_EX_FLAG_PIN), keeps its thunk pages, and some groups create engine
+objects that outlive a load (lockstep_view_scenes.h: physics scenes C..H registered where Scene::Step finds every
+scene; view points). About 400 module headers would each need a reset path, plus the engine globals the in-place
+steps change (folder, seed, config overrides, log, debug filter). One restart after the session is acceptable: the
+session ends with X4 quitting (as --close-when-over does), the helper takes the session files out of the menu
+extension and offers "back to single player" (steam://rungameid/392160 starts X4 the normal way).
+
+6. WHAT AN IN-PLACE START WOULD DO (design sketch, Steam X4)
+  1. The page's Host/Join as today: the helper finds/makes or downloads the session and builds the overlay while
+     the page shows progress (HostHandOver / JoinHandOver), but no "restart" at the end.
+  2. Refusal checks (then the current one-restart path): another extension enabled than the DLCs + the menu
+     extension (Lua GetExtensionList works in protected mode), a DLC set other than the save's, a patch path that
+     is not a placeholder (or was found missing already), another X4 build.
+  3. The helper: disposable profile folder with the staged save only; the overlay's files into the install's
+     extensions\x4online_menu (patch placeholders filled, the extension folder name retargeted from x4_lan_lab);
+     the session's config.lua.
+  4. The helper's three writes into the running X4 (after the pinned-build checks, read back): the personal
+     folder (then the page's ReloadSaveList), the forced seed, the package branch. Then the page sets the session's
+     values of the settings that change the simulation with X4's own option functions (their config saves go to
+     the disposable profile now) and loads.
+  5. The gate, loaded by the probe in the session's UI state: verify as today; open the session log in the
+     disposable profile with X4's logger; debug filter "scripts"; CPU throttle off.
+  6. The page runs the session form (lobby.session), the probe LoadGame('save_009') from the disposable folder:
+     MD/AI/libraries are read now, with the session's files (in a protected-mode X4 the probe must be told that
+     the package branch is open: it can check type(package) and say why when not). From here it is the session x4ls lobby runs, with the
+     launcher following the log in the disposable profile and watching the Steam X4 by pid.
+  7. The end: X4 quits; the helper restores the placeholders and removes the session files.
+
+7. PROTOTYPE RUNS (tools/dev/inplace_proto/proto.py, 26 Nov 01:51-02:07 and after, lock x4-b, one X4 in
+   C:/x4ls-lanes-inplace/c1, below normal priority, display 3)
+Stand-in "own" profile 45857 (config.xml without uisafemode: X4's default, protected UI mode on; DLCs + the
+stand-in menu extension x4inplace_proto enabled), started like the Steam X4 (no -seed, no -debug, no
+-nocputhrottle; -logfile only to observe). Disposable profile 45858 held only save/save_009. The save: the rk15-a
+session save (34.6 MB). The driver stands in for the gate/helper from outside (ReadProcessMemory /
+WriteProcessMemory on its own test X4, after the pinned-build checks).
+
+Run 1 (full):
+  pinned                running image = pinned build (TimeDateStamp 0x6a1eaded, SizeOfImage 0x6fa9000, the code
+                        of GetSaveFolderPath, GameClass::Load's seed test, GetForcedOrRandomSessionSeed,
+                        XLib::RemoveFile equal to the file)
+  protected UI mode     every UI state: package=nil io=nil os=nil debug=nil, ffi and loadfile available
+  log rows              DebugError rows reach the log without -debug (filter "error")
+  personal folder       ...\X4\45857\ at the start; one byte written -> ...\X4\45858\; the page's
+                        GetSaveFolderPath and ReloadSaveList followed at once
+  seed                  GameClient+0x218 was 0; the control load got a random g_SessionSeed (1156793563); with
+                        +0x218/+0x220 set to 276944566 the session load got g_SessionSeed = 276944566
+  start-time files      after a control load of an "own" save (the extension had no md/aiscripts then), copied in:
+                          new MD script md/x4inplace_proto.xml        loaded at the session load (MD_LOADED)
+                          new AI script aiscripts/x4inplace_proto.xml found and run (AI_RUNS on an NPC pilot)
+                          libraries/wares.xml, a <diff/> placeholder at the start, content replaced late:
+                                                                      applied (the ware exists after the load)
+                          md/notifications.xml, a patch of a stock script NOT there at the start:
+                                                                      not applied (no row, no error): the
+                                                                      negative existence cache of 2.1
+  SetUISafeModeOption   refused by X4 itself: "Restricted function SetUISafeModeOption() called from
+                        non-verified source 'extensions/x...'" (the value stayed true, package stayed nil). So route
+                        4(d) is closed: an extension cannot switch protected UI mode off.
+  injection             CreateRemoteThread(LoadLibraryW) of a copy of x4lan_net_64.dll: loaded (module listed)
+  writes                own profile 45857 after the redirect, through the session load, a save, a config write
+                        (SetAutosaveOption), the injection and quitting X4: nothing added, removed or changed
+                        but x4ls-c1.log (the log opened at the start, which a Steam X4 does not have).
+                        Disposable profile 45858: config.xml (the option change), uidata.xml (the load's UI
+                        teardown and the exit), progressbar.xml (ProgressTracker, at the load: a write missing
+                        from 1.2), pipelinecache.bin (8.2 MB, at the exit), save/save_010.xml.gz (the save).
+
+Run 2 (--quick: no control load; the gate DLL of the rk15 kit copied into the extension late):
+  - the same redirect and seed: GetSaveFolderPath ...\45858\save\, g_SessionSeed 276944566 after the load
+  - the 2-byte compare-and-write at 0xaf8089 (74 1f -> eb 1f: the branch that sets package = nil in every new UI
+    state) from outside before the load: the session's UI state had package=table (io, os and debug stay nil);
+    package.loadlib('./extensions/x4inplace_proto/native/x4lan_gate_64.dll', 'luaopen_x4lan_gate') loaded the
+    real gate in a protected-mode X4: luaopen returned its table (963 methods, pilot_slots_max = 8). The bytes
+    were written back afterwards (74 1f, verified). start_gate (and so verify()) was not called: it needs a
+    relay; its checks are the ones listed in 4 and do not depend on how the DLL came in.
+  - md/notifications.xml (a stock-script patch absent at the start) WAS applied this time (MD_PATCH_APPLIED):
+    without a game loaded in between, the start menu's own game had not cached that path as missing. In run 1
+    the control load had. So the negative cache fills at a player's first game load; placeholders are needed
+    for any player who played before pressing Multiplayer.
+  - own profile: again only x4ls-c1.log changed. Disposable profile: config.xml, uidata.xml, progressbar.xml,
+    userdata.xml (478 B: X4's user data, another write missing from 1.2), pipelinecache.bin, the save.
+  - the config.xml X4 wrote there holds the in-memory settings, among them trafficdensity, chardensity,
+    lodfactor and effectdistance (0.50 each: X4's defaults; a player's own values travel into the session).
+Both runs: view and profiles removed afterwards, the raw logs deleted after reading (the rows are in
+.local/inplace-run/run1|run2/summary.json, not committed).
+
+
+8. VERDICT, WORK, RISKS
+
+8.0 Verdict: DOABLE WITH LIMITS.
+  1 Profile: yes. One string, resolved per call; redirected before the load, nothing more reaches the own
+    profile, the exit included (measured). Limits: a log X4 opened at its start stays where it is (a Steam X4
+    has none); in-memory settings are the player's and get written into the disposable profile.
+  2 Start-time files: they are not start-time. MD, AI scripts, libraries and ui.xml are read at every load, and
+    the extension listing scans the folder live; only the set of enabled extensions is fixed at X4's start (and
+    the menu extension is in it). New scripts copied in late work; patches need a placeholder file that X4 has
+    not yet found missing (measured: both). Permanently installed scripts are not an option (71 patch operations,
+    16 factions in every single-player save).
+  3 Seed: yes. Two fields read at every NewGame/load before the databases are seeded; written at runtime they
+    give the same g_SessionSeed (measured).
+  4 Gate late: yes, as today in the multiplayer profile; in a Steam X4 only after `package` is let through, which
+    an extension cannot do (SetUISafeModeOption is restricted to verified sources) but a 2-byte patch from the
+    helper can (measured: the real gate loaded in a protected-mode X4). The pin checks do not depend on the way in.
+  5 Back to single player: not in the same process (one-shot gate, engine objects it creates); one restart after
+    the session.
+  Limits for the player: no other extension enabled than the DLCs and the menu (else today's restart); the
+  session's DLC set; the patch placeholders shipped with the menu extension (a release with new patch paths
+  restarts once); X4 quits at the session's end.
+
+8.1 Work (rough sizes; Python and C as written in this repository)
+  Helper (steamplay.NetHelper, a third way beside today's hand-over restart), about 500-700 lines + tests:
+    - refusal checks (other extensions, DLC set, placeholder set, X4 build, protected-mode route), falling back to
+      the one restart of today
+    - the disposable profile folder (only the staged save; nothing else is X4's until it writes it)
+    - the overlay's files into the install's extensions/x4online_menu (new scripts copied, placeholders filled),
+      and back (placeholders restored, scripts removed) when X4 is gone, at the helper's start too
+    - the three pre-load memory writes from outside (folder byte, seed field, package branch 74 1f -> eb 1f),
+      each after verify-style pin checks on the running image and read back, failing closed
+    - following the session's log in the disposable profile, watching the Steam X4 by pid (session.monitor_play
+      takes a Popen today)
+  Page (native_gate_lobby.lua), about 100 lines: the in-place form (the helper's writes done -> ReloadSaveList ->
+    the session's option overrides with X4's own option functions -> the session form), a "back to single
+    player" button after the session; the probe says why when `package` is missing.
+  Gate, about 200-300 lines + pins and tests: open the session log with X4's logger (0x14b9b30), the debug
+    filter "scripts" (0x14b9210), CPU throttle off (0x2f4b9d2), refuse unless GetSaveFolderPath is a disposable
+    profile (the probe does already); optional: clear the patch-path negative cache (g_FileIO+0xc0) so that a
+    session with new patch paths needs no placeholder.
+  Overlay and kit, about 100-200 lines: the extension folder name as a parameter instead of x4_lan_lab
+    (native_gate_probe.lua 3 places, _lobby 1, _live 1, _snapshot 1, game.py 1, the 16 icon texture paths of
+    base/libraries/icons.xml and their generator), placeholders for every patch path in the release's menu
+    extension (tools/make_release_kit.py; netlobby.start_parts gives the list).
+  Live verification: the Steam path with a stand-in own profile (as tools/dev/inplace_proto), then two PCs (a
+    host in place, a joiner in place, one of each), the own-profile audit in every run.
+  In all: about 1,000-1,300 lines, one to two weeks with the live runs.
+
+8.2 Risks to single player
+  - The menu extension gets placeholder patches: <diff/> changes nothing, but if the helper dies during a session
+    and X4 is started again before the helper restores them, that X4's single-player game loads the session's
+    patches and factions (the factions then stay in the save the player makes). Mitigation: restore at X4 exit,
+    at the helper's start, and the page refuses to stay in single player while the menu extension holds session
+    content (a marker file it can loadfile).
+  - Memory writes into the player's own X4. Fail closed on other builds; the order (folder first) matters: a
+    session that loads before the redirect would write the player's profile (the probe's folder check stops it
+    before the gate arms, not before X4's own writes of the load: the helper must read the string back first).
+  - The session runs with the player's settings: autosave (on by default), traffic and character density, LOD,
+    effect distance. Some change what the simulation does (the disposable profile gives every client the same
+    defaults today). The page must set the session's values with X4's option functions after the redirect; which
+    settings matter needs a cross-PC census with different settings (the X4LS_CLIENT_CONFIG runs covered
+    resolution, detail distances and graphics quality only).
+  - Mods: a player with any third-party extension enabled gets the restart path (refusal), never a session with
+    their mods loaded.
+  - The session ends with X4 quitting; single player again is one restart (section 5).
+  - The package branch: for the rest of that process every new UI state keeps `package` (protected UI mode is
+    off in all but name). Acceptable only because the refusal admits no other extension and the process ends
+    with the session.
+  - Anti-virus: external WriteProcessMemory into X4 is less suspicious than injection, but not invisible.
+
+8.3 Recommendation
+  - Correct the restart rule now, whatever is decided about the Steam path: md/, aiscripts/ and libraries/ are
+    not start-time (2.1, measured). In the multiplayer profile (x4ls lobby, "X4 Online (play)"), where the gate
+    already loads late and protected mode is off, LobbyGame.take could take another release's session in place:
+    copy its files, set the seed field from the gate before the load (no -seed restart), and refuse only for
+    patch paths the running X4 has not got as placeholders or has found missing (and, as today, once a session
+    has run in that process: the gate is one-shot). Small (in_place_refusal,
+    start_parts, a gate call for the seed; a day or two with a live check), no risk to single player.
+  - Build the Steam path behind a switch, off until a two-PC run and an own-profile audit pass; keep today's one
+    restart as the fallback for every refusal. Do the settings census first (which of the player's settings
+    change the simulation); if that list is long or unclear, the in-place Steam path loses most of its value,
+    because the page would override most of the player's settings anyway.
+  - Do not try to continue single player in the same process.

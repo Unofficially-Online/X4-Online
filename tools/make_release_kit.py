@@ -1,7 +1,8 @@
 """Assemble a release kit: what an X4 Online install holds (docs/NETPLAY.md, "Release kit and installer").
 
   python tools/make_release_kit.py --gate-dll DLL --out DIR [--master URL] [--python-embed ZIP] [--crypto-dll DLL]
-                                   [--sessions DIR | --prebuild-sessions 2,3,4 [--game X4] [--lanes DIR] [--display N]]
+                                   [--sessions DIR | --prebuild-sessions 2,3,4 [--prebuild-starts discover,terran1,...]
+                                    [--game X4] [--lanes DIR] [--display N]]
   python tools/make_release_kit.py --verify DIR
 
   repo/          this checkout's tracked files (git archive HEAD): the launcher, the Lua pages, the tools
@@ -21,7 +22,9 @@
 
 A joiner always downloads the host's session. A host's PC makes a session the kit does not ship (x4ls new-session) and
 keeps it in sessions/. Ready-made sessions are made with the kit's own gate DLL and code: --prebuild-sessions runs x4ls
-new-session for each player count (X4 and Steam on this PC, about 2 minutes each, a clean checkout); --sessions takes
+new-session for each player count (X4 and Steam on this PC, about 2 minutes each, a clean checkout), for each start of
+--prebuild-starts (default: discover; the Host form's starts, src/lockstep/launcher/hoststarts.py: a story start gives
+every player its own copy of the story, as a hosted game of it does); --sessions takes
 the host-* folders of an earlier build or install (their gate DLL and probe must be this kit's). The builder refuses a
 kit that would hold anything private or anything of X4 (PRIVATE_FOLDERS, PRIVATE_NAMES, PRIVATE_SUFFIXES,
 PRIVATE_PATTERNS, secrets in JSON files; a shipped session holds only its files, with no path of the PC that made it):
@@ -336,15 +339,18 @@ def checkout_clean(root):
     return done.returncode == 0 and not done.stdout.strip()
 
 
-def add_sessions(out, sessions=None, prebuild=(), options=None, make=None, clean=None, log=print):
+def add_sessions(out, sessions=None, prebuild=(), options=None, make=None, clean=None, log=print, starts=(),
+                 table=None):
     """The kit's sessions/: the host-* folders of `sessions` (an earlier kit's or an install's sessions/, a folder of
-    sessions made before) that are this kit's, and one new session for each player count in `prebuild` (x4ls
-    new-session with the kit's gate DLL: X4 runs). options: new-session's {game, lanes, steam_fix} for prebuild.
-    make, clean: a test's stand-ins for netkit.make_session and checkout_clean. Returns the folder names."""
+    sessions made before) that are this kit's, and one new session for each player count in `prebuild` and each start
+    of `starts` (start names as --prebuild-starts takes them; none: the default start) (x4ls new-session with the
+    kit's gate DLL: X4 runs). options: new-session's {game, lanes, steam_fix} for prebuild. make, clean, table: a
+    test's stand-ins for netkit.make_session, checkout_clean and hoststarts.load. Returns the folder names."""
     netkit = launcher()
     kit = netkit.Kit(out)
     target = out / SESSIONS
     shipped = []
+    stories = {}   # the prebuilt sessions' starts: whether every player has its own story
     if sessions:
         source = Path(sessions)
         if not source.is_dir():
@@ -362,15 +368,18 @@ def add_sessions(out, sessions=None, prebuild=(), options=None, make=None, clean
             refuse('--prebuild-sessions: this checkout\'s src/ or tools/ differ from HEAD; commit first (the kit\'s '
                    'sessions must be made by its own code, git archive HEAD)')
         options = dict(options or {})
-        for players in prebuild:
-            key = netkit.host_session_key(kit, players, netkit.HOST_SESSION_MODE, netkit.HOST_SESSION_START)
+        stories = prebuild_starts(starts, options.get('game'), table, log)
+        for start, players in [(start, players) for start in stories for players in prebuild]:
+            key = netkit.host_session_key(kit, players, netkit.HOST_SESSION_MODE, start)
             if (target / key).exists():
                 continue
-            log(f'sessions: making the session for {players} players (x4ls new-session, about 2 minutes)')
+            log(f'sessions: making the session for {players} players at {start}'
+                + (' (every player with its own story)' if stories[start] else '') + ' (x4ls new-session, about 2 minutes)')
             extra = {'display': options['display']} if options.get('display') else {}
-            made = (make or netkit.make_session)(kit, players, netkit.HOST_SESSION_MODE, netkit.HOST_SESSION_START,
+            made = (make or netkit.make_session)(kit, players, netkit.HOST_SESSION_MODE, start,
                                                  None, log, None, steam_fix=bool(options.get('steam_fix')),
-                                                 game=options.get('game'), lanes=options.get('lanes'), **extra)
+                                                 game=options.get('game'), lanes=options.get('lanes'), story=stories[start],
+                                                 **extra)
             made_folder = Path(made.overlay).parent
             work = made_folder.with_name(made_folder.name + '.made')
             made_folder.rename(work)
@@ -383,7 +392,8 @@ def add_sessions(out, sessions=None, prebuild=(), options=None, make=None, clean
     problems = []
     for name in shipped:
         folder = target / name
-        files = netkit.cached_session(kit, *session_counts(netkit, name))
+        counts = session_counts(netkit, name)
+        files = netkit.cached_session(kit, *counts, stories.get(counts[2]))   # a prebuilt one: its story form too
         if files is None:
             problems.append(f'{name}: this kit could not host it (its gate DLL, its players or its form)')
             continue
@@ -402,6 +412,35 @@ def session_counts(netkit, name):
     match = netkit.HOST_KEY.fullmatch(name)
     opened = tuple(int(slot) for slot in match.group('open').split('_')) if match.group('open') else ()
     return int(match.group('players')), match.group('mode'), match.group('start'), opened
+
+
+def start_names(text):
+    """--prebuild-starts: 'discover,terran1' -> ('discover', 'terran1') (a start's id, or its id without
+    x4ep1_gamestart_)."""
+    names = tuple(dict.fromkeys(part.strip().lower() for part in str(text).split(',') if part.strip()))
+    if not names or not all(re.fullmatch(r'[a-z0-9_]{1,64}', name) for name in names):
+        refuse(f'--prebuild-starts: {text!r} is not a list of starts (discover,terran1)')
+    return names
+
+
+def prebuild_starts(names, game=None, table=None, log=print):
+    """{gamestart id: story} of the starts to prebuild, in the order named (none named: the default start), each
+    checked against the starts this PC's game can host (hoststarts.load, or a test's table() -> (rows, refused))."""
+    netkit = launcher()
+    from lockstep.launcher import hoststarts
+    if not names:
+        return {netkit.HOST_SESSION_START: False}
+    rows, refused = table() if table else hoststarts.load(game, log=log)
+    out = {}
+    for name in names:
+        start = hoststarts.full(name, rows)
+        if start is None:
+            known = next((sid for sid in (name, hoststarts.PREFIX + name) if sid in refused), None)
+            refuse(f'--prebuild-starts: {name} cannot be hosted: '
+                   + (refused[known] if known else 'this game has no such start')
+                   + '. Hostable: ' + ', '.join(hoststarts.short(row['id']) for row in rows))
+        out[start] = bool(hoststarts.find(rows, start)['story'])
+    return out
 
 
 def player_counts(text):
@@ -588,9 +627,9 @@ def remove_made(out, existed):
 
 
 def build(gate_dll, out, master=None, python_embed=None, crypto_dll=None, root=ROOT, built=None, sessions=None,
-          prebuild=(), session_options=None, make=None, clean=None):
-    """The release kit in out (new or empty); its manifest. master is a URL or HOST[:PORT]. sessions, prebuild: the
-    ready-made host sessions (add_sessions)."""
+          prebuild=(), session_options=None, make=None, clean=None, starts=(), table=None):
+    """The release kit in out (new or empty); its manifest. master is a URL or HOST[:PORT]. sessions, prebuild, starts:
+    the ready-made host sessions (add_sessions)."""
     out = Path(out).resolve()   # absolute: the steam-menu step runs a child Python whose cwd is the kit
     master = master_url(master) if master else None
     existed = out.exists()
@@ -601,7 +640,8 @@ def build(gate_dll, out, master=None, python_embed=None, crypto_dll=None, root=R
     try:
         release, python_sha = assemble(gate_dll, out, master, python_embed, crypto_dll, root, built)
         if sessions or prebuild:
-            shipped = add_sessions(out, sessions, prebuild, session_options, make=make, clean=clean)
+            shipped = add_sessions(out, sessions, prebuild, session_options, make=make, clean=clean, starts=starts,
+                                   table=table)
             if shipped:   # KIT.txt names them
                 (out / 'KIT.txt').write_bytes(kit_text(release, master, bool(python_embed), bool(crypto_dll),
                                                        shipped).encode('ascii'))
@@ -658,8 +698,12 @@ def main(argv=None):
                         help='ready-made host sessions to ship: the host-* folders of DIR (an earlier kit\'s or an '
                              'install\'s sessions/), made with this --gate-dll and this checkout\'s code')
     parser.add_argument('--prebuild-sessions', metavar='N,N,...',
-                        help='make a host session for each player count (2,3,4: the default start, coop) with x4ls '
-                             'new-session and ship them (X4 and Steam on this PC, about 2 minutes each; a clean checkout)')
+                        help='make a host session for each player count (2,3,4; coop) with x4ls new-session and ship them '
+                             '(X4 and Steam on this PC, about 2 minutes each; a clean checkout)')
+    parser.add_argument('--prebuild-starts', metavar='START,...',
+                        help='with --prebuild-sessions: the starts to make them for (default discover; a start\'s id or '
+                             'its id without x4ep1_gamestart_, e.g. discover,terran1,split2,fight: the starts the Host '
+                             'form offers; one session per start and player count)')
     parser.add_argument('--game', metavar='DIR', help='with --prebuild-sessions: the X4 installation (default: Steam\'s)')
     parser.add_argument('--lanes', metavar='DIR', help='with --prebuild-sessions: the folder for the capture\'s game view')
     parser.add_argument('--steam-fix', action='store_true', help='with --prebuild-sessions: x4ls new-session --steam-fix')
@@ -676,9 +720,12 @@ def main(argv=None):
     if not (args.gate_dll and args.out):
         parser.error('--gate-dll and --out (or --verify KIT)')
     prebuild = player_counts(args.prebuild_sessions) if args.prebuild_sessions else ()
+    if args.prebuild_starts and not prebuild:
+        parser.error('--prebuild-starts goes with --prebuild-sessions')
+    starts = start_names(args.prebuild_starts) if args.prebuild_starts else ()
     options = {'game': args.game, 'lanes': args.lanes, 'steam_fix': args.steam_fix, 'display': args.display}
     manifest = build(args.gate_dll, args.out, args.master, args.python_embed, args.crypto_dll, sessions=args.sessions,
-                     prebuild=prebuild, session_options=options)
+                     prebuild=prebuild, session_options=options, starts=starts)
     shipped = manifest.get('sessions') or []
     print(f'release {manifest["release"]}: {len(manifest["files"])} files in {args.out}'
           + (f'; ready-made sessions: {", ".join(shipped)}' if shipped else ''))

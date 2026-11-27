@@ -9368,8 +9368,61 @@ local function mp_menu_rows()
   end}
  return rows
 end
+local function mp_menu_refresh()
+ local options=mp_menu.options
+ if options and type(options.refresh)=='function' then
+  pcall(options.refresh)
+ end
+end
+-- In a session the lobby made, the page as X4 draws its own menus (X4LAN_MP_UI.session_page of the lobby page,
+-- docs/MULTIPLAYER-PAGE.md): the status line, the join code with Copy, the players, the connection, the playing time,
+-- Leave with its question. The step, the relay and the desync note are mouse-overs there. false: the rows below instead
+-- (no lobby, an older lobby file, a table without X4's cells, or a page that failed once).
+local function mp_menu_draw_native(ftable)
+ local ui=X4LAN_MP_UI
+ if mp_menu.native_off or type(ui)~='table' or type(ui.session_page)~='function' or type(cfg.lobby)~='table'
+  or type(ftable)~='table' or type(ftable.addRow)~='function' then
+  return false
+ end
+ local hz=tonumber(cfg.native_gate_tick_hz) or 60
+ local info={slot=mp_menu_slot(),clients=clients or '?',left=mp_menu.left,lobby=mp_menu.lobby,
+  confirming=mp_menu.confirming,
+  relay='Relay '..tostring(cfg.native_gate_relay_host or cfg.host or '127.0.0.1')..':'..tostring(cfg.port or '?')}
+ info.active=function()
+  return mp_menu_active(mp_menu_state())
+ end
+ info.minutes=function()
+  local seconds=math.floor((tonumber(mp_menu_state().issued) or 0)/hz)
+  return string.format('%d:%02d',math.floor(seconds/60),seconds%60)
+ end
+ info.copy=function()
+  mp_menu.copied_at=ui.now()
+  mp_menu_request('COPY')
+ end
+ info.copied=function()
+  return mp_menu.copied_at~=nil and ui.now()-mp_menu.copied_at<2
+ end
+ info.confirm=function(on)
+  mp_menu.confirming=on and true or nil
+  mp_menu_refresh()
+ end
+ info.leave=function()
+  mp_menu.confirming=nil
+  mp_menu_leave()
+  mp_menu_refresh()
+ end
+ local ok,why=pcall(ui.session_page,ftable,info)
+ if not ok then
+  mp_menu.native_off=true
+  log('MP_MENU_DRAW_FALLBACK '..tostring(why))
+ end
+ return ok
+end
 -- The page's rows in place of the stock page's; a row that fails is left out (one row in the log).
 local function mp_menu_draw_rows(stock_row,ftable,...)
+ if mp_menu_draw_native(ftable) then
+  return
+ end
  local ok,rows=pcall(mp_menu_rows)
  if not ok then
   log('MP_MENU_DRAW_ERROR rows '..tostring(rows))
